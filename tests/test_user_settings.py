@@ -53,7 +53,7 @@ def test_custom_language_survives_storage_sync_and_editing_a_later_occurrence(de
     instances = store.query_occurrences(START, START + timedelta(days=400))
     selected = instances[4]
     edit = EventDialog(store.list_calendars(), selected.start, selected.end,
-                       event=selected, series=master)
+                       event=selected, series=master, edit_scope='group')
     windows.append(edit)
     assert edit.pattern.text() == literal
     assert edit.value(edit.start) == master.start
@@ -82,7 +82,7 @@ def test_legacy_custom_dates_reopen_as_equivalent_new_language(desktop, authored
                    expression_anchor=START.date().isoformat() if authored else '')
     store.apply('Create', [master])
     selected = store.query_occurrences(START, START + timedelta(days=400))[1]
-    dialog = EventDialog(store.list_calendars(), selected.start, selected.end, event=selected, series=master)
+    dialog = EventDialog(store.list_calendars(), selected.start, selected.end, event=selected, series=master, edit_scope='group')
     windows.append(dialog)
     assert 'Mo' not in dialog.pattern.text()
     assert '+2' in dialog.pattern.text()
@@ -108,7 +108,7 @@ def test_one_date_pattern_can_be_edited_and_moved_without_losing_its_language(de
     master = create.result_events[0]
     store.apply('Create', [master])
     selected = store.query_occurrences(START, START + timedelta(days=14))[0]
-    edit = EventDialog(store.list_calendars(), selected.start, selected.end, event=selected, series=master)
+    edit = EventDialog(store.list_calendars(), selected.start, selected.end, event=selected, series=master, edit_scope='group')
     windows.append(edit)
     assert edit.pattern.text() == '4.11.2026'
     edit.title.setText('Moved custom slot')

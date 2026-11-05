@@ -5,7 +5,7 @@ from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer
-from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon
+from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox,
@@ -17,6 +17,7 @@ from .patterns import expand_sequence, reconstruct_sequence, PatternError
 from .timeutil import local_zone
 from .preferences import Preferences
 from .series_preview import SeriesPreview
+from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, SCOPE_MODIFIERS
 
 
 def hint(text):
@@ -29,7 +30,8 @@ def hint(text):
 class EventDialog(QDialog):
     """One schedule editor: rules, chosen dates and alternatives share a master."""
     def __init__(self, calendars, start, end=None, event=None, parent=None,
-                 preferences=None, edit_scope='group', series=None, default_calendar_id=None):
+                 preferences=None, edit_scope='single', series=None, default_calendar_id=None,
+                 scope_shortcut='Alt+S', scope_modifiers=None):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self.setWindowTitle('Edit event' if event else 'Create event')
@@ -38,7 +40,10 @@ class EventDialog(QDialog):
         self.result_events = []
         self.schedule_replacement = False
         self.has_group = bool(series or (event and (event.group_id or event.series_id)))
-        source = series or event
+        self.scope_modifiers = normalize_scope_modifiers(scope_modifiers)
+        edit_scope = edit_scope if self.has_group and edit_scope in ('single', 'group', 'future') else 'single'
+        self._scope_sources = {}
+        source = self.schedule_source(edit_scope)
         reference = series if series and edit_scope == 'group' else event
         self._scope_name = edit_scope
         self._scope_values = {}
@@ -58,11 +63,12 @@ class EventDialog(QDialog):
         content = QVBoxLayout(body)
         self.form = form = QFormLayout()
         self.scope = QComboBox()
-        self.scope.addItem('Whole series' if series else 'Whole group', 'group')
         self.scope.addItem('Only this occurrence' if series else 'Only this event', 'single')
+        self.scope.addItem(f"All events ({self.scope_modifiers['all']})", 'group')
+        self.scope.addItem(f"This and following ({self.scope_modifiers['following']})", 'future')
         self.scope.setCurrentIndex(self.scope.findData(edit_scope))
         if self.has_group:
-            form.addRow('Edit scope', self.scope)
+            form.addRow('Edit scope' + (f' · {scope_shortcut}' if scope_shortcut else ''), self.scope)
         self.title = QLineEdit(reference.title if reference else '')
         self.title.setPlaceholderText('What are you making time for?')
         self.calendar = QComboBox()
@@ -130,6 +136,80 @@ class EventDialog(QDialog):
         self.pattern.setPlaceholderText('4*(+2) +3 3*+2')
         self.pattern_help = hint('')
         self.advanced_help = hint('Advanced: RRULE is the standard iCalendar recurrence rule. The regular controls generate it for you; this field is for rules the controls cannot express.')
+        self.load_schedule(source)
+        for label, field in [('Schedule', self.repeat), ('Every', self.interval), ('Days', self.weekday_container),
+                             ('Ends', self.repeat_end), ('Occurrences', self.repeat_count), ('Until', self.repeat_until),
+                             ('Add events', self.pattern), ('Rule', self.custom_rule)]:
+            form.addRow(label, field)
+        content.addLayout(form)
+        content.addWidget(self.pattern_help)
+        content.addWidget(self.advanced_help)
+        self.candidate = QCheckBox('Alternative slots — choosing one removes the other choices')
+        self.candidate.setChecked(reference.candidate if reference else False)
+        content.addWidget(self.candidate)
+        content.addStretch()
+        scroll.setWidget(body)
+        columns.addWidget(scroll, 1)
+        self.preview = SeriesPreview()
+        self.preview.date_toggled.connect(self.toggle_date)
+        columns.addWidget(self.preview, 1)
+        outer.addLayout(columns, 1)
+        self.error = QLabel()
+        self.error.setWordWrap(True)
+        self.error.setStyleSheet('color: #b54735;')
+        outer.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+        self.pattern.textChanged.connect(self.pattern_changed)
+        self.scope.currentIndexChanged.connect(self.scope_changed)
+        for signal in (self.start.dateTimeChanged, self.end.dateTimeChanged,
+                       self.repeat.currentIndexChanged, self.interval.valueChanged, self.repeat_end.currentIndexChanged,
+                       self.repeat_count.valueChanged, self.repeat_until.dateChanged, self.custom_rule.textChanged,
+                       self.candidate.toggled, self.all_day.toggled):
+            signal.connect(self.update_preview)
+        for box in self.weekdays:
+            box.toggled.connect(self.weekday_changed)
+        self.scope_shortcut = QShortcut(QKeySequence(scope_shortcut), self)
+        self.scope_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.scope_shortcut.setEnabled(self.has_group and bool(scope_shortcut))
+        self.scope_shortcut.activated.connect(self.cycle_scope)
+        self.update_preview()
+        self.title.setFocus()
+        self.title.selectAll()
+
+    def schedule_source(self, scope=None):
+        scope = scope or self.scope.currentData()
+        if scope == 'future' and self.series:
+            if scope not in self._scope_sources:
+                from .series_operations import partition_series
+                _, tail = partition_series(self.series, self.original)
+                if tail is None:
+                    raise ValueError('There are no events at or after this occurrence.')
+                self._scope_sources[scope] = tail
+            return self._scope_sources[scope]
+        return self.series or self.original
+
+    def load_schedule(self, source):
+        self._conversion_notice = ''
+        self._stored_sequence_starts = None
+        self._sequence_reencode = False
+        self._sequence_clicked = False
+        self._setting_pattern_from_click = False
+        self._click_excluded_dates = None
+        self._click_anchor = None
+        self._click_template = None
+        self.repeat.setCurrentIndex(self.repeat.findData(''))
+        self.interval.setValue(1)
+        self.repeat_end.setCurrentIndex(0)
+        self.repeat_count.setValue(10)
+        self.pattern.clear()
+        self.custom_rule.clear()
+        self._weekdays_auto = not bool(source and source.recurrence_rule)
+        day = source.start.astimezone(local_zone()).weekday() if source else self.start.date().toPython().weekday()
+        for index, box in enumerate(self.weekdays):
+            box.setChecked(index == day)
         if source and (source.schedule_expression or (source.recurrence_dates and not source.recurrence_rule)):
             self.repeat.setCurrentIndex(self.repeat.findData('RDATE'))
             from .recurrence import base_schedule_starts
@@ -177,43 +257,10 @@ class EventDialog(QDialog):
                 self.repeat.setCurrentIndex(self.repeat.findData('CUSTOM'))
             self.custom_rule.setText(source.recurrence_rule)
         self._initial_pattern = self.pattern.text()
-        for label, field in [('Schedule', self.repeat), ('Every', self.interval), ('Days', self.weekday_container),
-                             ('Ends', self.repeat_end), ('Occurrences', self.repeat_count), ('Until', self.repeat_until),
-                             ('Add events', self.pattern), ('Rule', self.custom_rule)]:
-            form.addRow(label, field)
-        content.addLayout(form)
-        content.addWidget(self.pattern_help)
-        content.addWidget(self.advanced_help)
-        self.candidate = QCheckBox('Alternative slots — choosing one removes the other choices')
-        self.candidate.setChecked(reference.candidate if reference else False)
-        content.addWidget(self.candidate)
-        content.addStretch()
-        scroll.setWidget(body)
-        columns.addWidget(scroll, 1)
-        self.preview = SeriesPreview()
-        self.preview.date_toggled.connect(self.toggle_date)
-        columns.addWidget(self.preview, 1)
-        outer.addLayout(columns, 1)
-        self.error = QLabel()
-        self.error.setWordWrap(True)
-        self.error.setStyleSheet('color: #b54735;')
-        outer.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.save)
-        buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
-        self.pattern.textChanged.connect(self.pattern_changed)
-        self.scope.currentIndexChanged.connect(self.scope_changed)
-        for signal in (self.start.dateTimeChanged, self.end.dateTimeChanged,
-                       self.repeat.currentIndexChanged, self.interval.valueChanged, self.repeat_end.currentIndexChanged,
-                       self.repeat_count.valueChanged, self.repeat_until.dateChanged, self.custom_rule.textChanged,
-                       self.scope.currentIndexChanged, self.candidate.toggled, self.all_day.toggled):
-            signal.connect(self.update_preview)
-        for box in self.weekdays:
-            box.toggled.connect(self.weekday_changed)
-        self.update_preview()
-        self.title.setFocus()
-        self.title.selectAll()
+
+    def cycle_scope(self):
+        if self.has_group:
+            self.scope.setCurrentIndex((self.scope.currentIndex() + 1) % self.scope.count())
 
     @staticmethod
     def validate_time(value):
@@ -246,21 +293,36 @@ class EventDialog(QDialog):
         return day
 
     def scope_changed(self, *_):
-        if not self.series:
-            return
         scope = self.scope.currentData()
         if scope == self._scope_name:
             return
-        self._scope_values[self._scope_name] = (
-            self.start.dateTime(), self.end.dateTime(), self.title.text(), self.location.text(),
-            self.description.toPlainText(), self.all_day.isChecked(), self.candidate.isChecked())
-        reference = self.edit_reference
-        values = self._scope_values.get(scope)
-        controls = (self.start, self.end, self.title, self.location, self.description, self.all_day, self.candidate)
-        for control in controls:
-            control.blockSignals(True)
         try:
-            if values is None:
+            source = self.schedule_source(scope)
+        except (ValueError, OverflowError) as exc:
+            blocked = self.scope.blockSignals(True)
+            self.scope.setCurrentIndex(self.scope.findData(self._scope_name))
+            self.scope.blockSignals(blocked)
+            self.error.setText(str(exc))
+            return
+        general = (self.start, self.end, self.title, self.location, self.description, self.all_day, self.candidate)
+        schedule = (self.repeat, self.interval, self.repeat_end, self.repeat_count, self.repeat_until,
+                    self.pattern, self.custom_rule, *self.weekdays)
+        state_names = ('_initial_pattern', '_conversion_notice', '_stored_sequence_starts',
+                       '_sequence_reencode', '_sequence_clicked', '_click_excluded_dates',
+                       '_click_anchor', '_click_template', '_weekdays_auto')
+        self._scope_values[self._scope_name] = {
+            'fields': (self.start.dateTime(), self.end.dateTime(), self.title.text(), self.location.text(),
+                       self.description.toPlainText(), self.all_day.isChecked(), self.candidate.isChecked()),
+            'schedule': (self.repeat.currentIndex(), self.interval.value(), self.repeat_end.currentIndex(),
+                         self.repeat_count.value(), self.repeat_until.date(), self.pattern.text(),
+                         self.custom_rule.text(), tuple(box.isChecked() for box in self.weekdays)),
+            'state': {name: getattr(self, name) for name in state_names},
+        }
+        previous_blocks = [control.blockSignals(True) for control in (*general, *schedule)]
+        try:
+            cached = self._scope_values.get(scope)
+            reference = self.edit_reference
+            if cached is None:
                 times = []
                 for value in (reference.start, reference.end):
                     value = value.astimezone(local_zone())
@@ -268,6 +330,8 @@ class EventDialog(QDialog):
                         QTime(value.hour, value.minute, value.second, value.microsecond // 1000), QTimeZone.utc()))
                 values = (*times, reference.title, reference.location, reference.description,
                           reference.all_day, reference.candidate)
+            else:
+                values = cached['fields']
             self.start.setDateTime(values[0])
             self.end.setDateTime(values[1])
             self.title.setText(values[2])
@@ -275,17 +339,32 @@ class EventDialog(QDialog):
             self.description.setPlainText(values[4])
             self.all_day.setChecked(values[5])
             self.candidate.setChecked(values[6])
+            if cached is None:
+                self.load_schedule(source)
+            else:
+                repeat, interval, ending, count, until, pattern, rule, weekdays = cached['schedule']
+                self.repeat.setCurrentIndex(repeat)
+                self.interval.setValue(interval)
+                self.repeat_end.setCurrentIndex(ending)
+                self.repeat_count.setValue(count)
+                self.repeat_until.setDate(until)
+                self.pattern.setText(pattern)
+                self.custom_rule.setText(rule)
+                for box, checked in zip(self.weekdays, weekdays):
+                    box.setChecked(checked)
+                for name, value in cached['state'].items():
+                    setattr(self, name, value)
             self._scope_name = scope
         finally:
-            for control in controls:
-                control.blockSignals(False)
+            for control, blocked in zip((*general, *schedule), previous_blocks):
+                control.blockSignals(blocked)
         self.update_preview()
 
     def sequence_starts(self):
         anchor = self.value(self.start)
         if self.all_day.isChecked():
             anchor = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
-        source = self.series or self.original
+        source = self.schedule_source()
         text = self.pattern.text()
         if source and text == self._initial_pattern and not self._sequence_clicked:
             # Moving a whole series keeps its existing spacing. Explicit dates
@@ -400,12 +479,12 @@ class EventDialog(QDialog):
         start, end = self.value(self.start), self.value(self.end)
         if end.timestamp() < start.timestamp():
             raise ValueError('End must not be before start.')
-        source = self.series or self.original
+        source = self.schedule_source()
         kind = self.repeat.currentData()
         single = self.has_group and self.scope.currentData() == 'single'
         configuration_changed = not single and kind == 'RDATE' and (self._sequence_clicked or not source or (not source.recurrence_dates and not source.schedule_expression) or self.pattern.text() != self._initial_pattern)
         dates_changed = configuration_changed or (not single and kind == 'RDATE' and self._sequence_reencode)
-        self.schedule_replacement = bool(self.series and dates_changed and self.scope.currentData() == 'group')
+        self.schedule_replacement = bool(self.series and dates_changed and self.scope.currentData() in ('group', 'future'))
         rdates = source.recurrence_dates if source and source.recurrence_rule and kind and not single else ()
         rule = '' if single else self.recurrence_rule(start)
         if kind == 'RDATE' and dates_changed:
@@ -419,7 +498,13 @@ class EventDialog(QDialog):
         elif not single and kind == 'RDATE' and source:
             rdates = source.recurrence_dates
             rule = source.recurrence_rule
-        if not single and kind == 'WEEKLY':
+        align_weekday = True
+        if source and self.edit_reference and kind == 'WEEKLY' and start == self.edit_reference.start:
+            from .recurrence import rules_equivalent
+            # A selected RDATE or detached exception need not fall on a rule
+            # weekday. A title-only edit must preserve that separate anchor.
+            align_weekday = not rules_equivalent(rule, source.recurrence_rule, source)
+        if not single and kind == 'WEEKLY' and align_weekday:
             chosen = {index for index, box in enumerate(self.weekdays) if box.isChecked()}
             if chosen and start.weekday() not in chosen:
                 offset = min((day - start.weekday()) % 7 for day in chosen)
@@ -470,7 +555,7 @@ class EventDialog(QDialog):
 
     def update_preview(self, *_):
         kind = self.repeat.currentData()
-        enabled = not self.has_group or (self.series is not None and self.scope.currentData() == 'group')
+        enabled = not self.has_group or (self.series is not None and self.scope.currentData() in ('group', 'future'))
         if self._weekdays_auto and kind == 'WEEKLY':
             # Reading the unvalidated wall date keeps live editing responsive
             # while the user is midway through entering a DST-gap time.
@@ -505,6 +590,10 @@ class EventDialog(QDialog):
             if self.series and self.scope.currentData() == 'group':
                 from .recurrence import updated_series
                 events = [updated_series(self.series, self.edit_reference, events[0], replace_schedule=self.schedule_replacement)]
+            elif self.series and self.scope.currentData() == 'future':
+                from .series_operations import updated_future
+                _, tail = updated_future(self.series, self.original, events[0], self.schedule_replacement)
+                events = [tail] if tail else []
             self.preview.set_events(events, self.preferences)
             self.error.setText(self.preview.error)
             self.preview.enable_date_editing(enabled and kind == 'RDATE' and not self.preview.error)
@@ -779,7 +868,7 @@ class HistoryDialog(QDialog):
 
 
 class ShortcutsDialog(QDialog):
-    def __init__(self, bindings, defaults, parent=None):
+    def __init__(self, bindings, defaults, parent=None, scope_modifiers=None):
         super().__init__(parent)
         self.setWindowTitle('Keyboard shortcuts')
         self.resize(470, 600)
@@ -789,6 +878,16 @@ class ShortcutsDialog(QDialog):
         scroll.setWidgetResizable(True)
         content = QWidget()
         form = QFormLayout(content)
+        self.scope_modifiers = {}
+        for key, label in (('all', 'All events modifier'), ('following', 'This and following modifier')):
+            field = QComboBox()
+            field.addItems(SCOPE_MODIFIERS)
+            field.setCurrentText(normalize_scope_modifiers(scope_modifiers)[key])
+            self.scope_modifiers[key] = field
+            form.addRow(label, field)
+        form.addRow(hint('Without a scope modifier, event actions affect only the selected occurrence. '
+                         'When both modifiers are held, this and following takes priority. '
+                         'Copy and paste keep their usual behavior inside text fields.'))
         self.fields = {}
         for key, value in bindings.items():
             field = QKeySequenceEdit(QKeySequence(value))
@@ -801,14 +900,28 @@ class ShortcutsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.RestoreDefaults)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(lambda: [f.setKeySequence(QKeySequence(defaults[k])) for k, f in self.fields.items()])
+        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(lambda: self.restore_defaults(defaults))
         outer.addWidget(buttons)
 
+    def restore_defaults(self, defaults):
+        for key, field in self.fields.items():
+            field.setKeySequence(QKeySequence(defaults[key]))
+        for key, value in normalize_scope_modifiers().items():
+            self.scope_modifiers[key].setCurrentText(value)
+
     def save(self):
-        bindings = {key: field.keySequence().toString() for key, field in self.fields.items()}
-        used = [value for value in bindings.values() if value]
+        bindings = {key: field.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+                    for key, field in self.fields.items()}
+        try:
+            modifiers = normalize_scope_modifiers({key: field.currentText() for key, field in self.scope_modifiers.items()})
+            expanded = expanded_scope_bindings(bindings, modifiers)
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        used = [QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
+                for value in expanded.values() if value]
         if len(used) != len(set(used)):
-            self.error.setText('Each action needs a unique shortcut.')
+            self.error.setText('Each action and its event scope variants need a unique shortcut.')
             return
         sequences = [QKeySequence(value) for value in used]
         for index, sequence in enumerate(sequences):
@@ -818,4 +931,5 @@ class ShortcutsDialog(QDialog):
                     self.error.setText('One shortcut cannot be the start of another shortcut.')
                     return
         self.result_bindings = bindings
+        self.result_scope_modifiers = modifiers
         self.accept()

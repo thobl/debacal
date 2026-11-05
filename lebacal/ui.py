@@ -1,7 +1,7 @@
 """Native desktop workspace. The local store is always the UI's source of truth."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 from queue import SimpleQueue, Empty
 from collections import deque
@@ -9,8 +9,8 @@ from uuid import uuid4
 import calendar as monthlib
 import math
 
-from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QKeyCombination
+from PySide6.QtGui import QKeySequence, QCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QLineEdit, QScrollArea, QStackedWidget, QCalendarWidget,
@@ -27,17 +27,20 @@ from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .conflict_dialog import ConflictDialog
+from .event_scope import normalize_scope_modifiers, scope_from_modifiers, SCOPED_ACTIONS
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': '/', 'today': 'T', 'previous': 'H', 'next': 'L',
-    'day_view': 'D', 'week_view': 'W', 'month_view': 'M',
+    'day_view': '1', 'week_view': 'W', 'month_view': 'M',
     'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
-    'edit_single': 'Shift+E', 'preferences': 'Ctrl+,',
+    'edit_single': '', 'preferences': 'Ctrl+,',
+    'copy_event': 'C', 'paste_event': 'V', 'duplicate_event': 'D', 'cycle_scope': 'Alt+S',
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
 }
+EVENT_MIME = 'application/x-lebacal-events+json'
 
 STYLE = '''
 QWidget { font-family: "Sans Serif"; font-size: 13px; color: #29382f; }
@@ -100,7 +103,18 @@ class MainWindow(QMainWindow):
         self.shortcut_timer = QTimer(self)
         self.shortcut_timer.setSingleShot(True)
         self.shortcut_timer.timeout.connect(self._shortcut_pending.clear)
-        self.bindings = DEFAULT_BINDINGS | store.get_setting('keybindings', {})
+        saved_bindings = dict(store.get_setting('keybindings', {}))
+        if saved_bindings.get('edit_single') == 'Shift+E':
+            saved_bindings['edit_single'] = ''
+        if saved_bindings.get('day_view') == 'D' and 'duplicate_event' not in saved_bindings:
+            saved_bindings['day_view'] = '1'
+        self.bindings = DEFAULT_BINDINGS | saved_bindings
+        try:
+            self.scope_modifiers = normalize_scope_modifiers(store.get_setting('event_scope_modifiers', None))
+        except (TypeError, ValueError):
+            self.scope_modifiers = normalize_scope_modifiers()
+        self._matched_scope = 'single'
+        self._pending_scope = 'single'
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lebacal-files')
         self.tasks = SimpleQueue()
         self.engine = None
@@ -252,10 +266,12 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.month)
         for widget in [self.canvas, self.month]:
             widget.create_requested.connect(self.create_event)
-            widget.edit_requested.connect(self.edit_event)
+            widget.edit_scoped_requested.connect(lambda event_id, modifiers: self.edit_event(event_id, scope=self.operation_scope(modifiers)))
             widget.selected.connect(self.select_event)
             widget.context_requested.connect(self.event_menu)
-        self.canvas.move_requested.connect(self.move_event)
+        self.canvas.set_scope_modifiers(self.scope_modifiers)
+        self.canvas.move_scoped_requested.connect(lambda reference, start, end, modifiers:
+            self.move_event(reference.id, start, end, scope=self.operation_scope(modifiers), reference=reference))
         self.results = QListWidget()
         self.results.setFixedWidth(285)
         self.results.hide()
@@ -281,6 +297,9 @@ class MainWindow(QMainWindow):
         self.navigation_prompt.setWordWrap(True)
         self.navigation_prompt.hide()
         outer.addWidget(self.navigation_prompt)
+        self.scope_hint = hint('')
+        outer.addWidget(self.scope_hint)
+        self.update_scope_hint()
         footer = QHBoxLayout()
         self.keyboard_hint = hint('')
         footer.addWidget(self.keyboard_hint, 1)
@@ -360,7 +379,9 @@ class MainWindow(QMainWindow):
             self.keyboard_hint.setText('Enter confirms the highlighted event · Esc cancels selection')
             self.navigation_prompt.setText(message)
         else:
-            self.keyboard_hint.setText(f'{key("new_event")} new   ·   {key("edit_event")} edit   ·   {key("select_event")} select   ·   {key("previous")}/{key("next")} navigate   ·   {key("shortcuts")} shortcuts')
+            self.keyboard_hint.setText(f'{key("new_event")} new · {key("edit_event")} edit · '
+                                      f'{key("copy_event")}/{key("paste_event")}/{key("duplicate_event")} copy/paste/duplicate · '
+                                      f'{key("select_event")} select · {key("previous")}/{key("next")} navigate · {key("shortcuts")} shortcuts')
         self.header.set_navigation(self.select_mode, self.nav_day, self.nav_digits or '')
         self.canvas.set_navigation(self.select_mode, self.nav_day, self.nav_digits or '')
 
@@ -461,43 +482,98 @@ class MainWindow(QMainWindow):
             return occurrences[0] if occurrences else None
         return event
 
-    def edit_event(self, event_id=None, group=None):
+    def operation_scope(self, modifiers=None):
+        return scope_from_modifiers(QApplication.keyboardModifiers() if modifiers is None else modifiers,
+                                    self.scope_modifiers)
+
+    def update_scope_hint(self, modifiers=None):
+        modifiers = QApplication.keyboardModifiers() if modifiers is None else modifiers
+        scope = self.operation_scope(modifiers)
+        label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
+        cycle = self.bindings.get('cycle_scope', '')
+        self.scope_hint.setText(f"Scope: {label} · {self.scope_modifiers['all']}: all · "
+                               f"{self.scope_modifiers['following']}: this and following"
+                               + (f" · {cycle}: change scope in the editor" if cycle else ''))
+        if hasattr(self, 'canvas'):
+            self.canvas.gesture_modifiers = modifiers
+            if self.canvas.drag:
+                self.canvas.update()
+
+    def scoped_members(self, event, scope):
+        if event.series_id:
+            return [self.store.get_event(event.series_id) or event]
+        members = self.group_members(event) if scope != 'single' else [event]
+        if scope == 'future':
+            members = [member for member in members if member.start >= event.start]
+        return members
+
+    def select_series_result(self, series, target, previous_ids=None):
+        resources = {series.id}
+        if previous_ids is not None:
+            current_ids = {event.id for event in self.store.list_events(calendar_ids=[series.calendar_id])}
+            resources = current_ids - previous_ids or resources
+        self.selected_id = None
+        self.refresh()
+        expected = target.astimezone(timezone.utc)
+        selected = next((event for event in self.visible_events
+                         if (event.series_id or event.id) in resources
+                         and event.start.astimezone(timezone.utc) == expected), None)
+        if selected:
+            self.select_event(selected.id)
+
+    def edit_event(self, event_id=None, group=None, scope=None):
         event = self.event_by_id(event_id or self.selected_id or '')
         if not event:
             self.show_notice('Select an event to edit. Use the select shortcut or click an event.')
             return
         series = self.store.get_event(event.series_id) if event.series_id else None
         linked = bool(event.group_id or series)
-        if group is None:
-            group = linked
-        members = self.group_members(event) if group else [event]
-        if any(not self.event_writable(member) for member in members):
+        if scope is None:
+            scope = ('group' if group else 'single') if group is not None else self.operation_scope()
+        members = self.scoped_members(event, scope)
+        if not self.event_writable(event) or any(not self.event_writable(member) for member in members):
             self.show_notice('This event is read only. Export it or copy it into a local calendar to make changes.')
             return
-        dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
-                             preferences=self.preferences, edit_scope='group' if group else 'single', series=series)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        try:
+            dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
+                                 preferences=self.preferences, edit_scope=scope, series=series,
+                                 scope_shortcut=self.bindings.get('cycle_scope', ''), scope_modifiers=self.scope_modifiers)
+        except ValueError as exc:
+            self.show_notice(str(exc))
             return
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self.update_scope_hint()
+            return
+        self.update_scope_hint()
         edited = dialog.result_events[0]
         if linked:
-            group = dialog.scope.currentData() == 'group'
-            members = self.group_members(event) if group else [event]
+            scope = dialog.scope.currentData()
+            members = self.scoped_members(event, scope)
             if any(not self.event_writable(member) for member in members):
                 self.show_notice('This group contains a read-only event. Choose single-event editing for its writable members.')
                 return
         if series:
             try:
-                if group:
+                previous_ids = ({item.id for item in self.store.list_events(calendar_ids=[series.calendar_id])}
+                                if scope == 'future' else None)
+                if scope == 'group':
                     self.store.edit_series(dialog.edit_reference, edited, replace_schedule=dialog.schedule_replacement)
+                elif scope == 'future':
+                    self.store.edit_future(event, edited, replace_schedule=dialog.schedule_replacement, expected_master=series)
                 else:
                     self.store.edit_occurrence(event, edited)
-                self.refresh()
-                self.show_notice('Updated the whole series.' if group else 'Updated only this occurrence. The series keeps its standard recurrence rule.')
+                reference = dialog.edit_reference
+                shift = edited.start.astimezone(local_zone()).replace(tzinfo=None) - reference.start.astimezone(local_zone()).replace(tzinfo=None)
+                target = (event.start.astimezone(local_zone()).replace(tzinfo=None) + shift).replace(tzinfo=local_zone(), fold=event.start.fold)
+                self.select_series_result(series, target, previous_ids)
+                self.show_notice({'group': 'Updated all events in the series.',
+                                  'future': 'Updated this and following events; earlier events are retained.',
+                                  'single': 'Updated only this occurrence.'}[scope])
             except ValueError as exc:
                 self.show_notice(str(exc))
             return
         events = [edited]
-        if group and event.group_id:
+        if scope != 'single' and event.group_id:
             # Shift wall-clock times in the system zone, preserving the chosen
             # hour across daylight-saving transitions in an irregular series.
             zone = local_zone()
@@ -516,7 +592,7 @@ class MainWindow(QMainWindow):
             except ValueError as exc:
                 self.show_notice(str(exc))
                 return
-        self.apply_events('Edit group' if group else 'Edit ' + event.title, events)
+        self.apply_events('Edit following events' if scope == 'future' else 'Edit group' if scope == 'group' else 'Edit ' + event.title, events)
 
     def event_writable(self, event):
         calendar = self.store.get_calendar(event.calendar_id)
@@ -563,12 +639,19 @@ class MainWindow(QMainWindow):
             self.detail_text.setText(event.title + '   ·   ' + value + ('   ·   ' + event.location if event.location else ''))
             self.confirm_btn.setVisible(event.candidate)
             linked = bool(event.group_id or event.series_id)
-            self.edit_button.setText('Edit series' if event.series_id else ('Edit group' if event.group_id else 'Edit'))
-            self.single_button.setVisible(linked)
+            self.edit_button.setText('Edit')
+            self.edit_button.setToolTip(f"{self.bindings['edit_event']}: one event; hold {self.scope_modifiers['all']} for all, "
+                                       f"{self.scope_modifiers['following']} for this and following.")
+            self.single_button.hide()
 
-    def move_event(self, event_id, start, end):
-        event = self.event_by_id(event_id)
+    def move_event(self, event_id, start, end, scope=None, reference=None):
+        event = reference or self.event_by_id(event_id)
         if event:
+            scope = scope or self.operation_scope()
+            members = self.scoped_members(event, scope)
+            if not self.event_writable(event) or any(not self.event_writable(member) for member in members):
+                self.show_notice('This selection contains a read-only event.')
+                return
             try:
                 EventDialog.validate_time(start)
                 EventDialog.validate_time(end)
@@ -578,32 +661,195 @@ class MainWindow(QMainWindow):
                 return
             if event.series_id:
                 try:
-                    self.store.edit_occurrence(event, moved, label='Move one occurrence')
-                    self.refresh()
-                    self.show_notice('Moved only this occurrence. Use Edit series to change the whole series.')
+                    master = self.store.get_event(event.series_id)
+                    if master is None:
+                        raise ValueError('This series changed. Refresh before moving it.')
+                    previous_ids = ({item.id for item in self.store.list_events(calendar_ids=[master.calendar_id])}
+                                    if scope == 'future' else None)
+                    if scope == 'group':
+                        edited = replace(master, start=start, end=end)
+                        self.store.edit_series(event, edited, label='Move all events in series', preserve_exceptions=True)
+                    elif scope == 'future':
+                        edited = replace(master, start=start, end=end)
+                        self.store.edit_future(event, edited, label='Move this and following events',
+                                               expected_master=master, preserve_exceptions=True)
+                    else:
+                        self.store.edit_occurrence(event, moved, label='Move one occurrence')
+                    self.select_series_result(master, start, previous_ids)
+                    self.show_notice({'single': 'Moved one event.', 'group': 'Moved all events in the series.',
+                                      'future': 'Moved this and following events; earlier events are retained.'}[scope])
                 except ValueError as exc:
                     self.show_notice(str(exc))
             else:
-                self.apply_events('Move ' + event.title, [moved])
+                if scope != 'single' and event.group_id:
+                    shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
+                    duration = end.astimezone(local_zone()).replace(tzinfo=None) - start.astimezone(local_zone()).replace(tzinfo=None)
+                    try:
+                        moved_events = []
+                        for member in members:
+                            begin = (member.start.astimezone(local_zone()).replace(tzinfo=None) + shift).replace(tzinfo=local_zone())
+                            finish = begin + duration
+                            EventDialog.validate_time(begin)
+                            EventDialog.validate_time(finish)
+                            moved_events.append(replace(member, start=begin, end=finish))
+                        self.apply_events('Move selected group events', moved_events)
+                    except ValueError as exc:
+                        self.show_notice(str(exc))
+                else:
+                    self.apply_events('Move ' + event.title, [moved])
 
-    def delete_event(self, event_id=None, group=False):
+    def delete_event(self, event_id=None, group=None, scope=None):
         event = self.event_by_id(event_id or self.selected_id or '')
         if not event:
             return
+        if scope is None:
+            scope = ('group' if group else 'single') if group is not None else self.operation_scope()
+        members = self.scoped_members(event, scope)
+        if not self.event_writable(event) or any(not self.event_writable(member) for member in members):
+            self.show_notice('This selection contains a read-only event.')
+            return
         if event.series_id:
             try:
-                if group:
+                if scope == 'group':
                     self.store.apply('Delete recurring series', delete_ids=[event.series_id])
+                elif scope == 'future':
+                    self.store.delete_future(event, expected_master=self.store.get_event(event.series_id))
                 else:
                     self.store.delete_occurrence(event)
                 self.refresh()
+                self.show_notice({'single': 'Deleted one event.', 'group': 'Deleted all events in the series.',
+                                  'future': 'Deleted this and following events.'}[scope] + ' Undo restores them.')
             except ValueError as exc:
                 self.show_notice(str(exc))
             return
-        ids = [event.id]
-        if group and event.group_id:
-            ids = [e.id for e in self.group_members(event)]
-        self.apply_events('Delete group' if group else 'Delete ' + event.title, delete_ids=ids)
+        ids = [member.id for member in members]
+        if self.apply_events('Delete following events' if scope == 'future' else 'Delete group' if scope == 'group' else 'Delete ' + event.title, delete_ids=ids):
+            self.show_notice({'single': 'Deleted one event.', 'group': 'Deleted all group events.',
+                              'future': 'Deleted this and following events.'}[scope] + ' Undo restores them.')
+
+    def capture_events(self, event, scope):
+        from .event_clipboard import EventClipboard
+        if event.series_id:
+            master = self.store.get_event(event.series_id)
+            if master is None:
+                raise ValueError('This event changed before it could be copied. Select it again.')
+            masters = [master]
+        else:
+            masters = self.group_members(event) if scope != 'single' else [event]
+        return EventClipboard.capture(masters, event, scope)
+
+    def copy_event(self, event_id=None, scope=None):
+        event = self.event_by_id(event_id or self.selected_id or '')
+        if event is None:
+            self.show_notice('Select an event to copy.')
+            return
+        scope = scope or self.operation_scope()
+        try:
+            from .ics import export_ics
+            selection = self.capture_events(event, scope)
+            mime = QMimeData()
+            mime.setData(EVENT_MIME, selection.to_bytes())
+            portable = selection.instantiate('group', selection.reference.start, selection.masters[0].calendar_id)
+            data = export_ics(portable)
+            mime.setData('text/calendar', data)
+            mime.setText(data.decode('utf-8'))
+            QApplication.clipboard().setMimeData(mime)
+            paste = self.bindings.get('paste_event', '')
+            self.show_notice({'single': f'Copied one event. {paste or "Paste"} pastes it.',
+                              'group': f"Copied all events. {self.scope_modifiers['all']}+{paste} pastes the whole selection." if paste else 'Copied all events.',
+                              'future': f"Copied this and following events. {self.scope_modifiers['following']}+{paste} pastes that selection." if paste else 'Copied this and following events.'}[scope])
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.show_notice(str(exc))
+
+    def read_event_clipboard(self):
+        from .event_clipboard import EventClipboard, MAX_CLIPBOARD_BYTES
+        from .ics import parse_ics
+        from .recurrence import recurrence_set, occurrence
+        mime = QApplication.clipboard().mimeData()
+        if mime is None:
+            raise ValueError('Copy a calendar event before pasting.')
+        if mime.hasFormat(EVENT_MIME):
+            return EventClipboard.from_bytes(bytes(mime.data(EVENT_MIME)))
+        data = bytes(mime.data('text/calendar')) if mime.hasFormat('text/calendar') else mime.text().encode('utf-8')
+        if len(data) > MAX_CLIPBOARD_BYTES or b'BEGIN:VCALENDAR' not in data.upper():
+            raise ValueError('The clipboard does not contain a calendar event.')
+        masters = parse_ics(data, 'clipboard')
+        if not masters:
+            raise ValueError('The clipboard does not contain an event.')
+        first = masters[0]
+        if first.recurring:
+            try:
+                reference = occurrence(first, next(iter(recurrence_set(first))))
+            except StopIteration as exc:
+                raise ValueError('The copied series contains no occurrences.') from exc
+        else:
+            reference = first
+        return EventClipboard.capture(masters, reference, 'group')
+
+    def paste_target(self, selection):
+        position = QCursor.pos()
+        if self.view != 'month':
+            point = self.canvas.mapFromGlobal(position)
+            viewport = self.scroll.viewport()
+            if viewport.rect().contains(viewport.mapFromGlobal(position)) and self.canvas.rect().contains(point) and point.x() >= self.canvas.gutter:
+                day, minute = self.canvas.position(point)
+                return at(self.canvas.days[day]) + timedelta(minutes=minute)
+        else:
+            point = self.month.mapFromGlobal(position)
+            if self.month.rect().contains(point) and point.y() >= 28:
+                day = self.month.day_at(point)
+                return selection.reference.start.astimezone(local_zone()).replace(
+                    year=day.year, month=day.month, day=day.day)
+        selected = self.event_by_id(self.selected_id or '')
+        if selected:
+            return selected.start
+        return selection.reference.start.astimezone(local_zone()).replace(
+            year=self.anchor.year, month=self.anchor.month, day=self.anchor.day)
+
+    def persist_copies(self, events, target, label):
+        if self.apply_events(label, events):
+            self.anchor = target.astimezone(local_zone()).date()
+            self.selected_id = None
+            self.refresh()
+            ids = {event.id for event in events}
+            choices = [event for event in self.visible_events if (event.series_id or event.id) in ids]
+            if choices:
+                selected = min(choices, key=lambda event: abs(event.start.timestamp() - target.timestamp()))
+                self.select_event(selected.id)
+                self.ensure_event_visible(selected.id)
+            self.show_notice(label + '. Undo restores the previous calendar.')
+
+    def paste_events(self, scope=None, target=None):
+        scope = scope or self.operation_scope()
+        try:
+            selection = self.read_event_clipboard()
+            calendar = self.store.get_default_calendar()
+            if calendar is None or calendar.read_only or calendar.kind == 'ics':
+                raise ValueError('Choose a writable default calendar before pasting events.')
+            target = target or self.paste_target(selection)
+            EventDialog.validate_time(target)
+            events = selection.instantiate(scope, target, calendar.id)
+            self.persist_copies(events, target, 'Paste ' + {'single': 'one event', 'group': 'all copied events', 'future': 'following copied events'}[scope])
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.show_notice(str(exc))
+
+    def duplicate_event(self, event_id=None, scope=None):
+        event = self.event_by_id(event_id or self.selected_id or '')
+        if event is None:
+            self.show_notice('Select an event to duplicate.')
+            return
+        scope = scope or self.operation_scope()
+        try:
+            selection = self.capture_events(event, scope)
+            calendar = self.store.get_calendar(event.calendar_id)
+            if calendar is None or calendar.read_only or calendar.kind == 'ics':
+                calendar = self.store.get_default_calendar()
+            if calendar is None or calendar.read_only or calendar.kind == 'ics':
+                raise ValueError('Choose a writable default calendar before duplicating events.')
+            events = selection.instantiate('group', event.start, calendar.id)
+            self.persist_copies(events, event.start, 'Duplicate ' + {'single': 'one event', 'group': 'all events', 'future': 'this and following events'}[scope])
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.show_notice(str(exc))
 
     def confirm_candidate(self, event_id=None):
         event = self.event_by_id(event_id or self.selected_id or '')
@@ -621,16 +867,31 @@ class MainWindow(QMainWindow):
     def event_menu(self, event_id, point):
         self.select_event(event_id)
         event = self.event_by_id(event_id)
+        if event is None:
+            return
         menu = QMenu(self)
-        menu.addAction('Edit only this occurrence' if event and event.series_id else 'Edit only this event', lambda: self.edit_event(event_id, group=False))
-        menu.addAction('Delete event', lambda: self.delete_event(event_id))
-        if event and (event.group_id or event.series_id):
+        menu.addAction('Edit this event', lambda: self.edit_event(event_id, scope='single'))
+        menu.addAction('Delete this event', lambda: self.delete_event(event_id, scope='single'))
+        menu.addAction('Copy this event', lambda: self.copy_event(event_id, scope='single'))
+        menu.addAction('Duplicate this event', lambda: self.duplicate_event(event_id, scope='single'))
+        if event.group_id or event.series_id:
             menu.addSeparator()
-            menu.addAction('Edit whole series' if event.series_id else 'Edit whole group', lambda: self.edit_event(event_id, group=True))
-            menu.addAction('Delete whole series' if event.series_id else 'Delete whole group', lambda: self.delete_event(event_id, group=True))
-        if event and event.candidate:
+            for label, scope in [('All events', 'group'), ('This and following', 'future')]:
+                submenu = menu.addMenu(label)
+                submenu.addAction('Edit…', lambda checked=False, value=scope: self.edit_event(event_id, scope=value))
+                submenu.addAction('Delete', lambda checked=False, value=scope: self.delete_event(event_id, scope=value))
+                submenu.addAction('Copy', lambda checked=False, value=scope: self.copy_event(event_id, scope=value))
+                submenu.addAction('Duplicate', lambda checked=False, value=scope: self.duplicate_event(event_id, scope=value))
+        menu.addSeparator()
+        menu.addAction('Paste one event here', lambda: self.paste_events(scope='single', target=event.start))
+        menu.addAction('Paste all copied events here', lambda: self.paste_events(scope='group', target=event.start))
+        menu.addAction('Paste following copied events here', lambda: self.paste_events(scope='future', target=event.start))
+        if event.candidate:
             menu.addAction('Confirm this slot; remove alternatives', lambda: self.confirm_candidate(event_id))
-        menu.exec(point)
+        try:
+            menu.exec(point)
+        finally:
+            menu.deleteLater()
 
     def undo(self):
         try:
@@ -652,10 +913,14 @@ class MainWindow(QMainWindow):
         HistoryDialog(self.store, self.refresh, self).exec()
 
     def show_shortcuts(self):
-        dialog = ShortcutsDialog(self.bindings, DEFAULT_BINDINGS, self)
+        dialog = ShortcutsDialog(self.bindings, DEFAULT_BINDINGS, self, scope_modifiers=self.scope_modifiers)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.bindings = dialog.result_bindings
+            self.scope_modifiers = dialog.result_scope_modifiers
             self.store.set_setting('keybindings', self.bindings)
+            self.store.set_setting('event_scope_modifiers', self.scope_modifiers)
+            self.canvas.set_scope_modifiers(self.scope_modifiers)
+            self.update_scope_hint()
             self.update_hints()
 
     def run_search(self, *_):
@@ -953,6 +1218,16 @@ class MainWindow(QMainWindow):
         self.ensure_event_visible(event.id)
 
     def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease) and self.isActiveWindow() and not QApplication.activeModalWidget():
+            modifiers = event.modifiers()
+            if event.type() == QEvent.Type.KeyRelease:
+                released = {Qt.Key.Key_Control: Qt.KeyboardModifier.ControlModifier,
+                            Qt.Key.Key_Shift: Qt.KeyboardModifier.ShiftModifier,
+                            Qt.Key.Key_Alt: Qt.KeyboardModifier.AltModifier,
+                            Qt.Key.Key_Meta: Qt.KeyboardModifier.MetaModifier}.get(event.key())
+                if released:
+                    modifiers &= ~released
+            self.update_scope_hint(modifiers)
         if event.type() != QEvent.Type.KeyPress or not self.isActiveWindow() or QApplication.activeModalWidget():
             return super().eventFilter(obj, event)
         focus = QApplication.focusWidget()
@@ -1006,9 +1281,12 @@ class MainWindow(QMainWindow):
         if action == 'pending':
             return True
         actions = {
-            'new_event': self.create_event, 'edit_event': self.edit_event,
+            'new_event': self.create_event, 'edit_event': lambda: self.edit_event(scope=self._matched_scope),
             'edit_single': lambda: self.edit_event(group=False), 'preferences': self.show_preferences,
-            'delete_event': self.delete_event, 'search': self.search.setFocus,
+            'delete_event': lambda: self.delete_event(scope=self._matched_scope), 'search': self.search.setFocus,
+            'copy_event': lambda: self.copy_event(scope=self._matched_scope),
+            'paste_event': lambda: self.paste_events(scope=self._matched_scope),
+            'duplicate_event': lambda: self.duplicate_event(scope=self._matched_scope),
             'today': self.today, 'previous': lambda: self.navigate(-1), 'next': lambda: self.navigate(1),
             'day_view': lambda: self.set_view('day'), 'week_view': lambda: self.set_view('week'),
             'month_view': lambda: self.set_view('month'), 'select_event': self.start_selection,
@@ -1025,7 +1303,9 @@ class MainWindow(QMainWindow):
     def match_shortcut(self, event):
         if event.key() in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
             return None
-        variants = [event.keyCombination()]
+        if not self._shortcut_pending:
+            self._pending_scope = 'single'
+        variants = [(event.keyCombination(), 'single', False)]
         char = event.text()
         command_modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier
         if (not event.modifiers() & command_modifiers and len(char) == 1
@@ -1034,12 +1314,19 @@ class MainWindow(QMainWindow):
             # '/' is Shift+7 in German). Respect explicitly configured physical
             # Shift combinations first, then match the printable character.
             printable = QKeySequence(char)
-            if not printable.isEmpty() and printable[0] not in variants:
-                variants.append(printable[0])
-        attempts = [self._shortcut_pending + [key] for key in variants]
+            if not printable.isEmpty() and printable[0] != event.keyCombination():
+                variants.append((printable[0], 'single', False))
+        modifier_bits = {'Ctrl': Qt.KeyboardModifier.ControlModifier, 'Shift': Qt.KeyboardModifier.ShiftModifier,
+                         'Alt': Qt.KeyboardModifier.AltModifier, 'Meta': Qt.KeyboardModifier.MetaModifier}
+        scope_bits = modifier_bits[self.scope_modifiers['all']] | modifier_bits[self.scope_modifiers['following']]
+        if event.modifiers() & scope_bits:
+            key = QKeyCombination(event.modifiers() & ~scope_bits, Qt.Key(event.key()))
+            variants.append((key, self.operation_scope(event.modifiers()), True))
+        attempts = [(self._shortcut_pending + [key], scope if scoped else self._pending_scope, scoped or self._pending_scope != 'single')
+                    for key, scope, scoped in variants]
         if self._shortcut_pending:
-            attempts.extend([key] for key in variants)
-        for attempt in attempts:
+            attempts.extend(([key], scope, scoped) for key, scope, scoped in variants)
+        for attempt, scope, scoped in attempts:
             if len(attempt) > 4:
                 continue
             sequence = QKeySequence(*attempt)
@@ -1047,14 +1334,18 @@ class MainWindow(QMainWindow):
             for action, binding in self.bindings.items():
                 if not binding:
                     continue
+                if scoped and action not in SCOPED_ACTIONS:
+                    continue
                 match = sequence.matches(QKeySequence(binding))
                 if match == QKeySequence.SequenceMatch.ExactMatch:
                     self._shortcut_pending.clear()
                     self.shortcut_timer.stop()
+                    self._matched_scope = scope
                     return action
                 partial |= match == QKeySequence.SequenceMatch.PartialMatch
             if partial:
                 self._shortcut_pending = attempt
+                self._pending_scope = scope
                 self.shortcut_timer.start(1200)
                 return 'pending'
         self._shortcut_pending.clear()

@@ -178,7 +178,7 @@ class DialogTests(unittest.TestCase):
         self.store.apply('Create custom seminar', [master])
         instances = self.store.query_occurrences(master.start, datetime(2027, 1, 1, tzinfo=ZONE))
         selected = instances[1]
-        edit = self.dialog(event=selected, series=master)
+        edit = self.dialog(event=selected, series=master, edit_scope='group')
         self.assertEqual(edit.repeat.currentData(), 'RDATE')
         self.assertEqual(edit.value(edit.start), master.start)
         self.assertEqual(len(edit.preview.events_on(date(2026, 11, 4))), 1)

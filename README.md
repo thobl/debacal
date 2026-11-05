@@ -59,7 +59,7 @@ imported definitions are retained. UTC events and RDATE-only series export offli
 
 ## Workflow
 
-* **Day / week / month:** switch with the toolbar or `D`, `W`, `M`. `H`/`L`
+* **Day / week / month:** switch with the toolbar or `1`, `W`, `M`. `H`/`L`
   move backward/forward; `T` returns to today. Click the mini calendar to jump.
 * **Create:** `N`, the New event button, or drag an empty day/week time slot.
   Drag a timed event to move it; drag its bottom edge to resize. Double-click
@@ -67,16 +67,21 @@ imported definitions are retained. UTC events and RDATE-only series export offli
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
-  only as far as needed to reveal an event. `E` edits a whole linked group/series
-  by default; `Shift+E` edits only the selected event/occurrence. `Delete` deletes
-  one occurrence without a prompt; the context menu can delete a whole series.
+  only as far as needed to reveal an event. `E` edits one occurrence, `Ctrl+E`
+  edits all events, and `Shift+E` edits this and following events. The same scope
+  modifiers apply to deletion, mouse dragging/resizing, copy, paste and duplicate.
+* **Copy / paste / duplicate:** `C`, `V`, `D`. Hold `Ctrl` for all events or
+  `Shift` for this and following events. `D` creates a copy at the same time;
+  day view is now `1`. Text fields keep native `Ctrl+C` / `Ctrl+V` behavior.
 * **Search:** `/`, then title, notes, or location. Press Enter to jump to the
   first match, or activate a result. Escape clears search.
 * **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
 * **Configuration:** Keyboard shortcuts (or `F1`) lets you change the bindings;
-  configuration is stored in the database and hints update to match.
+  it also configures the all-events and following-events modifiers, and the
+  editor's scope-switch shortcut. Configuration survives restart, and generated
+  modifier combinations are checked for shortcut collisions.
 * **Preferences:** choose a writable default calendar for new events, any start
   weekday, system/European/ISO/US date
   format, and system/12-hour/24-hour time. Defaults follow the OS locale. The
@@ -84,6 +89,40 @@ imported definitions are retained. UTC events and RDATE-only series export offli
   The default calendar has a star in the sidebar. Editing an existing event
   retains its original calendar. Automatic syncing can be paused or enabled,
   with an interval from 1 to 1,440 minutes; manual **Sync** remains available.
+
+### Working with event series
+
+An action without an additional scope modifier affects one event. Hold `Ctrl`
+for all events, or `Shift` for this and following events. Holding both uses this
+and following. The footer shows the current scope; mouse drag previews show it
+before applying the change. Right-click menus offer all three scopes explicitly.
+The editor shows its scope and lets you cycle it with `Alt+S`, including while
+typing in a text field. You can also choose it directly from the scope control.
+
+A following edit splits at the selected event's original recurrence date. The
+past keeps its identity; the future gets a new calendar UID and retains a
+standard recurrence rule. For example, moving an endless Monday series from
+one occurrence onward to Wednesday ends the Monday series before the selection
+and starts an endless Wednesday series. Moved exceptions and excluded dates are
+partitioned by their original recurrence IDs. The complete split is one undoable
+operation and synchronizes as ordinary calendar resources. Splitting at the
+first occurrence updates the original resource without leaving an empty past.
+
+Use `Ctrl+C`, then `Ctrl+V`, to copy and paste a complete series; use `Shift+C`
+and `Shift+V` for its future part. Plain `V` takes one occurrence from the copied
+selection. Paste cannot recover events outside the scope originally copied.
+It aligns the copied selected occurrence with the hovered day/time, a selected
+event, or the displayed day at the copied clock time. Pasting uses the writable
+default calendar; duplication uses the source calendar when writable. Each copy
+gets fresh event identities and independent group links. Clipboard data also
+includes standard iCalendar for other applications, and standard ICS can be
+pasted from other applications. Duplication preserves the existing clipboard.
+
+Normal daily, weekly, monthly, yearly, finite and irregular schedules support
+following operations. A rule whose phase cannot be retained safely, or a split
+requiring more than 10,000 historical rule instances, produces an explanatory
+error before changing any events. Moving and resizing preserve individual
+exception content; moving also preserves their different durations.
 
 ### Irregular groups and candidate slots
 

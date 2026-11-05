@@ -28,14 +28,14 @@ def editors():
     store = Store(':memory:')
     widgets, errors = [], []
     with patch('lebacal.dialogs.local_zone', return_value=ZONE), patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
-        def create(start=START, event=None, series=None):
+        def create(start=START, event=None, series=None, edit_scope='single'):
             reference = series or event
             if reference:
                 start, end = reference.start, reference.end
             else:
                 end = start + timedelta(minutes=90)
             dialog = EventDialog(store.list_calendars(), start, end, event=event, series=series,
-                                 preferences=Preferences(0, 'european', '24h'))
+                                 preferences=Preferences(0, 'european', '24h'), edit_scope=edit_scope)
             widgets.append(dialog)
             if event is None:
                 dialog.title.setText('A clicked sequence')
@@ -143,7 +143,7 @@ def test_reopen_compressed_series_click_remove_and_undo_keep_exact_duration(edit
     master = save(dialog)
     store.apply('Create', [master])
     original = actual(store, master)
-    edit = create(event=original[2], series=master)
+    edit = create(event=original[2], series=master, edit_scope='group')
     assert edit.pattern.text() == master.schedule_expression
     click(edit, original[3].start.date())
     assert edit.schedule_replacement
@@ -177,7 +177,7 @@ def test_click_uses_current_stored_times_instead_of_stale_other_client_authoring
                    recurrence_dates=(first.isoformat(), second.isoformat()), schedule_syntax=2,
                    schedule_expression='11:00 11:00-5.11.2026', expression_anchor=START.date().isoformat())
     store.apply('Import', [master])
-    edit = create(event=actual(store, master)[1], series=master)
+    edit = create(event=actual(store, master)[1], series=master, edit_scope='group')
     assert instants(edit.sequence_starts()) == instants([START, first, second])
     click(edit, date(2026, 11, 6))
     assert instants(edit.sequence_starts()) == instants([START, first, second, START + timedelta(days=2)])
@@ -191,7 +191,7 @@ def test_removing_last_unrepresentable_imported_addition_does_not_restore_old_ca
     extra = (START + timedelta(days=1)).replace(second=59, microsecond=234567)
     master = Event('precise', 'local', 'Precise source', initial, initial + timedelta(minutes=90), recurrence_dates=(extra.isoformat(),))
     store.apply('Import', [master])
-    edit = create(event=actual(store, master)[0], series=master)
+    edit = create(event=actual(store, master)[0], series=master, edit_scope='group')
     assert edit.pattern.text() == ''
     click(edit, extra.date())
     assert edit.pattern.text() == ''
@@ -215,7 +215,7 @@ def test_unrelated_click_preserves_exclusions_and_clicking_skipped_day_restores_
     skipped = instances[2]
     store.delete_occurrence(skipped)
     master = store.get_event(master.id)
-    edit = create(event=actual(store, master)[0], series=master)
+    edit = create(event=actual(store, master)[0], series=master, edit_scope='group')
     assert edit.preview.events_on(skipped.start.date()) == []
     click(edit, date(2026, 11, 30))
     assert edit.preview.events_on(skipped.start.date()) == []

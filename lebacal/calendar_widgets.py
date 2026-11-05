@@ -11,6 +11,7 @@ from .layout import layout_events
 from .recurrence import overlaps
 from .preferences import Preferences
 from .timeutil import local_zone, now
+from .event_scope import normalize_scope_modifiers, scope_from_modifiers
 
 BG = QColor('#fafbf8')
 LINE = QColor('#e4e8e0')
@@ -84,6 +85,8 @@ class CalendarCanvas(QWidget):
     create_requested = Signal(object, object)
     edit_requested = Signal(str)
     move_requested = Signal(str, object, object)
+    edit_scoped_requested = Signal(str, object)
+    move_scoped_requested = Signal(object, object, object, object)
     selected = Signal(str)
     context_requested = Signal(str, object)
 
@@ -100,6 +103,8 @@ class CalendarCanvas(QWidget):
         self.ghost = None
         self.show_numbers = False
         self.preferences = Preferences()
+        self.scope_modifiers = normalize_scope_modifiers()
+        self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self.navigation_day = None
         self.navigation_digits = ''
         # Keep a late-night point's minimum visual marker fully visible below
@@ -115,6 +120,10 @@ class CalendarCanvas(QWidget):
 
     def set_preferences(self, preferences):
         self.preferences = preferences
+        self.update()
+
+    def set_scope_modifiers(self, settings):
+        self.scope_modifiers = normalize_scope_modifiers(settings)
         self.update()
 
     def set_navigation(self, active, day=None, digits=''):
@@ -216,6 +225,10 @@ class CalendarCanvas(QWidget):
                 p.setPen(QPen(GREEN, 2, Qt.PenStyle.DashLine))
                 p.setBrush(QColor(80, 130, 90, 45))
                 p.drawRoundedRect(rect, 5, 5)
+                if self.drag and self.drag[0] != 'create':
+                    scope = scope_from_modifiers(self.gesture_modifiers, self.scope_modifiers)
+                    label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
+                    text(p, rect.adjusted(5, 0, -5, 0), label, GREEN, 8, True)
         p.end()
 
     def paint_event(self, p, rect, event, number):
@@ -261,6 +274,7 @@ class CalendarCanvas(QWidget):
         if event.button() != Qt.MouseButton.LeftButton or not self.days:
             return
         point = event.position()
+        self.gesture_modifiers = event.modifiers()
         hit = self.hit(point)
         self.setFocus()
         if hit:
@@ -275,6 +289,7 @@ class CalendarCanvas(QWidget):
 
     def mouseMoveEvent(self, event):
         point = event.position()
+        self.gesture_modifiers = event.modifiers()
         if not self.drag:
             hit = self.hit(point)
             local = hit[1].start.astimezone(local_zone()) if hit else None
@@ -315,8 +330,10 @@ class CalendarCanvas(QWidget):
                     self.create_requested.emit(start, end)
                 elif kind == 'resize':
                     self.move_requested.emit(item.id, item.start, end)
+                    self.move_scoped_requested.emit(item, item.start, end, event.modifiers())
                 else:
                     self.move_requested.emit(item.id, start, end)
+                    self.move_scoped_requested.emit(item, start, end, event.modifiers())
             elif kind == 'create':
                 start = at(self.days[day]) + timedelta(minutes=minute)
                 self.create_requested.emit(start, start + timedelta(hours=1))
@@ -327,6 +344,7 @@ class CalendarCanvas(QWidget):
         hit = self.hit(event.position())
         if hit:
             self.edit_requested.emit(hit[1].id)
+            self.edit_scoped_requested.emit(hit[1].id, event.modifiers())
 
     def contextMenuEvent(self, event):
         hit = self.hit(event.pos())
@@ -340,6 +358,7 @@ class MonthCanvas(QWidget):
     create_requested = Signal(object, object)
     open_day = Signal(object)
     edit_requested = Signal(str)
+    edit_scoped_requested = Signal(str, object)
     selected = Signal(str)
     context_requested = Signal(str, object)
 
@@ -423,6 +442,7 @@ class MonthCanvas(QWidget):
         hit = next(((r, e) for r, e in self.hits if r.contains(event.position())), None)
         if hit:
             self.edit_requested.emit(hit[1].id)
+            self.edit_scoped_requested.emit(hit[1].id, event.modifiers())
         else:
             self.open_day.emit(self.day_at(event.position()))
 

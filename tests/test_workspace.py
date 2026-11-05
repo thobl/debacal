@@ -176,11 +176,11 @@ class WorkspaceRegressionTests(unittest.TestCase):
             self.window.edit_event(event_id, group=group)
         return scopes
 
-    def test_real_editor_defaults_to_editing_candidate_group(self):
+    def test_real_editor_explicit_whole_candidate_group_edit(self):
         originals = [self.event(str(index), day=date(2026, 11, 4 + index),
                                 group_id='meeting-options', candidate=True) for index in range(3)]
         self.window.apply_events('Create options', originals)
-        scopes = self.edit_with_real_dialog(originals[1].id)
+        scopes = self.edit_with_real_dialog(originals[1].id, group=True)
         self.assertEqual(scopes, ['group'])
         for original in originals:
             changed = self.store.get_event(original.id)
@@ -197,9 +197,9 @@ class WorkspaceRegressionTests(unittest.TestCase):
         originals = [self.event(str(index), day=date(2026, 11, 4 + index),
                                 group_id='meeting-options', candidate=True) for index in range(3)]
         self.window.apply_events('Create options', originals)
-        # Choosing the single-event option in the default group editor must
+        # Choosing the single-event option after opening the whole group must
         # propagate to the command, not just change the visible form.
-        scopes = self.edit_with_real_dialog(originals[1].id, scope='single')
+        scopes = self.edit_with_real_dialog(originals[1].id, group=True, scope='single')
         self.assertEqual(scopes, ['group'])
         self.assertEqual(self.store.get_event(originals[0].id), originals[0])
         self.assertEqual(self.store.get_event(originals[2].id), originals[2])
@@ -217,7 +217,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         self.assertEqual(displayed.start.date(), date(2026, 11, 11))
         with patch.object(self.store, 'edit_series', wraps=self.store.edit_series) as edit_series, \
                 patch.object(self.store, 'edit_occurrence', wraps=self.store.edit_occurrence) as edit_occurrence:
-            scopes = self.edit_with_real_dialog(displayed.id)
+            scopes = self.edit_with_real_dialog(displayed.id, group=True)
             self.assertEqual(scopes, ['group'])
             self.assertEqual(edit_series.call_count, 1)
             self.assertEqual(edit_occurrence.call_count, 0)
@@ -239,7 +239,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
                             excluded_dates=(self.event(day=date(2026, 11, 11)).start.astimezone(ZoneInfo('UTC')).isoformat(),))
         self.window.apply_events('Create series', [master])
         selected = self.window.visible_events[0]
-        self.edit_with_real_dialog(selected.id, shift_hours=0)
+        self.edit_with_real_dialog(selected.id, group=True, shift_hours=0)
         self.assertEqual(self.store.get_event(master.id).excluded_dates, master.excluded_dates)
         occurrences = self.store.query_occurrences(master.start, master.start + timedelta(days=30))
         self.assertEqual(len(occurrences), 2)

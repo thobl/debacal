@@ -87,7 +87,7 @@ def test_time_only_sequence_keeps_multiple_daily_slots_and_edits_from_fixed_star
     assert len(dialog.preview.events_on((START + timedelta(days=1)).date())) == 3
     assert not master.recurrence_rule and len(master.recurrence_dates) == 5
     selected = values[4]
-    edit = create(event=selected, series=master)
+    edit = create(event=selected, series=master, edit_scope='group')
     assert edit.pattern.text() == literal
     assert edit.value(edit.start) == START
     assert edit.edit_reference == master
@@ -127,7 +127,7 @@ def test_regular_authored_sequences_use_standard_rules_and_reopen_as_text(editor
     values = occurrences(store, master)
     assert len(values) == 5
     selected = values[2]
-    edit = create(event=selected, series=master)
+    edit = create(event=selected, series=master, edit_scope='group')
     assert edit.repeat.currentData() == 'RDATE'
     assert edit.pattern.text() == text
     assert edit.value(edit.start) == master.start
@@ -154,11 +154,11 @@ def test_actual_workspace_group_edit_uses_master_reference_from_later_occurrence
         save(dialog)
         return dialog.result()
     with patch.object(EventDialog, 'exec', edit):
-        window.edit_event(before[-1].id)
+        window.edit_event(before[-1].id, group=True)
     moved = store.get_event(master.id)
     assert moved.start == START + timedelta(hours=1)
     assert [value.start for value in occurrences(store, moved)] == [value.start + timedelta(hours=1) for value in before]
-    reopen = create(event=occurrences(store, moved)[1], series=moved)
+    reopen = create(event=occurrences(store, moved)[1], series=moved, edit_scope='group')
     assert reopen.sequence_starts() == [value.start for value in occurrences(store, moved)]
 
 
@@ -190,7 +190,7 @@ def test_unrepresentable_imported_precision_is_retained_on_ordinary_edits(editor
                    recurrence_dates=(second.isoformat(),))
     store.apply('Import precise schedule', [master])
     selected = occurrences(store, master)[1]
-    dialog = create(event=selected, series=master)
+    dialog = create(event=selected, series=master, edit_scope='group')
     assert 'precise times are preserved' in dialog.pattern_help.text()
     dialog.title.setText('Rename precise schedule')
     store.edit_series(dialog.edit_reference, save(dialog))
@@ -206,7 +206,7 @@ def test_stale_authoring_text_never_replaces_times_changed_by_another_client(edi
                    schedule_expression='11:00-7.11.2026 11:00-8.11.2026', expression_anchor=START.date().isoformat())
     store.apply('Import externally edited schedule', [master])
     selected = occurrences(store, master)[1]
-    dialog = create(event=selected, series=master)
+    dialog = create(event=selected, series=master, edit_scope='group')
     assert 'refreshed from the current calendar dates' in dialog.pattern_help.text()
     assert dialog.sequence_starts() == [START, first, second]
     extra_day = START + timedelta(days=2)
@@ -223,7 +223,7 @@ def test_legacy_authored_count_rule_migrates_all_dates_and_moves_without_loss(ed
                    expression_anchor='2026-11-04')
     store.apply('Import old custom rule', [master])
     selected = occurrences(store, master)[1]
-    dialog = create(event=selected, series=master)
+    dialog = create(event=selected, series=master, edit_scope='group')
     assert len(dialog.sequence_starts()) == 3
     assert 'Mo' not in dialog.pattern.text()
     dialog.start.setDateTime(dialog.start.dateTime().addDays(1))
@@ -234,7 +234,7 @@ def test_legacy_authored_count_rule_migrates_all_dates_and_moves_without_loss(ed
     assert current.schedule_syntax == 2
     assert [value.start for value in occurrences(store, current)] == [
         initial + timedelta(days=1), initial + timedelta(days=15), initial + timedelta(days=29)]
-    reopen = create(event=occurrences(store, current)[-1], series=current)
+    reopen = create(event=occurrences(store, current)[-1], series=current, edit_scope='group')
     assert reopen.sequence_starts() == [value.start for value in occurrences(store, current)]
 
 
