@@ -1,0 +1,346 @@
+"""Versioned authoring text remains faithful to canonical RRULE/RDATE storage."""
+from dataclasses import replace
+from datetime import date, datetime, timedelta
+import hashlib
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+from zoneinfo import ZoneInfo
+
+from lebacal.models import Calendar, Event
+from lebacal.patterns import expand_sequence, serialize_sequence
+from lebacal.recurrence import base_schedule_starts, expand_event, schedule_fields
+from lebacal.store import Store
+
+
+ZONE = ZoneInfo('Europe/Berlin')
+ANCHOR = datetime(2026, 11, 4, 10, tzinfo=ZONE)
+LITERAL = '  3*+2    +3 2*(+2)  '
+
+
+def custom_event(expression=LITERAL, *, candidate=False, calendar_id='local', anchor=ANCHOR):
+    starts = expand_sequence(expression, anchor)
+    return Event('custom', calendar_id, 'Seminar', starts[0], starts[0] + timedelta(hours=1),
+                 **schedule_fields(starts), schedule_expression=expression,
+                 expression_anchor=anchor.date().isoformat(), schedule_syntax=2, candidate=candidate)
+
+
+def legacy_event(expression='3(Mo X)'):
+    from lebacal.legacy_patterns import expand_pattern
+    days = expand_pattern(expression, ANCHOR.date())
+    starts = [datetime.combine(day, ANCHOR.timetz()) for day in days]
+    return Event('legacy', 'local', 'Old seminar', starts[0], starts[0] + timedelta(hours=1),
+                 recurrence_dates=tuple(value.isoformat() for value in starts[1:]),
+                 schedule_expression=expression, expression_anchor=ANCHOR.date().isoformat(), schedule_syntax=1)
+
+
+def instants(values):
+    return {value.timestamp() for value in values}
+
+
+class ExpressionTests(unittest.TestCase):
+    def assert_authoring_matches(self, event):
+        functional = base_schedule_starts(event)
+        authored = expand_sequence(event.schedule_expression, event.start)
+        self.assertEqual(authored[0], event.start)
+        self.assertEqual(instants(authored), instants(functional))
+
+    def test_literal_anchor_and_version_survive_restart_history_and_outbox(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                store.save_calendar(Calendar('remote', 'Remote', '#678956', kind='caldav', url='https://example.test/cal/'))
+                master = custom_event(calendar_id='remote')
+                store.apply('Create custom schedule', [master])
+                self.assertEqual(store.pending_changes()[0]['payload']['schedule_expression'], LITERAL)
+                self.assertEqual(store.pending_changes()[0]['payload']['schedule_syntax'], 2)
+            with Store(path) as store:
+                self.assertEqual(store.get_event(master.id).schedule_expression, LITERAL)
+                self.assertEqual(store.get_event(master.id).expression_anchor, ANCHOR.date().isoformat())
+                store.undo()
+                self.assertIsNone(store.get_event(master.id))
+                store.redo()
+                self.assertEqual(store.get_event(master.id), master)
+
+    def test_relative_only_literal_survives_title_time_and_day_moves(self):
+        with Store(':memory:') as store:
+            master = custom_event()
+            original = base_schedule_starts(master)
+            store.apply('Create', [master])
+            moved = replace(master, title='New seminar title', start=master.start + timedelta(days=1, hours=2),
+                            end=master.end + timedelta(days=1, hours=2))
+            store.edit_series(master, moved)
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_expression, LITERAL)
+            self.assertEqual(updated.expression_anchor, '2026-11-05')
+            self.assertEqual(updated.schedule_syntax, 2)
+            self.assertEqual(instants(base_schedule_starts(updated)), instants([value + timedelta(days=1, hours=2) for value in original]))
+            self.assert_authoring_matches(updated)
+
+    def test_time_only_and_absolute_steps_rewrite_without_losing_different_times(self):
+        with Store(':memory:') as store:
+            master = custom_event('14:30 08:15-8.11.2026 12:05-15.11.2026')
+            original = base_schedule_starts(master)
+            store.apply('Create', [master])
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1, hours=2),
+                                              end=master.end + timedelta(days=1, hours=2)))
+            updated = store.get_event(master.id)
+            self.assertNotEqual(updated.schedule_expression, master.schedule_expression)
+            self.assertEqual(instants(base_schedule_starts(updated)), instants([value + timedelta(days=1, hours=2) for value in original]))
+            self.assert_authoring_matches(updated)
+            actual = expand_event(updated, min(original), max(original) + timedelta(days=4))
+            self.assertTrue(all(event.end - event.start == timedelta(hours=1) for event in actual))
+
+    def test_explicit_earlier_dates_never_replace_fixed_initial_anchor(self):
+        with Store(':memory:') as store:
+            master = custom_event('08:30-1.10.2026 +1d 12:00')
+            self.assertEqual(master.start, ANCHOR)
+            self.assertEqual(master.recurrence_rule, '')
+            store.apply('Create', [master])
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.start, ANCHOR + timedelta(days=1))
+            self.assert_authoring_matches(updated)
+
+    def test_count_rule_custom_series_preserves_all_authoring_steps_when_moved(self):
+        with Store(':memory:') as store:
+            master = custom_event('  4*+2  ')
+            self.assertIn('FREQ=WEEKLY', master.recurrence_rule)
+            self.assertEqual(master.recurrence_dates, ())
+            store.apply('Create', [master])
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_expression, '  4*+2  ')
+            self.assertEqual(len(base_schedule_starts(updated)), 5)
+            self.assert_authoring_matches(updated)
+
+    def test_new_literal_absolute_schedule_replacement_is_authoritative(self):
+        with Store(':memory:') as store:
+            master = custom_event()
+            store.apply('Create', [master])
+            replacement = custom_event('+1d +2d', anchor=ANCHOR + timedelta(days=5))
+            store.edit_series(master, replacement, replace_schedule=True)
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_expression, '+1d +2d')
+            self.assertEqual(updated.start, replacement.start)
+            self.assertEqual(updated.schedule_syntax, 2)
+            self.assert_authoring_matches(updated)
+
+    def test_single_override_keeps_parent_language_and_clears_its_own_authoring(self):
+        with Store(':memory:') as store:
+            master = custom_event()
+            store.apply('Create', [master])
+            selected = store.query_occurrences(master.start, master.start + timedelta(days=60))[1]
+            store.edit_occurrence(selected, replace(selected, title='Only one seminar'))
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_expression, LITERAL)
+            self.assertEqual(updated.schedule_syntax, 2)
+            override = updated.recurrence_overrides[selected.recurrence_id]
+            self.assertEqual((override['schedule_expression'], override['expression_anchor'], override['schedule_syntax']), ('', '', 1))
+
+    def test_confirm_and_convert_to_once_clear_authoring_and_undo_restores_it(self):
+        with Store(':memory:') as store:
+            master = custom_event(candidate=True)
+            store.apply('Create', [master])
+            selected = store.query_occurrences(master.start, master.start + timedelta(days=60))[1]
+            store.confirm_candidate(selected)
+            confirmed = store.get_event(master.id)
+            self.assertEqual((confirmed.schedule_expression, confirmed.expression_anchor, confirmed.schedule_syntax), ('', '', 1))
+            store.undo()
+            self.assertEqual(store.get_event(master.id), master)
+            store.edit_series(master, replace(master, recurrence_dates=(), recurrence_rule='', schedule_expression='', expression_anchor=''))
+            ordinary = store.get_event(master.id)
+            self.assertFalse(ordinary.recurring)
+            self.assertEqual((ordinary.schedule_expression, ordinary.expression_anchor, ordinary.schedule_syntax), ('', '', 1))
+
+    def test_legacy_relative_day_move_uses_legacy_language_until_explicit_conversion(self):
+        from lebacal.legacy_patterns import expand_pattern
+        with Store(':memory:') as store:
+            master = legacy_event()
+            store.apply('Create legacy', [master])
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_syntax, 1)
+            self.assertEqual(updated.schedule_expression, '3(Tu X)')
+            self.assertEqual(expand_pattern(updated.schedule_expression, date.fromisoformat(updated.expression_anchor)),
+                             [value.date() for value in base_schedule_starts(updated)])
+
+    def test_converted_legacy_literal_follows_same_move_without_truncation(self):
+        with Store(':memory:') as store:
+            master = legacy_event()
+            store.apply('Create legacy', [master])
+            text = serialize_sequence(base_schedule_starts(master))
+            edited = replace(master, start=master.start + timedelta(days=1, hours=2), end=master.end + timedelta(days=1, hours=2),
+                             schedule_expression=text, schedule_syntax=2, expression_anchor=master.start.date().isoformat())
+            store.edit_series(master, edited)
+            updated = store.get_event(master.id)
+            self.assertEqual(updated.schedule_syntax, 2)
+            self.assertEqual(len(base_schedule_starts(updated)), 3)
+            self.assert_authoring_matches(updated)
+            store.undo()
+            self.assertEqual(store.get_event(master.id), master)
+
+    def test_one_date_authored_series_and_old_index_migration(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                master = custom_event('10:00-4.11.2026')
+                self.assertEqual(master.recurrence_dates, ())
+                self.assertTrue(master.recurring)
+                store.apply('Create one-date custom schedule', [master])
+                store.connection.execute('UPDATE events SET recurring=0 WHERE id=?', (master.id,))
+                store.connection.commit()
+            with Store(path) as store:
+                occurrences = store.query_occurrences(master.start, master.end)
+                self.assertEqual(len(occurrences), 1)
+                self.assertEqual(occurrences[0].series_id, master.id)
+                changed = replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1))
+                store.edit_series(master, changed)
+                self.assert_authoring_matches(store.get_event(master.id))
+
+    def test_exclusions_and_detached_overrides_stay_separate_from_base_authoring(self):
+        with Store(':memory:') as store:
+            master = custom_event('+2 +2 +3')
+            store.apply('Create', [master])
+            original = store.query_occurrences(master.start, master.start + timedelta(days=80))
+            store.delete_occurrence(original[1])
+            store.edit_occurrence(original[2], replace(original[2], start=original[2].start + timedelta(hours=2), end=original[2].end + timedelta(hours=2)))
+            master = store.get_event(master.id)
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
+            updated = store.get_event(master.id)
+            self.assertEqual(len(updated.excluded_dates), 1)
+            self.assertEqual(len(updated.recurrence_overrides), 1)
+            self.assertEqual(len(base_schedule_starts(updated)), 4)
+            self.assert_authoring_matches(updated)
+
+    def test_month_clamp_move_rewrites_only_when_literal_would_change_later_instants(self):
+        with Store(':memory:') as store:
+            master = custom_event('3*+1m', anchor=datetime(2027, 1, 31, 10, tzinfo=ZONE))
+            before = base_schedule_starts(master)
+            store.apply('Create', [master])
+            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
+            updated = store.get_event(master.id)
+            self.assertNotEqual(updated.schedule_expression, master.schedule_expression)
+            self.assertEqual(instants(base_schedule_starts(updated)), instants([value + timedelta(days=1) for value in before]))
+            self.assert_authoring_matches(updated)
+
+
+class ScheduleSynthesisTests(unittest.TestCase):
+    def test_regular_sequences_synthesize_exact_standard_count_rules(self):
+        for expression, frequency in [('4*+1d', 'DAILY'), ('4*+2', 'WEEKLY'), ('4*+1m', 'MONTHLY'), ('3*+1y', 'YEARLY')]:
+            with self.subTest(expression=expression):
+                starts = expand_sequence(expression, ANCHOR)
+                fields = schedule_fields(starts)
+                self.assertIn('FREQ=' + frequency, fields['recurrence_rule'])
+                event = Event('rule', 'local', 'Rule', starts[0], starts[0] + timedelta(hours=1), **fields)
+                self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+
+    def test_irregular_different_times_and_earlier_dates_use_exact_rdates(self):
+        for expression in ['14:30 +2d 09:00', '08:30-1.10.2026 +1d', '+1 +2 +3']:
+            starts = expand_sequence(expression, ANCHOR)
+            fields = schedule_fields(starts)
+            self.assertEqual(fields['recurrence_rule'], '')
+            event = Event('dates', 'local', 'Dates', starts[0], starts[0] + timedelta(minutes=45), **fields)
+            self.assertEqual(event.start, ANCHOR)
+            self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+
+    def test_different_folds_do_not_get_synthesized_as_same_clock_rule(self):
+        first = datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=0)
+        second = first.replace(fold=1)
+        fields = schedule_fields([first, second])
+        self.assertEqual(fields['recurrence_rule'], '')
+        self.assertEqual(len(fields['recurrence_dates']), 1)
+
+    def test_exported_standard_schedule_matches_independent_icalendar_expansion(self):
+        try:
+            import icalendar
+            import recurring_ical_events
+        except ImportError:
+            self.skipTest('Independent optional recurrence library is unavailable')
+        from lebacal.ics import export_ics, parse_ics
+        cases = [(LITERAL, ANCHOR), ('4*+2', ANCHOR), ('4*+1m', ANCHOR),
+                 ('14:30 08:15-8.11.2026 12:05-15.11.2026', ANCHOR),
+                 ('08:30-1.10.2026 +1d 12:00', ANCHOR),
+                 ('3*+1m', datetime(2027, 1, 31, 10, tzinfo=ZONE))]
+        for expression, anchor in cases:
+            with self.subTest(expression=expression):
+                event = custom_event(expression, anchor=anchor)
+                expected = expand_sequence(expression, anchor)
+                data = export_ics([event])
+                calendar = icalendar.Calendar.from_ical(data)
+                master_component = calendar.walk('VEVENT')[0]
+                self.assertEqual(master_component.decoded('DTSTART').timestamp(), anchor.timestamp())
+                independent = recurring_ical_events.of(calendar).between(min(expected) - timedelta(days=1), max(expected) + timedelta(days=1))
+                self.assertEqual(instants(component.decoded('DTSTART') for component in independent), instants(expected))
+                restored = parse_ics(data, 'local')[0]
+                self.assertEqual(restored.schedule_expression, expression)
+                self.assertEqual(restored.schedule_syntax, 2)
+                self.assertEqual(restored.timezone_id, event.timezone_id)
+                self.assertEqual(instants(base_schedule_starts(restored)), instants(expected))
+
+
+class CalendarMetadataTests(unittest.TestCase):
+    def test_server_color_can_follow_server_or_keep_manual_override(self):
+        original = Calendar('remote', 'Remote', '#112233', server_color='#445566')
+        self.assertEqual(original.color, '#445566')
+        custom = replace(original, use_server_color=False, color='#aabbcc')
+        refreshed = replace(custom, server_color='#cc3344')
+        self.assertEqual(refreshed.color, '#aabbcc')
+        self.assertEqual(replace(refreshed, use_server_color=True).color, '#cc3344')
+        legacy = Calendar.from_dict({'id': 'old', 'name': 'Old', 'color': '#112233'})
+        self.assertEqual(legacy.color, '#112233')
+        self.assertEqual(legacy.server_color, '')
+
+    def test_default_calendar_is_persisted_and_falls_back_from_read_only(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                remote = Calendar('remote', 'Remote', '#112233', kind='caldav')
+                store.save_calendar(remote)
+                self.assertEqual(store.get_default_calendar().id, 'local')
+                store.set_default_calendar(remote.id)
+            with Store(path) as store:
+                self.assertEqual(store.get_default_calendar().id, 'remote')
+                store.save_calendar(replace(remote, read_only=True))
+                self.assertEqual(store.get_default_calendar().id, 'local')
+                with self.assertRaises(ValueError):
+                    store.set_default_calendar('remote')
+                with self.assertRaises(ValueError):
+                    store.set_default_calendar('missing')
+                store.save_calendar(replace(store.get_calendar('local'), read_only=True))
+                self.assertIsNone(store.get_default_calendar())
+
+    def test_quarantine_preserves_raw_data_without_changing_last_good_event(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            raw = b'BEGIN:VCALENDAR\r\ninvalid\xff\r\nEND:VCALENDAR\r\n'
+            with Store(path) as store:
+                master = custom_event()
+                store.apply('Create', [master])
+                store.set_quarantined_resource('local', 'bad-resource', raw, 'Invalid resource')
+                store.set_quarantined_resource('local', 'bad-resource', raw, 'Updated reason')
+                self.assertEqual(len(store.list_quarantined_resources()), 1)
+                self.assertEqual(store.get_event(master.id), master)
+                self.assertEqual(len(store.history()), 1)
+            with Store(path) as store:
+                record = store.list_quarantined_resources('local')[0]
+                self.assertEqual(record['raw_ics'], raw)
+                self.assertEqual(record['reason'], 'Updated reason')
+                store.delete_quarantined_resource('local', 'bad-resource')
+                self.assertEqual(store.list_quarantined_resources(), [])
+
+    def test_invalid_cached_rule_does_not_hide_healthy_events(self):
+        with Store(':memory:') as store:
+            healthy = replace(custom_event(), id='healthy', recurrence_dates=(), recurrence_rule='',
+                              schedule_expression='', expression_anchor='', schedule_syntax=1)
+            store.apply('Create', [healthy])
+            bad = replace(healthy, id='bad', ical_uid='bad-uid', title='Private title', recurrence_rule='FREQ=INVALID', raw_ics='original raw')
+            store.connection.execute('INSERT INTO events(id,calendar_id,start,end,data,recurring) VALUES (?,?,?,?,?,?)',
+                                     (bad.id, bad.calendar_id, bad.start.timestamp(), bad.end.timestamp(), json.dumps(bad.to_dict()), True))
+            store.connection.commit()
+            self.assertEqual(store.query_occurrences(healthy.start, healthy.end), [healthy])
+            record = store.list_quarantined_resources()[0]
+            self.assertEqual(record['resource_id'], hashlib.sha256(b'bad-uid').hexdigest()[:12])
+            self.assertEqual(record['raw_ics'], 'original raw')
+            self.assertNotIn('Private title', record['reason'])

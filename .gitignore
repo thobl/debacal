@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+*.sqlite3*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.sync/
+build/
+dist/
+
+# Git metadata and environment-managed directories in this workspace.
+/.git-local/
+/.agents/
+/.aws/
+/.codex/
+
+# Local calendar data and planning notes can contain private information.
+/*.ics
+/notes.md
+.env
+.env.*
+!.env.example
+*~
+*.swp
+*.swo
+\#*\#
+.\#*
