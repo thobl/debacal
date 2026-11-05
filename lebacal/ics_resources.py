@@ -341,6 +341,54 @@ def _date_property(key, value):
     return f"{key}:{parsed.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
 
 
+def rekey_recurrence_templates(event, transform):
+    """Keep detached raw metadata aligned with a projected recurrence ID.
+
+    Structured exceptions remain authoritative for their event fields. Their
+    retained templates, including cancelled components, must follow the same
+    recurrence-key transform so export can still find the original metadata.
+    """
+    raw = event.raw_ics
+    if not raw:
+        return raw
+    from .recurrence import event_zone
+    zone = event_zone(event)
+    header, blocks = _blocks(raw)
+    projected, changed = [], False
+    for block in blocks:
+        if block[0] != "BEGIN:VEVENT" or _uid_of(block) != event.ical_uid:
+            projected.append(block)
+            continue
+        component = fallback.components(fallback.folded(["BEGIN:VCALENDAR", *block, "END:VCALENDAR"]))[0]
+        if "RECURRENCE-ID" not in component:
+            projected.append(block)
+            continue
+        key = _key(_decoded(component, "RECURRENCE-ID", zone)[0], zone)
+        moved_key = transform(key)
+        if moved_key == key:
+            projected.append(block)
+            continue
+        replacement = _date_property("RECURRENCE-ID", moved_key)
+        moved, depth = [], 0
+        for line in block:
+            left, _, value = line.partition(":")
+            marker = left.upper()
+            if marker == "BEGIN":
+                depth += 1
+            elif marker == "END":
+                depth -= 1
+            if depth == 1 and left.split(";", 1)[0].upper() == "RECURRENCE-ID":
+                moved.append(replacement)
+            else:
+                moved.append(line)
+        projected.append(moved)
+        changed = True
+    if not changed:
+        return raw
+    return fallback.folded(["BEGIN:VCALENDAR", *header,
+                            *(line for block in projected for line in block), "END:VCALENDAR"]).decode()
+
+
 def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
@@ -454,6 +502,11 @@ def serialize_resource(event):
 
 
 def export(events):
+    events = tuple(events)
+    if len(events) == 1:
+        # A single UID is also the sync transport's resource format. Preserve
+        # imported calendar-level metadata when creating a split or a copy.
+        return serialize_resource(events[0])
     components, seen_timezones = [], set()
     for event in events:
         _, blocks = _blocks(serialize_resource(event))

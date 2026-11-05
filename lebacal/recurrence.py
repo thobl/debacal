@@ -267,6 +267,14 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
     absolute schedule replacement instead takes the editor's DTSTART/date set.
     Both previews and persisted edits use this same rule/exception projection.
     """
+    def checked_wall(value):
+        if not _valid_wall_time(value):
+            raise RecurrenceError(
+                "This move would use a local time that does not exist because of a daylight-saving transition. "
+                "Choose another time."
+            )
+        return value
+
     if replace_schedule:
         updated = replace(edited, id=master.id, calendar_id=master.calendar_id,
                           ical_uid=master.ical_uid, raw_ics=master.raw_ics,
@@ -289,6 +297,8 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
                     override_end = datetime.fromtimestamp(override_start.timestamp() + updated.end.timestamp() - updated.start.timestamp(), zone)
                 else:
                     override_end = override_start + duration
+                checked_wall(override_start)
+                checked_wall(override_end)
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                                          start=override_start, end=override_end,
                                          timezone_id=updated.timezone_id, title=updated.title,
@@ -306,14 +316,15 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
     wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
     shift = wall(edited.start) - wall(reference.start)
     duration = wall(edited.end) - wall(edited.start)
-    start = (wall(master.start) + shift).replace(tzinfo=zone)
+    start = checked_wall((wall(master.start) + shift).replace(tzinfo=zone))
     if duration <= timedelta(0):
         end = datetime.fromtimestamp(start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
     else:
         end = start + duration
+    checked_wall(end)
 
     def shift_key(key):
-        value = (wall(key_datetime(key, master)) + shift).replace(tzinfo=zone)
+        value = checked_wall((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone))
         return recurrence_key(value, edited.all_day)
 
     dates = tuple(shift_key(key) for key in master.recurrence_dates) if edited.recurrence_dates == master.recurrence_dates else edited.recurrence_dates
@@ -325,11 +336,12 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
     for key, payload in master.recurrence_overrides.items():
         moved_key = shift_key(key)
         value = Event.from_dict(payload)
-        override_start = (wall(value.start) + shift).replace(tzinfo=zone)
+        override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone))
         if duration <= timedelta(0):
             override_end = datetime.fromtimestamp(override_start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
         else:
             override_end = override_start + duration
+        checked_wall(override_end)
         overrides[moved_key] = replace(value, id=occurrence_id(master.id, moved_key),
                                        start=override_start, end=override_end,
                                        recurrence_id=moved_key, timezone_id=master.timezone_id,
@@ -338,12 +350,14 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
                                        candidate=edited.candidate,
                                        schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
     expression, anchor = edited.schedule_expression, edited.expression_anchor
+    from .ics_resources import rekey_recurrence_templates
     updated = replace(master, title=edited.title, description=edited.description, location=edited.location,
                       start=start, end=end, all_day=edited.all_day, candidate=edited.candidate,
                       recurrence_rule=rule, recurrence_dates=dates,
                       excluded_dates=exclusions, recurrence_overrides=overrides,
                       schedule_expression=expression, expression_anchor=anchor,
-                      schedule_syntax=edited.schedule_syntax)
+                      schedule_syntax=edited.schedule_syntax,
+                      raw_ics=rekey_recurrence_templates(master, shift_key))
     if expression:
         from .patterns import shift_schedule_expression
         if edited.schedule_syntax == 2:

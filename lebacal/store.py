@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import time
 from typing import Any, Iterable, Iterator
+from uuid import uuid4
 
 from .models import Calendar, Event
 
@@ -371,12 +372,122 @@ class Store:
                                 if event.id != master.id and event.group_id == master.group_id and event.candidate]
             return self.apply(label, [chosen], alternatives)
 
-    def edit_series(self, reference: Event, edited: Event, label: str = "Edit series", *, replace_schedule: bool = False) -> int | None:
+    @staticmethod
+    def _preserve_mouse_exceptions(master: Event, reference: Event, edited: Event, projected: Event) -> Event:
+        """Move exception snapshots without applying dialog common fields.
+
+        Dragging an unusually long exception moves the regular one-hour series
+        without making every occurrence longer. Resizing explicitly applies
+        the new duration to the regular event and all detached exceptions.
+        """
+        from .recurrence import event_zone, key_datetime, recurrence_key
+        zone = event_zone(master)
+        wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+        shift = wall(edited.start) - wall(reference.start)
+        reference_duration = wall(reference.end) - wall(reference.start)
+        edited_duration = wall(edited.end) - wall(edited.start)
+        resized = reference_duration != edited_duration
+        if not resized and reference_duration.total_seconds() <= 0:
+            resized = (edited.end.timestamp() - edited.start.timestamp()
+                       != reference.end.timestamp() - reference.start.timestamp())
+
+        def end_for(start, source):
+            duration = wall(source.end) - wall(source.start)
+            if duration.total_seconds() > 0:
+                return (wall(start) + duration).replace(tzinfo=zone)
+            return datetime.fromtimestamp(start.timestamp() + source.end.timestamp() - source.start.timestamp(), zone)
+
+        duration_source = edited if resized else master
+        overrides = dict(projected.recurrence_overrides)
+        for key, payload in master.recurrence_overrides.items():
+            moved_key = recurrence_key((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone), projected.all_day)
+            if moved_key not in overrides:
+                continue  # A following edit leaves the earlier exceptions alone.
+            original = Event.from_dict(payload)
+            moved = Event.from_dict(overrides[moved_key])
+            overrides[moved_key] = replace(
+                original, id=moved.id, calendar_id=moved.calendar_id,
+                ical_uid=moved.ical_uid, series_id=moved.series_id,
+                recurrence_id=moved.recurrence_id, start=moved.start,
+                end=end_for(moved.start, edited if resized else original),
+            ).to_dict()
+        return replace(projected, end=end_for(projected.start, duration_source), recurrence_overrides=overrides)
+
+    def edit_series(
+        self, reference: Event, edited: Event, label: str = "Edit series", *,
+        replace_schedule: bool = False, preserve_exceptions: bool = False,
+    ) -> int | None:
         """Persist the same pure series projection used by editor previews."""
         from .recurrence import updated_series
         with self._transaction():
             master = self._reviewed_master(reference)
-            return self.apply(label, [updated_series(master, reference, edited, replace_schedule)])
+            updated = updated_series(master, reference, edited, replace_schedule)
+            if preserve_exceptions:
+                updated = self._preserve_mouse_exceptions(master, reference, edited, updated)
+            return self.apply(label, [updated])
+
+    def _reviewed_future_master(self, reference: Event, expected_master: Event | None) -> Event:
+        master = self._reviewed_master(reference)
+        if expected_master is not None and (
+            expected_master.id != master.id
+            or self._semantic_event(expected_master.to_dict()) != self._semantic_event(master.to_dict())
+        ):
+            raise HistoryConflict("This series changed while it was being edited. Open it again before saving.")
+        return master
+
+    def future_snapshot(self, reference: Event, *, expected_master: Event | None = None) -> Event:
+        """Return the selected occurrence's remaining schedule for a clipboard.
+
+        The snapshot retains its source identity. Copy/paste must assign a new
+        event ID and UID before storing it as another resource.
+        """
+        from .series_operations import partition_series
+        with self._transaction():
+            master = self._reviewed_future_master(reference, expected_master)
+            _, tail = partition_series(master, reference)
+            if tail is None:
+                raise ValueError("There are no events at or after this occurrence.")
+            return tail
+
+    def edit_future(
+        self, reference: Event, edited: Event, label: str = "Edit this and following events", *,
+        replace_schedule: bool = False, expected_master: Event | None = None,
+        preserve_exceptions: bool = False,
+    ) -> int | None:
+        """Split and edit a series in one undoable, synchronizable operation.
+
+        The past retains the existing iCalendar resource. A nonempty future
+        becomes a new resource, while a split before the first occurrence
+        updates the original resource without creating an empty past.
+        """
+        from .series_operations import reidentify_series, updated_future
+        with self._transaction():
+            master = self._reviewed_future_master(reference, expected_master)
+            before, after = updated_future(master, reference, edited, replace_schedule)
+            if after is None:
+                raise ValueError("There are no events at or after this occurrence.")
+            if preserve_exceptions:
+                after = self._preserve_mouse_exceptions(master, reference, edited, after)
+            if before is None:
+                after = replace(after, id=master.id, calendar_id=master.calendar_id,
+                                ical_uid=master.ical_uid)
+                return self.apply(label, [after])
+            after_id = str(uuid4())
+            after = reidentify_series(after, after_id, after_id)
+            return self.apply(label, [before, after])
+
+    def delete_future(
+        self, reference: Event, label: str = "Delete this and following events", *,
+        expected_master: Event | None = None,
+    ) -> int | None:
+        """Remove the original recurrence IDs at and after the selection."""
+        from .series_operations import partition_series
+        with self._transaction():
+            master = self._reviewed_future_master(reference, expected_master)
+            before, _ = partition_series(master, reference)
+            if before is None:
+                return self.apply(label, delete_ids=[master.id])
+            return self.apply(label, [before])
 
     @staticmethod
     def _validate_datetime(value: datetime) -> None:
