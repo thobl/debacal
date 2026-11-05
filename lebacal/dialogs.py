@@ -89,7 +89,7 @@ class EventDialog(QDialog):
             field.calendarWidget().setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
             field.setDisplayFormat(self.preferences.qt_datetime_pattern())
             field.setTimeZone(QTimeZone.utc())
-            wall = value.astimezone(local_zone())
+            wall = value if reference and reference.all_day else value.astimezone(local_zone())
             field.setDateTime(QDateTime(QDate(wall.year, wall.month, wall.day),
                 QTime(wall.hour, wall.minute, wall.second, wall.microsecond // 1000), QTimeZone.utc()))
         self.all_day = QCheckBox('All-day event')
@@ -192,6 +192,9 @@ class EventDialog(QDialog):
         return self.series or self.original
 
     def load_schedule(self, source):
+        from .recurrence import event_zone
+        self._authoring_zone = (event_zone(source) if source and source.schedule_expression
+                                and source.schedule_syntax == 2 else None)
         self._conversion_notice = ''
         self._stored_sequence_starts = None
         self._sequence_reencode = False
@@ -214,7 +217,9 @@ class EventDialog(QDialog):
             self.repeat.setCurrentIndex(self.repeat.findData('RDATE'))
             from .recurrence import base_schedule_starts
             try:
-                starts = [value.astimezone(local_zone()) for value in base_schedule_starts(source, limit=500)]
+                zone = self.sequence_zone()
+                starts = [value.replace(tzinfo=zone) if source.all_day else value.astimezone(zone)
+                          for value in base_schedule_starts(source, limit=500)]
                 self._stored_sequence_starts = starts
                 faithful = False
                 if source.schedule_expression and source.schedule_syntax == 2:
@@ -270,16 +275,48 @@ class EventDialog(QDialog):
         return value
 
     def value(self, field):
-        value = field.dateTime().toPython().replace(tzinfo=local_zone())
+        reference = self.edit_reference
+        calendar_date = bool(self.all_day.isChecked() and reference and reference.all_day)
+        if calendar_date:
+            from .recurrence import event_zone
+            zone = event_zone(reference)
+        else:
+            zone = local_zone()
+        value = field.dateTime().toPython().replace(tzinfo=zone)
         if self.edit_reference:
             previous = self.edit_reference.start if field is self.start else self.edit_reference.end
-            previous = previous.astimezone(local_zone())
+            previous = previous.astimezone(zone)
             displayed = previous.replace(microsecond=previous.microsecond // 1000 * 1000, tzinfo=None)
             if displayed == value.replace(tzinfo=None):
                 value = previous
             elif value.microsecond == previous.microsecond // 1000 * 1000:
                 value = value.replace(microsecond=previous.microsecond)
         return self.validate_time(value)
+
+    def sequence_zone(self):
+        return self._authoring_zone or local_zone()
+
+    def sequence_calendar_day(self, value):
+        """Use the same date as the local preview, keeping DATE values floating."""
+        return value.date() if self.all_day.isChecked() else value.astimezone(local_zone()).date()
+
+    def sequence_date_start(self, day, anchor):
+        """Place the authoring clock on a selected local calendar date."""
+        if self.all_day.isChecked():
+            return self.validate_time(datetime.combine(day, anchor.timetz()))
+        expected = day + (anchor.date() - self.sequence_calendar_day(anchor))
+        invalid = None
+        for offset in (0, -1, 1, -2, 2):
+            value = datetime.combine(expected + timedelta(days=offset), anchor.timetz())
+            if self.sequence_calendar_day(value) != day:
+                continue
+            try:
+                return self.validate_time(value)
+            except ValueError as exc:
+                invalid = exc
+        if invalid is not None:
+            raise invalid
+        raise ValueError('The sequence time cannot fall on this calendar date in its original timezone. Choose another date.')
 
     @property
     def edit_reference(self):
@@ -309,7 +346,7 @@ class EventDialog(QDialog):
                     self.pattern, self.custom_rule, *self.weekdays)
         state_names = ('_initial_pattern', '_conversion_notice', '_stored_sequence_starts',
                        '_sequence_reencode', '_sequence_clicked', '_click_excluded_dates',
-                       '_click_anchor', '_click_template', '_weekdays_auto')
+                       '_click_anchor', '_click_template', '_weekdays_auto', '_authoring_zone')
         self._scope_values[self._scope_name] = {
             'fields': (self.start.dateTime(), self.end.dateTime(), self.title.text(), self.location.text(),
                        self.description.toPlainText(), self.all_day.isChecked(), self.candidate.isChecked()),
@@ -325,7 +362,7 @@ class EventDialog(QDialog):
             if cached is None:
                 times = []
                 for value in (reference.start, reference.end):
-                    value = value.astimezone(local_zone())
+                    value = value if reference.all_day else value.astimezone(local_zone())
                     times.append(QDateTime(QDate(value.year, value.month, value.day),
                         QTime(value.hour, value.minute, value.second, value.microsecond // 1000), QTimeZone.utc()))
                 values = (*times, reference.title, reference.location, reference.description,
@@ -362,25 +399,29 @@ class EventDialog(QDialog):
 
     def sequence_starts(self):
         anchor = self.value(self.start)
+        zone = self.sequence_zone()
         if self.all_day.isChecked():
-            anchor = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+            anchor = anchor.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=zone)
+        else:
+            anchor = anchor.astimezone(zone)
         source = self.schedule_source()
         text = self.pattern.text()
         if source and text == self._initial_pattern and not self._sequence_clicked:
             # Moving a whole series keeps its existing spacing. Explicit dates
             # are rewritten on save rather than left pointing at the old days.
             from .recurrence import key_datetime
-            original = source.start.astimezone(local_zone())
+            original = source.start.replace(tzinfo=zone) if source.all_day else source.start.astimezone(zone)
             if self._stored_sequence_starts is not None:
                 starts = self._stored_sequence_starts
             else:
-                starts = [original, *(key_datetime(key, source).astimezone(local_zone()) for key in source.recurrence_dates)]
+                starts = [original, *(key_datetime(key, source).replace(tzinfo=zone) if source.all_day
+                                      else key_datetime(key, source).astimezone(zone) for key in source.recurrence_dates)]
             delta = anchor.replace(tzinfo=None) - original.replace(tzinfo=None)
             return [self.validate_time((value.replace(tzinfo=None) + delta).replace(tzinfo=anchor.tzinfo, fold=value.fold)) for value in starts]
         return expand_sequence(text, anchor)
 
     def dates(self):
-        return sorted({value.date() for value in self.sequence_starts()})
+        return sorted({self.sequence_calendar_day(value) for value in self.sequence_starts()})
 
     def pattern_changed(self, *_):
         if not self._setting_pattern_from_click:
@@ -404,18 +445,18 @@ class EventDialog(QDialog):
             anchor = starts[0]
             template = self.preview.masters[0] if self.preview.masters else (self.series or self.original)
             exclusions = set(template.excluded_dates if template else ())
-            matching = [value for value in starts if value.date() == day]
+            matching = [value for value in starts if self.sequence_calendar_day(value) == day]
             fully_excluded = matching and all(recurrence_key(value, self.all_day.isChecked()) in exclusions for value in matching)
-            if day == anchor.date() and not fully_excluded:
+            if day == self.sequence_calendar_day(anchor) and not fully_excluded:
                 self.error.setText('The initial event is fixed. Change Starts and Ends to move it.')
                 return
             if fully_excluded:
-                exclusions = {key for key in exclusions if key_datetime(key, template).astimezone(local_zone()).date() != day}
+                exclusions = {key for key in exclusions if self.sequence_calendar_day(key_datetime(key, template)) != day}
             elif matching:
-                starts = [value for value in starts if value.date() != day]
-                exclusions = {key for key in exclusions if key_datetime(key, template).astimezone(local_zone()).date() != day}
+                starts = [value for value in starts if self.sequence_calendar_day(value) != day]
+                exclusions = {key for key in exclusions if self.sequence_calendar_day(key_datetime(key, template)) != day}
             else:
-                starts.append(self.validate_time(datetime.combine(day, anchor.timetz())))
+                starts.append(self.sequence_date_start(day, anchor))
             starts = [anchor, *sorted(starts[1:], key=lambda value: value.timestamp())]
             expression = simplify_sequence(starts)
             self._sequence_clicked = True
@@ -442,7 +483,9 @@ class EventDialog(QDialog):
         active = {recurrence_key(value, self.all_day.isChecked()) for value in starts}
         excluded = []
         for key in self._click_excluded_dates:
-            value = key_datetime(key, self._click_template).astimezone(local_zone())
+            zone = self.sequence_zone()
+            value = key_datetime(key, self._click_template)
+            value = value.replace(tzinfo=zone) if self.all_day.isChecked() else value.astimezone(zone)
             value = (value.replace(tzinfo=None) + shift).replace(tzinfo=anchor.tzinfo, fold=value.fold)
             moved = recurrence_key(value, self.all_day.isChecked())
             if moved in active:
@@ -482,6 +525,12 @@ class EventDialog(QDialog):
         source = self.schedule_source()
         kind = self.repeat.currentData()
         single = self.has_group and self.scope.currentData() == 'single'
+        if kind == 'RDATE' and not single:
+            zone = self.sequence_zone()
+            if self.all_day.isChecked():
+                start, end = start.replace(tzinfo=zone), end.replace(tzinfo=zone)
+            else:
+                start, end = start.astimezone(zone), end.astimezone(zone)
         configuration_changed = not single and kind == 'RDATE' and (self._sequence_clicked or not source or (not source.recurrence_dates and not source.schedule_expression) or self.pattern.text() != self._initial_pattern)
         dates_changed = configuration_changed or (not single and kind == 'RDATE' and self._sequence_reencode)
         self.schedule_replacement = bool(self.series and dates_changed and self.scope.currentData() in ('group', 'future'))
@@ -528,7 +577,8 @@ class EventDialog(QDialog):
         expression = self.pattern.text() if kind == 'RDATE' and not single else ''
         if expression and dates_changed and source and self.pattern.text() == self._initial_pattern:
             from .patterns import shift_schedule_expression
-            previous = source.start.astimezone(local_zone())
+            zone = self.sequence_zone()
+            previous = source.start.replace(tzinfo=zone) if source.all_day else source.start.astimezone(zone)
             shift = start.replace(tzinfo=None) - previous.replace(tzinfo=None)
             expression, _ = shift_schedule_expression(expression, previous.date().isoformat(), shift, starts, syntax=2)
         values = dict(id=self.original.id if self.original else str(uuid4()),
@@ -539,7 +589,8 @@ class EventDialog(QDialog):
             excluded_dates=() if configuration_changed or single else (source.excluded_dates if source else ()),
             recurrence_overrides=source.recurrence_overrides if source and not single else {},
             schedule_expression=expression,
-            expression_anchor=(source.start.astimezone(local_zone()).date().isoformat() if source and not dates_changed else start.date().isoformat()) if kind == 'RDATE' and not single else '',
+            expression_anchor=((source.start.date() if source.all_day else source.start.astimezone(self.sequence_zone()).date()).isoformat()
+                               if source and not dates_changed else start.date().isoformat()) if kind == 'RDATE' and not single else '',
             schedule_syntax=2 if kind == 'RDATE' and not single else 1,
             timezone_id=(getattr(start.tzinfo, 'key', '') if kind == 'RDATE' and dates_changed
                          else source.timezone_id if source and source.timezone_id else getattr(local_zone(), 'key', '')))
@@ -577,7 +628,11 @@ class EventDialog(QDialog):
         self.pattern_help.setVisible(kind == 'RDATE')
         self.advanced_help.setVisible(kind == 'CUSTOM')
         self.preview.enable_date_editing(False)
-        self.pattern_help.setText(self._conversion_notice
+        authoring_note = ''
+        if self._authoring_zone is not None and not self.all_day.isChecked() and str(self._authoring_zone) != str(local_zone()):
+            authoring_note = (f'Sequence dates and times use {self._authoring_zone}. '
+                              f'Starts, Ends, and the calendar show {local_zone()}.\n')
+        self.pattern_help.setText(authoring_note + self._conversion_notice
             + 'The initial event is always included. Each step is evaluated from the previous event. '
             '+2d = 2 days; +3 = 3 weeks; +1m / +1y = 1 month / year.\n'
             'Dates: 13. or 3.2.; times: 10:00 or 10:00-3.2.2027. Omitted date parts roll forward. '

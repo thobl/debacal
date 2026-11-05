@@ -53,9 +53,9 @@ preserved recurrence for views. CalDAV reports an actionable error when its
 client dependency is missing. CalDAV sync now uses vdirsyncer; updating the project
 dependencies is required after upgrading from the previous version. A missing
 executable is shown in Sync status rather than silently disabling sync.
-Exporting a newly created named-timezone RRULE series also needs `icalendar` to
-generate its VTIMEZONE definition; local editing still works without it. Existing
-imported definitions are retained. UTC events and RDATE-only series export offline.
+Exporting a newly created named-timezone RRULE series or custom sequence also
+needs `icalendar` to generate its VTIMEZONE definition; local editing still works
+without it. Existing imported definitions are retained. UTC events export offline.
 
 ## Workflow
 
@@ -185,13 +185,19 @@ weekday selection), monthly and yearly schedules with interval/count/end-date
 controls. **Advanced rule** exposes standard RRULE text for schedules beyond those
 controls.
 
+Custom sequence definitions also synchronize between Lebacal instances. The ICS
+master stores the exact expression, language version and anchor in
+`X-LEBACAL-PATTERN` properties alongside standard RRULE/RDATE fields. Another
+instance restores the editable definition and its authoring timezone, even when
+its display timezone differs. See the [metadata protocol](docs/SYNC.md#custom-series-metadata-between-lebacal-instances).
+
 For alternatives, check **Alternative slots**. Regular repeating and chosen-date
 series can both be alternatives. Select the chosen
 occurrence and click **Confirm this slot**: that actual slot remains as an
 ordinary event and other choices disappear as one undoable action, including
 the remaining occurrences of a candidate series. Right-click an event for whole-group editing or deletion.
-The editor always shows a scope selector for linked events: whole group/series or
-only this event/occurrence. Group editing applies common fields and a relative
+The editor always shows a scope selector for linked events: this event, all
+events, or this and following events. Group editing applies common fields and a relative
 time shift. Single-occurrence edits produce standard RECURRENCE-ID exceptions;
 single-occurrence deletion produces EXDATE. Both are undoable without flattening
 the master series.

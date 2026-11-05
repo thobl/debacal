@@ -16,7 +16,13 @@ from .models import Event
 def unfolded(data):
     if isinstance(data, bytes):
         data = data.decode("utf-8-sig")
-    return re.sub(r"\r?\n[ \t]", "", data).replace("\r\n", "\n").splitlines()
+    logical = re.sub(r"(?:\r\n|\r|\n)[ \t]", "", data).replace("\r\n", "\n").replace("\r", "\n")
+    # Unicode line/paragraph separators are valid TEXT content, including
+    # whitespace in a custom sequence. Only physical ICS newlines split lines.
+    lines = logical.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
 
 
 def components(data):

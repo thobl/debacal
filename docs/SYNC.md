@@ -162,12 +162,66 @@ One event master represents one UID resource. RRULE, RDATE, EXDATE and detached
 RECURRENCE-ID exceptions remain standard iCalendar. Views expand occurrences;
 sync never flattens the series. The editor's regular controls, chosen dates and
 advanced rule field are different ways to configure this same schedule model.
-Authoring text and anchor date are retained in SQLite/history and optional
-X-LEBACAL-PATTERN properties, while RRULE/RDATE remain the functional standard
-schedule other clients understand.
+Custom authoring text and its anchor date are retained in SQLite/history and
+written into the master VEVENT's proprietary properties whenever a custom
+definition exists. These fields travel through the same CalDAV resource as the
+standard recurrence, including when a definition compiles to a regular RRULE.
 New named-zone RRULE exports generate VTIMEZONE through the declared `icalendar`
 dependency. Definitions cover 1970–2100 by default and extend to master dates;
 imported definitions and unknown event metadata are retained.
+
+## Custom series metadata between Lebacal instances
+
+Each authored series carries these properties on its master VEVENT:
+
+| Property | Meaning |
+| --- | --- |
+| `X-LEBACAL-PATTERN` | Exact custom sequence text, including its formatting. |
+| `X-LEBACAL-PATTERN-VERSION` | Language version: `2` is the current sequential syntax; `1` is the legacy syntax. |
+| `X-LEBACAL-PATTERN-ANCHOR` | Initial calendar date in ISO `YYYY-MM-DD` form. |
+
+For example, part of a fortnightly resource is:
+
+```ics
+DTSTART;TZID=Europe/Berlin:20261107T090000
+DTEND;TZID=Europe/Berlin:20261107T100000
+RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=5
+X-LEBACAL-PATTERN:4*+2
+X-LEBACAL-PATTERN-VERSION:2
+X-LEBACAL-PATTERN-ANCHOR:2026-11-07
+```
+
+The initial time and authoring zone come from DTSTART/TZID, with VTIMEZONE
+included for named zones. Date-only all-day schedules retain calendar-date
+semantics. Metadata uses normal iCalendar TEXT escaping and UTF-8 line folding;
+Unicode whitespace inside a definition is preserved as text. These properties
+are per series, rather than a global VCALENDAR setting. Detached exceptions use
+the master definition.
+
+Another Lebacal instance restores the definition even when its local calendar
+IDs or display timezone differ. Sequence clock times continue to use the series'
+original authoring zone; the editor identifies that zone while showing Starts
+and Ends in the local display zone. For a current version-2 definition matching
+the standard schedule, a title-only edit keeps the definition, anchor, authoring
+zone and event instants intact. Legacy version-1 definitions are upgraded to the
+current notation when edited. Changes to the definition alone also enter the
+outbox and synchronize.
+
+RRULE/RDATE/EXDATE remain the functional schedule other clients understand.
+If another client changes those dates without updating the proprietary text,
+the editor reconstructs an equivalent definition for finite schedules of up to
+500 occurrences. Larger or unbounded schedules show a notice and retain their
+standard recurrence until a replacement definition is entered. If a client
+removes the proprietary fields, a clean pull accepts their removal and retains
+the standard schedule; it does not silently restore an old annotation.
+
+To check sharing, save a custom series in instance A and finish Sync, then sync
+the same calendar in instance B. Open **All events** (`Ctrl+E` by default) to view
+and edit its custom definition. The X-properties are also visible in an ICS
+export or the downloaded master resource. A queued change must finish uploading
+before another instance can receive it. Integration tests use separate databases
+and calendar IDs sharing a simulated remote through the actual sync bridge,
+including edits in both directions and different display timezones.
 
 A recurring candidate series is supported. It currently represents alternative
 slots for one scheduling decision: confirming an occurrence keeps that actual
