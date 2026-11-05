@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 from typing import Iterable
 from uuid import uuid4
@@ -92,8 +92,15 @@ def _selected(masters: tuple[Event, ...], reference: Event, scope: str) -> tuple
 class EventClipboard:
     masters: tuple[Event, ...]
     reference: Event
+    view_origin: date | None = None
+    view_kind: str | None = None
+    exact_selection: bool = False
 
     def __post_init__(self) -> None:
+        if self.view_origin is not None and (not isinstance(self.view_origin, date) or isinstance(self.view_origin, datetime)):
+            raise ValueError("The clipboard view origin must be a calendar date.")
+        if self.view_kind not in {None, "day", "week", "month"} or type(self.exact_selection) is not bool:
+            raise ValueError("The clipboard view or selection context is invalid.")
         masters = tuple(Event.from_dict(event.to_dict()) for event in self.masters)
         if not masters or any(event.series_id for event in masters):
             raise ValueError("The clipboard must contain stored event snapshots.")
@@ -128,8 +135,12 @@ class EventClipboard:
         return cls(selected, anchor)
 
     def to_bytes(self) -> bytes:
-        data = json.dumps({"version": 1, "events": [event.to_dict() for event in self.masters],
-                           "reference": self.reference.to_dict()}, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        value = {"version": 1, "events": [event.to_dict() for event in self.masters],
+                 "reference": self.reference.to_dict()}
+        if self.view_origin is not None or self.view_kind is not None or self.exact_selection:
+            value.update(version=2, view_origin=self.view_origin.isoformat() if self.view_origin else None,
+                         view_kind=self.view_kind, exact_selection=self.exact_selection)
+        data = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(data) > MAX_CLIPBOARD_BYTES:
             raise ValueError("This event selection exceeds the 10 MB clipboard limit.")
         return data
@@ -140,11 +151,15 @@ class EventClipboard:
             raise ValueError("The event clipboard is invalid or exceeds its 10 MB limit.")
         try:
             value = json.loads(data)
-            if (not isinstance(value, dict) or set(value) != {"version", "events", "reference"}
-                    or type(value["version"]) is not int or value["version"] != 1
+            version = value.get("version") if isinstance(value, dict) else None
+            fields = {"version", "events", "reference"} | ({"view_origin", "view_kind", "exact_selection"} if version == 2 else set())
+            if (not isinstance(value, dict) or set(value) != fields
+                    or type(version) is not int or version not in {1, 2}
                     or not isinstance(value["events"], list) or not isinstance(value["reference"], dict)):
                 raise ValueError
-            return cls(tuple(Event.from_dict(event) for event in value["events"]), Event.from_dict(value["reference"]))
+            context = {} if version == 1 else {"view_origin": date.fromisoformat(value["view_origin"]) if value["view_origin"] is not None else None,
+                                              "view_kind": value["view_kind"], "exact_selection": value["exact_selection"]}
+            return cls(tuple(Event.from_dict(event) for event in value["events"]), Event.from_dict(value["reference"]), **context)
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
             raise ValueError("The clipboard does not contain valid Lebacal event snapshots.") from error
 
@@ -155,7 +170,7 @@ class EventClipboard:
             raise ValueError("The paste target must include a timezone.")
         if not calendar_id:
             raise ValueError("Choose a calendar for the pasted events.")
-        selected, _ = _selected(self.masters, self.reference, scope)
+        selected = self.masters if self.exact_selection else _selected(self.masters, self.reference, scope)[0]
         from .series_operations import reidentify_series
         group_ids = {event.group_id: str(uuid4()) for event in selected if event.group_id}
         result = []

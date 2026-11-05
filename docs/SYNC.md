@@ -216,7 +216,7 @@ removes the proprietary fields, a clean pull accepts their removal and retains
 the standard schedule; it does not silently restore an old annotation.
 
 To check sharing, save a custom series in instance A and finish Sync, then sync
-the same calendar in instance B. Open **All events** (`Ctrl+E` by default) to view
+the same calendar in instance B. Choose **All in series** (`F3`), then edit (`E`) to view
 and edit its custom definition. The X-properties are also visible in an ICS
 export or the downloaded master resource. A queued change must finish uploading
 before another instance can receive it. Integration tests use separate databases

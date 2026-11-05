@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer
+from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox,
+    QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox, QButtonGroup,
     QListWidget, QListWidgetItem, QKeySequenceEdit, QScrollArea, QWidget, QColorDialog,
 )
 
@@ -17,7 +17,7 @@ from .patterns import expand_sequence, reconstruct_sequence, PatternError
 from .timeutil import local_zone
 from .preferences import Preferences
 from .series_preview import SeriesPreview
-from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, SCOPE_MODIFIERS
+from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 
 
 def hint(text):
@@ -29,19 +29,22 @@ def hint(text):
 
 class EventDialog(QDialog):
     """One schedule editor: rules, chosen dates and alternatives share a master."""
+    mode_changed = Signal(str)
     def __init__(self, calendars, start, end=None, event=None, parent=None,
                  preferences=None, edit_scope='single', series=None, default_calendar_id=None,
-                 scope_shortcut='Alt+S', scope_modifiers=None):
+                 scope_shortcut='Alt+S', scope_modifiers=None, scope_bindings=None, common_fields_only=False):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self.setWindowTitle('Edit event' if event else 'Create event')
         self.resize(1080, 740)
         self.original, self.series = event, series
+        self.common_fields_only = bool(common_fields_only)
         self.result_events = []
         self.schedule_replacement = False
         self.has_group = bool(series or (event and (event.group_id or event.series_id)))
         self.scope_modifiers = normalize_scope_modifiers(scope_modifiers)
-        edit_scope = edit_scope if self.has_group and edit_scope in ('single', 'group', 'future') else 'single'
+        edit_scope = edit_scope if event and edit_scope in ('single', 'group', 'future') else 'single'
+        self.scope_bindings = DEFAULT_MODE_BINDINGS | (scope_bindings or {})
         self._scope_sources = {}
         source = self.schedule_source(edit_scope)
         reference = series if series and edit_scope == 'group' else event
@@ -62,13 +65,34 @@ class EventDialog(QDialog):
         body = QWidget()
         content = QVBoxLayout(body)
         self.form = form = QFormLayout()
-        self.scope = QComboBox()
+        self.scope = QComboBox(self)
         self.scope.addItem('Only this occurrence' if series else 'Only this event', 'single')
         self.scope.addItem(f"All events ({self.scope_modifiers['all']})", 'group')
         self.scope.addItem(f"This and following ({self.scope_modifiers['following']})", 'future')
         self.scope.setCurrentIndex(self.scope.findData(edit_scope))
-        if self.has_group:
-            form.addRow('Edit scope' + (f' · {scope_shortcut}' if scope_shortcut else ''), self.scope)
+        self.scope.hide()
+        self.scope_buttons = {}
+        self.scope_button_group = QButtonGroup(self)
+        self.scope_button_group.setExclusive(True)
+        mode_widget = QWidget()
+        mode_row = QHBoxLayout(mode_widget)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(0)
+        for action, label in (('scope_single', 'Single'), ('scope_all', 'All'), ('scope_following', 'Following')):
+            scope = MODE_ACTIONS[action]
+            shortcut = self.scope_bindings.get(action, '')
+            button = QPushButton(label + (f'  {shortcut}' if shortcut else ''))
+            button.setCheckable(True)
+            button.setChecked(scope == edit_scope)
+            button.clicked.connect(lambda _checked=False, value=scope: self.scope.setCurrentIndex(self.scope.findData(value)))
+            self.scope_button_group.addButton(button)
+            self.scope_buttons[scope] = button
+            mode_row.addWidget(button)
+        self.scope_controls = mode_widget
+        if event:
+            form.addRow('Selection mode', mode_widget)
+        else:
+            mode_widget.hide()
         self.title = QLineEdit(reference.title if reference else '')
         self.title.setPlaceholderText('What are you making time for?')
         self.calendar = QComboBox()
@@ -142,6 +166,10 @@ class EventDialog(QDialog):
                              ('Add events', self.pattern), ('Rule', self.custom_rule)]:
             form.addRow(label, field)
         content.addLayout(form)
+        self.common_fields_help = hint('Changes to common fields and relative times apply to the selection. '
+                                       'Select one series to change its recurrence.')
+        self.common_fields_help.setVisible(self.common_fields_only)
+        content.addWidget(self.common_fields_help)
         content.addWidget(self.pattern_help)
         content.addWidget(self.advanced_help)
         self.candidate = QCheckBox('Alternative slots — choosing one removes the other choices')
@@ -175,6 +203,13 @@ class EventDialog(QDialog):
         self.scope_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.scope_shortcut.setEnabled(self.has_group and bool(scope_shortcut))
         self.scope_shortcut.activated.connect(self.cycle_scope)
+        self.mode_shortcuts = {}
+        for action, scope in MODE_ACTIONS.items():
+            shortcut = QShortcut(QKeySequence(self.scope_bindings.get(action, '')), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.setEnabled(bool(event and self.scope_bindings.get(action)))
+            shortcut.activated.connect(lambda value=scope: self.scope.setCurrentIndex(self.scope.findData(value)))
+            self.mode_shortcuts[action] = shortcut
         self.update_preview()
         self.title.setFocus()
         self.title.selectAll()
@@ -264,7 +299,7 @@ class EventDialog(QDialog):
         self._initial_pattern = self.pattern.text()
 
     def cycle_scope(self):
-        if self.has_group:
+        if self.original:
             self.scope.setCurrentIndex((self.scope.currentIndex() + 1) % self.scope.count())
 
     @staticmethod
@@ -339,6 +374,7 @@ class EventDialog(QDialog):
             blocked = self.scope.blockSignals(True)
             self.scope.setCurrentIndex(self.scope.findData(self._scope_name))
             self.scope.blockSignals(blocked)
+            self.scope_buttons[self._scope_name].setChecked(True)
             self.error.setText(str(exc))
             return
         general = (self.start, self.end, self.title, self.location, self.description, self.all_day, self.candidate)
@@ -396,6 +432,9 @@ class EventDialog(QDialog):
             for control, blocked in zip((*general, *schedule), previous_blocks):
                 control.blockSignals(blocked)
         self.update_preview()
+        for value, button in self.scope_buttons.items():
+            button.setChecked(value == scope)
+        self.mode_changed.emit(scope)
 
     def sequence_starts(self):
         anchor = self.value(self.start)
@@ -606,7 +645,7 @@ class EventDialog(QDialog):
 
     def update_preview(self, *_):
         kind = self.repeat.currentData()
-        enabled = not self.has_group or (self.series is not None and self.scope.currentData() in ('group', 'future'))
+        enabled = (not self.has_group or (self.series is not None and self.scope.currentData() in ('group', 'future'))) and not self.common_fields_only
         if self._weekdays_auto and kind == 'WEEKLY':
             # Reading the unvalidated wall date keeps live editing responsive
             # while the user is midway through entering a DST-gap time.
@@ -616,17 +655,20 @@ class EventDialog(QDialog):
                 box.setChecked(index == day)
                 box.blockSignals(False)
         self.repeat.setEnabled(enabled)
+        self.repeat.setVisible(not self.common_fields_only)
+        self.form.labelForField(self.repeat).setVisible(not self.common_fields_only)
         self.interval.setSuffix({'DAILY': ' day(s)', 'WEEKLY': ' week(s)', 'MONTHLY': ' month(s)', 'YEARLY': ' year(s)'}.get(kind, ''))
         for field, visible in ((self.interval, kind in ('DAILY','WEEKLY','MONTHLY','YEARLY')),
                 (self.weekday_container, kind == 'WEEKLY'), (self.repeat_end, kind in ('DAILY','WEEKLY','MONTHLY','YEARLY')),
                 (self.repeat_count, kind in ('DAILY','WEEKLY','MONTHLY','YEARLY') and self.repeat_end.currentData() == 'COUNT'),
                 (self.repeat_until, kind in ('DAILY','WEEKLY','MONTHLY','YEARLY') and self.repeat_end.currentData() == 'UNTIL'),
                 (self.custom_rule, kind == 'CUSTOM'), (self.pattern, kind == 'RDATE')):
+            visible = visible and not self.common_fields_only
             field.setVisible(visible)
             field.setEnabled(enabled)
             self.form.labelForField(field).setVisible(visible)
-        self.pattern_help.setVisible(kind == 'RDATE')
-        self.advanced_help.setVisible(kind == 'CUSTOM')
+        self.pattern_help.setVisible(kind == 'RDATE' and not self.common_fields_only)
+        self.advanced_help.setVisible(kind == 'CUSTOM' and not self.common_fields_only)
         self.preview.enable_date_editing(False)
         authoring_note = ''
         if self._authoring_zone is not None and not self.all_day.isChecked() and str(self._authoring_zone) != str(local_zone()):
@@ -933,16 +975,15 @@ class ShortcutsDialog(QDialog):
         scroll.setWidgetResizable(True)
         content = QWidget()
         form = QFormLayout(content)
+        # Retain the old result attribute for stored preferences/API callers;
+        # held modifiers are no longer part of the visible interaction model.
         self.scope_modifiers = {}
-        for key, label in (('all', 'All events modifier'), ('following', 'This and following modifier')):
+        for key in ('all', 'following'):
             field = QComboBox()
-            field.addItems(SCOPE_MODIFIERS)
+            field.addItems(('Ctrl', 'Shift', 'Alt', 'Meta'))
             field.setCurrentText(normalize_scope_modifiers(scope_modifiers)[key])
             self.scope_modifiers[key] = field
-            form.addRow(label, field)
-        form.addRow(hint('Without a scope modifier, event actions affect only the selected occurrence. '
-                         'When both modifiers are held, this and following takes priority. '
-                         'Copy and paste keep their usual behavior inside text fields.'))
+        form.addRow(hint('Selection modes use their own shortcuts. Copy and paste keep their usual behavior inside text fields.'))
         self.fields = {}
         for key, value in bindings.items():
             field = QKeySequenceEdit(QKeySequence(value))
@@ -976,7 +1017,7 @@ class ShortcutsDialog(QDialog):
         used = [QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
                 for value in expanded.values() if value]
         if len(used) != len(set(used)):
-            self.error.setText('Each action and its event scope variants need a unique shortcut.')
+            self.error.setText('Each action needs a unique shortcut.')
             return
         sequences = [QKeySequence(value) for value in used]
         for index, sequence in enumerate(sequences):

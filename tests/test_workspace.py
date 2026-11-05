@@ -5,7 +5,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -85,7 +84,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         with patch("lebacal.ui.EventDialog") as editor:
             self.window.edit_event(selected.id, group=True)
             editor.assert_not_called()
-        self.assertIn("read only", self.window.notice.text())
+        self.assertIn("read-only", self.window.notice.text())
 
     def test_invalid_move_leaves_event_and_history_unchanged(self):
         event = self.event()
@@ -146,10 +145,16 @@ class WorkspaceRegressionTests(unittest.TestCase):
         selected = self.event("first", day=date(2026, 10, 19), group_id="group")
         later = self.event("later", day=date(2026, 11, 2), group_id="group")
         self.store.apply("Create", [selected, later])
-        edited = replace(selected, start=selected.start + timedelta(days=7), end=selected.end + timedelta(days=7))
-        editor = SimpleNamespace(exec=lambda: QDialog.DialogCode.Accepted, result_events=[edited],
-                                 scope=SimpleNamespace(currentData=lambda: 'group'))
-        with patch("lebacal.ui.EventDialog", return_value=editor), patch("lebacal.ui.local_zone", return_value=ZONE):
+        def save_dialog(dialog):
+            self.assertEqual(dialog.scope.currentData(), 'group')
+            for field in (dialog.start, dialog.end):
+                field.setDateTime(field.dateTime().addDays(7))
+            dialog.save()
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted, dialog.error.text())
+            return dialog.result()
+        with patch.object(EventDialog, 'exec', save_dialog), \
+                patch('lebacal.ui.local_zone', return_value=ZONE), \
+                patch('lebacal.dialogs.local_zone', return_value=ZONE):
             self.window.edit_event(selected.id, group=True)
         moved = self.store.get_event(later.id).start.astimezone(ZONE)
         self.assertEqual(moved.date(), date(2026, 11, 9))
@@ -215,12 +220,12 @@ class WorkspaceRegressionTests(unittest.TestCase):
         displayed = self.window.visible_events[0]
         self.assertEqual(displayed.series_id, master.id)
         self.assertEqual(displayed.start.date(), date(2026, 11, 11))
-        with patch.object(self.store, 'edit_series', wraps=self.store.edit_series) as edit_series, \
-                patch.object(self.store, 'edit_occurrence', wraps=self.store.edit_occurrence) as edit_occurrence:
+        with patch.object(self.store, 'edit_selection', wraps=self.store.edit_selection) as edit_selection:
             scopes = self.edit_with_real_dialog(displayed.id, group=True)
             self.assertEqual(scopes, ['group'])
-            self.assertEqual(edit_series.call_count, 1)
-            self.assertEqual(edit_occurrence.call_count, 0)
+            self.assertEqual(edit_selection.call_count, 1)
+            self.assertEqual(edit_selection.call_args.args[1], 'group')
+            self.assertEqual(edit_selection.call_args.args[2], master)
         changed = self.store.get_event(master.id)
         self.assertEqual(len(self.store.list_events()), 1)
         self.assertEqual(changed.title, 'Updated study')
@@ -261,12 +266,12 @@ class WorkspaceRegressionTests(unittest.TestCase):
         self.window.apply_events('Create recurring study', [master])
         self.window.go_date(date(2026, 11, 11))
         displayed = self.window.visible_events[0]
-        with patch.object(self.store, 'edit_series', wraps=self.store.edit_series) as edit_series, \
-                patch.object(self.store, 'edit_occurrence', wraps=self.store.edit_occurrence) as edit_occurrence:
+        with patch.object(self.store, 'edit_selection', wraps=self.store.edit_selection) as edit_selection:
             scopes = self.edit_with_real_dialog(displayed.id, group=False, title='Only this review', shift_hours=2)
             self.assertEqual(scopes, ['single'])
-            self.assertEqual(edit_series.call_count, 0)
-            self.assertEqual(edit_occurrence.call_count, 1)
+            self.assertEqual(edit_selection.call_count, 1)
+            self.assertEqual(edit_selection.call_args.args[1], 'single')
+            self.assertEqual(edit_selection.call_args.args[2], displayed)
         changed = self.store.get_event(master.id)
         self.assertEqual(len(self.store.list_events()), 1)
         self.assertEqual(changed.title, master.title)

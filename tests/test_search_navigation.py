@@ -119,20 +119,20 @@ def test_search_field_arrows_reveal_and_wrap_without_rebuilding_query_or_index(w
     window.apply_events('Create search targets', events)
     with patch.object(store, 'list_events', wraps=store.list_events) as reads:
         search(window)
-        index = window._search_index
+        index = window.results._index
         items = [window.results.item(row) for row in range(window.results.count())]
         for key, expected in [(Qt.Key.Key_Down, events[0]), (Qt.Key.Key_Down, events[1]),
                               (Qt.Key.Key_Down, events[2]), (Qt.Key.Key_Down, events[0]),
                               (Qt.Key.Key_Up, events[2])]:
-            QTest.keyClick(window.search, key)
+            QTest.keyClick(QApplication.focusWidget(), key)
             assert window.selected_id == expected.id
             assert window.selected_day == expected.start.date()
             assert any(event.id == expected.id for event in window.visible_events)
-            assert window.search.hasFocus()
+            assert window.results.hasFocus()
             assert window.search.text() == 'Needle'
             assert window.results.isVisible()
             assert [window.results.item(row) for row in range(window.results.count())] == items
-            assert window._search_index is index
+            assert window.results._index is index
         # Calendar reveals query their displayed date range; the unfiltered
         # read that builds the search index must occur only once.
         assert sum(not call.args and not call.kwargs for call in reads.call_args_list) == 1
@@ -144,7 +144,7 @@ def test_results_arrows_wrap_and_skip_result_limit_placeholder(workspace):
     window.apply_events('Create many search targets', events)
     search(window)
     assert window.results.count() == 201
-    assert not window.results.item(200).data(Qt.ItemDataRole.UserRole)
+    assert not window.results.event_id(window.results.item(200))
     assert not window.results.item(200).flags() & Qt.ItemFlag.ItemIsSelectable
     window.results.setCurrentRow(199)
     window.results.setFocus()
@@ -167,8 +167,8 @@ def test_no_match_placeholder_is_not_a_navigation_target(workspace):
     for key in (Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Return):
         QTest.keyClick(window.search, key)
         assert window.selected_id == event.id
-        assert window.search.hasFocus()
-    assert not window.results.currentItem()
+        assert window.results.hasFocus()
+    assert not window.results.event_id(window.results.currentItem())
 
 
 def test_mouse_selection_reveals_hidden_calendar_and_keeps_result_list(workspace):
@@ -189,23 +189,50 @@ def test_mouse_selection_reveals_hidden_calendar_and_keeps_result_list(workspace
     assert window.search.text() == 'Needle' and window.results.isVisible()
 
 
-def test_all_day_search_selection_scrolls_its_calendar_chip_into_view(workspace):
+def test_ctrl_click_search_multiselection_and_delete_use_same_calendar_selection(workspace):
+    app, window, store, _ = workspace
+    events = [sample('first'), sample('second', day=1), sample('retained', day=2)]
+    window.apply_events('Create', events)
+    search(window)
+    app.processEvents()
+    first, second = window.results.item(0), window.results.item(1)
+    QTest.mouseClick(window.results.viewport(), Qt.MouseButton.LeftButton,
+                     pos=window.results.visualItemRect(first).center())
+    QTest.mouseClick(window.results.viewport(), Qt.MouseButton.LeftButton, CTRL,
+                     window.results.visualItemRect(second).center())
+    assert window.selected_ids == {events[0].id, events[1].id}
+    assert window.results.selected_ids() == window.selected_ids
+    assert window.results.hasFocus()
+    QTest.keyClick(window.results, Qt.Key.Key_Delete)
+    assert store.get_event(events[0].id) is None
+    assert store.get_event(events[1].id) is None
+    assert store.get_event(events[2].id) == events[2]
+    assert window.search.text() == 'Needle'
+    assert len(store.history()) == 2
+
+
+def test_all_day_search_selection_highlights_pinned_chip_while_grid_is_scrolled(workspace):
     app, window, _, _ = workspace
     midnight = START.replace(hour=0)
     event = Event('all-day-search', 'local', 'Needle all-day event', midnight,
                   midnight + timedelta(days=1), all_day=True)
     window.apply_events('Create all-day search target', [event])
+    if not window.full_day:
+        window.toggle_full_day()
     app.processEvents()
     bar = window.scroll.verticalScrollBar()
     bar.setValue(9 * 64)
-    assert bar.value() > 0
+    before = bar.value()
+    assert before > 0
     search(window)
     QTest.keyClick(window.search, Qt.Key.Key_Down)
-    rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == event.id)
-    assert rect.top() >= bar.value()
-    assert rect.bottom() <= bar.value() + window.scroll.viewport().height()
+    rect = next(rect for rect, value, _ in window.all_day_canvas.rects() if value.id == event.id)
+    assert window.all_day_canvas.isVisible()
+    assert rect.top() >= 0 and rect.bottom() <= window.all_day_canvas.height()
+    assert event.id in window.all_day_canvas.selected_ids
+    assert bar.value() == before
     assert window.selected_id == event.id and window.selected_day == event.start.date()
-    assert window.search.hasFocus() and window.search.text() == 'Needle'
+    assert window.results.hasFocus() and window.search.text() == 'Needle'
 
 
 @pytest.mark.parametrize('view', ['week', 'month'])
@@ -216,9 +243,9 @@ def test_enter_commits_current_result_to_active_canvas_and_escape_exits(workspac
     window.set_view(view)
     search(window)
     QTest.keyClick(window.search, Qt.Key.Key_Down)
-    QTest.keyClick(window.search, Qt.Key.Key_Down)
+    QTest.keyClick(window.results, Qt.Key.Key_Down)
     assert window.selected_id == events[1].id
-    QTest.keyClick(window.search, Qt.Key.Key_Return)
+    QTest.keyClick(window.results, Qt.Key.Key_Return)
     canvas = window.month if view == 'month' else window.canvas
     assert canvas.hasFocus()
     assert window.selected_id == events[1].id
@@ -267,8 +294,8 @@ def test_actual_edits_invalidate_search_index_and_refresh_results(workspace):
     _, window, _, _ = workspace
     window.apply_events('Create', [sample('first')])
     search(window)
-    index = window._search_index
+    index = window.results._index
     window.apply_events('Create another', [sample('second')])
-    assert window._search_index is not index
+    assert window.results._index is not index
     assert window.results.count() == 2
     assert window.search.text() == 'Needle'

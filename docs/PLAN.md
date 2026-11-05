@@ -62,10 +62,11 @@ invitations, or reminder notifications in the initial scope.
   timestamp before replacing the text. Shorter date prefixes omit months or
   years only when their rollover still selects the intended date.
 * **Resolved:** confirming one candidate removes the others as one undoable action.
-  Event actions default to one occurrence; `Ctrl` selects all events, and `Shift`
-  selects this and following events. These configurable modifiers apply to edits,
-  deletion, mouse movement/resizing, and `C`/`V`/`D` copy/paste/duplicate. `Alt+S`
-  cycles scope in the editor while native text clipboard shortcuts remain intact.
+  Persistent selection modes use remappable `F2`/`F3`/`F4` keys for one occurrence,
+  all events, and this and following. Calendar and search highlights show the
+  exact affected union. Ctrl+click toggles selections and Ctrl+drag copies;
+  paste stages a movable preview until click/Enter confirmation. The editor uses
+  the same mode keys and segmented controls; `Alt+S` also cycles modes.
   Day view uses `1`, freeing `D` for duplication. A future edit splits canonical
   resources atomically, preserving earlier instances and assigning the future a
   new UID; one undo restores both. Clipboard copies have independent identities.

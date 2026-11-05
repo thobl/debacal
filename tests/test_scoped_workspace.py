@@ -25,7 +25,7 @@ START = datetime(2026, 11, 2, 10, tzinfo=ZONE)
 NONE = Qt.KeyboardModifier.NoModifier
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
-CASES = [('single', NONE), ('group', CTRL), ('future', SHIFT)]
+CASES = [('single', Qt.Key.Key_F2), ('group', Qt.Key.Key_F3), ('future', Qt.Key.Key_F4)]
 
 
 @pytest.fixture
@@ -72,8 +72,8 @@ def key(window, letter, modifiers=NONE):
     QApplication.instance().processEvents()
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_edit_key_uses_three_scopes_and_one_undo(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_edit_key_uses_three_scopes_and_one_undo(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
     seen = []
     def edit(dialog):
@@ -83,7 +83,8 @@ def test_edit_key_uses_three_scopes_and_one_undo(workspace, scope, modifiers):
         assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
         return dialog.result()
     with patch.object(EventDialog, 'exec', edit):
-        key(window, Qt.Key.Key_E, modifiers)
+        key(window, mode_key)
+        key(window, Qt.Key.Key_E)
     assert seen == [scope]
     events = all_events(store)
     assert len(events) == 5
@@ -96,33 +97,41 @@ def test_edit_key_uses_three_scopes_and_one_undo(workspace, scope, modifiers):
     assert store.list_events() == [master]
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_delete_key_uses_three_scopes(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_delete_key_uses_three_scopes(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
-    key(window, Qt.Key.Key_Delete, modifiers)
+    key(window, mode_key)
+    key(window, Qt.Key.Key_Delete)
     assert len(all_events(store)) == {'single': 4, 'group': 0, 'future': 2}[scope]
     assert len(store.history()) == 2
     window.undo()
     assert store.list_events() == [master]
 
 
-def test_combined_scope_modifiers_use_following(workspace):
+def test_held_modifiers_do_not_change_the_persistent_selection_mode(workspace):
     _, window, store, _, _, _ = workspace
+    key(window, Qt.Key.Key_F4)
     key(window, Qt.Key.Key_Delete, CTRL | SHIFT)
+    assert len(all_events(store)) == 5 and window.selection.scope == 'future'
+    key(window, Qt.Key.Key_Delete)
     assert len(all_events(store)) == 2
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
-    key(window, Qt.Key.Key_C, modifiers)
+    key(window, mode_key)
+    key(window, Qt.Key.Key_C)
     assert QApplication.clipboard().mimeData().hasFormat(EVENT_MIME)
     assert 'BEGIN:VCALENDAR' in QApplication.clipboard().text()
     assert len(store.history()) == 1
     target = datetime(2027, 1, 4, 10, tzinfo=ZONE)
     with patch.object(window, 'paste_target', return_value=target):
-        key(window, Qt.Key.Key_V, modifiers)
-        key(window, Qt.Key.Key_V, modifiers)
+        for count in range(2):
+            key(window, Qt.Key.Key_V)
+            assert window.pending_paste is not None
+            assert len(store.list_events()) == 1 + count
+            key(window, Qt.Key.Key_Return)
     copies = [event for event in store.list_events() if event.id != master.id]
     assert len(copies) == 2
     assert len({event.ical_uid for event in [master, *copies]}) == 3
@@ -134,19 +143,24 @@ def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, sco
     assert store.get_event(master.id) == master
 
 
-def test_plain_paste_from_copied_series_selects_one_occurrence(workspace):
+def test_changing_mode_after_copy_preserves_the_exact_captured_series(workspace):
     _, window, store, master, _, _ = workspace
-    key(window, Qt.Key.Key_C, CTRL)
+    key(window, Qt.Key.Key_F3)
+    key(window, Qt.Key.Key_C)
+    key(window, Qt.Key.Key_F2)
     window.paste_events(scope='single', target=datetime(2027, 1, 4, 10, tzinfo=ZONE))
+    assert store.list_events() == [master]
+    window.confirm_paste()
     copied = next(event for event in store.list_events() if event.id != master.id)
-    assert not copied.recurring
+    assert copied.recurring and len(all_events(store)) == 10
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_duplicate_key_keeps_clipboard_and_day_view_has_new_binding(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_duplicate_key_keeps_clipboard_and_day_view_has_new_binding(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
     QApplication.clipboard().setText('Keep this text')
-    key(window, Qt.Key.Key_D, modifiers)
+    key(window, mode_key)
+    key(window, Qt.Key.Key_D)
     assert QApplication.clipboard().text() == 'Keep this text'
     assert window.view == 'week'
     assert len(all_events(store)) == 5 + {'single': 1, 'group': 5, 'future': 3}[scope]
@@ -171,17 +185,18 @@ def test_main_text_fields_keep_native_copy_paste_and_literal_typing(workspace):
     assert len(store.history()) == 1
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_mouse_drag_moves_the_requested_scope(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_mouse_drag_moves_the_requested_scope(workspace, scope, mode_key):
     app, window, store, master, selected, _ = workspace
     canvas = window.canvas
+    key(window, mode_key)
     rect = next(rect for rect, event, _ in canvas.rects() if event.id == selected.id)
     begin = rect.center().toPoint()
     day_width = (canvas.width() - canvas.gutter) / len(canvas.days)
     finish = begin + QPoint(round(2 * day_width), 0)
-    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, modifiers, begin)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, NONE, begin)
     QTest.mouseMove(canvas, finish, delay=1)
-    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, modifiers, finish)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, NONE, finish)
     app.processEvents()
     events = all_events(store)
     assert len(events) == 5
@@ -193,60 +208,66 @@ def test_mouse_drag_moves_the_requested_scope(workspace, scope, modifiers):
     assert store.list_events() == [master]
 
 
-@pytest.mark.parametrize('scope,modifiers', CASES)
-def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, modifiers):
+@pytest.mark.parametrize('scope,mode_key', CASES)
+def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, mode_key):
     app, window, store, master, selected, _ = workspace
     canvas = window.canvas
+    key(window, mode_key)
     rect = next(rect for rect, event, _ in canvas.rects() if event.id == selected.id)
     begin = QPoint(round(rect.center().x()), round(rect.bottom() - 2))
     finish = begin + QPoint(0, canvas.hour_height)
-    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, modifiers, begin)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, NONE, begin)
     QTest.mouseMove(canvas, finish, delay=1)
-    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, modifiers, finish)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, NONE, finish)
     app.processEvents()
     assert sum(event.end - event.start == timedelta(hours=2) for event in all_events(store)) == {'single': 1, 'group': 5, 'future': 3}[scope]
     window.undo()
     assert store.list_events() == [master]
 
 
-def test_double_click_creates_new_event_even_with_scope_modifier(workspace):
+def test_double_click_creates_new_event_in_persistent_following_mode(workspace):
     _, window, _, _, selected, _ = workspace
     seen = []
+    key(window, Qt.Key.Key_F4)
     rect = next(rect for rect, event, _ in window.canvas.rects() if event.id == selected.id)
     def inspect(dialog):
         seen.append((dialog.original, dialog.series, dialog.title.text()))
         return QDialog.DialogCode.Rejected
     with patch.object(EventDialog, 'exec', inspect):
-        QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, SHIFT, rect.center().toPoint())
+        QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, NONE, rect.center().toPoint())
     assert seen == [(None, None, '')]
 
 
-def test_configured_scope_modifiers_and_shortcut_persistence(workspace):
+def test_configured_mode_shortcuts_and_persistence(workspace):
     app, window, store, _, _, windows = workspace
     def configure(dialog):
-        dialog.scope_modifiers['all'].setCurrentText('Alt')
-        dialog.scope_modifiers['following'].setCurrentText('Meta')
-        dialog.fields['cycle_scope'].setKeySequence('Alt+Q')
+        dialog.fields['scope_single'].setKeySequence('F5')
+        dialog.fields['scope_all'].setKeySequence('F6')
+        dialog.fields['scope_following'].setKeySequence('F7')
         dialog.save()
         assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
         return dialog.result()
     with patch.object(ShortcutsDialog, 'exec', configure):
         window.show_shortcuts()
-    assert store.get_setting('event_scope_modifiers') == {'all': 'Alt', 'following': 'Meta'}
-    assert window.bindings['cycle_scope'] == 'Alt+Q'
+    assert window.bindings['scope_single'] == 'F5'
+    assert window.bindings['scope_all'] == 'F6'
+    assert window.bindings['scope_following'] == 'F7'
     seen = []
     def inspect(dialog):
         seen.append(dialog.scope.currentData())
-        assert dialog.scope_shortcut.key().toString() == 'Alt+Q'
+        assert dialog.mode_shortcuts['scope_all'].key().toString() == 'F6'
+        assert dialog.mode_shortcuts['scope_following'].key().toString() == 'F7'
         return QDialog.DialogCode.Rejected
     with patch.object(EventDialog, 'exec', inspect):
-        key(window, Qt.Key.Key_E, Qt.KeyboardModifier.AltModifier)
-        key(window, Qt.Key.Key_E, Qt.KeyboardModifier.MetaModifier)
+        key(window, Qt.Key.Key_F6)
+        key(window, Qt.Key.Key_E)
+        key(window, Qt.Key.Key_F7)
+        key(window, Qt.Key.Key_E)
     assert seen == ['group', 'future']
     other = MainWindow(store, enable_sync=False)
     windows.append(other)
-    assert other.scope_modifiers == {'all': 'Alt', 'following': 'Meta'}
-    assert other.bindings['cycle_scope'] == 'Alt+Q'
+    assert other.bindings['scope_all'] == 'F6' and other.bindings['scope_following'] == 'F7'
+    assert other.selection.scope == 'future'
     app.processEvents()
 
 
@@ -279,6 +300,8 @@ def test_external_ics_clipboard_pastes_into_default_calendar(workspace):
     QApplication.clipboard().setText(export_ics([source]).decode())
     target = datetime(2027, 1, 4, 10, tzinfo=ZONE)
     window.paste_events(scope='single', target=target)
+    assert store.list_events() == [master]
+    window.confirm_paste()
     copied = next(event for event in store.list_events() if event.id != master.id)
     assert copied.calendar_id == 'local' and copied.title == 'External appointment'
     assert copied.start == target and copied.end - copied.start == timedelta(hours=2)

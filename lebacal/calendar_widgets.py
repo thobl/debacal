@@ -1,6 +1,6 @@
 """Paint-only calendar surfaces: visible events are cheap; gestures commit on release."""
 from dataclasses import replace
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
@@ -44,9 +44,38 @@ def badge(painter, rect, value, selected=False):
          Qt.AlignmentFlag.AlignCenter)
 
 
+def week_spans(events, first, days=7, *, capacity=None, selected=(), primary=None, reserve_timed=()):
+    """Place whole DATE spans in shared lanes, optionally bounded by cell rows."""
+    last = first + timedelta(days=days)
+    visible = [item for item in events if item.all_day and item.start.date() < last and item.end.date() > first]
+    visible.sort(key=lambda item: (0 if item.id == primary else 1 if item.id in selected else 2,
+                                  max(first, item.start.date()), -(item.end.date() - item.start.date()).days, item.id))
+    lanes, result = [], []
+    reserved = sum(1 << index for index in reserve_timed)
+    for number, item in enumerate(visible, 1):
+        start = (max(first, item.start.date()) - first).days
+        end = (min(last, item.end.date()) - first).days
+        mask = ((1 << (end - start)) - 1) << start
+        limit = capacity
+        if limit is not None and item.id != primary and mask & reserved:
+            limit = max(0, limit - 1)
+        lane = next((index for index, occupied in enumerate(lanes)
+                     if (limit is None or index < limit) and not occupied & mask), None)
+        if lane is None:
+            if limit is not None and len(lanes) >= limit:
+                continue
+            lane = len(lanes)
+            lanes.append(0)
+        lanes[lane] |= mask
+        result.append((item, lane, start, end, number, item.start.date() < first, item.end.date() > last))
+    return result
+
+
 class DayHeader(QWidget):
     day_selected = Signal(object)
     create_all_day_requested = Signal(object, object)
+    placement_moved = Signal(object)
+    placement_confirmed = Signal(object)
     gutter = 62
     all_day_top = 60
 
@@ -58,6 +87,8 @@ class DayHeader(QWidget):
         self.navigation_day = None
         self.navigation_digits = ''
         self.selected_day = None
+        self.placement_active = False
+        self._placement_consumed = False
         self.setFixedHeight(84)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -91,6 +122,11 @@ class DayHeader(QWidget):
             day = self.day_at(event.position())
             if day is not None:
                 self.setFocus()
+                if self.placement_active:
+                    self._placement_consumed = True
+                    self.placement_confirmed.emit(at(day))
+                    return
+                self._placement_consumed = False
                 self.set_selected_day(day)
                 self.day_selected.emit(day)
 
@@ -98,10 +134,21 @@ class DayHeader(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             day = self.day_at(event.position())
             if day is not None:
+                if self._placement_consumed:
+                    self._placement_consumed = False
+                    return
+                if self.placement_active:
+                    self.placement_confirmed.emit(at(day))
+                    return
                 self.setFocus()
                 self.set_selected_day(day)
                 self.day_selected.emit(day)
                 self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
+
+    def mouseMoveEvent(self, event):
+        day = self.day_at(event.position())
+        if self.placement_active and day is not None:
+            self.placement_moved.emit(at(day))
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -113,10 +160,6 @@ class DayHeader(QWidget):
             x = self.gutter + i * w
             today = day == now().date()
             selected_day = self.navigation_active and i == self.navigation_day
-            if day == self.selected_day:
-                p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
-                p.setBrush(SELECTED_DAY)
-                p.drawRoundedRect(QRectF(x + 3, 3, w - 6, self.height() - 6), 7, 7)
             if today or selected_day:
                 p.setPen(QPen(GREEN, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
                 p.setBrush(QColor('#dceace') if selected_day else QColor('#e6eedf'))
@@ -141,6 +184,11 @@ class CalendarCanvas(QWidget):
     edit_scoped_requested = Signal(str, object)
     move_scoped_requested = Signal(object, object, object, object)
     selected = Signal(str)
+    selected_scoped = Signal(str, object)
+    gesture_started = Signal(str)
+    drag_preview_requested = Signal(str, object, object, object)
+    placement_moved = Signal(object)
+    placement_confirmed = Signal(object)
     context_requested = Signal(str, object)
 
     hour_height = 64
@@ -151,7 +199,17 @@ class CalendarCanvas(QWidget):
         super().__init__(parent)
         self.days, self.events, self.calendars = [], [], {}
         self.selected_id = None
+        self.selected_ids = set()
         self.selected_day = None
+        self.scope = 'single'
+        self.preview_events = []
+        self.placement_active = False
+        self._placement_consumed = False
+        self._deferred_selection = None
+        self.fixed_all_day = False
+        self.start_hour, self.end_hour = 0, 24
+        self._viewport_height = None
+        self.full_day = False
         self.hits = []
         self.drag = None
         self.ghost = None
@@ -170,6 +228,55 @@ class CalendarCanvas(QWidget):
     def set_data(self, days, events, calendars):
         self.days, self.events = days, events
         self.calendars = {c.id: c for c in calendars}
+        self._refit()
+        self.update()
+
+    @property
+    def time_top(self):
+        return 0 if self.fixed_all_day else self.all_day_height
+
+    def set_selection(self, ids):
+        self.selected_ids = set(ids)
+        if self.selected_id not in self.selected_ids:
+            self.selected_id = next(iter(sorted(self.selected_ids)), None)
+        self.update()
+
+    def set_scope(self, scope):
+        self.scope = scope if scope in ('single', 'group', 'future') else 'single'
+        self.update()
+
+    def set_preview(self, events):
+        self.preview_events = list(events)
+        self.update()
+
+    def _refit(self):
+        if self._viewport_height is not None and not self.drag:
+            self.fit_to_viewport(self._viewport_height, self.full_day)
+
+    def fit_to_viewport(self, height, full_day=False):
+        self._viewport_height = max(1, int(height))
+        self.full_day = bool(full_day)
+        if self.drag:
+            return
+        first, last = (0, 24) if full_day else (8, 18)
+        if not full_day:
+            for day in self.days:
+                begin, finish = at(day), at(day + timedelta(days=1))
+                for event in [*self.events, *self.preview_events]:
+                    if event.all_day or not overlaps(event, begin, finish):
+                        continue
+                    start = max(event.start.astimezone(local_zone()), begin)
+                    end = min(event.end.astimezone(local_zone()), finish)
+                    start_min = (start - begin).total_seconds() / 60
+                    end_min = (end - begin).total_seconds() / 60
+                    if event.start.timestamp() == event.end.timestamp():
+                        end_min = min(1440, start_min + 15)
+                    first = min(first, max(0, math.floor(start_min / 60)))
+                    last = max(last, min(24, math.ceil(end_min / 60)))
+        self.start_hour, self.end_hour = first, last
+        hours = max(1, last - first)
+        self.hour_height = max(24, (self._viewport_height - self.time_top - 20) / hours)
+        self.setMinimumHeight(math.ceil(self.time_top + hours * self.hour_height + 20))
         self.update()
 
     def set_preferences(self, preferences):
@@ -201,14 +308,15 @@ class CalendarCanvas(QWidget):
         index = int(self.navigation_digits) - 1
         return options[index].id if 0 <= index < len(options) else None
 
-    def rects(self):
+    def rects(self, events=None):
         if not self.days:
             return []
         width = (self.width() - self.gutter) / len(self.days)
         result = []
         for index, day in enumerate(self.days):
             start, end = at(day), at(day + timedelta(days=1))
-            daily = [e for e in self.events if overlaps(e, start, end)]
+            daily = [e for e in (self.events if events is None else events)
+                     if (not self.fixed_all_day or not e.all_day) and overlaps(e, start, end)]
             timed = []
             for event in daily:
                 if not event.all_day:
@@ -226,10 +334,10 @@ class CalendarCanvas(QWidget):
                     placement = placements[event.id]
                     local_start = max(event.start.astimezone(local_zone()), start)
                     local_end = min(event.end.astimezone(local_zone()), end)
-                    top = (local_start - start).total_seconds() / 3600 * self.hour_height
-                    bottom = (local_end - start).total_seconds() / 3600 * self.hour_height
+                    top = ((local_start - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
+                    bottom = ((local_end - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
                     rect = QRectF(x + placement.column * width / placement.columns + 3,
-                                  self.all_day_height + top + 1,
+                                  self.time_top + top + 1,
                                   width / placement.columns - 6,
                                   max(18 if event.start.timestamp() == event.end.timestamp() else 14, bottom - top - 2))
                 result.append((rect, event, day_numbers[event.id]))
@@ -245,70 +353,66 @@ class CalendarCanvas(QWidget):
         for i, day in enumerate(self.days):
             if day.weekday() >= 5:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#f4f6f0'))
-            if day == self.selected_day:
-                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), SELECTED_DAY)
             if self.show_numbers and i == self.navigation_day:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#eef4e7'))
         p.setPen(QPen(LINE, 1))
         for i in range(len(self.days) + 1):
             x = self.gutter + i * w
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
-        if self.selected_day in self.days:
-            index = self.days.index(self.selected_day)
-            p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRect(QRectF(self.gutter + index * w + 1, 1, w - 2, self.height() - 2))
-        text(p, QRectF(4, 4, 56, 28), 'ALL DAY', MUTED, 7)
-        p.setPen(QPen(LINE, 1))
-        p.drawLine(0, self.all_day_height, self.width(), self.all_day_height)
-        for hour in range(24):
-            y = self.all_day_height + hour * self.hour_height
+        if not self.fixed_all_day:
+            text(p, QRectF(4, 4, 56, 28), 'ALL DAY', MUTED, 7)
             p.setPen(QPen(LINE, 1))
-            p.drawLine(self.gutter, y, self.width(), y)
-            if hour:
+            p.drawLine(0, self.time_top, self.width(), self.time_top)
+        for hour in range(self.start_hour, self.end_hour + 1):
+            y = self.time_top + (hour - self.start_hour) * self.hour_height
+            p.setPen(QPen(LINE, 1))
+            p.drawLine(QPointF(self.gutter, y), QPointF(self.width(), y))
+            if hour and hour < 24:
                 label = self.preferences.format_time(time(hour))
-                text(p, QRectF(2, y - 11, 54, 22), label, MUTED, 7 if len(label) > 5 else 8,
+                text(p, QRectF(2, max(0, y - 11), 54, 22), label, MUTED, 7 if len(label) > 5 else 8,
                      align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            p.setPen(QPen(QColor('#edf0e9'), 1, Qt.PenStyle.DotLine))
-            p.drawLine(self.gutter, y + self.hour_height // 2, self.width(), y + self.hour_height // 2)
+            if hour < self.end_hour:
+                p.setPen(QPen(QColor('#edf0e9'), 1, Qt.PenStyle.DotLine))
+                p.drawLine(QPointF(self.gutter, y + self.hour_height / 2), QPointF(self.width(), y + self.hour_height / 2))
         self.hits = self.rects()
         for rect, event, number in self.hits:
             self.paint_event(p, rect, event, number)
+        for rect, event, number in self.rects(self.preview_events):
+            self.paint_event(p, rect, event, number, preview=True)
         current = now()
-        if current.date() in self.days:
+        if current.date() in self.days and self.start_hour <= current.hour < self.end_hour:
             i = self.days.index(current.date())
-            y = self.all_day_height + (current.hour + current.minute / 60) * self.hour_height
+            y = self.time_top + (current.hour + current.minute / 60 - self.start_hour) * self.hour_height
             p.setPen(QPen(QColor('#c16f55'), 1.5))
             p.drawLine(QPointF(self.gutter + i * w, y), QPointF(self.gutter + (i + 1) * w, y))
             p.setBrush(QColor('#c16f55'))
             p.drawEllipse(QPointF(self.gutter + i * w, y), 3, 3)
-        if self.ghost:
+        if self.ghost and not self.preview_events:
             day, start_min, end_min = self.ghost
             if 0 <= day < len(self.days):
-                rect = QRectF(self.gutter + day * w + 3, self.all_day_height + start_min / 60 * self.hour_height,
+                rect = QRectF(self.gutter + day * w + 3, self.time_top + (start_min / 60 - self.start_hour) * self.hour_height,
                               w - 6, max(12, (end_min - start_min) / 60 * self.hour_height))
                 p.setPen(QPen(GREEN, 2, Qt.PenStyle.DashLine))
                 p.setBrush(QColor(80, 130, 90, 45))
                 p.drawRoundedRect(rect, 5, 5)
                 if self.drag and self.drag[0] != 'create':
-                    scope = scope_from_modifiers(self.gesture_modifiers, self.scope_modifiers)
+                    scope = self.scope
                     label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
                     text(p, rect.adjusted(5, 0, -5, 0), label, GREEN, 8, True)
         p.end()
 
-    def paint_event(self, p, rect, event, number):
+    def paint_event(self, p, rect, event, number, preview=False):
         color = QColor(self.calendars[event.calendar_id].color) if event.calendar_id in self.calendars else GREEN
         day_width = (self.width() - self.gutter) / max(1, len(self.days))
         day_index = int((rect.center().x() - self.gutter) / day_width)
-        numbered = self.show_numbers and self.navigation_day == day_index
+        numbered = not preview and self.show_numbers and self.navigation_day == day_index
         target = numbered and self.navigation_digits.isascii() and self.navigation_digits.isdigit() and int(self.navigation_digits) == number
-        selected = event.id == self.selected_id
-        fill = QColor(SELECTED_EVENT if selected else color)
-        if not selected:
-            fill.setAlpha(95 if target else (38 if event.candidate else 52))
+        selected = not preview and (event.id in self.selected_ids or event.id == self.selected_id)
+        fill = QColor(color)
+        fill.setAlpha(34 if preview else 70 if selected else 95 if target else 38 if event.candidate else 52)
         p.setBrush(fill)
-        p.setPen(QPen(GREEN if target else SELECTED_EVENT_BORDER if selected else color, 3 if target or selected else 1,
-                      Qt.PenStyle.DashLine if event.candidate else Qt.PenStyle.SolidLine))
+        p.setPen(QPen(GREEN if target else SELECTED_EVENT_BORDER if selected else color, 3 if target or selected else 2 if preview else 1,
+                      Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, 5, 5)
         if selected:
             p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), SELECTED_EVENT_BORDER)
@@ -321,7 +425,7 @@ class CalendarCanvas(QWidget):
             value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
             if event.candidate:
                 value += ' · option'
-            text(p, QRectF(rect.x() + 8, rect.y() + 23, rect.width() - 12, 18), value, color.darker(120), 8)
+            text(p, QRectF(rect.x() + 8, rect.y() + 23, rect.width() - 12, 18), value, SELECTED_EVENT_BORDER if selected else color.darker(120), 8)
         if rect.height() > 64 and event.location:
             text(p, QRectF(rect.x() + 8, rect.y() + 43, rect.width() - 12, 18), event.location, color.darker(120), 8)
         p.restore()
@@ -344,34 +448,68 @@ class CalendarCanvas(QWidget):
             self.day_selected.emit(day)
         return day
 
+    def placement_target(self, point):
+        day = self.day_at(point)
+        if day is None:
+            return None
+        if not self.fixed_all_day and point.y() < self.time_top:
+            return at(day)
+        return at(day) + timedelta(minutes=self.position(point)[1])
+
+    def emit_selection(self, item, modifiers):
+        self.selected_id = item.id
+        self.selected_scoped.emit(item.id, modifiers)
+        self.selected.emit(item.id)
+
     def position(self, point, endpoint=False):
         width = (self.width() - self.gutter) / max(1, len(self.days))
         day = min(len(self.days) - 1, max(0, int((point.x() - self.gutter) / width)))
-        minutes = min(1440 if endpoint else 1425,
-                      max(0, round((point.y() - self.all_day_height) / self.hour_height * 4) * 15))
+        minutes = min(self.end_hour * 60 if endpoint else self.end_hour * 60 - 15,
+                      max(self.start_hour * 60, self.start_hour * 60 + round((point.y() - self.time_top) / self.hour_height * 4) * 15))
         return day, minutes
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton or not self.days:
             return
         point = event.position()
-        if self.select_day_at(point) is None:
+        day = self.day_at(point)
+        if day is None:
             return
+        self.setFocus()
+        if self.placement_active:
+            self.drag = self.ghost = self._deferred_selection = None
+            self._placement_consumed = True
+            self.placement_confirmed.emit(self.placement_target(point))
+            return
+        self._placement_consumed = False
+        self.selected_day = day
         self.gesture_modifiers = event.modifiers()
         hit = self.hit(point)
-        self.setFocus()
+        self._deferred_selection = None
         if hit:
             rect, item = hit
-            self.selected_id = item.id
-            self.selected.emit(item.id)
+            self.gesture_started.emit(item.id)
+            selected = item.id in self.selected_ids or item.id == self.selected_id
+            if selected and (event.modifiers() & Qt.KeyboardModifier.ControlModifier or len(self.selected_ids) > 1):
+                self._deferred_selection = (item, event.modifiers())
+            else:
+                self.emit_selection(item, event.modifiers())
             if not item.all_day:
-                self.drag = ('resize' if point.y() >= rect.bottom() - 7 else 'move', item, point, self.position(point))
-        elif point.x() >= self.gutter and point.y() >= self.all_day_height:
-            self.drag = ('create', None, point, self.position(point))
+                resize = point.y() >= rect.bottom() - 7 and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                self.drag = ('resize' if resize else 'move', item, point, self.position(point))
+        else:
+            self.day_selected.emit(day)
+            if point.y() >= self.time_top:
+                self.drag = ('create', None, point, self.position(point))
         self.update()
 
     def mouseMoveEvent(self, event):
         point = event.position()
+        if self.placement_active:
+            target = self.placement_target(point)
+            if target is not None:
+                self.placement_moved.emit(target)
+            return
         self.gesture_modifiers = event.modifiers()
         if not self.drag:
             hit = self.hit(point)
@@ -382,7 +520,7 @@ class CalendarCanvas(QWidget):
                                 + ('All day' if hit[1].all_day else self.preferences.format_time(local)) + '\n'
                                 + hit[1].location + '\nDouble-click to create a new event.')
             elif day is not None:
-                self.setToolTip('Double-click to add an all-day event.' if point.y() < self.all_day_height else
+                self.setToolTip('Double-click to add an all-day event.' if point.y() < self.time_top else
                                 'Click to select this day. Double-click to add an event, or drag to choose its duration.')
             else:
                 self.setToolTip('')
@@ -401,9 +539,15 @@ class CalendarCanvas(QWidget):
             self.ghost = (old_day, start_min, max(start_min + 15, minute))
         else:
             local = item.start.astimezone(local_zone())
-            duration = (item.end.timestamp() - item.start.timestamp()) / 60
-            start_min = min(max(0, local.hour * 60 + local.minute + minute - old_min), max(0, 1440 - duration))
+            duration = (item.end.astimezone(timezone.utc) - item.start.astimezone(timezone.utc)).total_seconds() / 60
+            original_min = local.hour * 60 + local.minute + local.second / 60 + local.microsecond / 60_000_000
+            start_min = min(max(0, original_min + minute - old_min), max(0, 1440 - duration))
             self.ghost = (day, start_min, start_min + duration)
+        if kind != 'create' and self.ghost:
+            target_day, begin, finish = self.ghost
+            start = item.start if kind == 'resize' else at(self.days[target_day]) + timedelta(minutes=begin)
+            end = at(self.days[target_day]) + timedelta(minutes=finish)
+            self.drag_preview_requested.emit(item.id, start, end, event.modifiers())
         self.update()
 
     def mouseReleaseEvent(self, event):
@@ -411,6 +555,7 @@ class CalendarCanvas(QWidget):
             return
         drag, ghost = self.drag, self.ghost
         self.drag = self.ghost = None
+        deferred, self._deferred_selection = self._deferred_selection, None
         if drag:
             kind, item, _, (day, minute) = drag
             if ghost:
@@ -425,18 +570,29 @@ class CalendarCanvas(QWidget):
                 else:
                     self.move_requested.emit(item.id, start, end)
                     self.move_scoped_requested.emit(item, start, end, event.modifiers())
+        if deferred and not ghost:
+            self.emit_selection(*deferred)
         self.update()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         self.drag = self.ghost = None
+        self._deferred_selection = None
         point = event.position()
+        if self._placement_consumed:
+            self._placement_consumed = False
+            return
+        if self.placement_active:
+            target = self.placement_target(point)
+            if target is not None:
+                self.placement_confirmed.emit(target)
+            return
         day = self.select_day_at(point)
         if day is None:
             return
         self.setFocus()
-        if point.y() < self.all_day_height:
+        if point.y() < self.time_top:
             self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
         else:
             _, minute = self.position(point)
@@ -445,14 +601,20 @@ class CalendarCanvas(QWidget):
         self.update()
 
     def contextMenuEvent(self, event):
-        if self.select_day_at(event.pos()) is not None:
+        if self.placement_active:
+            return
+        day = self.day_at(event.pos())
+        if day is not None:
+            self.selected_day = day
             self.setFocus()
         hit = self.hit(event.pos())
         if hit:
-            self.selected_id = hit[1].id
-            self.selected.emit(hit[1].id)
+            if hit[1].id not in self.selected_ids and hit[1].id != self.selected_id:
+                self.emit_selection(hit[1], Qt.KeyboardModifier.NoModifier)
             self.update()
             self.context_requested.emit(hit[1].id, event.globalPos())
+        elif day is not None:
+            self.day_selected.emit(day)
 
 
 class MonthCanvas(QWidget):
@@ -463,6 +625,13 @@ class MonthCanvas(QWidget):
     edit_requested = Signal(str)
     edit_scoped_requested = Signal(str, object)
     selected = Signal(str)
+    selected_scoped = Signal(str, object)
+    gesture_started = Signal(str)
+    drag_preview_requested = Signal(str, object, object, object)
+    move_requested = Signal(str, object, object)
+    move_scoped_requested = Signal(object, object, object, object)
+    placement_moved = Signal(object)
+    placement_confirmed = Signal(object)
     context_requested = Signal(str, object)
 
     def __init__(self, parent=None):
@@ -471,7 +640,14 @@ class MonthCanvas(QWidget):
         self.month = self.start.month
         self.events, self.calendars, self.hits = [], {}, []
         self.selected_id = None
+        self.selected_ids = set()
         self.selected_day = None
+        self.scope = 'single'
+        self.preview_events = []
+        self.placement_active = False
+        self._placement_consumed = False
+        self._deferred_selection = None
+        self.drag = self.ghost = None
         self.preferences = Preferences()
         self.setMinimumHeight(440)
         self.setMouseTracking(True)
@@ -485,10 +661,42 @@ class MonthCanvas(QWidget):
         self.selected_day = day
         self.update()
 
+    set_selection = CalendarCanvas.set_selection
+    set_scope = CalendarCanvas.set_scope
+    emit_selection = CalendarCanvas.emit_selection
+
+    def set_preview(self, events):
+        self.preview_events = list(events)
+        self.update()
+
     def set_data(self, start, month, events, calendars):
         self.start, self.month, self.events = start, month, events
         self.calendars = {c.id: c for c in calendars}
         self.update()
+
+    def _paint_month_event(self, painter, rect, item, *, preview=False, before=False, after=False):
+        color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
+        selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
+        fill = QColor(color)
+        fill.setAlpha(45 if preview else 58 if selected else 40)
+        painter.setPen(QPen(SELECTED_EVENT_BORDER if selected else color, 3 if selected else 2 if preview else 1,
+                            Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine)
+                       if selected or preview or item.all_day else Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, 3, 3)
+        if selected:
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), SELECTED_EVENT_BORDER)
+        ink = SELECTED_EVENT_BORDER if selected else color.darker(140)
+        if before:
+            text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
+        if after:
+            text(painter, QRectF(rect.right() - 18, rect.top(), 12, rect.height()), '›', ink, 10, True)
+        label = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
+        label_rect = rect.adjusted(21 if before else 8 if selected else 5, 0, -21 if after else -3, 0)
+        painter.save()
+        painter.setClipRect(label_rect)
+        text(painter, label_rect, label, ink, 8, selected or preview)
+        painter.restore()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -496,56 +704,89 @@ class MonthCanvas(QWidget):
         p.fillRect(self.rect(), BG)
         self.hits = []
         w, h = self.width() / 7, (self.height() - 28) / 6
-        for i in range(7):
-            name = self.preferences.weekday_name(self.start + timedelta(days=i)).upper()
-            text(p, QRectF(i * w + 12, 0, w - 15, 25), name, MUTED, 8, True)
-        for i in range(42):
-            day = self.start + timedelta(days=i)
-            x, y = (i % 7) * w, 28 + (i // 7) * h
+        capacity = max(0, int((h - 37) / 24))
+        for index in range(7):
+            name = self.preferences.weekday_name(self.start + timedelta(days=index)).upper()
+            text(p, QRectF(index * w + 12, 0, w - 15, 25), name, MUTED, 8, True)
+        # Finish every day background before drawing any bar across its neighbors.
+        for index in range(42):
+            day = self.start + timedelta(days=index)
+            x, y = (index % 7) * w, 28 + (index // 7) * h
             rect = QRectF(x, y, w, h)
             if day.month != self.month:
                 p.fillRect(rect, QColor('#f0f3ec'))
             if day == now().date():
                 p.fillRect(rect, QColor('#edf2e7'))
-            if day == self.selected_day:
-                p.fillRect(rect, SELECTED_DAY)
             p.setPen(QPen(LINE, 1))
-            # Event pills set a fill brush. Reset it before drawing the next
-            # day border, otherwise that calendar's tint fills every later day.
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
-            if day == self.selected_day:
-                p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
-                p.drawRect(rect.adjusted(1, 1, -1, -1))
-            text(p, QRectF(x + 10, y + 3, w - 18, 25), str(day.day), GREEN if day == now().date() else INK, 10, True)
-            text(p, QRectF(x + 32, y + 5, w - 40, 20), '+ all day' if w >= 90 else '+', MUTED, 7,
-                 align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            daily = [e for e in self.events if overlaps(e, at(day), at(day + timedelta(days=1)))]
-            capacity = max(0, int((h - 37) / 24))
-            visible = daily[:capacity if len(daily) <= capacity else max(0, capacity - 1)]
-            selected = next((item for item in daily if item.id == self.selected_id), None)
-            if selected is not None and selected not in visible and capacity:
-                if visible:
-                    visible[-1] = selected
-                else:
-                    visible = [selected]
-            for n, item in enumerate(visible):
-                er = QRectF(x + 5, y + 32 + n * 24, w - 10, 21)
-                color = QColor(self.calendars[item.calendar_id].color)
-                selected = item.id == self.selected_id
-                p.setPen(QPen(SELECTED_EVENT_BORDER, 3) if selected else Qt.PenStyle.NoPen)
-                fill = QColor(SELECTED_EVENT if selected else color)
-                if not selected:
-                    fill.setAlpha(40)
-                p.setBrush(fill)
-                p.drawRoundedRect(er, 3, 3)
-                label = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
-                if selected:
-                    p.fillRect(QRectF(er.left() + 3, er.top() + 4, 3, er.height() - 8), SELECTED_EVENT_BORDER)
-                text(p, er.adjusted(8 if selected else 5, 0, -3, 0), label, SELECTED_EVENT_BORDER if selected else color.darker(140), 8, selected)
-                self.hits.append((er, item))
-            if len(daily) > len(visible) and len(visible) < capacity:
-                text(p, QRectF(x + 10, y + 32 + len(visible) * 24, w - 15, 21), f'+{len(daily) - len(visible)} more', MUTED, 8)
+            text(p, QRectF(x + 10, y + 3, w - 18, 25), str(day.day),
+                 GREEN if day == now().date() else INK, 10, True)
+        previews = self.preview_events or ([self.ghost] if self.ghost is not None else [])
+        for week in range(6):
+            first = self.start + timedelta(days=week * 7)
+            y = 28 + week * h
+            timed = [[item for item in self.events if not item.all_day
+                      and overlaps(item, at(first + timedelta(days=index)), at(first + timedelta(days=index + 1)))]
+                     for index in range(7)]
+            reserve = {index for index, daily in enumerate(timed)
+                       if any(item.id in self.selected_ids or item.id == self.selected_id for item in daily)}
+            spans = week_spans(self.events, first, capacity=capacity, selected=self.selected_ids,
+                               primary=self.selected_id, reserve_timed=reserve)
+            used, shown = [set() for _ in range(7)], [0] * 7
+            for item, lane, start, end, _number, before, after in spans:
+                rect = QRectF(start * w + 5, y + 32 + lane * 24, (end - start) * w - 10, 21)
+                self._paint_month_event(p, rect, item, before=before, after=after)
+                self.hits.append((rect, item))
+                for index in range(start, end):
+                    used[index].add(lane)
+                    shown[index] += 1
+            for index in range(7):
+                day = first + timedelta(days=index)
+                x = index * w
+                free = [lane for lane in range(capacity) if lane not in used[index]]
+                all_day_count = sum(item.all_day and item.start.date() <= day < item.end.date() for item in self.events)
+                daily = timed[index]
+                hidden_all_day = all_day_count - shown[index]
+                slots = len(free)
+                count = slots if len(daily) + hidden_all_day <= slots else max(0, slots - 1)
+                visible = daily[:count]
+                selected = [item for item in daily if item.id in self.selected_ids or item.id == self.selected_id]
+                for item in selected:
+                    if item in visible or not slots:
+                        continue
+                    replace_at = next((n for n in reversed(range(len(visible))) if visible[n] not in selected), None)
+                    if replace_at is not None:
+                        visible[replace_at] = item
+                    elif len(visible) < slots:
+                        visible.append(item)
+                for lane, item in zip(free, visible):
+                    rect = QRectF(x + 5, y + 32 + lane * 24, w - 10, 21)
+                    self._paint_month_event(p, rect, item)
+                    self.hits.append((rect, item))
+                hidden = hidden_all_day + len(daily) - len(visible)
+                header_count = hidden and len(visible) >= slots
+                if hidden and not header_count:
+                    lane = free[len(visible)]
+                    text(p, QRectF(x + 10, y + 32 + lane * 24, w - 15, 21), f'+{hidden} more', MUTED, 8)
+                if header_count:
+                    text(p, QRectF(x + 35, y + 5, max(0, w - 57), 20), f'+{hidden}', MUTED, 7)
+                text(p, QRectF(x + 32, y + 5, w - 40, 20), '+ all day' if w >= 90 and not header_count else '+', MUTED, 7,
+                     align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            preview_spans = week_spans(previews, first, capacity=capacity)
+            preview_used = [set() for _ in range(7)]
+            for item, lane, start, end, _number, before, after in preview_spans:
+                rect = QRectF(start * w + 5, y + 32 + lane * 24, (end - start) * w - 10, 21)
+                self._paint_month_event(p, rect, item, preview=True, before=before, after=after)
+                for index in range(start, end):
+                    preview_used[index].add(lane)
+            for index in range(7):
+                day = first + timedelta(days=index)
+                daily = [item for item in previews if not item.all_day and overlaps(item, at(day), at(day + timedelta(days=1)))]
+                free = [lane for lane in range(capacity) if lane not in preview_used[index]]
+                for lane, item in zip(free, daily):
+                    rect = QRectF(index * w + 5, y + 32 + lane * 24, w - 10, 21)
+                    self._paint_month_event(p, rect, item, preview=True)
         p.end()
 
     def day_at(self, point):
@@ -561,22 +802,53 @@ class MonthCanvas(QWidget):
             self.day_selected.emit(day)
         return day
 
+    def placement_target(self, point):
+        day = self.day_at(point)
+        return at(day, 9) if day is not None else None
+
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        if self.select_day_at(event.position()) is None:
+        day = self.day_at(event.position())
+        if day is None:
             return
         self.setFocus()
+        if self.placement_active:
+            self.drag = self.ghost = self._deferred_selection = None
+            self._placement_consumed = True
+            self.placement_confirmed.emit(self.placement_target(event.position()))
+            return
+        self._placement_consumed = False
+        self.selected_day = day
+        self._deferred_selection = None
         hit = next(((r, e) for r, e in self.hits if r.contains(event.position())), None)
         if hit:
-            self.selected_id = hit[1].id
-            self.selected.emit(hit[1].id)
+            item = hit[1]
+            self.gesture_started.emit(item.id)
+            selected = item.id in self.selected_ids or item.id == self.selected_id
+            if selected and (event.modifiers() & Qt.KeyboardModifier.ControlModifier or len(self.selected_ids) > 1):
+                self._deferred_selection = (item, event.modifiers())
+            else:
+                self.emit_selection(item, event.modifiers())
+            self.drag = (item, event.position(), day)
             self.update()
+        else:
+            self.day_selected.emit(day)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         point = event.position()
+        self.drag = self.ghost = None
+        self._deferred_selection = None
+        if self._placement_consumed:
+            self._placement_consumed = False
+            return
+        if self.placement_active:
+            day = self.day_at(point)
+            if day is not None:
+                self.placement_confirmed.emit(self.placement_target(point))
+            return
         day = self.select_day_at(point)
         if day is None:
             return
@@ -594,6 +866,18 @@ class MonthCanvas(QWidget):
         if day is None:
             self.setToolTip('')
             return
+        if self.placement_active:
+            self.placement_moved.emit(self.placement_target(point))
+            return
+        if self.drag and (point - self.drag[1]).manhattanLength() >= 5:
+            item, _, origin = self.drag
+            shift = timedelta(days=(day - origin).days)
+            start = item.start if item.all_day else item.start.astimezone(local_zone())
+            end = item.end if item.all_day else item.end.astimezone(local_zone())
+            self.ghost = replace(item, start=start + shift, end=end + shift)
+            self.drag_preview_requested.emit(item.id, self.ghost.start, self.ghost.end, event.modifiers())
+            self.update()
+            return
         height = (self.height() - 28) / 6
         all_day = (point.y() - 28) % height < 30
         self.setToolTip(self.preferences.format_date(day, weekday=True) + '\n'
@@ -601,12 +885,148 @@ class MonthCanvas(QWidget):
                            'Click to select this day. Double-click to create a new event at 09:00.'))
         self.setCursor(Qt.CursorShape.PointingHandCursor if all_day else Qt.CursorShape.ArrowCursor)
 
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        drag, ghost = self.drag, self.ghost
+        deferred = self._deferred_selection
+        self.drag = self.ghost = self._deferred_selection = None
+        if drag and ghost:
+            self.move_requested.emit(drag[0].id, ghost.start, ghost.end)
+            self.move_scoped_requested.emit(drag[0], ghost.start, ghost.end, event.modifiers())
+        elif deferred:
+            self.emit_selection(*deferred)
+        self.update()
+
     def contextMenuEvent(self, event):
-        if self.select_day_at(event.pos()) is not None:
+        if self.placement_active:
+            return
+        day = self.day_at(event.pos())
+        if day is not None:
+            self.selected_day = day
             self.setFocus()
         hit = next(((r, e) for r, e in self.hits if r.contains(event.pos())), None)
         if hit:
-            self.selected_id = hit[1].id
-            self.selected.emit(hit[1].id)
+            if hit[1].id not in self.selected_ids and hit[1].id != self.selected_id:
+                self.emit_selection(hit[1], Qt.KeyboardModifier.NoModifier)
             self.update()
             self.context_requested.emit(hit[1].id, event.globalPos())
+        elif day is not None:
+            self.day_selected.emit(day)
+
+
+class AllDayCanvas(MonthCanvas):
+    """Fixed week lanes, with one connected bar per all-day occurrence."""
+    gutter = 62
+    lane_height = 27
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.days = []
+        self.setMinimumHeight(0)
+        self.setFixedHeight(35)
+
+    def _lanes(self, events):
+        if not self.days:
+            return []
+        return week_spans(events, self.days[0], len(self.days))
+
+    def set_data(self, days, events, calendars):
+        self.days, self.events = list(days), list(events)
+        self.calendars = {calendar.id: calendar for calendar in calendars}
+        lanes = self._lanes(self.events)
+        count = max((entry[1] + 1 for entry in lanes), default=1)
+        self.setFixedHeight(count * self.lane_height + 8)
+        self.update()
+
+    def day_at(self, point):
+        if not self.days or point.x() < self.gutter or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+            return None
+        width = (self.width() - self.gutter) / len(self.days)
+        if width <= 0:
+            return None
+        index = min(len(self.days) - 1, max(0, int((point.x() - self.gutter) / width)))
+        return self.days[index]
+
+    def placement_target(self, point):
+        day = self.day_at(point)
+        return at(day) if day is not None else None
+
+    def rects(self, events=None):
+        width = (self.width() - self.gutter) / max(1, len(self.days))
+        return [(QRectF(self.gutter + start * width + 3, 4 + lane * self.lane_height,
+                        (end - start) * width - 6, self.lane_height - 4), item, number)
+                for item, lane, start, end, number, _left, _right in self._lanes(self.events if events is None else events)]
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), BG)
+        if not self.days:
+            p.end()
+            return
+        width = (self.width() - self.gutter) / len(self.days)
+        p.setPen(QPen(LINE, 1))
+        for index in range(len(self.days) + 1):
+            x = self.gutter + index * width
+            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        text(p, QRectF(3, 3, 55, 24), 'ALL DAY', MUTED, 7)
+        self.hits = []
+        for rect, item, number in self.rects():
+            self._paint_bar(p, rect, item)
+            self.hits.append((rect, item))
+        previews = self.preview_events or ([self.ghost] if self.ghost is not None else [])
+        slots = max(1, (self.height() - 8) // self.lane_height)
+        for rect, item, _number in self.rects(previews):
+            # Preview lanes never resize the fixed surface under the pointer.
+            rect.moveTop(4 + (int((rect.top() - 4) / self.lane_height) % slots) * self.lane_height)
+            self._paint_bar(p, rect, item, preview=True)
+        p.end()
+
+    def _paint_bar(self, painter, rect, item, preview=False):
+        color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
+        selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
+        fill = QColor(color)
+        fill.setAlpha(36 if preview else 70 if selected else 45)
+        painter.setPen(QPen(SELECTED_EVENT_BORDER if selected else color, 3 if selected else 2 if preview else 1,
+                            Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, 4, 4)
+        if selected:
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), SELECTED_EVENT_BORDER)
+        first, last = self.days[0], self.days[-1] + timedelta(days=1)
+        before, after = item.start.date() < first, item.end.date() > last
+        ink = SELECTED_EVENT_BORDER if selected else color.darker(145)
+        if before:
+            text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
+        if after:
+            text(painter, QRectF(rect.right() - 18, rect.top(), 12, rect.height()), '›', ink, 10, True)
+        label = rect.adjusted(21 if before else 8, 0, -21 if after else -6, 0)
+        painter.save()
+        painter.setClipRect(label)
+        text(painter, label, item.title, ink, 8, selected)
+        painter.restore()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self.drag = self.ghost = self._deferred_selection = None
+        if self._placement_consumed:
+            self._placement_consumed = False
+            return
+        day = self.day_at(event.position())
+        if day is None:
+            return
+        if self.placement_active:
+            self.placement_confirmed.emit(at(day))
+            return
+        self.setFocus()
+        self.selected_day = day
+        self.day_selected.emit(day)
+        self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
+
+    def mouseMoveEvent(self, event):
+        if self.drag or self.placement_active:
+            super().mouseMoveEvent(event)
+        else:
+            self.setToolTip('Click an event to select it. Drag to move; Ctrl-drag to copy. Double-click to add an all-day event.')

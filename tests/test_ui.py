@@ -619,6 +619,8 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(scrollbar.value(), original)
 
     def test_arrow_selection_scrolls_only_enough_to_show_hidden_event(self):
+        if not self.window.full_day:
+            self.window.toggle_full_day()
         start = datetime(2026, 11, 4, 22, tzinfo=ZONE)
         event = Event('late', 'local', 'Late event', start, start + timedelta(hours=1))
         self.window.apply_events('Create late event', [event])

@@ -171,7 +171,7 @@ def test_month_double_click_heading_is_all_day_and_body_is_timed_even_on_event(w
 
 
 @pytest.mark.parametrize('kind', ['canvas', 'month'])
-def test_multiday_event_click_and_context_emit_clicked_day_before_event_selection(widgets, kind):
+def test_multiday_event_click_and_context_preserve_clicked_day_without_clearing_selection(widgets, kind):
     _, _, _, make_canvas, make_month, _ = widgets
     existing = event(all_day=True, duration=72, start=datetime(2026, 11, 2, tzinfo=ZONE))
     widget = make_canvas([existing]) if kind == 'canvas' else make_month([existing])
@@ -185,11 +185,11 @@ def test_multiday_event_click_and_context_emit_clicked_day_before_event_selectio
     widget.selected.connect(lambda key: order.append(('event', key)))
     widget.context_requested.connect(lambda key, _position: order.append(('menu', key)))
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=point)
-    assert order == [('day', DAYS[1]), ('event', existing.id)]
+    assert order == [('event', existing.id)]
     assert widget.selected_day == DAYS[1]
     order.clear()
     QApplication.sendEvent(widget, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, widget.mapToGlobal(point)))
-    assert order == [('day', DAYS[1]), ('event', existing.id), ('menu', existing.id)]
+    assert order == [('menu', existing.id)]
     assert widget.selected_day == DAYS[1]
 
 
@@ -208,23 +208,25 @@ def test_selected_event_uses_visible_marker_independent_of_white_calendar_color(
     assert selected != plain
 
 
-def test_selected_day_highlight_persists_separately_from_today_and_navigation(widgets):
+def test_selected_day_is_state_only_and_navigation_has_its_own_highlight(widgets):
     app, _, _, make_canvas, make_month, make_header = widgets
     canvas, month, header = make_canvas(), make_month(), make_header()
     selected = DAYS[1]
+    initial = {widget: widget.grab().toImage() for widget in (canvas, month, header)}
     for widget in (canvas, month, header):
         widget.set_selected_day(selected)
+        assert widget.grab().toImage() == initial[widget]
+        assert widget.selected_day == selected and selected != NOW.date()
     canvas.set_navigation(True, 2)
     header.set_navigation(True, 2)
     app.processEvents()
-    canvas_point = timed_point(canvas, 1, 8, 15)
-    header_point = QPoint(int(62 + (header.width() - 62) / 7 + 5), 39)
-    month_location = month_point(month, selected)
-    for widget, point in ((canvas, canvas_point), (header, header_point), (month, month_location)):
-        assert widget.grab().toImage().pixelColor(point) == QColor('#edf1f8')
-        assert widget.selected_day == selected and selected != NOW.date()
+    assert canvas.grab().toImage() != initial[canvas]
+    assert header.grab().toImage() != initial[header]
+    assert month.grab().toImage() == initial[month]
+    for widget in (canvas, month, header):
+        navigation = widget.grab().toImage()
         widget.set_selected_day(None)
-        assert widget.grab().toImage().pixelColor(point) != QColor('#edf1f8')
+        assert widget.grab().toImage() == navigation
 
 
 @pytest.mark.parametrize('kind', ['header', 'month'])

@@ -75,6 +75,8 @@ def test_selected_day_paste_ignores_pointer_and_preserves_precise_local_clock(wo
         target = window.paste_target(selection)
         assert target == selection.reference.start.replace(year=chosen.year, month=chosen.month, day=chosen.day)
         window.paste_events(scope="single")
+        assert store.list_events() == [] and window.pending_paste is not None
+        window.confirm_paste()
     pasted = store.list_events()
     assert len(pasted) == 1
     value = pasted[0]
@@ -97,6 +99,8 @@ def test_foreign_zone_clipboard_keeps_its_displayed_local_clock_and_named_zone(w
     window.select_day(chosen)
     with patch.object(window, "read_event_clipboard", return_value=clipboard(source)):
         window.paste_events(scope="single")
+        assert store.list_events() == []
+        window.confirm_paste()
     pasted = store.list_events()[0]
     local = pasted.start.astimezone(ZONE)
     assert local.date() == chosen and local.time() == source.start.astimezone(ZONE).time()
@@ -110,6 +114,8 @@ def test_explicit_context_paste_target_overrides_selected_day_and_source_clock(w
     target = datetime(2026, 11, 12, 8, 45, 19, tzinfo=ZONE)
     with patch.object(window, "read_event_clipboard", return_value=clipboard(event())):
         window.paste_events(scope="single", target=target)
+        assert store.list_events() == []
+        window.confirm_paste()
     pasted = store.list_events()[0]
     assert pasted.start == target
     assert pasted.end - pasted.start == event().end - event().start
@@ -125,6 +131,8 @@ def test_all_day_paste_keeps_calendar_date_and_span_across_dst(workspace):
     window.set_view("month")
     with patch.object(window, "read_event_clipboard", return_value=clipboard(source)):
         window.paste_events(scope="single")
+        assert store.list_events() == []
+        window.confirm_paste()
     pasted = store.list_events()[0]
     assert pasted.all_day and pasted.start.date() == chosen
     assert pasted.start.hour == pasted.end.hour == 0
@@ -167,6 +175,8 @@ def test_mouse_day_selection_exits_number_selection_and_allows_keyboard_paste(wo
         assert not window.header.navigation_active and not window.canvas.show_numbers
         window.canvas.setFocus()
         QTest.keyClick(window.canvas, Qt.Key.Key_V)
+        assert store.list_events() == [] and window.pending_paste is not None
+        QTest.keyClick(window.canvas, Qt.Key.Key_Return)
     pasted = store.list_events()
     assert len(pasted) == 1 and pasted[0].start.astimezone(ZONE).date() == chosen
 
@@ -246,6 +256,8 @@ def test_moving_selected_event_updates_paste_day_within_the_same_visible_week(wo
     selection = clipboard(event())
     with patch.object(window, "read_event_clipboard", return_value=selection):
         window.paste_events(scope="single")
+        assert len(store.list_events()) == 1 and window.pending_paste is not None
+        window.confirm_paste()
     pasted = next(value for value in store.list_events() if value.id != source.id)
     assert pasted.start.astimezone(ZONE).date() == target.date()
     assert pasted.start.astimezone(ZONE).time() == selection.reference.start.time()
@@ -266,24 +278,30 @@ def test_all_day_event_selection_uses_calendar_date_instead_of_foreign_zone_conv
     assert window.selected_day == source.start.date()
 
 
-def test_all_day_event_reveal_returns_from_timed_hours_to_the_top(workspace):
+def test_all_day_event_remains_visible_in_fixed_lane_while_timed_hours_are_scrolled(workspace):
     window, store, app = workspace
     start = datetime(2026, 11, 4, tzinfo=ZONE)
     source = event(start=start, end=start + timedelta(days=1), all_day=True)
     store.apply("Create", [source])
     window.refresh()
+    window.resize(window.minimumWidth(), window.minimumHeight())
+    window.full_day = True
+    window.fit_calendar()
     app.processEvents()
     bar = window.scroll.verticalScrollBar()
     bar.setValue(500)
     assert bar.value() > 0
+    before = bar.value()
     window.select_event(source.id)
     window.ensure_event_visible(source.id)
-    assert bar.value() == 0
+    assert bar.value() == before
+    assert window.all_day_canvas.isVisible()
+    assert source.id in {value.id for _, value in window.all_day_canvas.hits}
     window.ensure_event_visible(source.id)
-    assert bar.value() == 0
+    assert bar.value() == before
 
 
-@pytest.mark.parametrize("origin", ["direct", "header", "canvas", "month"])
+@pytest.mark.parametrize("origin", ["direct", "header", "canvas", "month", "all_day_canvas"])
 def test_all_day_creation_reaches_real_editor_checked_with_exact_day_span(workspace, origin):
     window, store, _ = workspace
     start = datetime(2027, 3, 27, tzinfo=ZONE)
@@ -346,6 +364,8 @@ def test_paste_retains_repeated_hour_choice_and_duration(workspace):
     window.go_date(date(2027, 10, 31))
     with patch.object(window, "read_event_clipboard", return_value=clipboard(source)):
         window.paste_events(scope="single")
+        assert store.list_events() == [] and window.pending_paste is not None
+        window.confirm_paste()
     pasted = store.list_events()[0]
     target = datetime(2027, 10, 31, 2, 30, tzinfo=ZONE, fold=1)
     assert pasted.start.timestamp() == target.timestamp()

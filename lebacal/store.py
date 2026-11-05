@@ -413,6 +413,171 @@ class Store:
             ).to_dict()
         return replace(projected, end=end_for(projected.start, duration_source), recurrence_overrides=overrides)
 
+    def _review_selection(self, refs, scope, reference=None, expected_masters=()):
+        from .selection import affected_visible, selection_roots, validate_scope
+        validate_scope(scope)
+        refs = list(refs)
+        for value in refs:
+            self._reviewed_master(value)
+        roots = selection_roots(self, refs, scope)
+        expected = list(expected_masters.values() if hasattr(expected_masters, "values") else expected_masters)
+        if expected:
+            snapshots = {value.id: value for value in expected}
+            class Snapshot:
+                def get_event(self, event_id):
+                    return snapshots.get(event_id)
+                def list_events(self, calendar_ids=None):
+                    return [value for value in snapshots.values() if calendar_ids is None or value.calendar_id in calendar_ids]
+            expected_roots = selection_roots(Snapshot(), refs, scope)
+            master_ids = lambda values: {value.series_id or value.id for value in values}
+            if master_ids(expected_roots) != master_ids(roots):
+                raise HistoryConflict("The selected group changed while it was being edited. Select it again before saving.")
+            for event_id in master_ids(roots):
+                current = self.get_event(event_id)
+                previous = snapshots.get(event_id)
+                if previous is None or current is None or self._semantic_event(current.to_dict()) != self._semantic_event(previous.to_dict()):
+                    raise HistoryConflict("This selection changed while it was being edited. Select it again before saving.")
+        if reference is not None:
+            self._reviewed_master(reference)
+            if reference.id not in affected_visible(self, refs, scope, [reference]):
+                raise ValueError("The operation's reference is outside the selected events.")
+        return refs, roots
+
+    def delete_selection(self, refs, scope="single", label="Delete selected events", *, expected_masters=()) -> int | None:
+        """Delete the exact selected union as one history/outbox transaction."""
+        from .series_operations import partition_series
+        with self._transaction():
+            _, roots = self._review_selection(refs, scope, expected_masters=expected_masters)
+            changed, deleted = {}, set()
+            for root in roots:
+                master = changed.get(root.series_id or root.id) or self.get_event(root.series_id or root.id)
+                if scope == "single" and root.series_id:
+                    overrides = {key: value for key, value in master.recurrence_overrides.items() if key != root.recurrence_id}
+                    changed[master.id] = replace(master, excluded_dates=tuple(set(master.excluded_dates) | {root.recurrence_id}),
+                                                 recurrence_overrides=overrides)
+                elif scope == "future" and master.recurring:
+                    before, _ = partition_series(master, root)
+                    if before is None:
+                        deleted.add(master.id)
+                    else:
+                        changed[master.id] = before
+                else:
+                    deleted.add(master.id)
+            return self.apply(label, [event for key, event in changed.items() if key not in deleted], deleted)
+
+    def _transform_selection(self, roots, scope, reference, edited, *, common_changes=None,
+                             schedule_changes=None, replace_schedule=False):
+        """Compile projections in memory; no write occurs until every root passes."""
+        from datetime import timedelta
+        from .event_clipboard import _moved_times
+        from .recurrence import event_zone, occurrence_id, updated_series, _valid_wall_time
+        from .series_operations import partition_series, reidentify_series, updated_future
+        common_changes, schedule_changes = common_changes or {}, schedule_changes or {}
+        reference_zone = event_zone(reference)
+        reference_wall = lambda value: value.astimezone(reference_zone).replace(tzinfo=None)
+        old_duration = reference_wall(reference.end) - reference_wall(reference.start)
+        new_duration = reference_wall(edited.end) - reference_wall(edited.start)
+        resized = old_duration != new_duration
+        if old_duration <= timedelta(0) and not resized:
+            resized = reference.end.timestamp() - reference.start.timestamp() != edited.end.timestamp() - edited.start.timestamp()
+        changed = {}
+        for root in roots:
+            master = self.get_event(root.series_id or root.id)
+            source = root if scope == "single" or scope == "future" else master
+            zone = event_zone(master)
+            wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+            shift = wall(edited.start) - wall(reference.start)
+            start, end = _moved_times(source, shift, zone)
+            if resized:
+                duration = wall(edited.end) - wall(edited.start)
+                end = (start.replace(tzinfo=None) + duration).replace(tzinfo=zone, fold=edited.end.astimezone(zone).fold)
+                if duration <= timedelta(0):
+                    end = datetime.fromtimestamp(start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
+            if common_changes.get("all_day") is True:
+                from datetime import time
+                days = (edited.start.astimezone(zone).date() - reference.start.astimezone(zone).date()).days
+                start = datetime.combine(source.start.astimezone(zone).date() + timedelta(days=days), time.min, zone)
+                end = start + timedelta(days=max(1, (edited.end.astimezone(zone).date() - edited.start.astimezone(zone).date()).days))
+            if not all(_valid_wall_time(value) for value in (start, end)):
+                raise ValueError("A selected event falls in a daylight-saving clock change. Choose another time.")
+            if scope == "single":
+                value = replace(root, start=start, end=end, **common_changes)
+                if root.series_id:
+                    value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
+                                    schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
+                    previous = changed.get(master.id, master)
+                    changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
+                else:
+                    changed[master.id] = replace(value, **schedule_changes)
+                continue
+            base = master
+            if scope == "future" and master.recurring:
+                _, base = partition_series(master, root)
+            submission = replace(base, start=start, end=end, **(schedule_changes | common_changes))
+            if scope == "future" and master.recurring:
+                before, projected = updated_future(master, root, submission, replace_schedule)
+            else:
+                before, projected = None, updated_series(master, master, submission, replace_schedule)
+            # Start with copy-style exception content preservation. A duration
+            # edit then deliberately replaces each affected exception's end.
+            projected = self._preserve_mouse_exceptions(master, source, submission, projected)
+            if resized:
+                span = wall(edited.end) - wall(edited.start)
+                def resized_end(value):
+                    return ((wall(value) + span).replace(tzinfo=zone) if span > timedelta(0) else
+                            datetime.fromtimestamp(value.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone))
+                projected = replace(projected, end=resized_end(projected.start), recurrence_overrides={
+                    key: replace(Event.from_dict(payload), end=resized_end(Event.from_dict(payload).start)).to_dict()
+                    for key, payload in projected.recurrence_overrides.items()})
+            if common_changes:
+                projected = replace(projected, **common_changes, recurrence_overrides={
+                    key: replace(Event.from_dict(payload), **common_changes).to_dict()
+                    for key, payload in projected.recurrence_overrides.items()})
+            if before is not None:
+                changed[master.id] = before
+                new_id = str(uuid4())
+                projected = reidentify_series(projected, new_id, new_id)
+            changed[projected.id] = projected
+        return list(changed.values())
+
+    def move_selection(self, refs, scope, reference, start, end, *, copy=False,
+                       calendar_id=None, label="Move selected events", expected_masters=()):
+        """Move one union atomically, or prepare fresh copies without writing."""
+        from .recurrence import event_zone
+        with self._transaction():
+            refs, roots = self._review_selection(refs, scope, reference, expected_masters)
+            edited = replace(reference, start=start, end=end)
+            if copy:
+                from .selection import capture_selection
+                selection = capture_selection(self, refs, scope)
+                zone = event_zone(selection.reference)
+                wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+                target = (wall(selection.reference.start) + (wall(start) - wall(reference.start))).replace(tzinfo=zone)
+                calendar = self.get_calendar(calendar_id) if calendar_id else self.get_default_calendar()
+                if calendar is None or calendar.read_only or calendar.kind == "ics":
+                    raise ValueError("Choose a writable calendar for the copied events.")
+                return selection.instantiate("group", target, calendar.id)
+            return self.apply(label, self._transform_selection(roots, scope, reference, edited))
+
+    def edit_selection(self, refs, scope, reference, edited, *, replace_schedule=False,
+                       label="Edit selected events", expected_masters=()) -> int | None:
+        """Apply only changed primary fields across the selected union."""
+        from .series_operations import partition_series
+        with self._transaction():
+            _, roots = self._review_selection(refs, scope, reference, expected_masters)
+            master = self.get_event(reference.series_id or reference.id)
+            base = master if scope != "single" else reference
+            if scope == "future" and master.recurring:
+                _, base = partition_series(master, reference)
+            common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
+                      if getattr(edited, name) != getattr(reference, name)}
+            names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "schedule_expression", "expression_anchor", "schedule_syntax")
+            schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
+            projections = self._transform_selection(roots, scope, reference, edited,
+                                                    common_changes=common, schedule_changes=schedule,
+                                                    replace_schedule=replace_schedule)
+            return self.apply(label, projections)
+
     def edit_series(
         self, reference: Event, edited: Event, label: str = "Edit series", *,
         replace_schedule: bool = False, preserve_exceptions: bool = False,

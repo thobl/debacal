@@ -61,39 +61,49 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 * **Day / week / month:** switch with the toolbar or `1`, `W`, `M`. `H`/`L`
   move backward/forward; `T` returns to today. Click the mini calendar to jump.
-* **Select a day:** click a day heading or an empty calendar area. The selected
-  day is highlighted and follows view changes and the mini calendar. With no
-  event selected, Left/Right selects the previous/next day.
+* **Select events:** click an event; Ctrl+click adds or removes events from the
+  selection. Highlights keep the calendar color, with a thicker border and bar.
+  Escape clears the selection. Clicking empty space clears it too.
 * **Create:** `N`, the New event button, double-click in any view, or drag an
   empty day/week time slot. A single click selects without creating. Double-click
   always creates a new event, including over an existing event; use `E` or the
   right-click menu to edit. In month view, the body starts a timed event at 09:00.
   Double-click a day heading, its **+ All day** area, or the day/week all-day strip
-  to start an all-day event. The day/week heading remains available while scrolling.
-  Drag a timed event to move it; drag its bottom edge to resize.
+  to start an all-day event. All-day events stay above the timed grid; multi-day
+  bars connect adjacent dates and continue across month week rows. The timed grid
+  fits 08:00–18:00 and expands to include visible events. **Full day** shows all
+  24 hours; small windows can still scroll. Drag an event to move the selection;
+  Ctrl+drag copies it. Drag a timed event's bottom edge to resize.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
-  only as far as needed to reveal an event. `E` edits one occurrence, `Ctrl+E`
-  edits all events, and `Shift+E` edits this and following events. The same scope
-  modifiers apply to deletion, mouse dragging/resizing, copy, paste and duplicate.
-* **Copy / paste / duplicate:** `C`, `V`, `D`. Hold `Ctrl` for all events or
-  `Shift` for this and following events. `D` creates a copy at the same time;
-  `V` pastes on the selected day at the copied event's time. The pointer's
-  position has no effect. Day view is `1`. Text fields keep native
-  `Ctrl+C` / `Ctrl+V` behavior.
+  only as far as needed to reveal an event. Selection modes are `F2` for one
+  occurrence, `F3` for all events in its series, and `F4` for this and following.
+  The highlight shows the affected events; `E`, Delete, moving, resizing and
+  copying use that same selection. The mode persists until changed.
+* **Copy / paste / duplicate:** `C` / `Ctrl+C` copies the selection;
+  `V` / `Ctrl+V` previews it. Moving the pointer repositions the preview; click or
+  Enter places it, and Escape cancels without changing the calendar. Before any
+  pointer movement, the initial position retains the copied day/time relative
+  to the displayed page: copying in one week and pasting two weeks later shifts
+  the selection by two weeks. The preview includes every visible occurrence of
+  copied series. `D` duplicates the selection at its original time. Text fields
+  retain their native clipboard behavior.
 * **Search:** `Ctrl+F`, then title, notes, or location. Up/Down cycles through
   matches, wrapping at either end; clicking a result also reveals and highlights
-  its event in the calendar. The query stays open while browsing. Enter keeps the
-  current match selected and returns focus to the calendar; Escape closes search.
+  its event in the calendar. Result rows show a prominent title, smaller date/time
+  and calendar color; the calendar name is in the tooltip. Repeating series expand
+  into dated occurrences with bounded **More…** pages. Up/Down transfers focus to
+  the results so Delete, copy and edit act on the selected events. Ctrl+click and
+  selection modes work the same as in the calendar. The query stays open while
+  browsing. Enter returns focus to the calendar; Escape closes search.
   `/` remains a calendar shortcut for search with the default bindings.
 * **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
-* **Configuration:** Keyboard shortcuts (or `F1`) lets you change the bindings;
-  it also configures the all-events and following-events modifiers, and the
-  editor's scope-switch shortcut. Configuration survives restart, and generated
-  modifier combinations are checked for shortcut collisions.
+* **Configuration:** Keyboard shortcuts (or `F1`) lets you remap actions and all
+  three selection-mode keys. Configuration survives restart; conflicting or
+  ambiguous shortcut sequences are rejected.
 * **Preferences:** choose a writable default calendar for new events, any start
   weekday, system/European/ISO/US date
   format, and system/12-hour/24-hour time. Defaults follow the OS locale. The
@@ -104,12 +114,18 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 ### Working with event series
 
-An action without an additional scope modifier affects one event. Hold `Ctrl`
-for all events, or `Shift` for this and following events. Holding both uses this
-and following. The footer shows the current scope; mouse drag previews show it
-before applying the change. Right-click menus offer all three scopes explicitly.
-The editor shows its scope and lets you cycle it with `Alt+S`, including while
-typing in a text field. You can also choose it directly from the scope control.
+Choose **One event** (`F2`), **All in series** (`F3`), or **This and following**
+(`F4`) before selecting events. Changing the mode updates the affected highlights
+immediately, including for Ctrl-added selections. The toolbar and event editor
+use the same segmented controls and remappable keys, including while typing in
+the editor. `Alt+S` also cycles modes. Ctrl and Shift do not change the scope of
+an action. Ctrl+click toggles selection and Ctrl+drag copies.
+
+Operations use the union of selected events, avoiding duplicate changes where
+selected series overlap. Multi-event edits apply changed common fields and
+relative times while retaining untouched values. Select one series to edit its
+recurrence configuration. Each batch mutation is one undoable operation; a
+read-only or stale selected resource rejects the batch before any event changes.
 
 A following edit splits at the selected event's original recurrence date. The
 past keeps its identity; the future gets a new calendar UID and retains a
@@ -120,15 +136,13 @@ partitioned by their original recurrence IDs. The complete split is one undoable
 operation and synchronizes as ordinary calendar resources. Splitting at the
 first occurrence updates the original resource without leaving an empty past.
 
-Use `Ctrl+C`, then `Ctrl+V`, to copy and paste a complete series; use `Shift+C`
-and `Shift+V` for its future part. Plain `V` takes one occurrence from the copied
-selection. Paste cannot recover events outside the scope originally copied.
-It aligns the copied selected occurrence with the selected calendar day, keeping
-its clock time. Explicit **Paste … here** actions in an event's context menu use
-that event's date and time. All-day copies retain their calendar-date span.
-Pasting uses the writable default calendar; duplication uses the source calendar
-when writable. Each copy
-gets fresh event identities and independent group links. Clipboard data also
+Copy in `F3` mode for whole series, or `F4` for their future parts. Pasting keeps
+exactly the captured selection even if the mode has since changed. It stages a
+preview rather than writing immediately. **Paste here…** in a context menu sets
+the initial preview position to that event's time. All-day copies retain their
+calendar-date span. Pasting and Ctrl-drag use the writable default calendar;
+duplication retains each writable source calendar. Copies get fresh identities
+and independent group links. Clipboard data also
 includes standard iCalendar for other applications, and standard ICS can be
 pasted from other applications. Duplication preserves the existing clipboard.
 
