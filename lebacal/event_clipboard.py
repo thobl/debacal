@@ -31,8 +31,11 @@ def _semantic(event: Event) -> dict:
 
 
 def _moved_times(event: Event, shift: timedelta, zone) -> tuple[datetime, datetime]:
-    start = (event.start.astimezone(zone).replace(tzinfo=None) + shift).replace(tzinfo=zone)
-    end = (event.end.astimezone(zone).replace(tzinfo=None) + shift).replace(tzinfo=zone)
+    original_start, original_end = event.start.astimezone(zone), event.end.astimezone(zone)
+    # datetime arithmetic resets fold to zero, even for a zero-day duplicate.
+    # Preserve each endpoint's repeated-hour choice while moving its wall date.
+    start = (original_start.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_start.fold)
+    end = (original_end.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_end.fold)
     if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and event.end.timestamp() > event.start.timestamp()):
         end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
     for value in (start, end):
@@ -162,6 +165,16 @@ class EventClipboard:
             shift = (timedelta(days=(target.astimezone(zone).date() - self.reference.start.astimezone(zone).date()).days)
                      if event.all_day else wall(target) - wall(self.reference.start))
             start, end = _moved_times(event, shift, zone)
+            if not event.recurring and event.id == self.reference.id and not event.all_day:
+                actual_target = target.astimezone(zone)
+                if start.timestamp() != actual_target.timestamp():
+                    # An explicit target can select the other copy of the
+                    # repeated hour. Honor that instant and keep the copied
+                    # elapsed duration, rather than silently pasting an hour off.
+                    start = actual_target
+                    end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
+                    if not all(_valid_wall_time(value) for value in (start, end)):
+                        raise ValueError('The copied time falls in a daylight-saving clock change. Choose another paste time.')
             moved = replace(event, start=start, end=end)
             if event.recurring:
                 moved = updated_series(event, event, moved)

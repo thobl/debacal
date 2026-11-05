@@ -10,7 +10,7 @@ import calendar as monthlib
 import math
 
 from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QKeyCombination
-from PySide6.QtGui import QKeySequence, QCursor
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QLineEdit, QScrollArea, QStackedWidget, QCalendarWidget,
@@ -31,7 +31,7 @@ from .event_scope import normalize_scope_modifiers, scope_from_modifiers, SCOPED
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
-    'search': '/', 'today': 'T', 'previous': 'H', 'next': 'L',
+    'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
     'day_view': '1', 'week_view': 'W', 'month_view': 'M',
     'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
@@ -93,12 +93,14 @@ class MainWindow(QMainWindow):
         self.tray_icon = None
         self.preferences = Preferences.load(store)
         self.anchor = now().date()
+        self.selected_day = self.anchor
         self.view = 'week'
         self.selected_id = None
         self.nav_day = None
         self.nav_digits = None
         self.select_mode = False
         self._search_index = None
+        self._revealing_search_result = False
         self._shortcut_pending = []
         self.shortcut_timer = QTimer(self)
         self.shortcut_timer.setSingleShot(True)
@@ -108,6 +110,8 @@ class MainWindow(QMainWindow):
             saved_bindings['edit_single'] = ''
         if saved_bindings.get('day_view') == 'D' and 'duplicate_event' not in saved_bindings:
             saved_bindings['day_view'] = '1'
+        if saved_bindings.get('search') == '/':
+            saved_bindings['search'] = 'Ctrl+F'
         self.bindings = DEFAULT_BINDINGS | saved_bindings
         try:
             self.scope_modifiers = normalize_scope_modifiers(store.get_setting('event_scope_modifiers', None))
@@ -217,7 +221,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.heading)
         top.addStretch()
         self.search = QLineEdit()
-        self.search.setPlaceholderText('Search events   /')
+        self.search.setPlaceholderText('Search events   Ctrl+F')
         self.search.setMaximumWidth(250)
         self.search.textChanged.connect(self.run_search)
         top.addWidget(self.search)
@@ -267,14 +271,19 @@ class MainWindow(QMainWindow):
         for widget in [self.canvas, self.month]:
             widget.create_requested.connect(self.create_event)
             widget.edit_scoped_requested.connect(lambda event_id, modifiers: self.edit_event(event_id, scope=self.operation_scope(modifiers)))
-            widget.selected.connect(self.select_event)
+            widget.selected.connect(lambda event_id, source=widget: self.select_event(event_id, day=source.selected_day))
             widget.context_requested.connect(self.event_menu)
+        for widget in (self.header, self.canvas, self.month):
+            widget.day_selected.connect(self.select_day)
+            widget.create_all_day_requested.connect(self.create_all_day_event)
         self.canvas.set_scope_modifiers(self.scope_modifiers)
         self.canvas.move_scoped_requested.connect(lambda reference, start, end, modifiers:
             self.move_event(reference.id, start, end, scope=self.operation_scope(modifiers), reference=reference))
         self.results = QListWidget()
         self.results.setFixedWidth(285)
         self.results.hide()
+        self.results.currentItemChanged.connect(self.search_result_changed)
+        self.results.itemClicked.connect(self.reveal_search_result)
         self.results.itemActivated.connect(self.open_search_result)
         content.addWidget(self.results)
         outer.addLayout(content, 1)
@@ -320,19 +329,27 @@ class MainWindow(QMainWindow):
     def refresh(self, calendars=False):
         if self._closed:
             return
-        self._search_index = None
+        if not self._revealing_search_result:
+            self._search_index = None
         cals = self.store.list_calendars()
         days = self.dates()
+        if self.selected_day not in days:
+            self.selected_day = self.anchor
         self.visible_events = self.store.query_occurrences(at(days[0]), at(days[-1] + timedelta(days=1)), [c.id for c in cals if c.visible])
-        if self.selected_id and not any(e.id == self.selected_id for e in self.visible_events):
-            self.selected_id = self.canvas.selected_id = self.month.selected_id = None
+        if self.selected_id:
+            selected = next((event for event in self.visible_events if event.id == self.selected_id), None)
+            if selected is None:
+                self.selected_id = self.canvas.selected_id = self.month.selected_id = None
+            elif not any(event.id == selected.id for event in self.events_on_day(self.selected_day)):
+                self.selected_day = selected.start.date() if selected.all_day else selected.start.astimezone(local_zone()).date()
         self.heading.setText(self.anchor.strftime('%B %Y'))
         self.range_label.setText(self.preferences.format_date(days[0]) + ' — ' + self.preferences.format_date(days[-1]) if self.view != 'month' else 'A little perspective on the month')
         self.mini.setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
-        self.mini.setSelectedDate(QDate(self.anchor.year, self.anchor.month, self.anchor.day))
+        self.mini.setSelectedDate(QDate(self.selected_day.year, self.selected_day.month, self.selected_day.day))
         self.header.days = days[:7]
         for widget in (self.header, self.canvas, self.month):
             widget.set_preferences(self.preferences)
+            widget.set_selected_day(self.selected_day)
         self.header.update()
         self.canvas.set_data(days[:7], self.visible_events, cals)
         self.month.set_data(days[0], self.anchor.month, self.visible_events, cals)
@@ -356,7 +373,7 @@ class MainWindow(QMainWindow):
                 self.calendar_box.addWidget(cb)
         self.update_details()
         self.update_hints()
-        if self.search.text():
+        if self.search.text() and not self._revealing_search_result:
             self.run_search()
         self.update_sync_status()
 
@@ -420,16 +437,34 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def set_view(self, view):
+        self.anchor = self.selected_day
         self.view = view
         self.select_mode = False
         self.refresh()
 
     def go_date(self, day):
-        self.anchor = day
-        self.refresh()
+        self.select_day(day, reveal=True)
+
+    def select_day(self, day, reveal=False, clear_event=True):
+        self.selected_day = day
+        if clear_event:
+            self.selected_id = self.canvas.selected_id = self.month.selected_id = None
+            self.select_mode = False
+            self.nav_day, self.nav_digits = None, ''
+            self._shortcut_pending.clear()
+            self.shortcut_timer.stop()
+        if reveal:
+            self.anchor = day
+            self.refresh()
+        else:
+            self.mini.setSelectedDate(QDate(day.year, day.month, day.day))
+            for widget in (self.header, self.canvas, self.month):
+                widget.set_selected_day(day)
+            self.update_details()
+            self.update_hints()
 
     def open_day(self, day):
-        self.anchor = day
+        self.select_day(day)
         self.set_view('day')
 
     def today(self):
@@ -440,19 +475,25 @@ class MainWindow(QMainWindow):
             value = self.anchor.year * 12 + self.anchor.month - 1 + direction
             year, month = divmod(value, 12)
             self.anchor = self.anchor.replace(year=year, month=month + 1, day=min(self.anchor.day, monthlib.monthrange(year, month + 1)[1]))
+            self.selected_day = self.anchor.replace(day=min(self.selected_day.day, monthlib.monthrange(year, month + 1)[1]))
         else:
-            self.anchor += timedelta(days=direction * (7 if self.view == 'week' else 1))
+            shift = timedelta(days=direction * (7 if self.view == 'week' else 1))
+            self.anchor += shift
+            self.selected_day += shift
         self.refresh()
 
     def show_notice(self, message):
         self.notice.setText(message)
         self.notice.setVisible(bool(message))
 
-    def create_event(self, start=None, end=None):
+    def create_event(self, start=None, end=None, all_day=False):
         if start is None:
-            start = at(self.anchor, min(now().hour + 1, 23))
+            start = at(self.selected_day, 0 if all_day else min(now().hour + 1, 23))
+        if all_day:
+            end = end or start + timedelta(days=1)
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences, default_calendar_id=default.id if default else None)
+        dialog.all_day.setChecked(all_day)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if self.apply_events('Create ' + str(len(dialog.result_events)) + ' event(s)', dialog.result_events):
                 for event in dialog.result_events:
@@ -460,6 +501,9 @@ class MainWindow(QMainWindow):
                     if calendar and not calendar.visible:
                         self.store.set_calendar_visible(calendar.id, True)
                 self.refresh(calendars=True)
+
+    def create_all_day_event(self, start=None, end=None):
+        self.create_event(start, end, all_day=True)
 
     def apply_events(self, label, events=(), delete_ids=()):
         try:
@@ -604,9 +648,13 @@ class MainWindow(QMainWindow):
         return [member for member in self.store.list_events(calendar_ids=[event.calendar_id])
                 if member.group_id == event.group_id]
 
-    def select_event(self, event_id):
+    def select_event(self, event_id, day=None):
         self.selected_id = event_id
         self.canvas.selected_id = self.month.selected_id = event_id
+        event = next((value for value in self.visible_events if value.id == event_id), None) or self.event_by_id(event_id)
+        if event:
+            day = day or (event.start.date() if event.all_day else event.start.astimezone(local_zone()).date())
+            self.select_day(day, clear_event=False)
         self.canvas.update()
         self.month.update()
         self.update_details()
@@ -617,7 +665,7 @@ class MainWindow(QMainWindow):
             return
         self.details.parentWidget().layout().activate()
         self.scroll.parentWidget().layout().activate()
-        rects = [rect for rect, event, _ in self.canvas.rects() if event.id == event_id and not event.all_day]
+        rects = [rect for rect, event, _ in self.canvas.rects() if event.id == event_id]
         if not rects:
             return
         bar = self.scroll.verticalScrollBar()
@@ -787,28 +835,15 @@ class MainWindow(QMainWindow):
         return EventClipboard.capture(masters, reference, 'group')
 
     def paste_target(self, selection):
-        position = QCursor.pos()
-        if self.view != 'month':
-            point = self.canvas.mapFromGlobal(position)
-            viewport = self.scroll.viewport()
-            if viewport.rect().contains(viewport.mapFromGlobal(position)) and self.canvas.rect().contains(point) and point.x() >= self.canvas.gutter:
-                day, minute = self.canvas.position(point)
-                return at(self.canvas.days[day]) + timedelta(minutes=minute)
-        else:
-            point = self.month.mapFromGlobal(position)
-            if self.month.rect().contains(point) and point.y() >= 28:
-                day = self.month.day_at(point)
-                return selection.reference.start.astimezone(local_zone()).replace(
-                    year=day.year, month=day.month, day=day.day)
-        selected = self.event_by_id(self.selected_id or '')
-        if selected:
-            return selected.start
-        return selection.reference.start.astimezone(local_zone()).replace(
-            year=self.anchor.year, month=self.anchor.month, day=self.anchor.day)
+        source = selection.reference.start
+        if not selection.reference.all_day:
+            source = source.astimezone(local_zone())
+        day = self.selected_day
+        return source.replace(year=day.year, month=day.month, day=day.day)
 
     def persist_copies(self, events, target, label):
         if self.apply_events(label, events):
-            self.anchor = target.astimezone(local_zone()).date()
+            self.anchor = self.selected_day = (target.date() if events[0].all_day else target.astimezone(local_zone()).date())
             self.selected_id = None
             self.refresh()
             ids = {event.id for event in events}
@@ -865,7 +900,7 @@ class MainWindow(QMainWindow):
             self.show_notice(str(exc))
 
     def event_menu(self, event_id, point):
-        self.select_event(event_id)
+        self.select_event(event_id, day=self.selected_day if self.selected_id == event_id else None)
         event = self.event_by_id(event_id)
         if event is None:
             return
@@ -924,52 +959,135 @@ class MainWindow(QMainWindow):
             self.update_hints()
 
     def run_search(self, *_):
+        if self._revealing_search_result:
+            return
         query = self.search.text().strip().casefold()
         self.results.setVisible(bool(query))
-        self.results.clear()
-        if not query:
+        current = self.results.currentItem()
+        previous_id = current.data(Qt.ItemDataRole.UserRole) if current else None
+        blocked = self.results.blockSignals(True)
+        try:
+            self.results.clear()
+            if not query:
+                return
+            if self._search_index is None:
+                cals = {c.id: c for c in self.store.list_calendars()}
+                searchable_events = []
+                for master in self.store.list_events():
+                    searchable_events.append(master)
+                    searchable_events.extend(Event.from_dict(payload) for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates)
+                self._search_index = [
+                    (event, (event.title + ' ' + event.description + ' ' + event.location).casefold(), cals[event.calendar_id].name)
+                    for event in searchable_events
+                ]
+            matches, current_row = 0, -1
+            for event, searchable, calendar_name in self._search_index:
+                if query not in searchable:
+                    continue
+                matches += 1
+                if matches > 200:
+                    break
+                local = event.start.astimezone(local_zone())
+                when = self.preferences.format_date(local.date(), weekday=True) + ' · ' + self.preferences.format_time(local)
+                if event.recurring:
+                    when += ' · repeating'
+                item = QListWidgetItem(event.title + '\n' + when + '\n' + calendar_name)
+                item.setData(Qt.ItemDataRole.UserRole, event.id)
+                self.results.addItem(item)
+                if event.id == previous_id:
+                    current_row = self.results.count() - 1
+            if not matches or matches > 200:
+                item = QListWidgetItem('No matching events' if not matches else 'First 200 results · refine your search')
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
+                self.results.addItem(item)
+            self.results.setCurrentRow(current_row)
+        finally:
+            self.results.blockSignals(blocked)
+
+    def focus_search(self):
+        self._shortcut_pending.clear()
+        self.shortcut_timer.stop()
+        self.select_mode = False
+        self.search.setFocus()
+        self.search.selectAll()
+        self.update_hints()
+
+    def search_result_changed(self, current, _previous):
+        if current is not None:
+            self.reveal_search_result(current)
+
+    def cycle_search_result(self, direction):
+        rows = [row for row in range(self.results.count())
+                if self.results.item(row).data(Qt.ItemDataRole.UserRole)]
+        if not rows:
             return
-        if self._search_index is None:
-            cals = {c.id: c for c in self.store.list_calendars()}
-            searchable_events = []
-            for master in self.store.list_events():
-                searchable_events.append(master)
-                searchable_events.extend(Event.from_dict(payload) for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates)
-            self._search_index = [
-                (event, (event.title + ' ' + event.description + ' ' + event.location).casefold(), cals[event.calendar_id].name)
-                for event in searchable_events
-            ]
-        matches = 0
-        for event, searchable, calendar_name in self._search_index:
-            if query not in searchable:
-                continue
-            matches += 1
-            if matches > 200:
-                break
-            local = event.start.astimezone(local_zone())
-            when = self.preferences.format_date(local.date(), weekday=True) + ' · ' + self.preferences.format_time(local)
-            if event.recurring:
-                when += ' · repeating'
-            item = QListWidgetItem(event.title + '\n' + when + '\n' + calendar_name)
-            item.setData(Qt.ItemDataRole.UserRole, event.id)
-            self.results.addItem(item)
-        if not matches:
-            self.results.addItem('No matching events')
-        elif matches > 200:
-            self.results.addItem('First 200 results · refine your search')
+        current = self.results.currentRow()
+        index = rows.index(current) if current in rows else (-1 if direction > 0 else 0)
+        row = rows[(index + direction) % len(rows)]
+        if row == current:
+            self.reveal_search_result(self.results.item(row))
+        else:
+            self.results.setCurrentRow(row)
+        self.results.scrollToItem(self.results.currentItem())
+
+    def search_result_event(self, event_id):
+        master = self.store.get_occurrence(event_id)
+        if master is None or master.series_id or not master.recurring:
+            return master
+        visible = [event for event in self.visible_events if event.series_id == master.id]
+        if visible:
+            return min(visible, key=lambda event: event.start.timestamp())
+        event = self.event_by_id(event_id)
+        if event is not None:
+            return event
+        # A finished series can have an excluded DTSTART. Its next retained
+        # historical occurrence still needs to be reachable from search.
+        from .recurrence import recurrence_set, occurrence
+        rules = recurrence_set(master)
+        start = rules.after(master.start, inc=True) or rules.before(master.start, inc=True)
+        return occurrence(master, start) if start is not None else None
+
+    def reveal_search_result(self, item):
+        event_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not event_id or self._revealing_search_result:
+            return False
+        try:
+            event = self.search_result_event(event_id)
+        except (ValueError, OverflowError) as exc:
+            self.show_notice(str(exc))
+            return False
+        if event is None:
+            return False
+        cal = self.store.get_calendar(event.calendar_id)
+        if cal is None:
+            return False
+        focus = QApplication.focusWidget()
+        day = event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
+        self._revealing_search_result = True
+        try:
+            if not cal.visible:
+                self.store.set_calendar_visible(cal.id, True)
+            visible = any(value.id == event.id for value in self.visible_events)
+            if (not cal.visible or not visible or day not in self.dates()
+                    or (self.view == 'month' and (day.year, day.month) != (self.anchor.year, self.anchor.month))):
+                self.anchor = day
+                self.refresh(calendars=not cal.visible)
+            self.select_event(event.id)
+            self.ensure_event_visible(event.id)
+        finally:
+            self._revealing_search_result = False
+        if focus in (self.search, self.results):
+            focus.setFocus()
+        return True
 
     def open_search_result(self, item):
-        event = self.event_by_id(item.data(Qt.ItemDataRole.UserRole) or '')
-        if event:
-            cal = self.store.get_calendar(event.calendar_id)
-            self.store.set_calendar_visible(cal.id, True)
-            self.anchor = event.start.astimezone(local_zone()).date()
-            self.search.clear()
-            self.search.clearFocus()
-            self.refresh(calendars=True)
-            self.select_event(event.id)
-            self.canvas.setFocus()
-            self.ensure_event_visible(event.id)
+        if self.reveal_search_result(item):
+            (self.month if self.view == 'month' else self.canvas).setFocus()
+
+    def exit_search(self):
+        self.search.clear()
+        self.results.hide()
+        (self.month if self.view == 'month' else self.canvas).setFocus()
 
     def add_calendar(self, calendar=None):
         default = self.store.get_default_calendar()
@@ -1203,9 +1321,13 @@ class MainWindow(QMainWindow):
 
     def select_by_arrow(self, direction):
         events = self.visible_events
+        current = self.event_by_id(self.selected_id or '')
+        if direction in ('left', 'right') and current is None:
+            day = self.selected_day + timedelta(days=-1 if direction == 'left' else 1)
+            self.select_day(day, reveal=day not in self.dates())
+            return
         if not events:
             return
-        current = self.event_by_id(self.selected_id or '')
         if direction in ('left', 'right') and current:
             target = current.start.astimezone(local_zone()) + timedelta(days=-1 if direction == 'left' else 1)
             options = [e for e in events if e.start.astimezone(local_zone()).date() == target.date()]
@@ -1231,15 +1353,31 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.KeyPress or not self.isActiveWindow() or QApplication.activeModalWidget():
             return super().eventFilter(obj, event)
         focus = QApplication.focusWidget()
-        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox)):
+        text_focus = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox))
+        command_modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier
+        search_binding = QKeySequence(self.bindings.get('search', ''))
+        if ((not self._shortcut_pending or text_focus) and search_binding.count() == 1
+                and (event.modifiers() & command_modifiers or event.key() >= Qt.Key.Key_Escape)
+                and QKeySequence(event.keyCombination()).matches(search_binding) == QKeySequence.SequenceMatch.ExactMatch):
+            self.focus_search()
+            return True
+        searching = focus in (self.search, self.results)
+        if event.key() == Qt.Key.Key_Escape and (searching or (self.search.text() and self.results.isVisible())):
+            self.exit_search()
+            return True
+        if searching and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier:
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                self.cycle_search_result(-1 if event.key() == Qt.Key.Key_Up else 1)
+                return True
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                item = self.results.currentItem()
+                if item is None or not item.data(Qt.ItemDataRole.UserRole):
+                    self.cycle_search_result(1)
+                    item = self.results.currentItem()
+                self.open_search_result(item)
+                return True
+        if text_focus:
             self._shortcut_pending.clear()
-            if event.key() == Qt.Key.Key_Escape and focus is self.search:
-                self.search.clear()
-                self.canvas.setFocus()
-                return True
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and focus is self.search and self.results.count():
-                self.open_search_result(self.results.item(0))
-                return True
             return super().eventFilter(obj, event)
         if self.select_mode:
             char = event.text()
@@ -1278,12 +1416,15 @@ class MainWindow(QMainWindow):
             self.update_hints()
             return True
         action = self.match_shortcut(event)
+        if (action is None and self.bindings.get('search') == 'Ctrl+F' and event.text() == '/'
+                and not event.modifiers() & command_modifiers):
+            action = 'search'
         if action == 'pending':
             return True
         actions = {
             'new_event': self.create_event, 'edit_event': lambda: self.edit_event(scope=self._matched_scope),
             'edit_single': lambda: self.edit_event(group=False), 'preferences': self.show_preferences,
-            'delete_event': lambda: self.delete_event(scope=self._matched_scope), 'search': self.search.setFocus,
+            'delete_event': lambda: self.delete_event(scope=self._matched_scope), 'search': self.focus_search,
             'copy_event': lambda: self.copy_event(scope=self._matched_scope),
             'paste_event': lambda: self.paste_events(scope=self._matched_scope),
             'duplicate_event': lambda: self.duplicate_event(scope=self._matched_scope),

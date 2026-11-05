@@ -209,16 +209,16 @@ def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, mod
     assert store.list_events() == [master]
 
 
-def test_double_click_uses_scope_modifier(workspace):
+def test_double_click_creates_new_event_even_with_scope_modifier(workspace):
     _, window, _, _, selected, _ = workspace
     seen = []
     rect = next(rect for rect, event, _ in window.canvas.rects() if event.id == selected.id)
     def inspect(dialog):
-        seen.append(dialog.scope.currentData())
+        seen.append((dialog.original, dialog.series, dialog.title.text()))
         return QDialog.DialogCode.Rejected
     with patch.object(EventDialog, 'exec', inspect):
         QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, SHIFT, rect.center().toPoint())
-    assert seen == ['future']
+    assert seen == [(None, None, '')]
 
 
 def test_configured_scope_modifiers_and_shortcut_persistence(workspace):
@@ -292,10 +292,11 @@ def test_month_paste_changes_date_without_rounding_copied_clock(workspace):
     window.set_view('month')
     app.processEvents()
     target_day = date(2026, 11, 20)
+    window.select_day(target_day)
     index = (target_day - window.month.start).days
     point = QPoint(round((index % 7 + .5) * window.month.width() / 7),
                    round(28 + (index // 7 + .5) * (window.month.height() - 28) / 6))
-    with patch('lebacal.ui.QCursor.pos', return_value=window.month.mapToGlobal(point)):
+    with patch('PySide6.QtGui.QCursor.pos', return_value=window.month.mapToGlobal(point)):
         assert window.paste_target(selection) == source_start.replace(day=20)
 
 

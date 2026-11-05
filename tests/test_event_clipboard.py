@@ -202,3 +202,24 @@ def test_nested_override_is_validated_even_when_another_occurrence_is_selected()
     override["ical_uid"] = "unrelated@example.invalid"
     with pytest.raises(ValueError):
         EventClipboard.from_bytes(json.dumps(payload).encode())
+
+
+def test_zero_shift_duplicate_preserves_repeated_hour_endpoint_choices():
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=BERLIN, fold=1)
+    source = series(start=start, end=datetime(2026, 10, 25, 3, 30, tzinfo=BERLIN), recurrence_rule="")
+    clipboard = EventClipboard.capture([source], source)
+    pasted = clipboard.instantiate("single", source.start, "destination")[0]
+    assert pasted.start.timestamp() == source.start.timestamp()
+    assert pasted.end.timestamp() == source.end.timestamp()
+    assert pasted.start.fold == 1 and pasted.end.fold == 0
+
+
+@pytest.mark.parametrize("target_fold", [0, 1])
+def test_explicit_repeated_hour_target_is_honored_with_elapsed_duration(target_fold):
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=BERLIN, fold=1)
+    source = series(start=start, end=datetime(2026, 10, 25, 3, 30, tzinfo=BERLIN), recurrence_rule="")
+    clipboard = EventClipboard.capture([source], source)
+    target = datetime(2027, 10, 31, 2, 30, tzinfo=BERLIN, fold=target_fold)
+    pasted = clipboard.instantiate("single", target, "destination")[0]
+    assert pasted.start.timestamp() == target.timestamp()
+    assert pasted.end.timestamp() - pasted.start.timestamp() == 3600

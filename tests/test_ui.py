@@ -19,6 +19,7 @@ from lebacal.preferences import Preferences
 from lebacal.series_preview import SeriesPreview
 from lebacal.models import Calendar, Event
 from lebacal.store import Store
+from lebacal.timeutil import local_zone
 from lebacal.ui import MainWindow
 
 
@@ -400,7 +401,7 @@ class CanvasTests(unittest.TestCase):
             header.days = days
             self.assertFalse(header.grab().isNull())
 
-    def test_month_empty_day_and_overflow_open_the_day(self):
+    def test_month_empty_day_and_overflow_create_at_default_time(self):
         month = MonthCanvas()
         self.widgets.append(month)
         month.resize(1050, 700)
@@ -414,13 +415,13 @@ class CanvasTests(unittest.TestCase):
         day_height = (month.height() - 28) / 6
         overflow = QPoint(30, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=overflow)
-        self.assertEqual(open_spy.count(), 1)
-        self.assertEqual(open_spy.at(0)[0], date(2026, 11, 2))
+        self.assertEqual(create_spy.count(), 1)
+        self.assertEqual(create_spy.at(0)[0], datetime(2026, 11, 2, 9, tzinfo=local_zone()))
         empty = QPoint(170, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=empty)
-        self.assertEqual(open_spy.count(), 2)
-        self.assertEqual(open_spy.at(1)[0], date(2026, 11, 3))
-        self.assertEqual(create_spy.count(), 0)
+        self.assertEqual(create_spy.count(), 2)
+        self.assertEqual(create_spy.at(1)[0], datetime(2026, 11, 3, 9, tzinfo=local_zone()))
+        self.assertEqual(open_spy.count(), 0)
 
     def test_day_numbers_only_appear_during_navigation_and_mark_chosen_day(self):
         header = DayHeader()

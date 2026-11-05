@@ -18,6 +18,10 @@ LINE = QColor('#e4e8e0')
 INK = QColor('#26362e')
 MUTED = QColor('#89938a')
 GREEN = QColor('#416c51')
+SELECTED_DAY = QColor('#edf1f8')
+SELECTED_DAY_BORDER = QColor('#91a2b8')
+SELECTED_EVENT = QColor('#dce8f5')
+SELECTED_EVENT_BORDER = QColor('#2c527c')
 
 
 def at(day, hour=0, minute=0):
@@ -41,6 +45,11 @@ def badge(painter, rect, value, selected=False):
 
 
 class DayHeader(QWidget):
+    day_selected = Signal(object)
+    create_all_day_requested = Signal(object, object)
+    gutter = 62
+    all_day_top = 60
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.days = []
@@ -48,7 +57,12 @@ class DayHeader(QWidget):
         self.navigation_active = False
         self.navigation_day = None
         self.navigation_digits = ''
-        self.setFixedHeight(66)
+        self.selected_day = None
+        self.setFixedHeight(84)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip('Click to select a day. Double-click to create an all-day event.')
 
     def set_preferences(self, preferences):
         self.preferences = preferences
@@ -60,16 +74,49 @@ class DayHeader(QWidget):
         self.navigation_digits = str(digits or '') if active else ''
         self.update()
 
+    def set_selected_day(self, day):
+        self.selected_day = day
+        self.update()
+
+    def day_at(self, point):
+        if not self.days or point.x() < self.gutter or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+            return None
+        width = (self.width() - self.gutter) / len(self.days)
+        if width <= 0:
+            return None
+        return self.days[min(len(self.days) - 1, int((point.x() - self.gutter) / width))]
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            day = self.day_at(event.position())
+            if day is not None:
+                self.setFocus()
+                self.set_selected_day(day)
+                self.day_selected.emit(day)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            day = self.day_at(event.position())
+            if day is not None:
+                self.setFocus()
+                self.set_selected_day(day)
+                self.day_selected.emit(day)
+                self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.fillRect(self.rect(), BG)
         if not self.days:
             return
-        w = (self.width() - 62) / len(self.days)
+        w = (self.width() - self.gutter) / len(self.days)
         for i, day in enumerate(self.days):
-            x = 62 + i * w
+            x = self.gutter + i * w
             today = day == now().date()
             selected_day = self.navigation_active and i == self.navigation_day
+            if day == self.selected_day:
+                p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
+                p.setBrush(SELECTED_DAY)
+                p.drawRoundedRect(QRectF(x + 3, 3, w - 6, self.height() - 6), 7, 7)
             if today or selected_day:
                 p.setPen(QPen(GREEN, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
                 p.setBrush(QColor('#dceace') if selected_day else QColor('#e6eedf'))
@@ -78,11 +125,17 @@ class DayHeader(QWidget):
             text(p, QRectF(x + 14, 27, w - 22, 28), str(day.day), GREEN if today else INK, 18, True)
             if self.navigation_active:
                 badge(p, QRectF(x + w - 34, 11, 21, 21), str(i + 1), selected_day)
+            p.setPen(QPen(LINE, 1))
+            p.drawLine(QPointF(x + 8, self.all_day_top), QPointF(x + w - 8, self.all_day_top))
+            text(p, QRectF(x + 8, self.all_day_top + 1, w - 16, 20), '+ All day', GREEN, 8,
+                 align=Qt.AlignmentFlag.AlignCenter)
         p.end()
 
 
 class CalendarCanvas(QWidget):
     create_requested = Signal(object, object)
+    create_all_day_requested = Signal(object, object)
+    day_selected = Signal(object)
     edit_requested = Signal(str)
     move_requested = Signal(str, object, object)
     edit_scoped_requested = Signal(str, object)
@@ -98,6 +151,7 @@ class CalendarCanvas(QWidget):
         super().__init__(parent)
         self.days, self.events, self.calendars = [], [], {}
         self.selected_id = None
+        self.selected_day = None
         self.hits = []
         self.drag = None
         self.ghost = None
@@ -120,6 +174,10 @@ class CalendarCanvas(QWidget):
 
     def set_preferences(self, preferences):
         self.preferences = preferences
+        self.update()
+
+    def set_selected_day(self, day):
+        self.selected_day = day
         self.update()
 
     def set_scope_modifiers(self, settings):
@@ -187,12 +245,19 @@ class CalendarCanvas(QWidget):
         for i, day in enumerate(self.days):
             if day.weekday() >= 5:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#f4f6f0'))
+            if day == self.selected_day:
+                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), SELECTED_DAY)
             if self.show_numbers and i == self.navigation_day:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#eef4e7'))
         p.setPen(QPen(LINE, 1))
         for i in range(len(self.days) + 1):
             x = self.gutter + i * w
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        if self.selected_day in self.days:
+            index = self.days.index(self.selected_day)
+            p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(QRectF(self.gutter + index * w + 1, 1, w - 2, self.height() - 2))
         text(p, QRectF(4, 4, 56, 28), 'ALL DAY', MUTED, 7)
         p.setPen(QPen(LINE, 1))
         p.drawLine(0, self.all_day_height, self.width(), self.all_day_height)
@@ -237,17 +302,21 @@ class CalendarCanvas(QWidget):
         day_index = int((rect.center().x() - self.gutter) / day_width)
         numbered = self.show_numbers and self.navigation_day == day_index
         target = numbered and self.navigation_digits.isascii() and self.navigation_digits.isdigit() and int(self.navigation_digits) == number
-        fill = QColor(color)
-        fill.setAlpha(95 if target else (38 if event.candidate else 52))
+        selected = event.id == self.selected_id
+        fill = QColor(SELECTED_EVENT if selected else color)
+        if not selected:
+            fill.setAlpha(95 if target else (38 if event.candidate else 52))
         p.setBrush(fill)
-        p.setPen(QPen(GREEN if target else color, 3 if target else (2 if event.id == self.selected_id else 1),
+        p.setPen(QPen(GREEN if target else SELECTED_EVENT_BORDER if selected else color, 3 if target or selected else 1,
                       Qt.PenStyle.DashLine if event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, 5, 5)
+        if selected:
+            p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), SELECTED_EVENT_BORDER)
         p.save()
         p.setClipRect(rect.adjusted(4, 1, -3, -1))
         point_event = event.start.timestamp() == event.end.timestamp()
         title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
-        text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - (40 if numbered else 12), min(21, rect.height() - 2)), title, color.darker(145), 9, True)
+        text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - (40 if numbered else 12), min(21, rect.height() - 2)), title, SELECTED_EVENT_BORDER if selected else color.darker(145), 9, True)
         if rect.height() > 39:
             value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
             if event.candidate:
@@ -263,6 +332,18 @@ class CalendarCanvas(QWidget):
     def hit(self, pos):
         return next(((r, e) for r, e, _ in reversed(self.hits) if r.contains(pos)), None)
 
+    def day_at(self, point):
+        if not self.days or point.x() < self.gutter or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+            return None
+        return self.days[self.position(point)[0]]
+
+    def select_day_at(self, point):
+        day = self.day_at(point)
+        if day is not None:
+            self.set_selected_day(day)
+            self.day_selected.emit(day)
+        return day
+
     def position(self, point, endpoint=False):
         width = (self.width() - self.gutter) / max(1, len(self.days))
         day = min(len(self.days) - 1, max(0, int((point.x() - self.gutter) / width)))
@@ -274,6 +355,8 @@ class CalendarCanvas(QWidget):
         if event.button() != Qt.MouseButton.LeftButton or not self.days:
             return
         point = event.position()
+        if self.select_day_at(point) is None:
+            return
         self.gesture_modifiers = event.modifiers()
         hit = self.hit(point)
         self.setFocus()
@@ -293,8 +376,16 @@ class CalendarCanvas(QWidget):
         if not self.drag:
             hit = self.hit(point)
             local = hit[1].start.astimezone(local_zone()) if hit else None
-            self.setToolTip((hit[1].title + '\n' + self.preferences.format_date(local, weekday=True) + ' · '
-                             + self.preferences.format_time(local) + '\n' + hit[1].location) if hit else '')
+            day = self.day_at(point)
+            if hit:
+                self.setToolTip(hit[1].title + '\n' + self.preferences.format_date(local, weekday=True) + ' · '
+                                + ('All day' if hit[1].all_day else self.preferences.format_time(local)) + '\n'
+                                + hit[1].location + '\nDouble-click to create a new event.')
+            elif day is not None:
+                self.setToolTip('Double-click to add an all-day event.' if point.y() < self.all_day_height else
+                                'Click to select this day. Double-click to add an event, or drag to choose its duration.')
+            else:
+                self.setToolTip('')
             self.setCursor(Qt.CursorShape.SizeVerCursor if hit and point.y() > hit[0].bottom() - 7 and not hit[1].all_day else Qt.CursorShape.ArrowCursor)
             return
         if (point - self.drag[2]).manhattanLength() < 5:
@@ -334,28 +425,40 @@ class CalendarCanvas(QWidget):
                 else:
                     self.move_requested.emit(item.id, start, end)
                     self.move_scoped_requested.emit(item, start, end, event.modifiers())
-            elif kind == 'create':
-                start = at(self.days[day]) + timedelta(minutes=minute)
-                self.create_requested.emit(start, start + timedelta(hours=1))
         self.update()
 
     def mouseDoubleClickEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
         self.drag = self.ghost = None
-        hit = self.hit(event.position())
-        if hit:
-            self.edit_requested.emit(hit[1].id)
-            self.edit_scoped_requested.emit(hit[1].id, event.modifiers())
+        point = event.position()
+        day = self.select_day_at(point)
+        if day is None:
+            return
+        self.setFocus()
+        if point.y() < self.all_day_height:
+            self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
+        else:
+            _, minute = self.position(point)
+            start = at(day) + timedelta(minutes=minute)
+            self.create_requested.emit(start, start + timedelta(hours=1))
+        self.update()
 
     def contextMenuEvent(self, event):
+        if self.select_day_at(event.pos()) is not None:
+            self.setFocus()
         hit = self.hit(event.pos())
         if hit:
             self.selected_id = hit[1].id
             self.selected.emit(hit[1].id)
+            self.update()
             self.context_requested.emit(hit[1].id, event.globalPos())
 
 
 class MonthCanvas(QWidget):
     create_requested = Signal(object, object)
+    create_all_day_requested = Signal(object, object)
+    day_selected = Signal(object)
     open_day = Signal(object)
     edit_requested = Signal(str)
     edit_scoped_requested = Signal(str, object)
@@ -368,11 +471,18 @@ class MonthCanvas(QWidget):
         self.month = self.start.month
         self.events, self.calendars, self.hits = [], {}, []
         self.selected_id = None
+        self.selected_day = None
         self.preferences = Preferences()
         self.setMinimumHeight(440)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def set_preferences(self, preferences):
         self.preferences = preferences
+        self.update()
+
+    def set_selected_day(self, day):
+        self.selected_day = day
         self.update()
 
     def set_data(self, start, month, events, calendars):
@@ -397,41 +507,66 @@ class MonthCanvas(QWidget):
                 p.fillRect(rect, QColor('#f0f3ec'))
             if day == now().date():
                 p.fillRect(rect, QColor('#edf2e7'))
+            if day == self.selected_day:
+                p.fillRect(rect, SELECTED_DAY)
             p.setPen(QPen(LINE, 1))
             # Event pills set a fill brush. Reset it before drawing the next
             # day border, otherwise that calendar's tint fills every later day.
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
+            if day == self.selected_day:
+                p.setPen(QPen(SELECTED_DAY_BORDER, 1.5))
+                p.drawRect(rect.adjusted(1, 1, -1, -1))
             text(p, QRectF(x + 10, y + 3, w - 18, 25), str(day.day), GREEN if day == now().date() else INK, 10, True)
+            text(p, QRectF(x + 32, y + 5, w - 40, 20), '+ all day' if w >= 90 else '+', MUTED, 7,
+                 align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             daily = [e for e in self.events if overlaps(e, at(day), at(day + timedelta(days=1)))]
             capacity = max(0, int((h - 37) / 24))
             visible = daily[:capacity if len(daily) <= capacity else max(0, capacity - 1)]
+            selected = next((item for item in daily if item.id == self.selected_id), None)
+            if selected is not None and selected not in visible and capacity:
+                if visible:
+                    visible[-1] = selected
+                else:
+                    visible = [selected]
             for n, item in enumerate(visible):
                 er = QRectF(x + 5, y + 32 + n * 24, w - 10, 21)
                 color = QColor(self.calendars[item.calendar_id].color)
-                p.setPen(Qt.PenStyle.NoPen)
-                fill = QColor(color)
-                fill.setAlpha(40)
+                selected = item.id == self.selected_id
+                p.setPen(QPen(SELECTED_EVENT_BORDER, 3) if selected else Qt.PenStyle.NoPen)
+                fill = QColor(SELECTED_EVENT if selected else color)
+                if not selected:
+                    fill.setAlpha(40)
                 p.setBrush(fill)
                 p.drawRoundedRect(er, 3, 3)
                 label = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
-                text(p, er.adjusted(5, 0, -3, 0), label, color.darker(140), 8)
-                if item.id == self.selected_id:
-                    p.setPen(QPen(color, 2))
-                    p.setBrush(Qt.BrushStyle.NoBrush)
-                    p.drawRoundedRect(er, 3, 3)
+                if selected:
+                    p.fillRect(QRectF(er.left() + 3, er.top() + 4, 3, er.height() - 8), SELECTED_EVENT_BORDER)
+                text(p, er.adjusted(8 if selected else 5, 0, -3, 0), label, SELECTED_EVENT_BORDER if selected else color.darker(140), 8, selected)
                 self.hits.append((er, item))
-            if len(daily) > len(visible):
-                text(p, QRectF(x + 10, y + 32 + len(visible) * 24, w - 15, 21), f'+{len(daily) - len(visible)} more · open day', MUTED, 8)
+            if len(daily) > len(visible) and len(visible) < capacity:
+                text(p, QRectF(x + 10, y + 32 + len(visible) * 24, w - 15, 21), f'+{len(daily) - len(visible)} more', MUTED, 8)
         p.end()
 
     def day_at(self, point):
+        if point.y() < 28 or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+            return None
         index = min(5, max(0, int((point.y() - 28) / ((self.height() - 28) / 6)))) * 7 + min(6, max(0, int(point.x() / (self.width() / 7))))
         return self.start + timedelta(days=index)
+
+    def select_day_at(self, point):
+        day = self.day_at(point)
+        if day is not None:
+            self.set_selected_day(day)
+            self.day_selected.emit(day)
+        return day
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        if self.select_day_at(event.position()) is None:
+            return
+        self.setFocus()
         hit = next(((r, e) for r, e in self.hits if r.contains(event.position())), None)
         if hit:
             self.selected_id = hit[1].id
@@ -439,15 +574,39 @@ class MonthCanvas(QWidget):
             self.update()
 
     def mouseDoubleClickEvent(self, event):
-        hit = next(((r, e) for r, e in self.hits if r.contains(event.position())), None)
-        if hit:
-            self.edit_requested.emit(hit[1].id)
-            self.edit_scoped_requested.emit(hit[1].id, event.modifiers())
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        point = event.position()
+        day = self.select_day_at(point)
+        if day is None:
+            return
+        self.setFocus()
+        height = (self.height() - 28) / 6
+        if (point.y() - 28) % height < 30:
+            self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
         else:
-            self.open_day.emit(self.day_at(event.position()))
+            start = at(day, 9)
+            self.create_requested.emit(start, start + timedelta(hours=1))
+
+    def mouseMoveEvent(self, event):
+        point = event.position()
+        day = self.day_at(point)
+        if day is None:
+            self.setToolTip('')
+            return
+        height = (self.height() - 28) / 6
+        all_day = (point.y() - 28) % height < 30
+        self.setToolTip(self.preferences.format_date(day, weekday=True) + '\n'
+                        + ('Double-click the day heading to create an all-day event.' if all_day else
+                           'Click to select this day. Double-click to create a new event at 09:00.'))
+        self.setCursor(Qt.CursorShape.PointingHandCursor if all_day else Qt.CursorShape.ArrowCursor)
 
     def contextMenuEvent(self, event):
+        if self.select_day_at(event.pos()) is not None:
+            self.setFocus()
         hit = next(((r, e) for r, e in self.hits if r.contains(event.pos())), None)
         if hit:
+            self.selected_id = hit[1].id
             self.selected.emit(hit[1].id)
+            self.update()
             self.context_requested.emit(hit[1].id, event.globalPos())

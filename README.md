@@ -61,9 +61,16 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 * **Day / week / month:** switch with the toolbar or `1`, `W`, `M`. `H`/`L`
   move backward/forward; `T` returns to today. Click the mini calendar to jump.
-* **Create:** `N`, the New event button, or drag an empty day/week time slot.
-  Drag a timed event to move it; drag its bottom edge to resize. Double-click
-  an event to edit it. All-day events are entered in the event editor.
+* **Select a day:** click a day heading or an empty calendar area. The selected
+  day is highlighted and follows view changes and the mini calendar. With no
+  event selected, Left/Right selects the previous/next day.
+* **Create:** `N`, the New event button, double-click in any view, or drag an
+  empty day/week time slot. A single click selects without creating. Double-click
+  always creates a new event, including over an existing event; use `E` or the
+  right-click menu to edit. In month view, the body starts a timed event at 09:00.
+  Double-click a day heading, its **+ All day** area, or the day/week all-day strip
+  to start an all-day event. The day/week heading remains available while scrolling.
+  Drag a timed event to move it; drag its bottom edge to resize.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
@@ -72,9 +79,14 @@ without it. Existing imported definitions are retained. UTC events export offlin
   modifiers apply to deletion, mouse dragging/resizing, copy, paste and duplicate.
 * **Copy / paste / duplicate:** `C`, `V`, `D`. Hold `Ctrl` for all events or
   `Shift` for this and following events. `D` creates a copy at the same time;
-  day view is now `1`. Text fields keep native `Ctrl+C` / `Ctrl+V` behavior.
-* **Search:** `/`, then title, notes, or location. Press Enter to jump to the
-  first match, or activate a result. Escape clears search.
+  `V` pastes on the selected day at the copied event's time. The pointer's
+  position has no effect. Day view is `1`. Text fields keep native
+  `Ctrl+C` / `Ctrl+V` behavior.
+* **Search:** `Ctrl+F`, then title, notes, or location. Up/Down cycles through
+  matches, wrapping at either end; clicking a result also reveals and highlights
+  its event in the calendar. The query stays open while browsing. Enter keeps the
+  current match selected and returns focus to the calendar; Escape closes search.
+  `/` remains a calendar shortcut for search with the default bindings.
 * **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
@@ -111,9 +123,11 @@ first occurrence updates the original resource without leaving an empty past.
 Use `Ctrl+C`, then `Ctrl+V`, to copy and paste a complete series; use `Shift+C`
 and `Shift+V` for its future part. Plain `V` takes one occurrence from the copied
 selection. Paste cannot recover events outside the scope originally copied.
-It aligns the copied selected occurrence with the hovered day/time, a selected
-event, or the displayed day at the copied clock time. Pasting uses the writable
-default calendar; duplication uses the source calendar when writable. Each copy
+It aligns the copied selected occurrence with the selected calendar day, keeping
+its clock time. Explicit **Paste … here** actions in an event's context menu use
+that event's date and time. All-day copies retain their calendar-date span.
+Pasting uses the writable default calendar; duplication uses the source calendar
+when writable. Each copy
 gets fresh event identities and independent group links. Clipboard data also
 includes standard iCalendar for other applications, and standard ICS can be
 pasted from other applications. Duplication preserves the existing clipboard.
