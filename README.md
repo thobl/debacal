@@ -45,6 +45,8 @@ debacal --test                    # Persistent testing profile
 debacal --profile work            # Another named profile
 debacal appointment.ics           # Review a file before importing
 debacal --test one.ics two.ics    # Import into the testing profile
+debacal < appointment.ics         # Import ICS contents from standard input
+cat appointment.ics | debacal     # Piped contents work too
 ```
 
 `--test` is shorthand for `--profile testing`. Named profiles start with an empty
@@ -63,6 +65,12 @@ running; file paths are delivered to that window instead of starting another
 sync engine. Requests received during another dialog wait their turn. File reads
 run in the background, and an invalid file does not prevent other files from
 being imported. Imports can be undone.
+
+Redirected or piped ICS contents open the same review dialog, labeled
+**Standard input**, and can be combined with file arguments. This also works
+with `--test`, other profiles, and an already-running window. Empty input starts
+the app normally. Interactive terminal input is left alone unless you use
+`debacal -`; finish a pasted calendar with Ctrl+D. Each input is limited to 20 MB.
 
 `--demo-conflict` opens an offline sample conflict: click **Review conflicts** to
 compare calendar previews and try a decision using disposable data.

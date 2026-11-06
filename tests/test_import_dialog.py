@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
 from debacal.import_dialog import ImportDialog
+from debacal.import_sources import ImportSource
 from debacal.models import Calendar
 
 
@@ -97,3 +98,21 @@ def test_empty_request_or_no_writable_destination_cannot_be_accepted(dialogs, tm
     widget.save()
     assert widget.result() == QDialog.DialogCode.Rejected
     assert widget.selected_paths == () and widget.selected_calendar_id == ''
+
+
+def test_memory_contents_are_reviewed_without_requiring_a_file(dialogs):
+    source = ImportSource.from_data(b'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n')
+    widget = dialogs(CALENDARS, calendar_id='work', sources=[source])
+    assert widget.files.count() == 1 and widget.files.item(0).text() == 'Standard input'
+    assert widget.import_button.isEnabled() and widget.selected_sources == ()
+    widget.save()
+    assert widget.selected_sources == (source,)
+    assert widget.selected_paths == () and widget.selected_calendar_id == 'work'
+
+
+def test_cancelling_memory_contents_does_not_accept_sources(dialogs):
+    source = ImportSource.from_data(b'not parsed before confirmation')
+    widget = dialogs(CALENDARS, sources=[source])
+    QTest.keyClick(widget, Qt.Key.Key_Escape)
+    assert widget.result() == QDialog.DialogCode.Rejected
+    assert not widget.selected_sources and not widget.selected_paths

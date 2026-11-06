@@ -17,6 +17,8 @@ from .timeutil import now
 from .ui import MainWindow
 from .profiles import resolve_profile, validate_profile_name
 from .single_instance import InstanceCoordinator, InstanceError
+from .import_request import ImportRequest
+from .import_sources import ImportSource, MAX_IMPORT_BYTES
 
 
 def seed_demo(store):
@@ -57,6 +59,8 @@ def seed_demo(store):
 
 
 def _file_argument(value):
+    if value == '-':
+        return '-'
     if value.startswith('file:'):
         url = QUrl(value)
         if not url.isLocalFile():
@@ -68,7 +72,8 @@ def _file_argument(value):
 
 
 def parse_arguments(argv=None):
-    parser = argparse.ArgumentParser(description='A local-first Linux desktop calendar')
+    parser = argparse.ArgumentParser(description='A local-first Linux desktop calendar',
+                                     epilog='Redirected or piped standard input is opened for calendar import automatically.')
     parser.add_argument('--database', type=Path, help='Use a specific SQLite database')
     profiles = parser.add_mutually_exclusive_group()
     profiles.add_argument('--profile', type=validate_profile_name, default='default', metavar='NAME',
@@ -81,10 +86,35 @@ def parse_arguments(argv=None):
     parser.add_argument('--demo-conflict', action='store_true', help='Use disposable sample data with a sync conflict to review')
     parser.add_argument('--screenshot', type=Path, help='Save a workspace screenshot and exit')
     parser.add_argument('files', nargs='*', type=_file_argument, metavar='FILE.ics',
-                        help='Open calendar files for import')
+                        help='Open calendar files for import; use - to read standard input')
     args = parser.parse_args(argv)
     args.demo = args.demo or args.demo_conflict
+    if args.files.count('-') > 1:
+        parser.error('Specify standard input only once.')
+    args.stdin = '-' in args.files
+    args.files = [value for value in args.files if value != '-']
     return args
+
+
+def read_standard_input(stream=None, *, force=False):
+    """Read redirected ICS bytes without consuming an interactive terminal."""
+    stream = sys.stdin if stream is None else stream
+    if stream is None:
+        return None
+    if not force and stream.isatty():
+        return None
+    try:
+        source = getattr(stream, 'buffer', stream)
+        data = source.read(MAX_IMPORT_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        raise ValueError('Could not read standard input: ' + str(exc)) from None
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    if not data:
+        return None
+    if len(data) > MAX_IMPORT_BYTES:
+        raise ValueError('Choose standard input smaller than 20 MB.')
+    return bytes(data)
 
 
 class FileOpeningApplication(QApplication):
@@ -140,6 +170,11 @@ def configure_application(app):
 
 def main(argv=None):
     args = parse_arguments(argv)
+    try:
+        stdin_data = read_standard_input(force=args.stdin)
+    except ValueError as exc:
+        print('Could not import standard input: ' + str(exc), file=sys.stderr)
+        return 1
     app = FileOpeningApplication(sys.argv[:1])
     configure_application(app)
     profile = resolve_profile(args.profile, args.database)
@@ -148,7 +183,7 @@ def main(argv=None):
     workspaces, coordinators = [], []
     window = None
 
-    def deliver_request(files):
+    def deliver_request(request):
         if window is None or window._closed:
             return
         window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
@@ -156,14 +191,20 @@ def main(argv=None):
         target = QApplication.activeModalWidget() or window
         target.raise_()
         target.activateWindow()
-        if files:
-            window.import_files(files)
+        if isinstance(request, ImportRequest):
+            sources = [ImportSource.from_path(path) for path in request.files]
+            sources.append(ImportSource.from_data(request.stdin_data))
+            window.import_sources(sources)
+        elif request:
+            window.import_files(request)
 
-    def claim_workspace(database, files=()):
+    def claim_workspace(database, files=(), *, stdin_data=None):
         if args.new_instance:
             return None, True
         coordinator = InstanceCoordinator(database, parent=app)
-        primary = coordinator.start(files)
+        coordinator.admission_check = lambda requests, size: (
+            window is None or window.can_accept_import(size, requests=requests))
+        primary = coordinator.start(files, stdin_data=stdin_data) if stdin_data is not None else coordinator.start(files)
         if primary:
             coordinator.request_received.connect(deliver_request)
             coordinators.append(coordinator)
@@ -208,7 +249,7 @@ def main(argv=None):
             old_window.show_notice('Could not open the workspace: ' + str(exc))
 
     try:
-        coordinator, primary = claim_workspace(path, args.files)
+        coordinator, primary = claim_workspace(path, args.files, stdin_data=stdin_data)
         if not primary:
             return 0
         window = create_workspace(path, demo=args.demo)
@@ -224,8 +265,13 @@ def main(argv=None):
         QTimer.singleShot(0, app.enable_file_requests)
         if coordinator:
             QTimer.singleShot(0, coordinator.enable_requests)
+        elif stdin_data is not None:
+            request = ImportRequest(tuple(str(path) for path in args.files), stdin_data)
+            QTimer.singleShot(0, lambda value=request: deliver_request(value))
+            del request
         elif args.files:
             QTimer.singleShot(0, lambda: window.import_files(args.files))
+        stdin_data = None
         if args.demo:
             window.show_notice('Offline conflict demo · click Review conflicts to compare the versions. No server is connected.' if args.demo_conflict
                                else 'Demo workspace · temporary and offline. Use the sidebar button to open your persistent profile.')

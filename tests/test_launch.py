@@ -27,7 +27,8 @@ def isolated_process(tmp_path, script, *arguments):
         "XDG_RUNTIME_DIR": str(runtime),
     }
     result = subprocess.run([sys.executable, "-c", script, *arguments], cwd=ROOT,
-                            env=environment, capture_output=True, text=True, timeout=10)
+                            env=environment, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     decoded = json.loads(result.stdout)
     if decoded.get("code", 0) != 0:
@@ -122,6 +123,13 @@ def test_existing_instance_delivery_does_not_open_database_or_window(tmp_path):
     assert not list((tmp_path / "data").rglob("*.sqlite3"))
 
 
+def test_empty_standard_input_opens_the_workspace_without_importing(tmp_path):
+    result = isolated_process(tmp_path, STARTUP_SCRIPT, "new", json.dumps([
+        "--test", "--new-instance"]))
+    assert result["code"] == 0 and len(result["opened"]) == 1
+    assert result["imports"] == []
+
+
 @pytest.mark.parametrize("new_instance", [False, True])
 def test_testing_profile_launch_delivers_files_with_isolated_storage(tmp_path, new_instance):
     calendar = tmp_path / "incoming.ics"
@@ -214,7 +222,8 @@ ImportDialog.exec = review_and_cancel
 raise SystemExit(launch.main(['--test']))
 '''
     primary = subprocess.Popen([sys.executable, "-c", script, str(ready), str(reviewed)], cwd=ROOT,
-                               env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                               env=environment, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         deadline = time.monotonic() + 5
         while not ready.exists() and primary.poll() is None and time.monotonic() < deadline:
@@ -225,7 +234,8 @@ raise SystemExit(launch.main(['--test']))
             _stdout, stderr = primary.communicate(timeout=3)
             pytest.fail("Primary workspace did not start: " + stderr)
         secondary = subprocess.run([sys.executable, "-m", "debacal", "--test", str(calendar)], cwd=ROOT,
-                                   env=environment, capture_output=True, text=True, timeout=6)
+                                   env=environment, stdin=subprocess.DEVNULL,
+                                   capture_output=True, text=True, timeout=6)
         assert secondary.returncode == 0, secondary.stderr
         _stdout, stderr = primary.communicate(timeout=5)
         assert primary.returncode == 0, stderr

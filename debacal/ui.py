@@ -23,6 +23,7 @@ from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
+from .import_sources import ImportSource, MAX_IMPORT_BYTES, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
@@ -55,6 +56,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.demo_mode = demo_mode
         self.profile_label = profile_label
         self._import_requests = deque()
+        self._import_memory_bytes = 0
         self._import_dialog_active = False
         self._import_timer = QTimer(self)
         self._import_timer.setSingleShot(True)
@@ -1233,14 +1235,35 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.import_files((), calendar_id=calendar_id)
 
     def import_files(self, paths, *, calendar_id=None):
-        """Queue a reviewed import, including requests received during another dialog."""
-        if self._closed:
-            return
         if isinstance(paths, (str, Path)):
             paths = (paths,)
-        self._import_requests.append((tuple(Path(path).expanduser().absolute() for path in paths), calendar_id))
+        return self.import_sources((ImportSource.from_path(path) for path in paths), calendar_id=calendar_id)
+
+    def import_data(self, data, *, label='Standard input', calendar_id=None):
+        return self.import_sources((ImportSource.from_data(data, label),), calendar_id=calendar_id)
+
+    def can_accept_import(self, memory_bytes=0, *, requests=1):
+        """Check capacity without reading sources or changing queue state."""
+        return (not self._closed and memory_bytes >= 0 and requests >= 1
+                and len(self._import_requests) + requests <= MAX_PENDING_IMPORT_REQUESTS
+                and self._import_memory_bytes + memory_bytes <= MAX_PENDING_IMPORT_BYTES)
+
+    def import_sources(self, sources, *, calendar_id=None):
+        """Queue a reviewed import, including contents received during another dialog."""
+        if self._closed:
+            return False
+        sources = tuple(sources)
+        if any(not isinstance(source, ImportSource) for source in sources):
+            raise ValueError('Choose calendar import sources.')
+        memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
+        if not self.can_accept_import(memory_bytes):
+            self.show_notice('Too many calendar imports are waiting. Finish or cancel current imports before sending more.')
+            return False
+        self._import_memory_bytes += memory_bytes
+        self._import_requests.append((sources, calendar_id))
         if not self._import_dialog_active:
             self._import_timer.start(0)
+        return True
 
     def _process_import_request(self):
         if self._closed or self._import_dialog_active or not self._import_requests:
@@ -1248,22 +1271,29 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if QApplication.activeModalWidget() or QApplication.activePopupWidget():
             self._import_timer.start(100)
             return
-        paths, calendar_id = self._import_requests.popleft()
+        sources, calendar_id = self._import_requests.popleft()
         calendar = self.store.get_default_calendar()
         self._import_dialog_active = True
+        memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
+        submitted_bytes = 0
         dialog = None
         try:
-            dialog = ImportDialog(self.store.list_calendars(), paths,
+            dialog = ImportDialog(self.store.list_calendars(), sources=sources,
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
                 target = self.store.get_calendar(dialog.selected_calendar_id)
                 if target is None or target.read_only or target.kind == 'ics':
                     self.show_notice('Choose a writable calendar for the import.')
                 else:
-                    batch = {'remaining': len(dialog.selected_paths), 'messages': []}
-                    for path in dialog.selected_paths:
-                        self._read_import_file(path, target.id, batch=batch)
+                    batch = {'remaining': len(dialog.selected_sources), 'messages': []}
+                    for source in dialog.selected_sources:
+                        if source.path is not None:
+                            self._read_import_file(source.path, target.id, batch=batch)
+                        else:
+                            self._read_import_source(source, target.id, batch=batch)
+                            submitted_bytes += len(source.data)
         finally:
+            self._import_memory_bytes -= memory_bytes - submitted_bytes
             if dialog is not None:
                 dialog.deleteLater()
             self._import_dialog_active = False
@@ -1271,17 +1301,25 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._import_timer.start(0)
 
     def _read_import_file(self, path, calendar_id, *, batch=None):
+        self._read_import_source(ImportSource.from_path(path), calendar_id, batch=batch)
+
+    def _read_import_source(self, source, calendar_id, *, batch=None):
         self.show_notice('Reading calendar in the background…')
         def work():
             from .ics import parse_ics_report
-            with Path(path).open('rb') as source:
-                data = source.read(20_000_001)
-            if len(data) > 20_000_000:
+            if source.path is not None:
+                with source.path.open('rb') as stream:
+                    data = stream.read(MAX_IMPORT_BYTES + 1)
+            else:
+                data = source.data
+            if len(data) > MAX_IMPORT_BYTES:
                 raise ValueError('Choose a calendar file smaller than 20 MB.')
             return parse_ics_report(data, calendar_id)
         future = self.executor.submit(work)
         future.calendar_id = calendar_id
-        future.source_path = str(path)
+        future.source_path = str(source.path) if source.path is not None else ''
+        future.source_label = source.label
+        future.import_memory_bytes = len(source.data) if source.data is not None else 0
         future.import_batch = batch
         future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
@@ -1421,19 +1459,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 if self.apply_events('Import ' + str(len(events)) + ' event(s)', events):
                     detail = f'Imported {len(events)} event resource(s).'
                     if report.issues:
-                        detail += f' {len(report.issues)} resource issue(s); skipped resources remain in the source file.'
+                        detail += f' {len(report.issues)} resource issue(s); skipped resources were not imported.'
                         self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
                     self.show_notice(detail)
             except Exception as exc:
                 source = getattr(future, 'source_path', '')
-                detail = 'Import failed' + (' for ' + Path(source).name if source else '') + ': ' + str(exc)
+                label = getattr(future, 'source_label', Path(source).name if source else '')
+                detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(exc)
                 self._sync_messages.append(detail)
                 self.show_notice(detail)
             finally:
+                self._import_memory_bytes = max(0, self._import_memory_bytes - getattr(future, 'import_memory_bytes', 0))
                 batch = getattr(future, 'import_batch', None)
                 if batch is not None:
                     source = getattr(future, 'source_path', '')
-                    batch['messages'].append((Path(source).name + ': ' if source else '') + (detail or 'No events imported.'))
+                    label = getattr(future, 'source_label', Path(source).name if source else '')
+                    batch['messages'].append((label + ': ' if label else '') + (detail or 'No events imported.'))
                     batch['remaining'] -= 1
                     if batch['remaining'] == 0 and len(batch['messages']) > 1:
                         self.show_notice('Import complete · ' + ' · '.join(batch['messages']))
@@ -1695,6 +1736,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.shortcut_timer.stop()
         self.search_timer.stop()
         self._import_timer.stop()
+        self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests
+                                         for source in sources if source.data is not None)
         self._import_requests.clear()
         self._range_cache.clear()
         if self.engine:
