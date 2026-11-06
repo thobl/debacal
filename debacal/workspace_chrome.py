@@ -1,9 +1,8 @@
 """Workspace layout and controls, separate from event and synchronization logic."""
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLineEdit,
-    QScrollArea, QStackedWidget, QFrame, QMenu, QComboBox, QSizePolicy, QButtonGroup,
+    QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
 from .calendar_widgets import CalendarCanvas, MonthCanvas, DayHeader, AllDayCanvas
@@ -39,88 +38,79 @@ class WorkspaceChrome:
 
     def build_sidebar(self, root):
         self.command_buttons = []
+        sidebar_shell = QWidget()
+        sidebar_shell.setObjectName('sidebarShell')
+        sidebar_shell.setFixedWidth(280)
+        shell_layout = QVBoxLayout(sidebar_shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        root.addWidget(sidebar_shell)
         self.sidebar = QWidget()
         self.sidebar.setObjectName('sidebar')
-        self.sidebar.setFixedWidth(280)
-        root.addWidget(self.sidebar)
+        self.sidebar_scroll = QScrollArea()
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setWidget(self.sidebar)
+        shell_layout.addWidget(self.sidebar_scroll, 1)
         layout = QVBoxLayout(self.sidebar)
         layout.setContentsMargins(16, 18, 16, 12)
-        layout.setSpacing(9)
+        layout.setSpacing(8)
         brand = QLabel('debacal')
         brand.setObjectName('brand')
         brand_row = QHBoxLayout()
         brand_row.addWidget(brand, 1)
         self.icon_button('settings', 'Preferences', self.show_preferences, brand_row, 'preferences')
-        self.more_button = self.icon_button('more', 'More actions', lambda: None, brand_row)
-        self.app_menu = QMenu(self)
-        for title, action in [('Import .ics…', self.import_ics), ('Export .ics…', self.export_ics),
-                              ('Operation history…', self.show_history), ('Keyboard shortcuts…', self.show_shortcuts)]:
-            self.app_menu.addAction(title, action)
-        self.more_button.setMenu(self.app_menu)
         layout.addLayout(brand_row)
-        self.new_button = self.button('New event', self.create_event, layout, True)
-        self.new_button.setIcon(icon('new', '#ffffff'))
-        self.command_buttons.append((self.new_button, 'Create an event', 'new_event'))
-        creation_row = QHBoxLayout()
-        create_label = QLabel('Create &in')
-        self.creation_calendar = QComboBox()
-        self.creation_calendar.setAccessibleName('Calendar for new events')
-        self.creation_calendar.setToolTip('Choose the calendar used for new events.')
-        self.creation_calendar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.creation_calendar.currentIndexChanged.connect(self.change_creation_calendar)
-        create_label.setBuddy(self.creation_calendar)
-        creation_row.addWidget(create_label)
-        creation_row.addWidget(self.creation_calendar, 1)
-        layout.addLayout(creation_row)
         if self.demo_mode:
             self.button('Open my calendars', self.real_workspace_requested.emit, layout)
         self.mini = MiniCalendar(self.preferences)
         self.mini.setMinimumWidth(0)
         self.mini.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.mini.clicked.connect(lambda value: self.go_date(value.toPython()))
-        sources_body = QWidget()
-        sources_layout = QVBoxLayout(sources_body)
-        sources_layout.setContentsMargins(0, 0, 0, 0)
-        sources_layout.setSpacing(8)
-        sources_layout.addWidget(self.mini)
+        layout.addWidget(self.mini)
         calendars_heading = QHBoxLayout()
         calendars_label = QLabel('Calendars')
         calendars_label.setObjectName('section')
-        calendars_heading.addWidget(calendars_label)
-        calendars_heading.addStretch()
+        calendars_heading.addWidget(calendars_label, 1)
+        self.icon_button('import', 'Import calendar file', self.import_ics, calendars_heading)
+        self.icon_button('export', 'Export calendar file', self.export_ics, calendars_heading)
         self.icon_button('new', 'Add calendar', self.add_calendar, calendars_heading)
-        sources_layout.addLayout(calendars_heading)
+        layout.addLayout(calendars_heading)
         calendars_body = QWidget()
         self.calendar_box = QVBoxLayout(calendars_body)
         self.calendar_box.setContentsMargins(0, 0, 0, 0)
-        self.calendar_box.setSpacing(0)
+        self.calendar_box.setSpacing(2)
+        self.calendar_rows = {}
+        self.creation_button_group = QButtonGroup(self)
         self.calendar_scroll = QScrollArea()
         self.calendar_scroll.setWidgetResizable(True)
         self.calendar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.calendar_scroll.setWidget(calendars_body)
-        sources_layout.addWidget(self.calendar_scroll)
-        sources_layout.addStretch()
-        self.sources_scroll = QScrollArea()
-        self.sources_scroll.setWidgetResizable(True)
-        self.sources_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sources_scroll.setWidget(sources_body)
-        self.sources_scroll.setMinimumHeight(120)
-        layout.addWidget(self.sources_scroll, 3)
+        layout.addWidget(self.calendar_scroll)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(4)
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName('Search events')
         self.search.textChanged.connect(self.run_search)
-        layout.addWidget(self.search)
+        search_row.addWidget(self.search, 1)
+        self.filter_search = self.icon_button('filter', 'Filter calendar to match search',
+                                              self.toggle_search_filter, search_row)
+        self.filter_search.setCheckable(True)
+        self.filter_search.setChecked(bool(self.store.get_setting('filter_calendar_by_search', False)))
+        layout.addLayout(search_row)
         self.results_heading = QLabel('Next events')
         self.results_heading.setObjectName('section')
         layout.addWidget(self.results_heading)
         self.results = SearchPanel(self.store, self.preferences)
-        self.results.setMinimumHeight(70)
+        self.results.setMinimumHeight(60)
         self.results.result_selected.connect(self.select_search_result)
         self.results.activated.connect(self.activate_search_result)
         layout.addWidget(self.results, 1)
-        self.build_selection_details(layout)
-        footer = QHBoxLayout()
+        footer_widget = QWidget()
+        footer_widget.setObjectName('sidebarFooter')
+        footer = QHBoxLayout(footer_widget)
+        footer.setContentsMargins(16, 0, 16, 12)
         footer.setSpacing(4)
         self.sync_btn = self.icon_button('sync', 'Sync calendars', self.sync_now, footer, 'sync')
         self.status = ElidedButton()
@@ -137,24 +127,20 @@ class WorkspaceChrome:
         policy.setRetainSizeWhenHidden(True)
         self.conflict_btn.setSizePolicy(policy)
         self.conflict_btn.hide()
-        layout.addLayout(footer)
+        shell_layout.addWidget(footer_widget)
 
-    def build_selection_details(self, layout):
-        self.details = QFrame()
-        self.details.setObjectName('details')
-        row = QHBoxLayout(self.details)
-        row.setContentsMargins(0, 6, 0, 6)
-        self.detail_text = QLabel()
-        self.detail_text.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_text.setWordWrap(True)
-        self.detail_text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        row.addWidget(self.detail_text, 1)
-        self.confirm_btn = self.icon_button('confirm', 'Confirm this slot and remove alternatives',
-                                            self.confirm_candidate, row)
-        self.confirm_btn.hide()
-        self.details.setFixedHeight(54)
-        self.details.hide()
-        layout.addWidget(self.details)
+    def toolbar_section(self, title):
+        section = QWidget()
+        column = QVBoxLayout(section)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(3)
+        label = QLabel(title)
+        label.setObjectName('section')
+        column.addWidget(label)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(3)
+        column.addLayout(buttons)
+        return section, buttons
 
     def build_workspace(self, root):
         area = QWidget()
@@ -162,44 +148,64 @@ class WorkspaceChrome:
         outer = QVBoxLayout(area)
         outer.setContentsMargins(18, 18, 18, 8)
         outer.setSpacing(10)
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(4)
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        period = QWidget()
+        period_labels = QVBoxLayout(period)
+        period_labels.setContentsMargins(0, 0, 0, 0)
+        period_labels.setSpacing(3)
         self.heading = ElidedLabel()
         self.heading.setObjectName('heading')
-        self.heading.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(self.heading, 1)
-        self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), toolbar, 'previous')
-        self.today_button = self.button('Today', self.today, toolbar)
-        self.command_buttons.append((self.today_button, 'Go to today', 'today'))
-        self.icon_button('next', 'Next period', lambda: self.navigate(1), toolbar, 'next')
-        toolbar.addSpacing(10)
+        self.heading.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        period_labels.addWidget(self.heading)
+        self.range_label = hint('')
+        self.range_label.setWordWrap(False)
+        period_labels.addWidget(self.range_label)
+        header.addWidget(period)
+        navigation = QHBoxLayout()
+        navigation.setSpacing(3)
+        self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
+        self.today_button = self.icon_button('today', 'Go to today', self.today, navigation, 'today')
+        self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
+        header.addLayout(navigation)
+        header.addStretch()
+        outer.addLayout(header)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(20)
+        view_section, view_row = self.toolbar_section('View')
+        toolbar.addWidget(view_section)
         self.view_buttons = {}
         self.view_button_group = QButtonGroup(self)
         for mode in ('day', 'week', 'month'):
             button = self.icon_button(mode, mode.capitalize() + ' view', lambda value=mode: self.set_view(value),
-                                      toolbar, mode + '_view')
+                                      view_row, mode + '_view')
             button.setCheckable(True)
             self.view_button_group.addButton(button)
             self.view_buttons[mode] = button
-        toolbar.addSpacing(10)
+        self.full_day_button = self.icon_button('expand', 'Expand to show all 24 hours', self.toggle_full_day,
+                                                view_row, 'full_day')
+        self.full_day_button.setCheckable(True)
+        self.full_day_button.setChecked(self.full_day)
+        selection_section, selection_row = self.toolbar_section('Selection')
+        toolbar.addWidget(selection_section)
         self.selection_buttons = {}
         self.selection_button_group = QButtonGroup(self)
         for mode, title, symbol, binding in (
                 ('single', 'Select one event', 'single', 'scope_single'),
                 ('group', 'Select all in a series', 'series', 'scope_all'),
                 ('future', 'Select this and following events', 'following', 'scope_following')):
-            button = self.icon_button(symbol, title, lambda value=mode: self.set_selection_mode(value), toolbar, binding)
+            button = self.icon_button(symbol, title, lambda value=mode: self.set_selection_mode(value), selection_row, binding)
             button.setCheckable(True)
             self.selection_button_group.addButton(button)
             self.selection_buttons[mode] = button
-        toolbar.addSpacing(10)
-        self.full_day_button = self.icon_button('clock', 'Show all 24 hours', self.toggle_full_day, toolbar)
-        self.full_day_button.setCheckable(True)
-        self.full_day_button.setChecked(self.full_day)
+        events_section, events_row = self.toolbar_section('Events')
+        toolbar.addWidget(events_section)
+        self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
+        self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
+        self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
+        self.icon_button('history', 'Operation history', self.show_history, events_row, 'history')
+        toolbar.addStretch()
         outer.addLayout(toolbar)
-        self.range_label = hint('')
-        self.range_label.setWordWrap(False)
-        outer.addWidget(self.range_label)
         self.stack = QStackedWidget()
         week = QWidget()
         week_layout = QVBoxLayout(week)
@@ -232,6 +238,7 @@ class WorkspaceChrome:
                 self.select_event(event_id, day=source.selected_day,
                                   additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
             widget.context_requested.connect(self.event_menu)
+            widget.confirm_requested.connect(self.confirm_candidate)
             widget.move_scoped_requested.connect(lambda reference, start, end, modifiers:
                 self.move_event(reference.id, start, end, reference=reference,
                                 copy=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
@@ -255,29 +262,39 @@ class WorkspaceChrome:
         self.message_stack.setFixedHeight(28)
         outer.addWidget(self.message_stack)
 
-    def refresh_creation_calendars(self, calendars):
+    def refresh_calendar_list(self, calendars):
+        from .calendar_list import CalendarRow
         default = self.store.get_default_calendar()
-        blocked = self.creation_calendar.blockSignals(True)
-        try:
-            self.creation_calendar.clear()
-            for calendar in calendars:
-                if calendar.kind != 'ics' and not calendar.read_only:
-                    swatch = QPixmap(12, 12)
-                    swatch.fill(QColor(calendar.color))
-                    self.creation_calendar.addItem(QIcon(swatch), calendar.name, calendar.id)
-            index = self.creation_calendar.findData(default.id if default else None)
-            self.creation_calendar.setCurrentIndex(index)
-            self.creation_calendar.setEnabled(index >= 0)
-            self.creation_calendar.setToolTip('Create new events in ' + default.name if default else 'Add a writable calendar first.')
-        finally:
-            self.creation_calendar.blockSignals(blocked)
+        identifiers = {calendar.id for calendar in calendars}
+        for calendar_id in self.calendar_rows.keys() - identifiers:
+            row = self.calendar_rows.pop(calendar_id)
+            self.calendar_box.removeWidget(row)
+            row.deleteLater()
+        for index, calendar in enumerate(calendars):
+            row = self.calendar_rows.get(calendar.id)
+            if row is None:
+                row = CalendarRow(calendar)
+                row.creation_requested.connect(self.set_creation_calendar)
+                row.visibility_requested.connect(self.toggle_calendar)
+                row.context_requested.connect(self.calendar_menu)
+                self.creation_button_group.addButton(row.choice)
+                self.calendar_rows[calendar.id] = row
+            self.calendar_box.insertWidget(index, row)
+            row.set_calendar(calendar, current=bool(default and default.id == calendar.id),
+                              scale=self.preferences.font_scale)
+        row_height = max((row.sizeHint().height() for row in self.calendar_rows.values()), default=28)
+        full_height = max(1, len(calendars)) * (row_height + 2)
+        self.calendar_scroll.setMinimumHeight(full_height if len(calendars) <= 6 else 3 * (row_height + 2))
+        self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + 2)))
 
     def update_command_tooltips(self):
-        self.sources_scroll.setMaximumHeight(self.mini.minimumHeight()
-            + self.calendar_scroll.height() + round(48 * self.preferences.font_scale / 100))
         for button, title, binding in self.command_buttons:
             shortcut = self.bindings.get(binding, '') if binding else ''
             button.setToolTip(title + (f' ({shortcut})' if shortcut else ''))
             if button.property('iconOnly'):
                 size = max(30, round(32 * self.preferences.font_scale / 100))
                 button.setFixedSize(size, size)
+        # Large text can exceed a short window. Keep controls apart and let the
+        # whole sidebar scroll in that case; ordinary calendar lists remain full.
+        self.sidebar.layout().activate()
+        self.sidebar.setMinimumHeight(self.sidebar.layout().minimumSize().height())

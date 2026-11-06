@@ -5,7 +5,8 @@ import re
 _BASE_STYLE = """
 QWidget { font-family: "Sans Serif"; font-size: 13px; color: #29382f; }
 QMainWindow, QDialog { background: #fafbf8; }
-QWidget#sidebar { background: #edf0e8; border-right: 1px solid #dce2d5; }
+QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter { background: #edf0e8; }
+QWidget#sidebarShell { border-right: 1px solid #dce2d5; }
 QLabel[muted="true"] { color: #788373; font-size: 12px; }
 QLabel#brand { font-size: 25px; font-weight: 700; letter-spacing: -1px; }
 QLabel#heading { font-size: 24px; font-weight: 600; }
@@ -32,7 +33,8 @@ QCheckBox { spacing: 9px; padding: 5px 0; }
 QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #aabb9e; border-radius: 3px; background: #fafbf8; }
 QCheckBox::indicator:checked { background: #65865b; border-color: #65865b; }
 QLabel#notice { background: #edf0dc; padding: 9px; color: #626a39; border-radius: 5px; }
-QFrame#details { border-top: 1px solid #dce4d4; }
+QPushButton#calendarChoice { text-align: left; border: 1px solid transparent; padding: 5px 7px; }
+QPushButton#calendarChoice:checked { border-color: #b7c8ac; background: #e0e9d8; font-weight: 600; }
 
 QPushButton[iconOnly="true"] { padding: 5px; }
 QPushButton#syncStatus { text-align: left; border: none; padding: 5px 0; font-size: 11px; color: #65735f; }

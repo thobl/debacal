@@ -174,7 +174,7 @@ def test_mouse_day_selection_exits_number_selection_and_allows_keyboard_paste(wo
         assert window.nav_day is None and not window.nav_digits and not window._shortcut_pending
         assert not window.header.navigation_active and not window.canvas.show_numbers
         window.canvas.setFocus()
-        QTest.keyClick(window.canvas, Qt.Key.Key_V)
+        QTest.keyClick(window.canvas, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
         assert store.list_events() == [] and window.pending_paste is not None
         QTest.keyClick(window.canvas, Qt.Key.Key_Return)
     pasted = store.list_events()

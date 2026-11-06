@@ -268,13 +268,15 @@ def test_all_day_is_fixed_and_multi_day_has_one_connected_hit(workspace):
     assert not any(value.all_day for _, value, _ in window.canvas.rects())
 
 
-def test_context_duplicate_keeps_every_selected_event_at_its_original_time(workspace):
+def test_copy_paste_at_original_time_keeps_every_selected_event(workspace):
     _, window, store, insert = workspace
     a, b = sample('a'), sample('b', START.replace(hour=13))
     insert(a, b)
     window.select_event(a.id)
     window.select_event(b.id, additive=True)
-    window.duplicate_event(a.id)
+    window.copy_event(a.id)
+    window.paste_events(target=a.start)
+    window.confirm_paste()
     copies = [event for event in store.list_events() if event.id not in {a.id, b.id}]
     assert len(copies) == 2
     assert {event.start for event in copies} == {a.start, b.start}

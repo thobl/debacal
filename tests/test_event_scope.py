@@ -43,10 +43,10 @@ def test_default_configuration_is_not_mutated():
 
 def test_generated_scopes_include_all_event_operations():
     bindings = {'edit_event': 'E', 'copy_event': 'C', 'paste_event': 'V',
-                'duplicate_event': 'D', 'delete_event': 'Del', 'day_view': '1'}
+                'delete_event': 'Del', 'day_view': 'D'}
     expanded = expanded_scope_bindings(bindings)
-    assert len(expanded) == len(bindings) + 15
-    for action in ('edit_event', 'copy_event', 'paste_event', 'duplicate_event', 'delete_event'):
+    assert len(expanded) == len(bindings) + 12
+    for action in ('edit_event', 'copy_event', 'paste_event', 'delete_event'):
         assert expanded[action + ':group'] == 'Ctrl+' + bindings[action]
         assert expanded[action + ':future'] == 'Shift+' + bindings[action]
         assert expanded[action + ':future_combined'] == 'Ctrl+Shift+' + bindings[action]

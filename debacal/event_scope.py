@@ -6,7 +6,7 @@ bits, so callers may pass either Qt flags or integers.
 
 DEFAULT_SCOPE_MODIFIERS = {'all': 'Ctrl', 'following': 'Shift'}
 SCOPE_MODIFIERS = ('Ctrl', 'Shift', 'Alt', 'Meta')
-SCOPED_ACTIONS = ('edit_event', 'copy_event', 'paste_event', 'duplicate_event', 'delete_event')
+SCOPED_ACTIONS = ('edit_event', 'copy_event', 'paste_event', 'delete_event')
 SELECTION_MODES = ('single', 'group', 'future')
 DEFAULT_MODE_BINDINGS = {'scope_single': 'F2', 'scope_all': 'F3', 'scope_following': 'F4'}
 MODE_ACTIONS = {'scope_single': 'single', 'scope_all': 'group', 'scope_following': 'future'}

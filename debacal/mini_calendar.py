@@ -1,17 +1,108 @@
 """Compact sidebar calendar with explicit, keyboard-friendly month controls."""
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, Qt, Signal, QSignalBlocker
+from PySide6.QtCore import QDate, Qt, Signal, QPoint
+from PySide6.QtGui import QIntValidator, QActionGroup
 from PySide6.QtWidgets import (
-    QCalendarWidget, QComboBox, QHBoxLayout, QSizePolicy, QSpinBox,
-    QToolButton, QVBoxLayout, QWidget,
+    QCalendarWidget, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMenu, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .preferences import Preferences
 
 
+class _YearPopup(QFrame):
+    year_chosen = Signal(int)
+
+    def __init__(self, parent):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setObjectName('miniYearPopup')
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet('''
+            QFrame#miniYearPopup { background: #fafbf8; border: 1px solid #cbd5c6; border-radius: 6px; }
+            QFrame#miniYearPopup QPushButton { padding: 5px 8px; border: none; border-radius: 4px; }
+            QFrame#miniYearPopup QPushButton:hover { background: #edf1e8; }
+            QFrame#miniYearPopup QPushButton:checked { background: #dfe9d8; color: #35513d; font-weight: bold; }
+            QFrame#miniYearPopup QToolButton { border: none; background: transparent; padding: 3px; border-radius: 4px; }
+            QFrame#miniYearPopup QToolButton:hover { background: #e0e9d8; }
+        ''')
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(7)
+        self.year_input = QLineEdit(self)
+        self.year_input.setAccessibleName('Year')
+        self.year_input.setPlaceholderText('Year')
+        self.year_input.setValidator(QIntValidator(1, 9999, self))
+        self.year_input.setMaxLength(4)
+        self.year_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.year_input.returnPressed.connect(self._submit)
+        outer.addWidget(self.year_input)
+        row = QHBoxLayout()
+        self.previous_button = QToolButton(self)
+        self.previous_button.setText('‹')
+        self.previous_button.setToolTip('Earlier years')
+        self.next_button = QToolButton(self)
+        self.next_button.setText('›')
+        self.next_button.setToolTip('Later years')
+        self.range_label = QLabel(self)
+        self.range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self.previous_button)
+        row.addWidget(self.range_label, 1)
+        row.addWidget(self.next_button)
+        outer.addLayout(row)
+        grid = QGridLayout()
+        grid.setSpacing(3)
+        self.year_buttons = []
+        for index in range(12):
+            button = QPushButton(self)
+            button.setCheckable(True)
+            button.clicked.connect(lambda _checked=False, offset=index: self.choose(self._first_year + offset))
+            self.year_buttons.append(button)
+            grid.addWidget(button, index // 3, index % 3)
+        outer.addLayout(grid)
+        self.previous_button.clicked.connect(lambda: self._show_years(self._first_year - 12))
+        self.next_button.clicked.connect(lambda: self._show_years(self._first_year + 12))
+        self._year, self._first_year = 2026, 2021
+
+    def prepare(self, year, preferences):
+        self._year = year
+        self.setLocale(preferences.qt_locale())
+        self.year_input.validator().setLocale(preferences.qt_locale())
+        self.year_input.setText(str(year))
+        scale = preferences.font_scale / 100
+        for button in self.year_buttons:
+            button.setMinimumWidth(round(43 * scale))
+        self._show_years(year - 5)
+        self.adjustSize()
+
+    def _show_years(self, first):
+        self._first_year = max(1, min(9988, first))
+        self.range_label.setText(f'{self._first_year}–{self._first_year + 11}')
+        for offset, button in enumerate(self.year_buttons):
+            year = self._first_year + offset
+            button.setText(str(year))
+            button.setChecked(year == self._year)
+        self.previous_button.setEnabled(self._first_year > 1)
+        self.next_button.setEnabled(self._first_year < 9988)
+
+    def _submit(self):
+        if self.year_input.hasAcceptableInput():
+            self.choose(int(self.year_input.text()))
+
+    def choose(self, year):
+        self.year_chosen.emit(year)
+        self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
 class MiniCalendar(QWidget):
-    """A small QCalendar-compatible surface without its styled popup toolbar."""
+    """A quiet calendar heading with a month menu and year chooser on demand."""
     clicked = Signal(QDate)
     activated = Signal(QDate)
     selectionChanged = Signal()
@@ -26,31 +117,46 @@ class MiniCalendar(QWidget):
         outer.setSpacing(2)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(2)
+        row.setSpacing(0)
         self.previous_button = QToolButton(self)
         self.previous_button.setText('‹')
         self.previous_button.setToolTip('Previous month')
         self.next_button = QToolButton(self)
         self.next_button.setText('›')
         self.next_button.setToolTip('Next month')
-        self.month_selector = QComboBox(self)
-        self.month_selector.setObjectName('miniMonthSelector')
-        self.month_selector.setAccessibleName('Month')
-        self.month_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.month_selector.setMinimumContentsLength(3)
-        self.month_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.year_selector = QSpinBox(self)
-        self.year_selector.setObjectName('miniYearSelector')
-        self.year_selector.setAccessibleName('Year')
-        self.year_selector.setRange(1, 9999)
-        self.year_selector.setKeyboardTracking(False)
-        self.year_selector.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.year_selector.setGroupSeparatorShown(False)
-        row.addWidget(self.month_selector, 1)
-        row.addWidget(self.year_selector)
         row.addWidget(self.previous_button)
+        row.addStretch(1)
+        heading = QHBoxLayout()
+        heading.setSpacing(0)
+        self.month_button = QToolButton(self)
+        self.month_button.setAccessibleName('Choose month')
+        self.year_button = QToolButton(self)
+        self.year_button.setAccessibleName('Choose year')
+        heading.addWidget(self.month_button)
+        heading.addWidget(self.year_button)
+        row.addLayout(heading)
+        row.addStretch(1)
         row.addWidget(self.next_button)
+        for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
+            button.setAutoRaise(True)
+            button.setStyleSheet('QToolButton { border: none; background: transparent; color: #3b563e; '
+                                'padding: 2px; border-radius: 4px; } '
+                                'QToolButton:hover { background: #e0e9d8; } '
+                                'QToolButton:pressed { background: #d6e2cc; }')
+        for button in (self.month_button, self.year_button):
+            font = button.font()
+            font.setBold(True)
+            button.setFont(font)
         outer.addLayout(row)
+        self.month_menu = QMenu(self)
+        self.month_group = QActionGroup(self)
+        self.month_group.setExclusive(True)
+        self.month_actions = []
+        self._month_locale = None
+        self.year_popup = _YearPopup(self)
+        self.month_button.clicked.connect(self.show_month_menu)
+        self.year_button.clicked.connect(self.show_year_popup)
+        self.year_popup.year_chosen.connect(lambda year: self.setCurrentPage(year, self.monthShown()))
         self.calendar = QCalendarWidget(self)
         self.calendar.setNavigationBarVisible(False)
         self.calendar.setDateRange(QDate(1, 1, 1), QDate(9999, 12, 31))
@@ -64,8 +170,6 @@ class MiniCalendar(QWidget):
         self.calendar.currentPageChanged.connect(self._page_changed)
         self.previous_button.clicked.connect(self.showPreviousMonth)
         self.next_button.clicked.connect(self.showNextMonth)
-        self.month_selector.currentIndexChanged.connect(self._choose_page)
-        self.year_selector.valueChanged.connect(self._choose_page)
         self.set_preferences(self.preferences)
         self._page_changed(self.calendar.yearShown(), self.calendar.monthShown())
 
@@ -73,41 +177,80 @@ class MiniCalendar(QWidget):
         self.preferences = preferences
         locale = preferences.qt_locale()
         self.setLocale(locale)
-        locale_changed = self.calendar.locale().name() != locale.name() or self.month_selector.count() != 12
         self.calendar.setLocale(locale)
-        self.month_selector.setLocale(locale)
-        self.year_selector.setLocale(locale)
-        month = self.calendar.monthShown()
-        if locale_changed:
-            with QSignalBlocker(self.month_selector):
-                self.month_selector.clear()
-                for number in range(1, 13):
-                    self.month_selector.addItem(preferences.month_name(number, short=True), number)
-                self.month_selector.setCurrentIndex(month - 1)
+        if self._month_locale != locale.name():
+            self.month_menu.clear()
+            self.month_actions = []
+            for number in range(1, 13):
+                action = self.month_menu.addAction(preferences.month_name(number))
+                action.setData(number)
+                action.setCheckable(True)
+                self.month_group.addAction(action)
+                action.triggered.connect(lambda _checked=False, month=number: self.setCurrentPage(self.yearShown(), month))
+                self.month_actions.append(action)
+            self._month_locale = locale.name()
         self.setFirstDayOfWeek(Qt.DayOfWeek(preferences.first_weekday + 1))
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.ISOWeekNumbers
                                     if preferences.show_week_numbers else QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         scale = preferences.font_scale / 100
         # Keep date cells usable at large fonts while remaining compact by default.
-        self.setMinimumHeight(round(195 * scale))
+        self.setMinimumHeight(round(190 * scale))
         for button in (self.previous_button, self.next_button):
-            button.setFixedWidth(round(23 * scale))
+            button.setFixedWidth(round(22 * scale))
+        for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
+            button.setFixedHeight(round(25 * scale))
         self._page_changed(self.calendar.yearShown(), self.calendar.monthShown())
 
-    def _choose_page(self, *_):
-        month = self.month_selector.currentData()
-        if month:
-            self.calendar.setCurrentPage(self.year_selector.value(), month)
+    def _update_heading(self):
+        if not hasattr(self, 'calendar'):
+            return
+        month, year = self.monthShown(), self.yearShown()
+        scale = self.preferences.font_scale / 100
+        padding = round(8 * scale)
+        year_width = self.year_button.fontMetrics().horizontalAdvance(str(year)) + padding
+        self.year_button.setText(str(year))
+        self.year_button.setFixedWidth(year_width)
+        available = max(1, self.width() - self.previous_button.width() - self.next_button.width() - year_width - padding)
+        full = self.preferences.month_name(month)
+        short = self.preferences.month_name(month, short=True)
+        metrics = self.month_button.fontMetrics()
+        label = full if metrics.horizontalAdvance(full) + padding <= available else short
+        self.month_button.setText(label)
+        self.month_button.setFixedWidth(min(available, metrics.horizontalAdvance(label) + padding))
+        self.month_button.setToolTip(full + ' · choose month')
+        self.year_button.setToolTip(str(year) + ' · choose year')
 
     def _page_changed(self, year, month):
-        with QSignalBlocker(self.month_selector), QSignalBlocker(self.year_selector):
-            self.month_selector.setCurrentIndex(month - 1)
-            self.year_selector.setValue(year)
+        self._update_heading()
+        for action in self.month_actions:
+            action.setChecked(action.data() == month)
         self.previous_button.setEnabled((year, month) > (1, 1))
         self.next_button.setEnabled((year, month) < (9999, 12))
         if self._shown_page != (year, month):
             self._shown_page = (year, month)
             self.currentPageChanged.emit(year, month)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_heading()
+
+    def show_month_menu(self):
+        self.month_menu.setActiveAction(self.month_actions[self.monthShown() - 1])
+        self.month_menu.popup(self.month_button.mapToGlobal(QPoint(0, self.month_button.height())))
+
+    def show_year_popup(self):
+        self.year_popup.prepare(self.yearShown(), self.preferences)
+        point = self.year_button.mapToGlobal(QPoint(0, self.year_button.height()))
+        point.setX(self.mapToGlobal(QPoint((self.width() - self.year_popup.width()) // 2, 0)).x())
+        bounds = self.screen().availableGeometry()
+        point.setX(max(bounds.left(), min(point.x(), bounds.right() - self.year_popup.width() + 1)))
+        if point.y() + self.year_popup.height() > bounds.bottom():
+            point.setY(self.year_button.mapToGlobal(QPoint(0, 0)).y() - self.year_popup.height())
+        point.setY(max(bounds.top(), min(point.y(), bounds.bottom() - self.year_popup.height() + 1)))
+        self.year_popup.move(point)
+        self.year_popup.show()
+        self.year_popup.year_input.setFocus()
+        self.year_popup.year_input.selectAll()
 
     def selectedDate(self):
         return self.calendar.selectedDate()

@@ -20,8 +20,8 @@ from debacal.store import Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
-BINDINGS = {'edit_event': 'E', 'copy_event': 'C', 'paste_event': 'V', 'duplicate_event': 'D',
-            'delete_event': 'Del', 'day_view': '1', 'cycle_scope': 'Alt+S', 'undo': 'Ctrl+Z'}
+BINDINGS = {'edit_event': 'E', 'copy_event': 'C', 'paste_event': 'V',
+            'delete_event': 'Del', 'day_view': 'D', 'cycle_scope': 'Alt+S', 'undo': 'Ctrl+Z'}
 
 
 @pytest.fixture
@@ -198,7 +198,7 @@ def test_scope_shortcut_is_configurable_and_one_off_does_not_cycle(editors):
 
 
 @pytest.mark.parametrize(('other', 'message'), [('Ctrl+E', 'unique'), ('Shift+C', 'unique'),
-                                              ('Ctrl+Shift+D', 'unique'), ('Ctrl+E, X', 'start')])
+                                              ('Ctrl+Shift+V', 'unique'), ('Ctrl+E, X', 'start')])
 def test_shortcut_editor_checks_generated_scope_collisions(editors, other, message):
     _, _, widgets, _ = editors
     dialog = ShortcutsDialog(BINDINGS | {'other': other}, BINDINGS | {'other': other})

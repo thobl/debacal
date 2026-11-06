@@ -1,4 +1,4 @@
-"""Selection details never resize the calendar's viewport or time axis."""
+"""Selection and inline slot confirmation never resize the calendar's time axis."""
 
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -58,7 +58,7 @@ def geometry(window):
     return (viewport.width(), viewport.height(), canvas.width(), canvas.height(),
             canvas.start_hour, canvas.end_hour, canvas.hour_height,
             window.scroll.verticalScrollBar().isVisible(), window.scroll.verticalScrollBar().maximum(),
-            window.scroll.horizontalScrollBar().isVisible(), window.details.height())
+            window.scroll.horizontalScrollBar().isVisible())
 
 
 @pytest.mark.parametrize("size", [(1400, 900), (1030, 690)])
@@ -67,18 +67,17 @@ def test_select_clear_and_long_candidate_switch_keep_identical_calendar_geometry
     window.resize(*size)
     settle(app)
     baseline = geometry(window)
-    assert not window.details.isVisible()
+    assert not hasattr(window, 'details')
     assert not window.scroll.verticalScrollBar().isVisible()
     assert not window.scroll.horizontalScrollBar().isVisible()
     for event in (short, long, short, long):
         window.select_event(event.id)
         settle(app)
-        assert window.details.isVisible()
-        assert event.title in window.detail_text.text()
+        assert window.selected_id == event.id
         assert geometry(window) == baseline
     window.select_day(START.date())
     settle(app)
-    assert not window.details.isVisible()
+    assert window.selected_id is None
     assert geometry(window) == baseline
 
 

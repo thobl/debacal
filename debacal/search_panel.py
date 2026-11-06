@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import calendar
 from heapq import merge
+from html import escape
 from itertools import chain, islice
 
 from PySide6.QtCore import Qt, Signal, QSize
@@ -29,6 +30,21 @@ PAGE_SIZE = 100
 INFINITE_PAGE_SIZE = 10
 MAX_PAGES = 10
 CONTEXT_SCAN_LIMIT = 5000
+
+
+def event_search_text(event: Event) -> str:
+    return ' '.join((event.title, event.description, event.location)).casefold()
+
+
+def event_matches_query(event: Event, query: str, master: Event | None = None) -> bool:
+    """Match the same literal substring used by the search results.
+
+    A matching master includes its whole family. Otherwise an occurrence must
+    match its own effective fields, so an override-only hit stays date-specific.
+    This does not expand recurrence or access storage.
+    """
+    query = query.strip().casefold()
+    return not query or query in event_search_text(event) or (master is not None and query in event_search_text(master))
 
 
 def page_size(master):
@@ -269,7 +285,9 @@ class SearchPanel(QTreeWidget):
         self.addTopLevelItem(item)
 
     def _searchable(self, event):
-        return ' '.join((event.title, event.description, event.location)).casefold()
+        return event_search_text(event)
+
+    matches_event = staticmethod(event_matches_query)
 
     def populate(self, query):
         query = query.strip().casefold()
@@ -301,7 +319,7 @@ class SearchPanel(QTreeWidget):
                 return 0
             matches = 0
             for master, searchable, overrides in self._index:
-                matching_overrides = [event for event in overrides if query in self._searchable(event)]
+                matching_overrides = [event for event in overrides if event_matches_query(event, query)]
                 if query not in searchable and not matching_overrides:
                     continue
                 if matches >= 200:
@@ -328,8 +346,8 @@ class SearchPanel(QTreeWidget):
                 if representative is not None:
                     self._events_by_id[self.event_id(item)] = representative
                     self._events_by_id[master.id] = representative
-                    item.setData(SUBTITLE_ROLE, self._when(representative)
-                                 + (' · repeating' if master.recurring else ''))
+                    item.setData(SUBTITLE_ROLE, self._when(representative))
+                    item.setToolTip(0, self._event_tooltip(master, representative))
                 else:
                     self._events_by_id.pop(self.event_id(item), None)
                 self.addTopLevelItem(item)
@@ -392,14 +410,26 @@ class SearchPanel(QTreeWidget):
         item.setData(ROW_SCOPE_ROLE, scope)
         self._row_scopes[event.id] = scope
         item.setData(MASTER_ROLE, event.series_id or event.id)
-        subtitle = self._when(event)
-        if event.recurring:
-            subtitle += ' · repeating'
-        item.setData(SUBTITLE_ROLE, subtitle)
+        item.setData(SUBTITLE_ROLE, self._when(event))
         calendar = self._calendars.get(event.calendar_id)
         item.setData(COLOR_ROLE, calendar.color if calendar else '#788373')
-        item.setToolTip(0, calendar.name if calendar else '')
+        item.setToolTip(0, self._event_tooltip(event))
         return item
+
+    def _event_tooltip(self, event, representative=None):
+        effective = representative or event
+        calendar = self._calendars.get(event.calendar_id)
+        lines = [event.title, self._when(effective)]
+        if calendar:
+            lines.append(calendar.name)
+        if effective.title != event.title:
+            lines.append('Shown occurrence: ' + effective.title)
+        if effective.location:
+            lines.append(effective.location)
+        lines.append('Select using the current selection mode.' if self.agenda_mode else
+                     'Select the whole series. Expand to choose one date.' if event.recurring else
+                     'Select this occurrence.' if event.series_id else 'Select this event.')
+        return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>'
 
     def _when(self, event):
         local = event.start if event.all_day else event.start.astimezone(local_zone())

@@ -118,8 +118,8 @@ def test_quick_calendar_choice_is_persisted_and_used_by_new_event(workspace):
     store.save_calendar(Calendar('work', 'Work', '#123abc'))
     store.save_calendar(Calendar('subscription', 'Read only', '#789abc', kind='ics'))
     window.refresh(calendars=True)
-    assert window.creation_calendar.findData('subscription') == -1
-    window.creation_calendar.setCurrentIndex(window.creation_calendar.findData('work'))
+    assert not window.calendar_rows['subscription'].choice.isEnabled()
+    QTest.mouseClick(window.calendar_rows['work'].choice, Qt.MouseButton.LeftButton)
     assert store.get_default_calendar().id == 'work'
     chosen = []
     def inspect(dialog):
@@ -128,9 +128,8 @@ def test_quick_calendar_choice_is_persisted_and_used_by_new_event(workspace):
     with patch.object(EventDialog, 'exec', inspect):
         window.create_event(START)
     assert chosen == ['work']
-    assert any('★' in window.calendar_box.itemAt(index).widget().text()
-               and 'Work' in window.calendar_box.itemAt(index).widget().text()
-               for index in range(window.calendar_box.count()))
+    assert window.calendar_rows['work'].choice.isChecked()
+    assert not window.calendar_rows['local'].choice.isChecked()
 
 
 def test_preferences_apply_locale_visuals_and_shortcuts_in_one_save(workspace):

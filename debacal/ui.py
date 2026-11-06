@@ -12,13 +12,12 @@ from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSe
 from PySide6.QtGui import QKeySequence, QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLineEdit, QCheckBox, QMenu, QDialog, QFileDialog, QInputDialog,
+    QLineEdit, QMenu, QDialog, QFileDialog, QInputDialog,
     QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
 )
 
 from .calendar_widgets import at
 from .dialogs import EventDialog, CalendarDialog, HistoryDialog
-from .models import Event
 from .store import Store
 from .timeutil import now, local_zone
 from .preferences import Preferences
@@ -29,20 +28,21 @@ from .workspace_chrome import WorkspaceChrome
 from .appearance import stylesheet
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
-from .search_panel import MORE_ROLE
+from .search_panel import MORE_ROLE, event_matches_query
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
-    'day_view': '1', 'week_view': 'W', 'month_view': 'M',
+    'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'full_day': 'F',
     'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
     'edit_single': '', 'preferences': 'Ctrl+,',
-    'copy_event': 'C', 'paste_event': 'V', 'duplicate_event': 'D', 'cycle_scope': 'Alt+S',
+    'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'cycle_scope': 'Alt+S',
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
 } | DEFAULT_MODE_BINDINGS
 EVENT_MIME = 'application/x-debacal-events+json'
+
 
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
@@ -88,10 +88,27 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         saved_bindings = dict(store.get_setting('keybindings', {}))
         if saved_bindings.get('edit_single') == 'Shift+E':
             saved_bindings['edit_single'] = ''
-        if saved_bindings.get('day_view') == 'D' and 'duplicate_event' not in saved_bindings:
-            saved_bindings['day_view'] = '1'
+        saved_bindings.pop('duplicate_event', None)
+        migrate_bindings = store.get_setting('keybindings_version', 0) < 2
+        if migrate_bindings:
+            for action, old_default in (('day_view', '1'), ('copy_event', 'C'), ('paste_event', 'V')):
+                if saved_bindings.get(action) == old_default:
+                    saved_bindings.pop(action)
         if saved_bindings.get('search') == '/':
             saved_bindings['search'] = 'Ctrl+F'
+        if migrate_bindings:
+            # New defaults yield to deliberately configured actions, including
+            # multi-stroke shortcuts that share their first key.
+            for action in ('day_view', 'copy_event', 'paste_event', 'full_day'):
+                if action in saved_bindings:
+                    continue
+                sequence = QKeySequence(DEFAULT_BINDINGS[action])
+                if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
+                                   or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
+                       for other, value in saved_bindings.items() if other != action):
+                    saved_bindings[action] = ''
+            store.set_setting('keybindings', saved_bindings)
+            store.set_setting('keybindings_version', 2)
         self.bindings = DEFAULT_BINDINGS | saved_bindings
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
@@ -146,7 +163,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         days = self.dates()
         if self.selected_day not in days:
             self.selected_day = self.anchor
-        self.visible_events = self.store.query_occurrences(at(days[0]), at(days[-1] + timedelta(days=1)), [c.id for c in cals if c.visible])
+        self.range_events = self.store.query_occurrences(at(days[0]), at(days[-1] + timedelta(days=1)), [c.id for c in cals if c.visible])
+        self.visible_events = self.filter_calendar_events(self.range_events)
         refs = [value for reference in self.selection.refs
                 if (value := self.store.get_occurrence(reference.id)) is not None]
         self.selection.replace(refs)
@@ -176,28 +194,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         for name, btn in self.view_buttons.items():
             btn.setChecked(name == self.view)
         self.full_day_button.setEnabled(self.view != 'month')
-        if calendars or tuple(cals) != getattr(self, '_shown_calendars', ()):
-            self._shown_calendars = tuple(cals)
-            default_calendar = self.store.get_default_calendar()
-            while self.calendar_box.count():
-                item = self.calendar_box.takeAt(0)
-                item.widget().deleteLater()
-            for cal in cals:
-                cb = QCheckBox(cal.name.replace('&', '&&') + ('  ★' if default_calendar and cal.id == default_calendar.id else '') + ('  ↗' if cal.kind != 'local' else ''))
-                cb.setStyleSheet(f'QCheckBox::indicator:checked {{ background: {cal.color}; border-color: {cal.color}; }}')
-                cb.setChecked(cal.visible)
-                cb.setToolTip(cal.kind + (' · ' + cal.url if cal.url else '') + '\nRight-click to edit source')
-                cb.toggled.connect(lambda checked, cid=cal.id: self.toggle_calendar(cid, checked))
-                cb.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                cb.customContextMenuRequested.connect(lambda _, c=cal: self.add_calendar(c))
-                self.calendar_box.addWidget(cb)
-            self.refresh_creation_calendars(cals)
-            row_height = max(25, self.fontMetrics().height() + 14)
-            self.calendar_scroll.setFixedHeight(min(4, max(1, len(cals))) * row_height + 2)
+        self.refresh_calendar_list(cals)
         self.sync_selection()
         self.render_placement()
         self.fit_calendar()
-        self.update_details()
         self.update_hints()
         if not self._revealing_search_result:
             self.run_search()
@@ -245,12 +245,29 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.configure_auto_sync()
             self.refresh(calendars=True)
 
-    def change_creation_calendar(self, index):
-        calendar_id = self.creation_calendar.itemData(index)
-        if calendar_id is None:
-            return
+    def set_creation_calendar(self, calendar_id):
         self.store.set_default_calendar(calendar_id)
-        self.refresh(calendars=True)
+        self.refresh_calendar_list(self.store.list_calendars())
+
+    def calendar_menu(self, calendar_id, point):
+        calendar = self.store.get_calendar(calendar_id)
+        if calendar is None:
+            return
+        menu = QMenu(self)
+        if calendar.kind != 'ics' and not calendar.read_only:
+            action = menu.addAction('Create events in this calendar', lambda: self.set_creation_calendar(calendar.id))
+            action.setCheckable(True)
+            default = self.store.get_default_calendar()
+            action.setChecked(bool(default and default.id == calendar.id))
+        menu.addAction('Edit calendar…', lambda: self.add_calendar(calendar))
+        menu.addSeparator()
+        if calendar.kind != 'ics' and not calendar.read_only:
+            menu.addAction('Import .ics here…', lambda: self.import_ics(calendar.id))
+        menu.addAction('Export .ics…', lambda: self.export_ics(calendar.id))
+        try:
+            menu.exec(point)
+        finally:
+            menu.deleteLater()
 
     def configure_auto_sync(self):
         if self.engine and not self.demo_mode and self.preferences.auto_sync_enabled:
@@ -273,6 +290,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.canvas.fit_to_viewport(height, full_day=self.full_day)
 
     def toggle_full_day(self):
+        if self.view == 'month':
+            return
         self.full_day = not self.full_day
         self.full_day_button.setChecked(self.full_day)
         self.store.set_setting('show_full_day', self.full_day)
@@ -310,7 +329,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
                 widget.set_selected_day(day)
             self.sync_selection()
-            self.update_details()
             self.update_hints()
 
     def open_day(self, day):
@@ -431,7 +449,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             widget.set_scope(self.operation_scope())
         self.sync_search_selection()
         self.update_scope_hint()
-        self.update_details()
 
     def sync_search_selection(self):
         if self.results.agenda_mode:
@@ -596,20 +613,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             bar.setValue(max(0, math.floor(rect.top() - margin)))
         elif rect.bottom() > top + height - margin:
             bar.setValue(math.ceil(rect.bottom() - height + margin))
-
-    def update_details(self):
-        event = self.event_by_id(self.selected_id or '')
-        visible = event is not None and bool(self.selection.refs)
-        self.details.setVisible(visible)
-        if visible:
-            local = event.start if event.all_day else event.start.astimezone(local_zone())
-            value = self.preferences.format_date(local.date(), weekday=True) + (' · all day' if event.all_day
-                    else ' · ' + self.preferences.format_time(local))
-            self.detail_text.setText(event.title + '   ·   ' + value + ('   ·   ' + event.location if event.location else ''))
-            if len(self.selection.refs) > 1:
-                self.detail_text.setText(f'{len(self.selection.refs)} selections · ' + self.detail_text.text())
-            self.confirm_btn.setVisible(event.candidate)
-            self.detail_text.setToolTip(self.detail_text.text())
 
     def move_event(self, event_id, start, end, scope=None, reference=None, copy=False):
         event = reference or self.event_by_id(event_id)
@@ -819,30 +822,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if clear_notice:
             self.show_notice('')
 
-    def duplicate_event(self, event_id=None, scope=None):
-        event = self.event_by_id(event_id or self.selected_id or '')
-        if event is None:
-            self.show_notice('Select an event to duplicate.')
-            return
-        try:
-            selection = self.capture_events(event, scope or self.operation_scope())
-            calendar = self.store.get_calendar(event.calendar_id)
-            if calendar is None or calendar.read_only or calendar.kind == 'ics':
-                calendar = self.store.get_default_calendar()
-            if calendar is None or calendar.read_only or calendar.kind == 'ics':
-                raise ValueError('Choose a writable default calendar before duplicating events.')
-            events = selection.instantiate('group', selection.reference.start, calendar.id)
-            for index, source in enumerate(selection.masters):
-                source_calendar = self.store.get_calendar(source.calendar_id)
-                if source_calendar and not source_calendar.read_only and source_calendar.kind != 'ics':
-                    copied = events[index]
-                    overrides = {key: replace(Event.from_dict(payload), calendar_id=source_calendar.id).to_dict()
-                                 for key, payload in copied.recurrence_overrides.items()}
-                    events[index] = replace(copied, calendar_id=source_calendar.id, recurrence_overrides=overrides)
-            self.persist_copies(events, selection.reference.start, 'Duplicate selected events')
-        except (ValueError, TypeError, KeyError, OverflowError) as exc:
-            self.show_notice(str(exc))
-
     def confirm_candidate(self, event_id=None):
         event = self.event_by_id(event_id or self.selected_id or '')
         if not event or not event.candidate:
@@ -867,7 +846,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         menu.addAction('Edit selection', lambda: self.edit_event(event_id))
         menu.addAction('Delete selection', lambda: self.delete_event(event_id))
         menu.addAction('Copy selection', lambda: self.copy_event(event_id))
-        menu.addAction('Duplicate selection', lambda: self.duplicate_event(event_id))
         modes = menu.addMenu('Selection mode')
         for label, mode in (('One event', 'single'), ('All in series', 'group'), ('This and following', 'future')):
             action = modes.addAction(label, lambda checked=False, value=mode: self.set_selection_mode(value))
@@ -914,7 +892,46 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         else:
             self.results.populate_upcoming(now())
         self._search_index = getattr(self.results, '_search_index', None)
+        self.apply_search_filter()
         self.sync_search_selection()
+
+    def toggle_search_filter(self):
+        self.store.set_setting('filter_calendar_by_search', self.filter_search.isChecked())
+        self.apply_search_filter()
+
+    def filter_calendar_events(self, events):
+        query = self.search.text().strip()
+        if not self.filter_search.isChecked() or not query:
+            return list(events)
+        masters = {}
+        for event in events:
+            if event.series_id and event.series_id not in masters:
+                masters[event.series_id] = self.store.get_event(event.series_id)
+        return [event for event in events if event_matches_query(event, query, masters.get(event.series_id))]
+
+    def apply_search_filter(self):
+        events = self.filter_calendar_events(getattr(self, 'range_events', ()))
+        selection_changed = False
+        if self.filter_search.isChecked() and self.search.text().strip():
+            retained = [reference for reference in self.selection.refs
+                        if affected_visible(self.store, (reference,), self.operation_scope(), events)]
+            if tuple(retained) != self.selection.refs:
+                self.selection.replace(retained)
+                self._search_row_ids.intersection_update(reference.id for reference in retained)
+                selection_changed = True
+        if events == self.visible_events:
+            if selection_changed:
+                self.sync_selection()
+            return
+        self.visible_events = events
+        cals, days = self.store.list_calendars(), self.dates()
+        self.canvas.set_data(days[:7], events, cals)
+        self.all_day_canvas.set_data(days[:7], events, cals)
+        self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
+        self.month.set_data(days[0], self.anchor.month, events, cals)
+        self.sync_selection()
+        self.render_placement()
+        self.fit_calendar()
 
     def focus_search(self):
         self._shortcut_pending.clear()
@@ -1070,8 +1087,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         label, ok = QInputDialog.getItem(self, 'Choose calendar', 'Calendar', labels, 0, False)
         return calendars[labels.index(label)] if ok else None
 
-    def import_ics(self):
-        calendar = self.choose_calendar(writable=True)
+    def import_ics(self, calendar_id=None):
+        calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar(writable=True)
         if not calendar:
             return
         path, _ = QFileDialog.getOpenFileName(self, 'Import calendar', '', 'Calendar files (*.ics);;All files (*)')
@@ -1087,8 +1104,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         future.calendar_id = calendar.id
         future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
-    def export_ics(self):
-        calendar = self.choose_calendar()
+    def export_ics(self, calendar_id=None):
+        calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar()
         if not calendar:
             return
         path, _ = QFileDialog.getSaveFileName(self, 'Export calendar', calendar.name + '.ics', 'Calendar files (*.ics)')
@@ -1399,13 +1416,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             'new_event': self.create_event, 'edit_event': self.edit_event,
             'edit_single': lambda: self.edit_event(group=False), 'preferences': self.show_preferences,
             'delete_event': self.delete_event, 'search': self.focus_search,
-            'copy_event': self.copy_event, 'paste_event': self.paste_events, 'duplicate_event': self.duplicate_event,
+            'copy_event': self.copy_event, 'paste_event': self.paste_events,
             'scope_single': lambda: self.set_selection_mode('single'),
             'scope_all': lambda: self.set_selection_mode('group'),
             'scope_following': lambda: self.set_selection_mode('future'),
             'cycle_scope': lambda: self.set_selection_mode({'single': 'group', 'group': 'future', 'future': 'single'}[self.selection.scope]),
             'today': self.today, 'previous': lambda: self.navigate(-1), 'next': lambda: self.navigate(1),
             'day_view': lambda: self.set_view('day'), 'week_view': lambda: self.set_view('week'),
+            'full_day': self.toggle_full_day,
             'month_view': lambda: self.set_view('month'), 'select_event': self.start_selection,
             'undo': self.undo, 'redo': self.redo, 'history': self.show_history,
             'shortcuts': self.show_shortcuts, 'sync': self.sync_now,
@@ -1450,10 +1468,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.shortcut_timer.start(1200)
                 return 'pending'
         self._shortcut_pending.clear()
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            for key, action, default in ((Qt.Key.Key_C, 'copy_event', 'C'), (Qt.Key.Key_V, 'paste_event', 'V')):
-                if event.key() == key and self.bindings.get(action) == default:
-                    return action
         return None
 
     def closeEvent(self, event):

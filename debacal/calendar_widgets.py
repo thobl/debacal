@@ -3,9 +3,9 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 import math
 
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QFont
-from PySide6.QtWidgets import QWidget, QMenu
+from PySide6.QtWidgets import QWidget, QMenu, QApplication
 
 from .layout import layout_events
 from .recurrence import overlaps
@@ -22,6 +22,7 @@ SELECTED_DAY = QColor('#edf1f8')
 SELECTED_DAY_BORDER = QColor('#91a2b8')
 SELECTED_EVENT = QColor('#dce8f5')
 SELECTED_EVENT_BORDER = QColor('#2c527c')
+CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores them.'
 
 
 def at(day, hour=0, minute=0):
@@ -101,7 +102,7 @@ class DayHeader(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip('Click to select a day. Double-click to create an all-day event.')
+        self.setToolTip('Double-click to create an all-day event.')
 
     def set_preferences(self, preferences):
         self.preferences = preferences
@@ -203,6 +204,7 @@ class CalendarCanvas(QWidget):
     placement_moved = Signal(object)
     placement_confirmed = Signal(object)
     context_requested = Signal(str, object)
+    confirm_requested = Signal(str)
 
     hour_height = 64
     gutter = 62
@@ -234,6 +236,7 @@ class CalendarCanvas(QWidget):
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self.navigation_day = None
         self.navigation_digits = ''
+        self.initialize_confirmation()
         # Keep a late-night point's minimum visual marker fully visible below
         # its true time, without extending the event itself into tomorrow.
         self.setMinimumHeight(self.hour_height * 24 + self.all_day_height + 20)
@@ -241,6 +244,7 @@ class CalendarCanvas(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def set_data(self, days, events, calendars):
+        self.cancel_confirmation()
         self.days, self.events = days, events
         self.hover_time = None
         self.calendars = {c.id: c for c in calendars}
@@ -252,6 +256,8 @@ class CalendarCanvas(QWidget):
         return 0 if self.fixed_all_day else self.all_day_height
 
     def set_selection(self, ids):
+        if set(ids) != self.selected_ids:
+            self.cancel_confirmation()
         self.selected_ids = set(ids)
         if self.selected_id not in self.selected_ids:
             self.selected_id = next(iter(sorted(self.selected_ids)), None)
@@ -264,8 +270,112 @@ class CalendarCanvas(QWidget):
     def set_preview(self, events):
         self.preview_events = list(events)
         if self.placement_active:
+            self.cancel_confirmation()
             self.hover_time = None
         self.update()
+
+    def initialize_confirmation(self):
+        self.confirm_hits = []
+        self._confirm_pressed = None
+        self._pending_confirmation = None
+        self._confirm_timer = QTimer(self)
+        self._confirm_timer.setSingleShot(True)
+        self._confirm_timer.timeout.connect(self.emit_confirmation)
+
+    def cancel_confirmation(self):
+        self._confirm_timer.stop()
+        self._confirm_pressed = self._pending_confirmation = None
+
+    def confirmation_event(self, event_id):
+        if self.placement_active:
+            return None
+        for item in self.events:
+            calendar = self.calendars.get(item.calendar_id)
+            if (item.id == event_id and item.candidate and not item.read_only
+                    and (item.id in self.selected_ids or item.id == self.selected_id)
+                    and calendar and not calendar.read_only and calendar.kind != 'ics'):
+                return item
+        return None
+
+    def confirmation_rect(self, rect, item, preview=False, trailing=0):
+        if preview or self.drag or self.confirmation_event(item.id) is None:
+            return None
+        scale = display_scale(self)
+        size = min(18 * scale, rect.height() - 4 * scale)
+        if size < 9 * scale or rect.width() < size + (10 + trailing) * scale:
+            return None
+        return QRectF(rect.right() - (3 + trailing) * scale - size,
+                      rect.top() + 2 * scale, size, size)
+
+    def paint_confirmation(self, painter, rect, item):
+        if rect is None:
+            return
+        self.confirm_hits.append((rect, item.id))
+        painter.setPen(QPen(GREEN, 1.2))
+        painter.setBrush(QColor('#f8fbf3'))
+        painter.drawRoundedRect(rect, 3, 3)
+        painter.setPen(QPen(GREEN, max(1.4, 1.5 * display_scale(self))))
+        painter.drawLine(QPointF(rect.left() + rect.width() * .22, rect.top() + rect.height() * .52),
+                         QPointF(rect.left() + rect.width() * .43, rect.top() + rect.height() * .72))
+        painter.drawLine(QPointF(rect.left() + rect.width() * .43, rect.top() + rect.height() * .72),
+                         QPointF(rect.left() + rect.width() * .80, rect.top() + rect.height() * .27))
+
+    def confirmation_hit(self, point):
+        return next(((rect, event_id) for rect, event_id in reversed(self.confirm_hits)
+                     if rect.contains(point) and self.confirmation_event(event_id) is not None), None)
+
+    def begin_confirmation(self, point):
+        hit = self.confirmation_hit(point)
+        if hit is None:
+            return False
+        rect, event_id = hit
+        self._confirm_pressed = (event_id, QRectF(rect), QPointF(point), False)
+        self.drag = self.ghost = self._deferred_selection = None
+        self._drag_pointer = None
+        if hasattr(self, 'hover_time'):
+            self.hover_time = None
+        self.selected_day = self.day_at(point)
+        self.gesture_started.emit(event_id)
+        self.setToolTip(CONFIRM_TOOLTIP)
+        self.update()
+        return True
+
+    def confirmation_hover(self, point):
+        if self._confirm_pressed:
+            event_id, rect, origin, cancelled = self._confirm_pressed
+            cancelled = cancelled or (point - origin).manhattanLength() >= 5 or not rect.contains(point)
+            self._confirm_pressed = event_id, rect, origin, cancelled
+        if self._confirm_pressed or self.confirmation_hit(point):
+            if hasattr(self, 'hover_time'):
+                self.hover_time = None
+            self.setToolTip(CONFIRM_TOOLTIP)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.update()
+            return True
+        return False
+
+    def release_confirmation(self, event):
+        pressed, self._confirm_pressed = self._confirm_pressed, None
+        if pressed is None:
+            return False
+        event_id, rect, _origin, cancelled = pressed
+        if (not cancelled and rect.contains(event.position()) and self.confirmation_event(event_id) is not None):
+            self._pending_confirmation = event_id
+            # Qt delivers a release before the double-click event. Wait until
+            # it cannot be a double click before resolving the other choices.
+            self._confirm_timer.start(QApplication.doubleClickInterval())
+        self.update()
+        return True
+
+    def emit_confirmation(self):
+        self._confirm_timer.stop()
+        event_id, self._pending_confirmation = self._pending_confirmation, None
+        if event_id and self.confirmation_event(event_id) is not None:
+            self.confirm_requested.emit(event_id)
+
+    def hideEvent(self, event):
+        self.cancel_confirmation()
+        QWidget.hideEvent(self, event)
 
     def set_drag_modifiers(self, modifiers):
         self.gesture_modifiers = modifiers
@@ -422,6 +532,7 @@ class CalendarCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), BG)
+        self.confirm_hits = []
         if not self.days:
             return
         w = (self.width() - self.gutter) / len(self.days)
@@ -486,6 +597,7 @@ class CalendarCanvas(QWidget):
         numbered = not preview and self.show_numbers and self.navigation_day == day_index
         target = numbered and self.navigation_digits.isascii() and self.navigation_digits.isdigit() and int(self.navigation_digits) == number
         selected = not preview and (event.id in self.selected_ids or event.id == self.selected_id)
+        confirm = self.confirmation_rect(rect, event, preview)
         fill = QColor(color)
         fill.setAlpha(34 if preview else 70 if selected else 95 if target else 38 if event.candidate else 52)
         p.setBrush(fill)
@@ -499,7 +611,8 @@ class CalendarCanvas(QWidget):
         point_event = event.start.timestamp() == event.end.timestamp()
         scale = display_scale(self)
         title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
-        text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - (40 if numbered else 12), min(21 * scale, rect.height() - 2)), title, SELECTED_EVENT_BORDER if selected else color.darker(145), 9, True)
+        reserve = (40 if numbered else 12) + (confirm.width() + 6 * scale if confirm is not None else 0)
+        text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, SELECTED_EVENT_BORDER if selected else color.darker(145), 9, True)
         if rect.height() > 39 * scale:
             value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
             if event.candidate:
@@ -510,7 +623,9 @@ class CalendarCanvas(QWidget):
         p.restore()
         if numbered:
             size = min(22, max(12, rect.height() - 4))
-            badge(p, QRectF(rect.right() - 26, rect.top() + 3, 22, size), str(number), target)
+            offset = confirm.width() + 6 * scale if confirm is not None else 0
+            badge(p, QRectF(rect.right() - 26 - offset, rect.top() + 3, 22, size), str(number), target)
+        self.paint_confirmation(p, confirm, event)
 
     def hit(self, pos):
         return next(((r, e) for r, e, _ in reversed(self.hits) if r.contains(pos)), None)
@@ -563,6 +678,7 @@ class CalendarCanvas(QWidget):
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton or not self.days:
             return
+        self.cancel_confirmation()
         point = event.position()
         self.hover_time = None
         self._drag_pointer = point
@@ -574,6 +690,8 @@ class CalendarCanvas(QWidget):
             self.drag = self.ghost = self._deferred_selection = None
             self._placement_consumed = True
             self.placement_confirmed.emit(self.placement_target(point))
+            return
+        if self.begin_confirmation(point):
             return
         self._placement_consumed = False
         self.selected_day = day
@@ -609,6 +727,8 @@ class CalendarCanvas(QWidget):
             return
         self.gesture_modifiers = event.modifiers()
         if not self.drag:
+            if self.confirmation_hover(point):
+                return
             hit = self.hit(point)
             local = hit[1].start.astimezone(local_zone()) if hit else None
             day = self.day_at(point)
@@ -619,10 +739,11 @@ class CalendarCanvas(QWidget):
             if hit:
                 self.setToolTip(hit[1].title + '\n' + self.preferences.format_date(local, weekday=True) + ' · '
                                 + ('All day' if hit[1].all_day else self.preferences.format_time(local)) + '\n'
-                                + hit[1].location + '\nDouble-click to edit.')
+                                + hit[1].location + '\nDouble-click to edit.'
+                                + ('' if hit[1].all_day else ' Drag to move; Ctrl-drag to copy.'))
             elif day is not None:
                 self.setToolTip('Double-click to add an all-day event.' if point.y() < self.time_top else
-                                'Click to select this day. Double-click to add an event, or drag to choose its duration.')
+                                'Double-click to add an event, or drag to choose its duration.')
             else:
                 self.setToolTip('')
             self.setCursor(Qt.CursorShape.SizeVerCursor if hit and point.y() > hit[0].bottom() - 7 and not hit[1].all_day else Qt.CursorShape.ArrowCursor)
@@ -664,6 +785,8 @@ class CalendarCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        if self.release_confirmation(event):
+            return
         drag, ghost = self.drag, self.ghost
         self.drag = self.ghost = None
         self._drag_pointer = None
@@ -694,6 +817,7 @@ class CalendarCanvas(QWidget):
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        self.cancel_confirmation()
         self.drag = self.ghost = None
         self._deferred_selection = None
         self._drag_pointer = None
@@ -724,6 +848,7 @@ class CalendarCanvas(QWidget):
         self.update()
 
     def contextMenuEvent(self, event):
+        self.cancel_confirmation()
         if self.placement_active:
             return
         day = self.day_at(event.pos())
@@ -756,6 +881,7 @@ class MonthCanvas(QWidget):
     placement_moved = Signal(object)
     placement_confirmed = Signal(object)
     context_requested = Signal(str, object)
+    confirm_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -774,6 +900,7 @@ class MonthCanvas(QWidget):
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self._drag_pointer = None
         self.preferences = Preferences()
+        self.initialize_confirmation()
         self.setMinimumHeight(440)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -798,12 +925,26 @@ class MonthCanvas(QWidget):
     set_drag_modifiers = CalendarCanvas.set_drag_modifiers
     copy_badge_rect = CalendarCanvas.copy_badge_rect
     paint_copy_badge = CalendarCanvas.paint_copy_badge
+    initialize_confirmation = CalendarCanvas.initialize_confirmation
+    cancel_confirmation = CalendarCanvas.cancel_confirmation
+    confirmation_event = CalendarCanvas.confirmation_event
+    confirmation_rect = CalendarCanvas.confirmation_rect
+    paint_confirmation = CalendarCanvas.paint_confirmation
+    confirmation_hit = CalendarCanvas.confirmation_hit
+    begin_confirmation = CalendarCanvas.begin_confirmation
+    confirmation_hover = CalendarCanvas.confirmation_hover
+    release_confirmation = CalendarCanvas.release_confirmation
+    emit_confirmation = CalendarCanvas.emit_confirmation
+    hideEvent = CalendarCanvas.hideEvent
 
     def set_preview(self, events):
+        if self.placement_active:
+            self.cancel_confirmation()
         self.preview_events = list(events)
         self.update()
 
     def set_data(self, start, month, events, calendars):
+        self.cancel_confirmation()
         self.start, self.month, self.events = start, month, events
         self.calendars = {c.id: c for c in calendars}
         self.update()
@@ -811,6 +952,7 @@ class MonthCanvas(QWidget):
     def _paint_month_event(self, painter, rect, item, *, preview=False, before=False, after=False):
         color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
+        confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
         fill = QColor(color)
         fill.setAlpha(45 if preview else 58 if selected else 40)
         painter.setPen(QPen(SELECTED_EVENT_BORDER if selected else color, 3 if selected else 2 if preview else 1,
@@ -827,16 +969,20 @@ class MonthCanvas(QWidget):
             text(painter, QRectF(rect.right() - 18, rect.top(), 12, rect.height()), '›', ink, 10, True)
         label = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
         label_rect = rect.adjusted(21 if before else 8 if selected else 5, 0, -21 if after else -3, 0)
+        if confirm is not None:
+            label_rect.setRight(confirm.left() - 4 * display_scale(self))
         painter.save()
         painter.setClipRect(label_rect)
         text(painter, label_rect, label, ink, 8, selected or preview)
         painter.restore()
+        self.paint_confirmation(painter, confirm, item)
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), BG)
         self.hits = []
+        self.confirm_hits = []
         scale = display_scale(self)
         header, heading, lane, event_height = self.header_height, 32 * scale, 24 * scale, 21 * scale
         w, h = self.width() / 7, (self.height() - header) / 6
@@ -949,6 +1095,7 @@ class MonthCanvas(QWidget):
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        self.cancel_confirmation()
         day = self.day_at(event.position())
         if day is None:
             return
@@ -959,6 +1106,8 @@ class MonthCanvas(QWidget):
             self.drag = self.ghost = self._deferred_selection = None
             self._placement_consumed = True
             self.placement_confirmed.emit(self.placement_target(event.position()))
+            return
+        if self.begin_confirmation(event.position()):
             return
         self._placement_consumed = False
         self.selected_day = day
@@ -980,6 +1129,7 @@ class MonthCanvas(QWidget):
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        self.cancel_confirmation()
         point = event.position()
         self.drag = self.ghost = None
         self._deferred_selection = None
@@ -1010,6 +1160,8 @@ class MonthCanvas(QWidget):
         point = event.position()
         self._drag_pointer = point
         self.gesture_modifiers = event.modifiers()
+        if not self.placement_active and not self.drag and self.confirmation_hover(point):
+            return
         day = self.day_at(point)
         if day is None:
             self.setToolTip('')
@@ -1028,18 +1180,20 @@ class MonthCanvas(QWidget):
             return
         hit = self.hit(point)
         if hit:
-            self.setToolTip(hit[1].title + '\nDouble-click to edit.')
+            self.setToolTip(hit[1].title + '\nDouble-click to edit. Drag to move; Ctrl-drag to copy.')
             self.setCursor(Qt.CursorShape.ArrowCursor)
             return
         height = (self.height() - self.header_height) / 6
         all_day = (point.y() - self.header_height) % height < 30 * display_scale(self)
         self.setToolTip(self.preferences.format_date(day, weekday=True) + '\n'
                         + ('Double-click the day heading to create an all-day event.' if all_day else
-                           'Click to select this day. Double-click to create a new event at ' + self.preferences.format_time(time(9)) + '.'))
+                           'Double-click to create an event at ' + self.preferences.format_time(time(9)) + '.'))
         self.setCursor(Qt.CursorShape.PointingHandCursor if all_day else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self.release_confirmation(event):
             return
         drag, ghost = self.drag, self.ghost
         deferred = self._deferred_selection
@@ -1053,6 +1207,7 @@ class MonthCanvas(QWidget):
         self.update()
 
     def contextMenuEvent(self, event):
+        self.cancel_confirmation()
         if self.placement_active:
             return
         day = self.day_at(event.pos())
@@ -1099,6 +1254,7 @@ class AllDayCanvas(MonthCanvas):
         self.setFixedHeight(count * self.lane_height + math.ceil(8 * display_scale(self)))
 
     def set_data(self, days, events, calendars):
+        self.cancel_confirmation()
         self.days, self.events = list(days), list(events)
         self.calendars = {calendar.id: calendar for calendar in calendars}
         self._resize_lanes()
@@ -1139,6 +1295,7 @@ class AllDayCanvas(MonthCanvas):
         scale = display_scale(self)
         text(p, QRectF(3, 3, 55 * scale, 24 * scale), 'ALL DAY', MUTED, 7)
         self.hits = []
+        self.confirm_hits = []
         for rect, item, number in self.rects():
             self._paint_bar(p, rect, item)
             self.hits.append((rect, item))
@@ -1165,20 +1322,25 @@ class AllDayCanvas(MonthCanvas):
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), SELECTED_EVENT_BORDER)
         first, last = self.days[0], self.days[-1] + timedelta(days=1)
         before, after = item.start.date() < first, item.end.date() > last
+        confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
         ink = SELECTED_EVENT_BORDER if selected else color.darker(145)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:
             text(painter, QRectF(rect.right() - 18, rect.top(), 12, rect.height()), '›', ink, 10, True)
         label = rect.adjusted(21 if before else 8, 0, -21 if after else -6, 0)
+        if confirm is not None:
+            label.setRight(confirm.left() - 4 * display_scale(self))
         painter.save()
         painter.setClipRect(label)
         text(painter, label, item.title, ink, 8, selected)
         painter.restore()
+        self.paint_confirmation(painter, confirm, item)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        self.cancel_confirmation()
         self.drag = self.ghost = self._deferred_selection = None
         if self._placement_consumed:
             self._placement_consumed = False
@@ -1197,9 +1359,11 @@ class AllDayCanvas(MonthCanvas):
         self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
 
     def mouseMoveEvent(self, event):
-        if self.drag or self.placement_active:
+        if self.drag or self.placement_active or self._confirm_pressed:
             super().mouseMoveEvent(event)
         else:
+            if self.confirmation_hover(event.position()):
+                return
             hit = self.hit(event.position())
             self.setToolTip((hit[1].title + '\nDrag to move; Ctrl-drag to copy. Double-click to edit.') if hit else
                             'Double-click to add an all-day event.')

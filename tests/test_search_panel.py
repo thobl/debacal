@@ -67,9 +67,10 @@ def test_one_parent_per_series_and_colored_two_line_presentation(workspace):
     parent = next(panel.item(index) for index in range(panel.count()) if panel.event_id(panel.item(index)) == master.id)
     assert parent.childCount() == 0
     assert parent.text() == master.title
-    assert 'repeating' in parent.data(SUBTITLE_ROLE)
+    assert 'repeating' not in parent.data(SUBTITLE_ROLE)
     assert parent.data(COLOR_ROLE) == calendar.color
-    assert parent.toolTip(0) == calendar.name
+    assert calendar.name in parent.toolTip(0)
+    assert master.title in parent.toolTip(0)
     parent.setExpanded(True)
     children = genuine_children(parent)
     assert len(children) == 3

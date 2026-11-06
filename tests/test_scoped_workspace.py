@@ -122,14 +122,14 @@ def test_held_modifiers_do_not_change_the_persistent_selection_mode(workspace):
 def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
     key(window, mode_key)
-    key(window, Qt.Key.Key_C)
+    key(window, Qt.Key.Key_C, CTRL)
     assert QApplication.clipboard().mimeData().hasFormat(EVENT_MIME)
     assert 'BEGIN:VCALENDAR' in QApplication.clipboard().text()
     assert len(store.history()) == 1
     target = datetime(2027, 1, 4, 10, tzinfo=ZONE)
     with patch.object(window, 'paste_target', return_value=target):
         for count in range(2):
-            key(window, Qt.Key.Key_V)
+            key(window, Qt.Key.Key_V, CTRL)
             assert window.pending_paste is not None
             assert len(store.list_events()) == 1 + count
             key(window, Qt.Key.Key_Return)
@@ -147,7 +147,7 @@ def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, sco
 def test_changing_mode_after_copy_preserves_the_exact_captured_series(workspace):
     _, window, store, master, _, _ = workspace
     key(window, Qt.Key.Key_F3)
-    key(window, Qt.Key.Key_C)
+    key(window, Qt.Key.Key_C, CTRL)
     key(window, Qt.Key.Key_F2)
     window.paste_events(scope='single', target=datetime(2027, 1, 4, 10, tzinfo=ZONE))
     assert store.list_events() == [master]
@@ -157,19 +157,17 @@ def test_changing_mode_after_copy_preserves_the_exact_captured_series(workspace)
 
 
 @pytest.mark.parametrize('scope,mode_key', CASES)
-def test_duplicate_key_keeps_clipboard_and_day_view_has_new_binding(workspace, scope, mode_key):
+def test_day_key_changes_view_without_changing_clipboard_or_events(workspace, scope, mode_key):
     _, window, store, master, _, _ = workspace
     QApplication.clipboard().setText('Keep this text')
     key(window, mode_key)
     key(window, Qt.Key.Key_D)
     assert QApplication.clipboard().text() == 'Keep this text'
-    assert window.view == 'week'
-    assert len(all_events(store)) == 5 + {'single': 1, 'group': 5, 'future': 3}[scope]
-    assert len(store.history()) == 2
-    window.undo()
-    assert store.list_events() == [master]
-    key(window, Qt.Key.Key_1)
     assert window.view == 'day'
+    assert len(all_events(store)) == 5
+    assert len(store.history()) == 1
+    assert store.list_events() == [master]
+    assert 'duplicate_event' not in window.bindings
 
 
 def test_main_text_fields_keep_native_copy_paste_and_literal_typing(workspace):
@@ -275,11 +273,16 @@ def test_configured_mode_shortcuts_and_persistence(workspace):
 
 def test_old_default_bindings_migrate_without_overwriting_other_customizations(workspace):
     _, _, store, _, _, windows = workspace
-    store.set_setting('keybindings', {'day_view': 'D', 'edit_single': 'Shift+E', 'search': 'Ctrl+F'})
+    store.set_setting('keybindings_version', 0)
+    store.set_setting('keybindings', {'day_view': '1', 'copy_event': 'C', 'paste_event': 'V',
+                                     'duplicate_event': 'D', 'edit_single': 'Shift+E', 'search': 'Ctrl+F', 'new_event': 'Ctrl+N'})
     other = MainWindow(store, enable_sync=False)
     windows.append(other)
-    assert other.bindings['day_view'] == '1'
-    assert other.bindings['duplicate_event'] == 'D'
+    assert other.bindings['day_view'] == 'D'
+    assert other.bindings['copy_event'] == 'Ctrl+C'
+    assert other.bindings['paste_event'] == 'Ctrl+V'
+    assert 'duplicate_event' not in other.bindings
+    assert other.bindings['new_event'] == 'Ctrl+N'
     assert other.bindings['edit_single'] == ''
     assert other.bindings['search'] == 'Ctrl+F'
 
