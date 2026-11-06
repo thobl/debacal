@@ -446,16 +446,18 @@ class Store:
     def delete_selection(self, refs, scope="single", label="Delete selected events", *, expected_masters=()) -> int | None:
         """Delete the exact selected union as one history/outbox transaction."""
         from .series_operations import partition_series
+        from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, expected_masters=expected_masters)
             changed, deleted = {}, set()
             for root in roots:
                 master = changed.get(root.series_id or root.id) or self.get_event(root.series_id or root.id)
-                if scope == "single" and root.series_id:
+                root_scope = "group" if is_whole_root(root) else scope
+                if root_scope == "single" and root.series_id:
                     overrides = {key: value for key, value in master.recurrence_overrides.items() if key != root.recurrence_id}
                     changed[master.id] = replace(master, excluded_dates=tuple(set(master.excluded_dates) | {root.recurrence_id}),
                                                  recurrence_overrides=overrides)
-                elif scope == "future" and master.recurring:
+                elif root_scope == "future" and master.recurring:
                     before, _ = partition_series(master, root)
                     if before is None:
                         deleted.add(master.id)
@@ -472,6 +474,7 @@ class Store:
         from .event_clipboard import _moved_times
         from .recurrence import event_zone, occurrence_id, updated_series, _valid_wall_time
         from .series_operations import partition_series, reidentify_series, updated_future
+        from .selection import is_whole_root
         common_changes, schedule_changes = common_changes or {}, schedule_changes or {}
         reference_zone = event_zone(reference)
         reference_wall = lambda value: value.astimezone(reference_zone).replace(tzinfo=None)
@@ -482,8 +485,9 @@ class Store:
             resized = reference.end.timestamp() - reference.start.timestamp() != edited.end.timestamp() - edited.start.timestamp()
         changed = {}
         for root in roots:
+            root_scope = "group" if is_whole_root(root) else scope
             master = self.get_event(root.series_id or root.id)
-            source = root if scope == "single" or scope == "future" else master
+            source = root if root_scope == "single" or root_scope == "future" else master
             zone = event_zone(master)
             wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
             shift = wall(edited.start) - wall(reference.start)
@@ -500,7 +504,7 @@ class Store:
                 end = start + timedelta(days=max(1, (edited.end.astimezone(zone).date() - edited.start.astimezone(zone).date()).days))
             if not all(_valid_wall_time(value) for value in (start, end)):
                 raise ValueError("A selected event falls in a daylight-saving clock change. Choose another time.")
-            if scope == "single":
+            if root_scope == "single":
                 value = replace(root, start=start, end=end, **common_changes)
                 if root.series_id:
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
@@ -511,10 +515,10 @@ class Store:
                     changed[master.id] = replace(value, **schedule_changes)
                 continue
             base = master
-            if scope == "future" and master.recurring:
+            if root_scope == "future" and master.recurring:
                 _, base = partition_series(master, root)
             submission = replace(base, start=start, end=end, **(schedule_changes | common_changes))
-            if scope == "future" and master.recurring:
+            if root_scope == "future" and master.recurring:
                 before, projected = updated_future(master, root, submission, replace_schedule)
             else:
                 before, projected = None, updated_series(master, master, submission, replace_schedule)
@@ -563,16 +567,23 @@ class Store:
                        label="Edit selected events", expected_masters=()) -> int | None:
         """Apply only changed primary fields across the selected union."""
         from .series_operations import partition_series
+        from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, reference, expected_masters)
             master = self.get_event(reference.series_id or reference.id)
-            base = master if scope != "single" else reference
-            if scope == "future" and master.recurring:
+            reference_root = next(root for root in roots if (root.series_id or root.id) == master.id)
+            reference_scope = "group" if is_whole_root(reference_root) else scope
+            base = master if reference_scope != "single" else reference
+            if reference_scope == "future" and master.recurring:
                 _, base = partition_series(master, reference)
             common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
                       if getattr(edited, name) != getattr(reference, name)}
             names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "schedule_expression", "expression_anchor", "schedule_syntax")
             schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
+            if scope == "single" and reference.series_id:
+                # A dated Single form never configures recurrence. Clearing its
+                # inherited annotation must not clear another selected family.
+                schedule = {}
             projections = self._transform_selection(roots, scope, reference, edited,
                                                     common_changes=common, schedule_changes=schedule,
                                                     replace_schedule=replace_schedule)

@@ -24,9 +24,18 @@ COLOR_ROLE = SUBTITLE_ROLE + 1
 MASTER_ROLE = SUBTITLE_ROLE + 2
 MORE_ROLE = SUBTITLE_ROLE + 3
 EVENT_ROLE = SUBTITLE_ROLE + 4
+ROW_SCOPE_ROLE = SUBTITLE_ROLE + 5
 PAGE_SIZE = 100
+INFINITE_PAGE_SIZE = 10
 MAX_PAGES = 10
 CONTEXT_SCAN_LIMIT = 5000
+
+
+def page_size(master):
+    """Keep an open-ended resource compact without shrinking finite pages."""
+    fields = {piece.partition('=')[0].strip().upper().removeprefix('RRULE:')
+              for piece in master.recurrence_rule.split(';')}
+    return PAGE_SIZE if not master.recurrence_rule or fields & {'COUNT', 'UNTIL'} else INFINITE_PAGE_SIZE
 
 
 def impossible_monthday_filter(rule):
@@ -103,7 +112,9 @@ class _ResultDelegate(QStyledItemDelegate):
 class SearchPanel(QTreeWidget):
     """One parent per matching resource; dated instances load on expansion.
 
-    Pages contain at most 100 rows, with ten pages per resource. Seeking the
+    Finite pages contain at most 100 rows, open-ended pages ten, with ten pages
+    per resource. Selecting a resource row means its complete series; a dated
+    child is an independent single-event row. Seeking the
     current view inspects at most 5,000 nominal starts; very old dense series
     fall back to their beginning rather than scanning an unbounded history.
     """
@@ -130,6 +141,7 @@ class SearchPanel(QTreeWidget):
         self._masters = {}
         self._calendars = {}
         self._events_by_id = {}
+        self._row_scopes = {}
         self._prefetched = {}
         self._context_budget = CONTEXT_SCAN_LIMIT
         self._updating = False
@@ -198,7 +210,8 @@ class SearchPanel(QTreeWidget):
         self.scrollToItem(item)
         return self.event_id(item)
 
-    def set_selection(self, identifiers):
+    def set_row_selection(self, identifiers):
+        """Highlight exactly these row identities, independently of payloads."""
         identifiers = set(identifiers)
         blocked = self.blockSignals(True)
         try:
@@ -207,6 +220,9 @@ class SearchPanel(QTreeWidget):
         finally:
             self.blockSignals(blocked)
 
+    def set_selection(self, identifiers):
+        self.set_row_selection(identifiers)
+
     def _all_rows(self):
         def walk(item):
             yield item
@@ -214,8 +230,24 @@ class SearchPanel(QTreeWidget):
                 yield from walk(item.child(index))
         return [item for index in range(self.topLevelItemCount()) for item in walk(self.topLevelItem(index))]
 
-    def selected_ids(self):
+    def selected_row_ids(self):
         return {self.event_id(item) for item in self.selectedItems() if self.event_id(item)}
+
+    def selected_ids(self):
+        return self.selected_row_ids()
+
+    def row_scope(self, row):
+        """Resource parents select a series; dated/ordinary rows select one."""
+        if isinstance(row, QTreeWidgetItem):
+            return row.data(0, ROW_SCOPE_ROLE) or 'single'
+        return self._row_scopes.get(row, 'single')
+
+    def row_item(self, event_id):
+        """Find a loaded row, including a child of a collapsed series."""
+        return next((item for item in self._all_rows() if self.event_id(item) == event_id), None)
+
+    def is_series_root(self, row):
+        return self.row_scope(row) == 'group'
 
     def selection_targets(self):
         """Return loaded row identities and their actual selection payloads."""
@@ -258,6 +290,7 @@ class SearchPanel(QTreeWidget):
             self._states.clear()
             self._masters.clear()
             self._events_by_id.clear()
+            self._row_scopes.clear()
             self._prefetched.clear()
             self._context_budget = CONTEXT_SCAN_LIMIT
             self._query = query
@@ -277,7 +310,6 @@ class SearchPanel(QTreeWidget):
                 self._masters[master.id] = master
                 if query not in searchable:
                     matching_overrides.sort(key=lambda event: event.start.astimezone(timezone.utc))
-                    item.setData(Qt.ItemDataRole.UserRole, matching_overrides[0].id)
                     item.setData(SUBTITLE_ROLE, 'Matching dated occurrence · expand to inspect')
                     item.setData(MORE_ROLE, matching_overrides)
                     representative = matching_overrides[0]
@@ -322,6 +354,9 @@ class SearchPanel(QTreeWidget):
         item.setData(Qt.ItemDataRole.UserRole, event.id)
         item.setData(EVENT_ROLE, event)
         self._events_by_id[event.id] = event
+        scope = 'group' if event.recurring and not event.series_id else 'single'
+        item.setData(ROW_SCOPE_ROLE, scope)
+        self._row_scopes[event.id] = scope
         item.setData(MASTER_ROLE, event.series_id or event.id)
         subtitle = self._when(event)
         if event.recurring:
@@ -404,28 +439,31 @@ class SearchPanel(QTreeWidget):
             except (ValueError, OverflowError):
                 self._placeholder(item, 'Dates unavailable', 'This event needs review before its dates can be shown.')
                 return
-            state = self._states[master_id] = {'iterator': iterator, 'pages': 0, 'finished': False}
+            state = self._states[master_id] = {'iterator': iterator, 'pages': 0, 'finished': False,
+                                               'page_size': page_size(self._masters[master_id])}
         if state['finished'] or state['pages'] >= MAX_PAGES:
             return
         for index in range(item.childCount() - 1, -1, -1):
             if item.child(index).data(MORE_ROLE) is True:
                 item.takeChild(index)
         try:
-            values = list(islice(state['iterator'], PAGE_SIZE + 1))
+            size = state['page_size']
+            values = list(islice(state['iterator'], size + 1))
         except (ValueError, OverflowError):
             self._placeholder(item, 'Dates unavailable', 'This event needs review before more dates can be shown.')
             state['finished'] = True
             return
-        for event in values[:PAGE_SIZE]:
+        for event in values[:size]:
             item.addChild(self._event_item(event))
         state['pages'] += 1
-        state['finished'] = len(values) <= PAGE_SIZE
+        state['finished'] = len(values) <= size
         if not state['finished']:
-            state['iterator'] = chain(values[PAGE_SIZE:], state['iterator'])
+            state['iterator'] = chain(values[size:], state['iterator'])
             if state['pages'] < MAX_PAGES:
-                self._placeholder(item, 'More dates…', f'{state["pages"] * PAGE_SIZE} dates shown', more=True)
+                self._placeholder(item, 'More dates…', f'{state["pages"] * size:,} dates shown', more=True)
             else:
-                self._placeholder(item, '1,000 dates shown', 'Choose another calendar range to inspect later dates.')
+                self._placeholder(item, f'{state["pages"] * size:,} dates shown',
+                                  'Choose another calendar range to inspect later dates.')
         if remember:
             self._pages[master_id] = state['pages']
 

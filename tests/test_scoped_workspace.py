@@ -225,17 +225,17 @@ def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, mod
     assert store.list_events() == [master]
 
 
-def test_double_click_creates_new_event_in_persistent_following_mode(workspace):
-    _, window, _, _, selected, _ = workspace
+def test_double_click_edits_existing_event_in_persistent_following_mode(workspace):
+    _, window, _, master, selected, _ = workspace
     seen = []
     key(window, Qt.Key.Key_F4)
     rect = next(rect for rect, event, _ in window.canvas.rects() if event.id == selected.id)
     def inspect(dialog):
-        seen.append((dialog.original, dialog.series, dialog.title.text()))
+        seen.append((dialog.original.id, dialog.series.id, dialog.scope.currentData()))
         return QDialog.DialogCode.Rejected
     with patch.object(EventDialog, 'exec', inspect):
         QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, NONE, rect.center().toPoint())
-    assert seen == [(None, None, '')]
+    assert seen == [(selected.id, master.id, 'future')]
 
 
 def test_configured_mode_shortcuts_and_persistence(workspace):

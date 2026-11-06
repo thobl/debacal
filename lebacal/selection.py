@@ -19,6 +19,11 @@ def validate_scope(scope: str) -> str:
     return scope
 
 
+def is_whole_root(event: Event) -> bool:
+    """A selected raw recurring resource explicitly represents its family."""
+    return event.recurring and not event.series_id
+
+
 @dataclass
 class EventSelection:
     scope: str = "single"
@@ -53,6 +58,13 @@ class EventSelection:
     def select(self, event: Event, additive: bool = False) -> None:
         if not additive:
             self._refs = [event]
+            return
+        master_family = lambda value: (value.calendar_id, value.series_id or value.id)
+        related_roots = [value for value in self._refs if master_family(value) == master_family(event)]
+        if is_whole_root(event) or any(is_whole_root(value) for value in related_roots):
+            self._refs = [value for value in self._refs if master_family(value) != master_family(event)]
+            if is_whole_root(event) and not any(is_whole_root(value) for value in related_roots):
+                self._refs.append(event)
             return
         if self.scope == "single":
             if event.id in self.ids:
@@ -101,6 +113,8 @@ def selection_roots(store, refs: Iterable[Event], scope: str) -> list[Event]:
     """
     scope = validate_scope(scope)
     refs = list(dict((event.id, event) for event in refs).values())
+    whole = {event.id for event in refs if is_whole_root(event)}
+    refs = [event for event in refs if not event.series_id or event.series_id not in whole]
     if scope == "single":
         return refs
     roots: dict[str, Event] = {}
@@ -110,7 +124,7 @@ def selection_roots(store, refs: Iterable[Event], scope: str) -> list[Event]:
         if master is None:
             continue
         if master.recurring or reference.series_id:
-            value = master if scope == "group" else reference
+            value = master if scope == "group" or is_whole_root(reference) else reference
             previous = roots.get(master.id)
             if previous is None or (scope == "future" and _nominal(value, master) < _nominal(previous, master)):
                 roots[master.id] = value
@@ -135,14 +149,16 @@ def affected_visible(store, refs: Iterable[Event], scope: str, visible_events: I
     """Return exactly the visible occurrence IDs affected by the selection."""
     roots = selection_roots(store, refs, scope)
     if scope == "single":
-        return {event.id for event in visible_events if event.id in {root.id for root in roots}}
+        explicit = {root.id for root in roots}
+        whole = {root.id for root in roots if is_whole_root(root)}
+        return {event.id for event in visible_events if event.id in explicit or _master_id(event) in whole}
     by_master = {_master_id(root): root for root in roots}
     result = set()
     for event in visible_events:
         root = by_master.get(_master_id(event))
         if root is None:
             continue
-        if scope == "future":
+        if scope == "future" and not is_whole_root(root):
             master = store.get_event(_master_id(event))
             if master is None or _nominal(event, master) < _nominal(root, master):
                 continue
@@ -151,7 +167,8 @@ def affected_visible(store, refs: Iterable[Event], scope: str, visible_events: I
 
 
 def capture_selection(store, refs: Iterable[Event], scope: str, *,
-                      view_origin: date | None = None, view_kind: str | None = None):
+                      view_origin: date | None = None, view_kind: str | None = None,
+                      reference: Event | None = None):
     """Capture an exact union, never references to mutable source events."""
     from .event_clipboard import EventClipboard, _resolve
     from .series_operations import detach_event, partition_series
@@ -159,13 +176,15 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
     if not refs:
         raise ValueError("Select an event before copying.")
     with store._transaction():
-        for reference in refs:
-            store._reviewed_master(reference)
+        for value in [*refs, *([reference] if reference is not None else [])]:
+            store._reviewed_master(value)
         roots = selection_roots(store, refs, scope)
         snapshots = []
         for root in roots:
             master = store.get_event(_master_id(root))
-            if scope == "single":
+            if is_whole_root(root):
+                snapshots.append(master)
+            elif scope == "single":
                 snapshots.append(detach_event(master, root))
             elif scope == "future" and master.recurring:
                 _, tail = partition_series(master, root)
@@ -173,10 +192,14 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
                     snapshots.append(tail)
             else:
                 snapshots.append(master)
-        primary = refs[-1]
-        if scope == "single":
-            primary = next(event for event in snapshots if event.id == primary.id)
-        else:
-            primary = _resolve(tuple(snapshots), primary)
+        primary = reference or refs[-1]
+        if is_whole_root(primary):
+            from .recurrence import occurrence, recurrence_set
+            try:
+                primary = occurrence(primary, next(iter(recurrence_set(primary))))
+            except StopIteration:
+                raise ValueError("This selected series contains no dated occurrences.") from None
+        detached = next((event for event in snapshots if event.id == primary.id and not event.recurring), None)
+        primary = detached if detached is not None else _resolve(tuple(snapshots), primary)
         return EventClipboard(tuple(snapshots), primary, view_origin=view_origin,
                               view_kind=view_kind, exact_selection=True)

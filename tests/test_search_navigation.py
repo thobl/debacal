@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 from lebacal.models import Calendar, Event
 from lebacal.recurrence import expand_series, recurrence_key
 from lebacal.store import Store
+from lebacal.selection import selection_roots
 from lebacal.ui import MainWindow
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -272,8 +273,8 @@ def test_master_result_selects_real_historical_occurrence_with_excluded_initial_
     assert window.selected_day == selected.start.date()
 
 
-def test_detached_title_result_selects_moved_occurrence(workspace):
-    _, window, store, _ = workspace
+def test_detached_title_parent_selects_series_and_dated_child_selects_moved_occurrence(workspace):
+    app, window, store, _ = workspace
     master = sample('series', title='Regular study', recurrence_rule='FREQ=WEEKLY;COUNT=3')
     window.apply_events('Create', [master])
     instance = expand_series(master, START, START + timedelta(days=30))[1]
@@ -284,10 +285,34 @@ def test_detached_title_result_selects_moved_occurrence(workspace):
     search(window)
     assert window.results.count() == 1
     QTest.keyClick(window.search, Qt.Key.Key_Down)
+    parent = window.results.topLevelItem(0)
+    assert window.results.event_id(parent) == master.id
+    assert window.results.row_scope(parent) == 'group'
+    assert window.results.selected_row_ids() == {master.id}
+    roots = selection_roots(store, window.selection.refs, window.operation_scope())
+    assert roots == [store.get_event(master.id)]
+    assert roots[0].recurrence_rule == master.recurrence_rule
+    parent.setExpanded(True)
+    child = next(parent.child(index) for index in range(parent.childCount())
+                 if window.results.event_id(parent.child(index)) == moved.id)
+    window.set_selection_mode('group')
+    app.processEvents()
+    QTest.mouseClick(window.results.viewport(), Qt.MouseButton.LeftButton,
+                     pos=window.results.visualItemRect(child).center())
     selected = store.get_occurrence(window.selected_id)
     assert selected.id == moved.id and selected.start == moved.start
     assert window.selected_day == moved.start.date()
     assert any(event.id == selected.id for event in window.visible_events)
+    assert window.results.row_scope(child) == 'single'
+    assert window.results.selected_row_ids() == {moved.id}
+    assert not parent.isSelected()
+    before = store.get_event(master.id)
+    window.delete_event()
+    remaining = store.query_occurrences(START, START + timedelta(days=100))
+    assert len(remaining) == 2 and all(event.id != moved.id for event in remaining)
+    assert store.get_event(master.id).recurrence_rule == master.recurrence_rule
+    window.undo()
+    assert store.get_event(master.id) == before
 
 
 def test_actual_edits_invalidate_search_index_and_refresh_results(workspace):

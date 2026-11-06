@@ -66,14 +66,19 @@ without it. Existing imported definitions are retained. UTC events export offlin
   Escape clears the selection. Clicking empty space clears it too.
 * **Create:** `N`, the New event button, double-click in any view, or drag an
   empty day/week time slot. A single click selects without creating. Double-click
-  always creates a new event, including over an existing event; use `E` or the
-  right-click menu to edit. In month view, the body starts a timed event at 09:00.
+  an existing event to open the same editor as **Edit** or `E`, including the
+  one/all/following controls. Double-click empty space to create a new event.
+  In month view, an empty body starts a timed event at 09:00.
   Double-click a day heading, its **+ All day** area, or the day/week all-day strip
   to start an all-day event. All-day events stay above the timed grid; multi-day
   bars connect adjacent dates and continue across month week rows. The timed grid
   fits 08:00–18:00 and expands to include visible events. **Full day** shows all
   24 hours; small windows can still scroll. Drag an event to move the selection;
-  Ctrl+drag copies it. Drag a timed event's bottom edge to resize.
+  Ctrl+drag copies it; a small **+** marks a copy while dragging, including when
+  Ctrl is pressed or released without moving. Drag a timed event's bottom edge
+  to resize. Hover over empty timed space for a light snapped-time guide;
+  creation drags also show their starting time. The detail row reserves its
+  space so selecting an event does not shift the calendar or its time scale.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
@@ -93,9 +98,12 @@ without it. Existing imported definitions are retained. UTC events export offlin
   matches, wrapping at either end; clicking a result also reveals and highlights
   its event in the calendar. Result rows show a prominent title, smaller date/time
   and calendar color; the calendar name is in the tooltip. Repeating series expand
-  into dated occurrences with bounded **More…** pages. Up/Down transfers focus to
-  the results so Delete, copy and edit act on the selected events. Ctrl+click and
-  selection modes work the same as in the calendar. The query stays open while
+  into dated occurrences with bounded **More…** pages: infinite series show ten
+  dates per page, finite schedules show 100. A series root selects the whole
+  series; a dated child selects only that occurrence, even when the calendar is
+  in all-events mode. Their row highlights are independent. Ctrl+click combines
+  roots and children with those meanings. Up/Down transfers focus to the results
+  so Delete, copy and edit act on that selection. The query stays open while
   browsing. Enter returns focus to the calendar; Escape closes search.
   `/` remains a calendar shortcut for search with the default bindings.
 * **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier

@@ -108,16 +108,15 @@ def test_empty_single_clicks_select_day_without_creating_any_event(widgets):
         assert timed is None or timed.count() == 0
 
 
-def test_timed_double_click_creates_at_clicked_time_even_over_existing_event(widgets):
+def test_timed_double_click_creates_on_empty_grid_and_edits_existing_event(widgets):
     _, _, _, make_canvas, _, _ = widgets
     canvas = make_canvas([event()])
     created, edited = QSignalSpy(canvas.create_requested), QSignalSpy(canvas.edit_requested)
-    for index, point in enumerate((timed_point(canvas, 1, 10, 15), timed_point(canvas, 0, 9, 30))):
+    for point in (timed_point(canvas, 1, 10, 15), timed_point(canvas, 0, 9, 30)):
         QTest.mouseDClick(canvas, Qt.MouseButton.LeftButton, pos=point)
-        assert created.count() == index + 1
+    assert created.count() == 1
     assert created.at(0) == [datetime(2026, 11, 3, 10, 15, tzinfo=ZONE), datetime(2026, 11, 3, 11, 15, tzinfo=ZONE)]
-    assert created.at(1) == [datetime(2026, 11, 2, 9, 30, tzinfo=ZONE), datetime(2026, 11, 2, 10, 30, tzinfo=ZONE)]
-    assert edited.count() == 0
+    assert edited.count() == 1 and edited.at(0) == ['event']
     assert canvas.drag is None and canvas.ghost is None
 
 
@@ -135,7 +134,7 @@ def test_timed_drag_still_creates_an_exact_range_but_single_click_does_not(widge
     assert created.count() == 1
 
 
-def test_fixed_header_and_canvas_strip_create_all_day_over_existing_event(widgets):
+def test_fixed_header_and_empty_canvas_strip_create_all_day_while_existing_event_edits(widgets):
     _, _, _, make_canvas, _, make_header = widgets
     existing = event(all_day=True, duration=24, start=datetime(2026, 11, 2, tzinfo=ZONE))
     canvas, header = make_canvas([existing]), make_header()
@@ -144,15 +143,22 @@ def test_fixed_header_and_canvas_strip_create_all_day_over_existing_event(widget
         (header, [QPoint(130, 30), QPoint(270, header.all_day_top + 10)]),
     ):
         created = QSignalSpy(widget.create_all_day_requested)
+        edited = QSignalSpy(widget.edit_requested) if widget is canvas else None
         for index, point in enumerate(points):
             QTest.mouseDClick(widget, Qt.MouseButton.LeftButton, pos=point)
-            assert created.count() == index + 1
-            assert_all_day(created, index, DAYS[index])
+            if widget is canvas:
+                assert created.count() == index
+                if index:
+                    assert_all_day(created, 0, DAYS[index])
+            else:
+                assert created.count() == index + 1
+                assert_all_day(created, index, DAYS[index])
+        assert edited is None or edited.count() == 1
         assert 'all-day' in widget.toolTip() or widget is canvas
     assert header.height() > header.all_day_top + 16
 
 
-def test_month_double_click_heading_is_all_day_and_body_is_timed_even_on_event(widgets):
+def test_month_double_click_heading_and_empty_body_create_while_existing_event_edits(widgets):
     _, _, _, _, make_month, _ = widgets
     month = make_month([event()])
     timed, all_day, edited, opened = (QSignalSpy(month.create_requested), QSignalSpy(month.create_all_day_requested),
@@ -162,10 +168,9 @@ def test_month_double_click_heading_is_all_day_and_body_is_timed_even_on_event(w
     event_rect = month.hits[0][0]
     QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=event_rect.center().toPoint())
     QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=month_point(month, DAYS[2]))
-    assert timed.count() == 2
-    assert timed.at(0) == [datetime(2026, 11, 2, 9, tzinfo=ZONE), datetime(2026, 11, 2, 10, tzinfo=ZONE)]
-    assert timed.at(1) == [datetime(2026, 11, 4, 9, tzinfo=ZONE), datetime(2026, 11, 4, 10, tzinfo=ZONE)]
-    assert edited.count() == opened.count() == 0
+    assert timed.count() == 1
+    assert timed.at(0) == [datetime(2026, 11, 4, 9, tzinfo=ZONE), datetime(2026, 11, 4, 10, tzinfo=ZONE)]
+    assert edited.count() == 1 and opened.count() == 0
     QTest.mouseMove(month, month_point(month, DAYS[1], heading=True))
     assert 'all-day' in month.toolTip()
 

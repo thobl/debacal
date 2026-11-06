@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 import json
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -401,3 +402,125 @@ def test_modal_snapshot_guard_ignores_unrelated_updates_but_detects_group_member
     with pytest.raises(HistoryConflict, match="group changed"):
         store.delete_selection([selected], "group", expected_masters=snapshot)
     assert len(store.list_events()) == 3
+
+
+@pytest.mark.parametrize("scope", ["single", "group", "future"])
+def test_raw_master_root_dominates_dated_children_and_always_means_whole_family(store, scope):
+    source = repeating()
+    store.apply("Create", [source])
+    values = occurrences(store, source.id)
+    roots = selection_roots(store, [values[3], source, values[1]], scope)
+    assert roots == [source]
+    visible = [source, *values]
+    assert affected_visible(store, [values[3], source], scope, visible) == {value.id for value in visible}
+
+
+def test_mixed_raw_parent_and_other_single_child_capture_preserves_exact_union(store):
+    a, b = repeating("a"), repeating("b")
+    store.apply("Create", [a, b])
+    av, bv = occurrences(store, a.id), occurrences(store, b.id)
+    clip = capture_selection(store, [a, bv[2]], "single", reference=bv[2])
+    assert clip.reference.start == bv[2].start
+    assert len(clip.masters) == 2
+    assert sum(value.recurring for value in clip.masters) == 1
+    copies = clip.instantiate("single", clip.reference.start + timedelta(days=7), "local")
+    assert len(expand_events(copies, *BOUNDS)) == 7
+    assert len([value for value in copies if not value.recurring]) == 1
+    anchor = capture_selection(store, [a, bv[2]], "single", reference=av[4])
+    assert anchor.reference.id == av[4].id
+    with pytest.raises(ValueError):
+        capture_selection(store, [a, bv[2]], "single", reference=bv[4])
+
+
+def test_mixed_raw_parent_and_other_child_delete_is_one_atomic_operation(store):
+    a, b = repeating("a"), repeating("b")
+    store.apply("Create", [a, b])
+    bv = occurrences(store, b.id)
+    operation = store.delete_selection([a, bv[2]], "single")
+    assert store.get_event(a.id) is None
+    assert len(occurrences(store, b.id)) == 5
+    assert store.get_occurrence(bv[1].id) == bv[1]
+    assert store.get_event(b.id).excluded_dates == (bv[2].recurrence_id,)
+    assert len(store.history()) == 2
+    store.undo(operation)
+    assert {value.id: value for value in store.list_events()} == {a.id: a, b.id: b}
+
+
+def test_mixed_raw_parent_and_child_move_preserves_other_siblings_and_undo(store):
+    a, b = repeating("a"), repeating("b")
+    store.apply("Create", [a, b])
+    av, bv = occurrences(store, a.id), occurrences(store, b.id)
+    operation = store.move_selection([a, bv[2]], "single", bv[2],
+                                     bv[2].start + timedelta(hours=1), bv[2].end + timedelta(hours=1))
+    assert all(value.start.hour == 10 for value in occurrences(store, a.id))
+    assert store.get_occurrence(bv[2].id).start.hour == 10
+    assert store.get_occurrence(bv[1].id) == bv[1]
+    assert len(store.history()) == 2
+    store.undo(operation)
+    assert {value.id: value for value in store.list_events()} == {a.id: a, b.id: b}
+
+
+def test_raw_master_future_delete_does_not_keep_dates_before_its_dtstart(store):
+    a = repeating("a", recurrence_rule="", recurrence_dates=("2026-10-01T07:00:00+00:00",))
+    store.apply("Create", [a])
+    store.delete_selection([a], "future")
+    assert store.list_events() == []
+    store.undo()
+    assert store.list_events() == [a]
+
+
+def test_raw_unbounded_master_capture_does_not_materialize_occurrences(store):
+    a = repeating("a", recurrence_rule="FREQ=WEEKLY")
+    store.apply("Create", [a])
+    selected = occurrences(store, a.id)[3]
+    with patch("lebacal.recurrence.expand_series", side_effect=AssertionError("Do not flatten")):
+        clip = capture_selection(store, [a], "single", reference=selected)
+    assert clip.masters == (a,) and clip.reference.id == selected.id
+    assert clip.masters[0].recurrence_rule == "FREQ=WEEKLY"
+
+
+def test_raw_parent_title_edit_from_dated_single_form_keeps_standard_recurrence(store):
+    source = repeating()
+    store.apply("Create", [source])
+    selected = occurrences(store, source.id)[3]
+    operation = store.edit_selection([source], "single", selected, replace(selected, title="Whole parent"))
+    assert store.get_event(source.id).recurrence_rule == source.recurrence_rule
+    assert all(value.title == "Whole parent" for value in occurrences(store, source.id))
+    assert store.get_event(source.id).start == source.start
+    store.undo(operation)
+    assert store.list_events() == [source]
+
+
+def test_ctrl_raw_parent_promotes_partial_family_then_toggles_it_off(store):
+    source = repeating()
+    store.apply("Create", [source])
+    values = occurrences(store, source.id)
+    selection = EventSelection("single")
+    selection.select(values[2])
+    selection.select(source, additive=True)
+    assert selection.refs == (source,)
+    selection.select(source, additive=True)
+    assert selection.refs == ()
+
+
+def test_mixed_authored_parent_and_dated_single_edit_keeps_both_custom_definitions(store):
+    a = repeating("a", schedule_expression=" 5*(+1) ", expression_anchor=START.date().isoformat(), schedule_syntax=2)
+    b = repeating("b", start=START + timedelta(hours=3), end=START + timedelta(hours=4),
+                  schedule_expression="5*+1", expression_anchor=START.date().isoformat(), schedule_syntax=2)
+    store.apply("Create", [a, b])
+    original = store.query_occurrences(*BOUNDS)
+    selected = occurrences(store, b.id)[2]
+    assert selected.schedule_expression == b.schedule_expression
+    # The Single editor clears inherited authoring fields on its result event;
+    # that implicit cleanup is not a requested recurrence edit for raw root A.
+    edited = replace(selected, title="Shared title", schedule_expression="", expression_anchor="", schedule_syntax=1)
+    operation = store.edit_selection([a, selected], "single", selected, edited)
+    assert store.get_event(a.id) == replace(a, title="Shared title")
+    bb = store.get_event(b.id)
+    assert bb.title == b.title and bb.recurrence_rule == b.recurrence_rule
+    assert (bb.schedule_expression, bb.expression_anchor, bb.schedule_syntax) == (b.schedule_expression, b.expression_anchor, b.schedule_syntax)
+    assert store.get_occurrence(selected.id).title == "Shared title"
+    assert [(value.start.timestamp(), value.end.timestamp()) for value in store.query_occurrences(*BOUNDS)] == [
+        (value.start.timestamp(), value.end.timestamp()) for value in original]
+    store.undo(operation)
+    assert {value.id: value for value in store.list_events()} == {a.id: a, b.id: b}

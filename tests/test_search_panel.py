@@ -103,13 +103,13 @@ def test_unbounded_series_has_fixed_page_cap_and_bounded_context_seek(workspace)
     parent = panel.item(0)
     parent.setExpanded(True)
     assert perf_counter() - started < 2
-    assert len(genuine_children(parent)) == 100
+    assert len(genuine_children(parent)) == 10
     for _ in range(12):
         panel.load_more(parent)
-    assert len(genuine_children(parent)) == 1000
-    assert parent.childCount() == 1001
-    assert panel.event_id(parent.child(1000)) is None
-    assert not parent.child(1000).flags() & Qt.ItemFlag.ItemIsSelectable
+    assert len(genuine_children(parent)) == 100
+    assert parent.childCount() == 101
+    assert panel.event_id(parent.child(100)) is None
+    assert not parent.child(100).flags() & Qt.ItemFlag.ItemIsSelectable
 
 
 def test_lazy_dates_start_near_requested_calendar_range(workspace):
@@ -158,7 +158,8 @@ def test_matching_detached_override_is_grouped_under_its_master(workspace):
     assert panel.topLevelItemCount() == 1
     parent = panel.item(0)
     assert parent.text() == master.title
-    assert panel.event_id(parent) == moved.id
+    assert panel.event_id(parent) == master.id
+    assert panel.result_event(master.id).id == moved.id
     parent.setExpanded(True)
     assert len(genuine_children(parent)) == 1
     assert panel.event_id(parent.child(0)) == moved.id

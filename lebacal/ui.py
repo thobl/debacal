@@ -9,7 +9,7 @@ from uuid import uuid4
 import calendar as monthlib
 import math
 
-from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData
+from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
@@ -30,7 +30,7 @@ from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
-from .search_panel import SearchPanel
+from .search_panel import SearchPanel, MORE_ROLE
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
@@ -113,6 +113,9 @@ class MainWindow(QMainWindow):
         self.select_mode = False
         self._search_index = None
         self._revealing_search_result = False
+        self._search_selection_active = False
+        self._search_row_ids = set()
+        self._gesture_selection = None
         self._shortcut_pending = []
         self.shortcut_timer = QTimer(self)
         self.shortcut_timer.setSingleShot(True)
@@ -288,6 +291,7 @@ class MainWindow(QMainWindow):
         week_layout.addWidget(self.all_day_scroll)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.canvas = CalendarCanvas()
         self.canvas.fixed_all_day = True
         self.scroll.setWidget(self.canvas)
@@ -298,7 +302,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.month)
         for widget in [self.canvas, self.month, self.all_day_canvas]:
             widget.create_requested.connect(self.create_event)
-            widget.edit_scoped_requested.connect(lambda event_id, modifiers: self.edit_event(event_id, scope=self.operation_scope(modifiers)))
+            widget.edit_scoped_requested.connect(self.edit_from_double_click)
+            widget.gesture_started.connect(self.remember_selection_for_gesture)
             widget.selected_scoped.connect(lambda event_id, modifiers, source=widget:
                 self.select_event(event_id, day=source.selected_day,
                                   additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
@@ -326,12 +331,23 @@ class MainWindow(QMainWindow):
         self.detail_text = QLabel()
         self.detail_text.setTextFormat(Qt.TextFormat.PlainText)
         self.detail_text.setWordWrap(True)
+        self.detail_text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         detail_layout.addWidget(self.detail_text, 1)
         self.edit_button = self.button('Edit', self.edit_event, detail_layout)
         self.single_button = self.button('Edit only this event', lambda: self.edit_event(group=False), detail_layout)
         self.single_button.hide()
         self.confirm_btn = self.button('Confirm this slot', self.confirm_candidate, detail_layout, True)
         self.button('Delete', self.delete_event, detail_layout)
+        # Selection must not steal height from the time grid. Reserve the same
+        # two-line row even when hidden, and contain unusually long titles.
+        self.details.ensurePolished()
+        margins = detail_layout.contentsMargins()
+        row_height = max(self.edit_button.sizeHint().height(), self.confirm_btn.sizeHint().height(),
+                         self.detail_text.fontMetrics().lineSpacing() * 2)
+        self.details.setFixedHeight(row_height + margins.top() + margins.bottom())
+        detail_policy = self.details.sizePolicy()
+        detail_policy.setRetainSizeWhenHidden(True)
+        self.details.setSizePolicy(detail_policy)
         self.details.hide()
         outer.addWidget(self.details)
         self.navigation_prompt = QLabel()
@@ -477,7 +493,10 @@ class MainWindow(QMainWindow):
 
     def fit_calendar(self):
         if not self._closed and self.view != 'month':
-            self.canvas.fit_to_viewport(self.scroll.viewport().height(), full_day=self.full_day)
+            # Leave one pixel for integer rounding before Qt sees the minimum
+            # size. Clamping afterward can repeatedly show/hide a scrollbar.
+            height = max(1, self.scroll.viewport().height() - 1)
+            self.canvas.fit_to_viewport(height, full_day=self.full_day)
 
     def toggle_full_day(self):
         self.full_day = not self.full_day
@@ -501,6 +520,8 @@ class MainWindow(QMainWindow):
     def select_day(self, day, reveal=False, clear_event=True):
         self.selected_day = day
         if clear_event:
+            self._search_selection_active = False
+            self._search_row_ids.clear()
             self.selection.clear()
             self.selected_id = self.canvas.selected_id = self.month.selected_id = None
             self.select_mode = False
@@ -526,6 +547,8 @@ class MainWindow(QMainWindow):
         self.go_date(now().date())
 
     def navigate(self, direction):
+        self._search_selection_active = False
+        self._search_row_ids.clear()
         self.selection.clear()
         self.selected_id = None
         if self.view == 'month':
@@ -575,6 +598,14 @@ class MainWindow(QMainWindow):
     def event_by_id(self, event_id):
         event = self.store.get_occurrence(event_id) if event_id else None
         if event and not event.series_id and event.recurring:
+            cached = self.results.result_event(event_id)
+            if cached is not None:
+                current = self.store.get_occurrence(cached.id)
+                if current is not None:
+                    return current
+            visible = [value for value in self.visible_events if value.series_id == event.id]
+            if visible:
+                return min(visible, key=lambda value: value.start.timestamp())
             from .recurrence import expand_event
             start = now()
             occurrences = expand_event(event, start, start + timedelta(days=732))
@@ -584,9 +615,16 @@ class MainWindow(QMainWindow):
         return event
 
     def operation_scope(self, modifiers=None):
-        return self.selection.scope
+        return 'single' if self._search_selection_active else self.selection.scope
 
     def set_selection_mode(self, scope):
+        if scope != 'group':
+            converted = [self.search_result_event(value.id) if value.recurring and not value.series_id else value
+                         for value in self.selection.refs]
+            self.selection.replace(value for value in converted if value is not None)
+        if self._search_selection_active:
+            self._search_selection_active = False
+            self._search_row_ids.clear()
         self.selection.set_scope(scope)
         self.store.set_setting('selection_mode', scope)
         self.sync_selection()
@@ -607,26 +645,32 @@ class MainWindow(QMainWindow):
 
     def sync_selection(self):
         try:
-            self.selected_ids = affected_visible(self.store, self.selection.refs, self.selection.scope, self.visible_events)
+            self.selected_ids = affected_visible(self.store, self.selection.refs, self.operation_scope(), self.visible_events)
         except (ValueError, KeyError, OverflowError):
             self.selected_ids = set()
         self.selected_id = self.selection.primary.id if self.selection.primary else None
         for widget in (self.canvas, self.month, self.all_day_canvas):
             widget.selected_id = self.selected_id
             widget.set_selection(self.selected_ids)
-            widget.set_scope(self.selection.scope)
+            widget.set_scope(self.operation_scope())
         self.sync_search_selection()
         self.update_scope_hint()
         self.update_details()
 
     def sync_search_selection(self):
-        targets = self.results.selection_targets()
-        affected = affected_visible(self.store, self.selection.refs, self.selection.scope,
-                                    [event for _, event in targets])
-        self.results.set_selection({row_id for row_id, event in targets if event.id in affected})
+        if self._search_selection_active:
+            self.results.set_row_selection(self._search_row_ids)
+            return
+        identifiers = set()
+        for reference in self.selection.refs:
+            if reference.series_id and self.selection.scope == 'group':
+                identifiers.add(reference.series_id)
+            else:
+                identifiers.add(reference.id)
+        self.results.set_row_selection(identifiers)
 
     def update_scope_hint(self, modifiers=None):
-        scope = self.operation_scope(modifiers)
+        scope = self.selection.scope
         label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
         key_names = {'single': 'scope_single', 'group': 'scope_all', 'future': 'scope_following'}
         for mode, button in self.selection_buttons.items():
@@ -637,6 +681,25 @@ class MainWindow(QMainWindow):
         count = len(self.selection.refs)
         self.scope_hint.setText(f'Selection: {label}' + (f' · {count} selected' if count else '')
                                + ' · Ctrl+click: add/remove · Ctrl+drag: copy')
+        if self._search_selection_active:
+            self.scope_hint.setText('Search selection: series rows select all; dated rows select one'
+                                    + (f' · {count} selected' if count else '') + ' · Ctrl+click: add/remove')
+
+    def remember_selection_for_gesture(self, event_id):
+        self._gesture_selection = (self.selection.refs, self.selection.scope, self._search_selection_active,
+                                   set(self._search_row_ids))
+
+    def edit_from_double_click(self, event_id, modifiers=None):
+        event = self.event_by_id(event_id)
+        if event and self._gesture_selection:
+            refs, scope, searching, rows = self._gesture_selection
+            if event.id in affected_visible(self.store, refs, 'single' if searching else scope, [event]):
+                self.selection.replace(refs)
+                self.selection.set_scope(scope)
+                self._search_selection_active, self._search_row_ids = searching, rows
+                self.sync_selection()
+        self._gesture_selection = None
+        self.edit_event(event_id)
 
 
 
@@ -646,7 +709,9 @@ class MainWindow(QMainWindow):
             self.show_notice('Select an event to edit.')
             return
         refs = self.operation_references(event)
-        scope = scope or (('group' if group else 'single') if group is not None else self.selection.scope)
+        scope = scope or (('group' if group else 'single') if group is not None else self.operation_scope())
+        dialog_scope = ('group' if self._search_selection_active and self.selection.primary
+                        and self.selection.primary.recurring and not self.selection.primary.series_id else scope)
         series = self.store.get_event(event.series_id) if event.series_id else None
         expected = self.store.list_events()
         try:
@@ -654,16 +719,25 @@ class MainWindow(QMainWindow):
             if any(not self.event_writable(member) for member in members):
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
             dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
-                                 preferences=self.preferences, edit_scope=scope, series=series,
+                                 preferences=self.preferences, edit_scope=dialog_scope, series=series,
                                  scope_bindings=self.bindings,
                                  common_fields_only=len({value.series_id or value.id for value in refs}) > 1)
-            dialog.mode_changed.connect(self.set_selection_mode)
+            mode_changes = []
+            def change_editor_mode(value):
+                mode_changes.append(value)
+                self.set_selection_mode(value)
+            dialog.mode_changed.connect(change_editor_mode)
             if len(refs) > 1:
                 dialog.setWindowTitle(f'Edit {len(refs)} selections')
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-            scope = dialog.scope.currentData()
-            self.set_selection_mode(scope)
+            if mode_changes:
+                scope = dialog.scope.currentData()
+                if scope != 'group':
+                    refs = tuple(value for reference in refs
+                                 if (value := (self.search_result_event(reference.id)
+                                               if reference.recurring and not reference.series_id else reference)) is not None)
+                self.set_selection_mode(scope)
             edited = dialog.result_events[0]
             reference = dialog.edit_reference
             previous_ids = {value.id for value in expected}
@@ -687,6 +761,8 @@ class MainWindow(QMainWindow):
         event = next((value for value in self.visible_events if value.id == event_id), None) or self.event_by_id(event_id)
         if event is None:
             return
+        self._search_selection_active = False
+        self._search_row_ids.clear()
         self.select_mode = False
         self.nav_day, self.nav_digits = None, ''
         self.selection.select(event, additive=additive)
@@ -696,7 +772,7 @@ class MainWindow(QMainWindow):
         self.update_hints()
 
     def operation_references(self, event):
-        if self.selection.refs and event.id in affected_visible(self.store, self.selection.refs, self.selection.scope, [event]):
+        if self.selection.refs and event.id in affected_visible(self.store, self.selection.refs, self.operation_scope(), [event]):
             return self.selection.refs
         return (event,)
 
@@ -723,6 +799,8 @@ class MainWindow(QMainWindow):
                 same_exact = [value for value in exact if value in same_resource]
                 value = min(identity_exact or same_exact or exact or same_resource or available,
                             key=lambda item: abs(item.start.timestamp() - expected.timestamp()))
+                if reference.recurring and not reference.series_id:
+                    value = self.store.get_event(value.series_id or value.id) or value
                 selected.append(value)
         self.selection.replace(selected)
         self.sync_selection()
@@ -768,7 +846,7 @@ class MainWindow(QMainWindow):
         if event is None:
             return
         refs = self.operation_references(event)
-        scope = scope or self.selection.scope
+        scope = scope or self.operation_scope()
         previous_ids = {value.id for value in self.store.list_events()}
         try:
             EventDialog.validate_time(start)
@@ -790,7 +868,7 @@ class MainWindow(QMainWindow):
         if event is None:
             return
         try:
-            prepared = self.store.move_selection(self.operation_references(event), self.selection.scope,
+            prepared = self.store.move_selection(self.operation_references(event), self.operation_scope(),
                                                   event, start, end, copy=True)
             from .recurrence import expand_events
             days = self.dates()
@@ -807,11 +885,13 @@ class MainWindow(QMainWindow):
         event = self.event_by_id(event_id or self.selected_id or '')
         if event is None:
             return
-        scope = scope or (('group' if group else 'single') if group is not None else self.selection.scope)
+        scope = scope or (('group' if group else 'single') if group is not None else self.operation_scope())
         try:
             row = self.results.currentRow()
             self.store.delete_selection(self.operation_references(event), scope)
             self.selection.clear()
+            self._search_selection_active = False
+            self._search_row_ids.clear()
             self.selected_id = None
             self.refresh()
             if self.search.text() and self.results.count():
@@ -822,7 +902,7 @@ class MainWindow(QMainWindow):
 
     def capture_events(self, event, scope):
         return capture_selection(self.store, self.operation_references(event), scope,
-                                 view_origin=self.dates()[0], view_kind=self.view)
+                                 view_origin=self.dates()[0], view_kind=self.view, reference=event)
 
     def copy_event(self, event_id=None, scope=None):
         event = self.event_by_id(event_id or self.selected_id or '')
@@ -831,7 +911,7 @@ class MainWindow(QMainWindow):
             return
         try:
             from .ics import export_ics
-            selection = self.capture_events(event, scope or self.selection.scope)
+            selection = self.capture_events(event, scope or self.operation_scope())
             mime = QMimeData()
             mime.setData(EVENT_MIME, selection.to_bytes())
             portable = selection.instantiate('group', selection.reference.start, selection.masters[0].calendar_id)
@@ -875,6 +955,8 @@ class MainWindow(QMainWindow):
         if not events:
             return
         self.selection.clear()
+        self._search_selection_active = False
+        self._search_row_ids.clear()
         self.selected_id = None
         for calendar_id in {event.calendar_id for event in events}:
             calendar = self.store.get_calendar(calendar_id)
@@ -973,7 +1055,7 @@ class MainWindow(QMainWindow):
             self.show_notice('Select an event to duplicate.')
             return
         try:
-            selection = self.capture_events(event, scope or self.selection.scope)
+            selection = self.capture_events(event, scope or self.operation_scope())
             calendar = self.store.get_calendar(event.calendar_id)
             if calendar is None or calendar.read_only or calendar.kind == 'ics':
                 calendar = self.store.get_default_calendar()
@@ -1122,10 +1204,40 @@ class MainWindow(QMainWindow):
             if not calendar.visible or not any(value.id == event.id for value in self.visible_events) or day not in self.dates():
                 self.anchor = day
                 self.refresh(calendars=not calendar.visible)
-            self.select_event(event.id, additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier))
+            root = self.results.is_series_root(event_id)
+            selected = self.store.get_event(event_id) if root else event
+            if selected is None:
+                return False
+            additive = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            if not additive:
+                refs, self._search_row_ids = [], set()
+            else:
+                if self._search_selection_active:
+                    refs = list(self.selection.refs)
+                else:
+                    refs = selection_roots(self.store, self.selection.refs, self.selection.scope)
+                    self._search_row_ids = {value.id for value in refs}
+            if additive and event_id in self._search_row_ids:
+                refs = [value for value in refs if value.id != selected.id]
+                self._search_row_ids.discard(event_id)
+            else:
+                refs = [value for value in refs if value.id != selected.id] + [selected]
+                self._search_row_ids.add(event_id)
+            self.selection.replace(refs)
+            self._search_selection_active = True
+            self.selected_day = day
+            self.mini.setSelectedDate(QDate(day.year, day.month, day.day))
+            self.sync_selection()
             self.ensure_event_visible(event.id)
         finally:
             self._revealing_search_result = False
+        row = self.results.row_item(event_id)
+        if row is not None and row is not self.results.currentItem():
+            blocked = self.results.blockSignals(True)
+            try:
+                self.results.setCurrentItem(row, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            finally:
+                self.results.blockSignals(blocked)
         self.results.setFocus()
         return True
 
@@ -1396,6 +1508,17 @@ class MainWindow(QMainWindow):
         self.ensure_event_visible(event.id)
 
     def eventFilter(self, obj, event):
+        if (event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease)
+                and self.isActiveWindow() and not QApplication.activeModalWidget()):
+            modifiers = event.modifiers()
+            bit = {Qt.Key.Key_Control: Qt.KeyboardModifier.ControlModifier,
+                   Qt.Key.Key_Shift: Qt.KeyboardModifier.ShiftModifier,
+                   Qt.Key.Key_Alt: Qt.KeyboardModifier.AltModifier,
+                   Qt.Key.Key_Meta: Qt.KeyboardModifier.MetaModifier}.get(event.key())
+            if bit:
+                modifiers = (modifiers | bit if event.type() == QEvent.Type.KeyPress else modifiers & ~bit)
+            for widget in (self.canvas, self.month, self.all_day_canvas):
+                widget.set_drag_modifiers(modifiers)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
         if event.type() != QEvent.Type.KeyPress or not self.isActiveWindow() or QApplication.activeModalWidget():
@@ -1440,6 +1563,10 @@ class MainWindow(QMainWindow):
                 if item is None:
                     self.cycle_search_result(1)
                     item = self.results.currentItem()
+                if item is not None and item.data(MORE_ROLE) is True:
+                    self.results.load_more(item)
+                    self.sync_search_selection()
+                    return True
                 self.open_search_result(item)
                 return True
             if focus is self.results and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
