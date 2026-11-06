@@ -23,7 +23,7 @@ from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
-from .import_sources import ImportSource, MAX_IMPORT_BYTES, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
+from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
@@ -1279,19 +1279,27 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         dialog = None
         try:
             dialog = ImportDialog(self.store.list_calendars(), sources=sources,
-                                  calendar_id=calendar_id or (calendar.id if calendar else None), parent=self)
+                                  calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
+                                  preferences=self.preferences, executor=self.executor)
             if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
                 target = self.store.get_calendar(dialog.selected_calendar_id)
                 if target is None or target.read_only or target.kind == 'ics':
                     self.show_notice('Choose a writable calendar for the import.')
+                elif dialog.selected_prepared is None:
+                    self.show_notice('Wait for the calendar preview before importing.')
                 else:
-                    batch = {'remaining': len(dialog.selected_sources), 'messages': []}
-                    for source in dialog.selected_sources:
-                        if source.path is not None:
-                            self._read_import_file(source.path, target.id, batch=batch)
-                        else:
-                            self._read_import_source(source, target.id, batch=batch)
-                            submitted_bytes += len(source.data)
+                    batch = {'remaining': len(dialog.selected_prepared.items), 'messages': []}
+                    self.show_notice('Importing the reviewed events…')
+                    for item in dialog.selected_prepared.items:
+                        source = dialog.selected_sources[item.index]
+                        future = self.executor.submit(item.remap, target.id)
+                        future.calendar_id = target.id
+                        future.source_path = str(source.path) if source.path is not None else ''
+                        future.source_label = item.label
+                        future.import_memory_bytes = len(source.data) if source.data is not None else 0
+                        future.import_batch = batch
+                        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
+                        submitted_bytes += future.import_memory_bytes
         finally:
             self._import_memory_bytes -= memory_bytes - submitted_bytes
             if dialog is not None:
@@ -1299,29 +1307,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._import_dialog_active = False
             if self._import_requests and not self._closed:
                 self._import_timer.start(0)
-
-    def _read_import_file(self, path, calendar_id, *, batch=None):
-        self._read_import_source(ImportSource.from_path(path), calendar_id, batch=batch)
-
-    def _read_import_source(self, source, calendar_id, *, batch=None):
-        self.show_notice('Reading calendar in the background…')
-        def work():
-            from .ics import parse_ics_report
-            if source.path is not None:
-                with source.path.open('rb') as stream:
-                    data = stream.read(MAX_IMPORT_BYTES + 1)
-            else:
-                data = source.data
-            if len(data) > MAX_IMPORT_BYTES:
-                raise ValueError('Choose a calendar file smaller than 20 MB.')
-            return parse_ics_report(data, calendar_id)
-        future = self.executor.submit(work)
-        future.calendar_id = calendar_id
-        future.source_path = str(source.path) if source.path is not None else ''
-        future.source_label = source.label
-        future.import_memory_bytes = len(source.data) if source.data is not None else 0
-        future.import_batch = batch
-        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
     def export_ics(self, calendar_id=None):
         calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar()

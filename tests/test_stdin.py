@@ -63,7 +63,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QElapsedTimer, QTimer
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 import debacal.__main__ as launch
 from debacal.import_dialog import ImportDialog
@@ -96,6 +97,12 @@ def finish(window):
 
 def review(self):
     window = self.parentWidget()
+    elapsed = QElapsedTimer()
+    elapsed.start()
+    while not self.preview_ready and elapsed.elapsed() < 5000:
+        QApplication.processEvents()
+        QTest.qWait(5)
+    assert self.preview_ready
     reviews.append({
         'sources': [{'path': str(source.path) if source.path is not None else None,
                      'label': source.label,
@@ -103,6 +110,7 @@ def review(self):
                     for source in self._sources],
         'calendar': self.calendar.currentData(),
         'events_before_confirming': len(window.store.list_events()),
+        'preview_titles': sorted(event.title for event in self.prepared_import.events),
     })
     if accept:
         self.save()
@@ -172,6 +180,8 @@ def test_redirected_stdin_opens_the_same_review_and_import_flow(tmp_path, runnin
             assert len(result['reviews']) == 1
             review = result['reviews'][0]
             assert review['calendar'] == 'local' and review['events_before_confirming'] == 0
+            assert review['preview_titles'] == (['Café 🗓 from stdin', 'From file argument'] if accept
+                                               else ['Café 🗓 from stdin'])
             stdin = next(source for source in review['sources'] if source['path'] is None)
             assert stdin == {'path': None, 'label': 'Standard input', 'sha256': hashlib.sha256(data).hexdigest()}
             assert len(review['sources']) == (2 if accept else 1)

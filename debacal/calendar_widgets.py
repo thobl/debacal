@@ -1093,6 +1093,7 @@ class MonthCanvas(QWidget):
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self._drag_pointer = None
         self.preferences = Preferences()
+        self.show_creation_hints = True
         self.initialize_confirmation()
         self.setMinimumHeight(440)
         self.setMouseTracking(True)
@@ -1197,19 +1198,24 @@ class MonthCanvas(QWidget):
         painter.restore()
         self.paint_confirmation(painter, confirm, item)
 
+    def month_row_metrics(self):
+        scale = display_scale(self)
+        return 32 * scale, 24 * scale, 21 * scale, 5 * scale
+
     def month_layout(self):
         previews = [self.ghost] if not self.preview_events and self.ghost is not None else self.preview_events
         key = (self._data_version, self._preview_version, id(self.ghost), self.start,
                self.width(), self.height(), display_scale(self), local_zone(),
-               frozenset(self.selected_ids), self.selected_id, self.week_gutter)
+               frozenset(self.selected_ids), self.selected_id, self.week_gutter, self.show_creation_hints)
         cached = self._shape_cache.get('month')
         if cached is not None and cached[0] == key:
             return cached[1]
         scale = display_scale(self)
-        header, heading, lane, event_height = self.header_height, 32 * scale, 24 * scale, 21 * scale
+        header = self.header_height
+        heading, lane, event_height, bottom_padding = self.month_row_metrics()
         gutter = self.week_gutter
         width, height = (self.width() - gutter) / 7, (self.height() - header) / 6
-        capacity = max(0, int((height - 37 * scale) / lane))
+        capacity = max(0, int((height - heading - bottom_padding) / lane))
         days = [self.start + timedelta(days=index) for index in range(42)]
         _bounds, buckets = self.day_buckets(days, date_events=True)
         _bounds, preview_buckets = self.day_buckets(days, previews, date_events=True)
@@ -1265,9 +1271,10 @@ class MonthCanvas(QWidget):
                     commands.append(('text', QRectF(x + 10, y + heading + lane_index * lane, width - 15, event_height), f'+{hidden} more', 8, None))
                 if header_count:
                     commands.append(('text', QRectF(x + 35, y + 5 * scale, max(0, width - 57), 20 * scale), f'+{hidden}', 7, None))
-                commands.append(('text', QRectF(x + 32, y + 5 * scale, width - 40, 20 * scale),
-                                 '+ all day' if width >= 90 and not header_count else '+', 7,
-                                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+                if self.show_creation_hints:
+                    commands.append(('text', QRectF(x + 32, y + 5 * scale, width - 40, 20 * scale),
+                                     '+ all day' if width >= 90 and not header_count else '+', 7,
+                                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
             preview_spans = week_spans(previews, first, capacity=capacity)
             preview_used = [set() for _ in range(7)]
             for item, lane_index, start, end, _number, before, after in preview_spans:
@@ -1293,6 +1300,7 @@ class MonthCanvas(QWidget):
         scale = display_scale(self)
         gutter = self.week_gutter
         width, height = (self.width() - gutter) / 7, (self.height() - self.header_height) / 6
+        day_label_height = min(25 * scale, self.month_row_metrics()[0] - 2 * scale)
         if gutter:
             text(p, QRectF(0, 0, gutter, self.header_height), 'Wk', MUTED, 7, True, Qt.AlignmentFlag.AlignCenter)
             for row in range(6):
@@ -1316,7 +1324,7 @@ class MonthCanvas(QWidget):
             p.setPen(QPen(LINE, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
-            text(p, QRectF(x + 10, y + 3 * scale, width - 18, 25 * scale), str(day.day),
+            text(p, QRectF(x + 10, y + 3 * scale, width - 18, day_label_height), str(day.day),
                  GREEN if day == today else INK, 10, True)
         commands, hits = self.month_layout()
         self.hits = [(QRectF(rect), item) for rect, item in hits]

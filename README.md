@@ -60,11 +60,17 @@ database path; alternative databases also use separate keyring credentials.
 
 Opening one or more `.ics` files shows an import dialog with the selected
 creation calendar as its destination. Choose a different writable calendar or
-cancel before anything is imported. The same dialog opens if Debacal is already
+cancel before anything is imported. A compact source field leaves room for a
+month preview showing the incoming events, recurring dates, and connected
+all-day spans. Navigate months or click an event/day to inspect its details;
+the preview is read-only. Changing the destination updates the preview color.
+Unreadable files and unsupported entries are listed under **Review issues**.
+The same dialog opens if Debacal is already
 running; file paths are delivered to that window instead of starting another
 sync engine. Requests received during another dialog wait their turn. File reads
-run in the background, and an invalid file does not prevent other files from
-being imported. Imports can be undone.
+and preview preparation run in the background, and an invalid file does not
+prevent other files from being imported. Confirmation imports the reviewed
+snapshot without rereading files. Imports can be undone.
 
 Redirected or piped ICS contents open the same review dialog, labeled
 **Standard input**, and can be combined with file arguments. This also works

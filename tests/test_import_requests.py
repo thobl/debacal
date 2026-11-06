@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from debacal.ics import export_ics
 from debacal.import_dialog import ImportDialog
 from debacal.import_sources import ImportSource
+from debacal.import_preparation import PreparedSource
 from debacal.models import Calendar, Event
 from debacal.store import Store
 from debacal.ui import MainWindow
@@ -64,6 +65,7 @@ def finish_parsing(window):
 
 
 def accept_request(dialog):
+    wait_for(QApplication.instance(), lambda: dialog.preview_ready)
     dialog.save()
     return dialog.result()
 
@@ -103,14 +105,13 @@ def test_file_open_reviews_destination_before_background_import_and_undo(desktop
     assert not store.list_events()
 
 
-def test_cancelled_file_open_never_schedules_read_or_changes_calendar(desktop, tmp_path):
+def test_cancelled_file_preview_does_not_change_calendar(desktop, tmp_path):
     app, window, store = desktop
     path = write_calendar(tmp_path / 'Invitation.ics')
-    with patch.object(ImportDialog, 'exec', return_value=QDialog.DialogCode.Rejected) as dialog, \
-            patch.object(window, '_read_import_file') as read:
+    with patch.object(ImportDialog, 'exec', return_value=QDialog.DialogCode.Rejected) as dialog:
         window.import_files([path])
         wait_for(app, lambda: dialog.call_count == 1)
-        assert not read.called and not store.list_events() and not store.history()
+        assert not store.list_events() and not store.history()
 
 
 def test_request_arriving_during_review_waits_for_current_dialog_to_finish(desktop, tmp_path):
@@ -185,20 +186,20 @@ def test_bad_files_do_not_block_other_files_or_create_empty_history_entries(desk
     second = write_calendar(tmp_path / 'Second.ics', 'second', 'Second')
     opened = []
     good_file_started, continue_reading = ThreadEvent(), ThreadEvent()
-    original_open = Path.open
+    original_remap = PreparedSource.remap
 
-    def read(source, *args, **kwargs):
-        if incremental and source == first:
+    def remap(source, *args, **kwargs):
+        if incremental and source.label == first.name:
             good_file_started.set()
             if not continue_reading.wait(timeout=3):
                 raise AssertionError('Import test did not release its worker.')
-        return original_open(source, *args, **kwargs)
+        return original_remap(source, *args, **kwargs)
 
     def review(dialog):
         opened.append(dialog._paths)
         return accept_request(dialog)
 
-    with patch.object(ImportDialog, 'exec', review), patch.object(Path, 'open', read), \
+    with patch.object(ImportDialog, 'exec', review), patch.object(PreparedSource, 'remap', remap), \
             patch.object(window, 'show_notice', wraps=window.show_notice) as notices:
         window.import_files([missing, invalid, first, second])
         wait_for(app, lambda: len(opened) == 1)
@@ -246,7 +247,7 @@ def calendar_contents(identity='stdin', title='From standard input'):
     return export_ics([Event(identity, 'source', title, start, start + timedelta(hours=1))])
 
 
-def test_stdin_contents_require_confirmation_then_parse_in_worker_without_temp_files(desktop):
+def test_stdin_contents_preview_in_worker_and_require_confirmation_without_temp_files(desktop):
     app, window, store = desktop
     from debacal.ics import parse_ics_report
     store.save_calendar(Calendar('work', 'Work', '#315ab7'))
@@ -263,12 +264,13 @@ def test_stdin_contents_require_confirmation_then_parse_in_worker_without_temp_f
         opened.append(dialog._sources)
         assert dialog.files.item(0).text() == 'Standard input'
         assert dialog.calendar.currentData() == 'work'
-        assert not store.list_events() and not parser_threads
+        wait_for(app, lambda: dialog.preview_ready)
+        assert not store.list_events() and parser_threads
+        assert all(thread != ui_thread for thread in parser_threads)
         return accept_request(dialog)
 
     with patch.object(ImportDialog, 'exec', review), \
-            patch('debacal.ics.parse_ics_report', side_effect=parse), \
-            patch.object(window, '_read_import_file', side_effect=AssertionError('Memory import used a file source')), \
+            patch('debacal.import_preparation.parse_ics_report', side_effect=parse), \
             patch('tempfile.mkstemp', side_effect=AssertionError('Memory import created a temporary file')):
         assert window.import_data(data)
         assert not opened and not store.list_events()
@@ -276,19 +278,19 @@ def test_stdin_contents_require_confirmation_then_parse_in_worker_without_temp_f
         finish_parsing(window)
     assert opened == [(source,)]
     assert parser_threads and all(thread != ui_thread for thread in parser_threads)
+    assert len(parser_threads) == 1, 'Confirmation must use the preview snapshot without parsing again.'
     assert [(event.title, event.calendar_id) for event in store.list_events()] == [('Réunion · Prüfung', 'work')], window.notice.text()
     assert window._import_memory_bytes == 0
     window.undo()
     assert not store.list_events()
 
 
-def test_cancelled_stdin_contents_never_schedule_parsing_and_release_pending_memory(desktop):
+def test_cancelled_stdin_preview_releases_memory_without_committing(desktop):
     app, window, store = desktop
-    with patch.object(ImportDialog, 'exec', return_value=QDialog.DialogCode.Rejected) as dialog, \
-            patch.object(window, '_read_import_source') as parse:
+    with patch.object(ImportDialog, 'exec', return_value=QDialog.DialogCode.Rejected) as dialog:
         assert window.import_data(calendar_contents())
         wait_for(app, lambda: dialog.call_count == 1)
-    assert not parse.called and not store.list_events() and not store.history()
+    assert not store.list_events() and not store.history()
     assert not window._import_requests and window._import_memory_bytes == 0
 
 
@@ -365,7 +367,7 @@ def test_pending_stdin_memory_is_bounded_and_cancellation_allows_another_request
     assert window._import_memory_bytes == 0 and not store.list_events()
 
 
-def test_background_stdin_parsing_holds_capacity_until_the_result_is_processed(desktop):
+def test_stdin_preview_holds_capacity_while_loading_and_before_confirmation(desktop):
     app, window, store = desktop
     from debacal.ics import parse_ics_report
     data = calendar_contents()
@@ -377,17 +379,53 @@ def test_background_stdin_parsing_holds_capacity_until_the_result_is_processed(d
             raise AssertionError('Test did not release the parsing worker.')
         return parse_ics_report(*args, **kwargs)
 
-    with patch('debacal.ui.MAX_PENDING_IMPORT_BYTES', len(data)), \
-            patch.object(ImportDialog, 'exec', accept_request), \
-            patch('debacal.ics.parse_ics_report', side_effect=parse):
+    def review(dialog):
         try:
-            assert window.import_data(data)
             wait_for(app, started.is_set)
             assert not window.can_accept_import(len(data))
             assert not window.import_data(data)
             assert not store.list_events()
         finally:
             release.set()
+        wait_for(app, lambda: dialog.preview_ready)
+        assert not window.can_accept_import(len(data))
+        return accept_request(dialog)
+
+    with patch('debacal.ui.MAX_PENDING_IMPORT_BYTES', len(data)), \
+            patch.object(ImportDialog, 'exec', review), \
+            patch('debacal.import_preparation.parse_ics_report', side_effect=parse):
+        try:
+            assert window.import_data(data)
+            wait_for(app, started.is_set)
+        finally:
+            release.set()
         finish_parsing(window)
         assert window.can_accept_import(len(data)) and window._import_memory_bytes == 0
     assert len(store.list_events()) == 1
+
+
+def test_confirmation_imports_the_exact_preview_snapshot_after_file_changes(desktop, tmp_path):
+    app, window, store = desktop
+    path = write_calendar(tmp_path / 'Changing invitation.ics', title='Shown in the preview')
+    reader_threads, ui_thread = [], get_ident()
+    original_open = Path.open
+
+    def read(source, *args, **kwargs):
+        mode = args[0] if args else kwargs.get('mode', 'r')
+        if source == path and 'r' in mode:
+            reader_threads.append(get_ident())
+        return original_open(source, *args, **kwargs)
+
+    def review(dialog):
+        wait_for(app, lambda: dialog.preview_ready)
+        assert not store.list_events() and not store.history()
+        assert [event.title for event in dialog.prepared_import.events] == ['Shown in the preview']
+        write_calendar(path, title='Changed on disk after preview')
+        return accept_request(dialog)
+
+    with patch.object(ImportDialog, 'exec', review), patch.object(Path, 'open', read):
+        window.import_files([path])
+        wait_for(app, lambda: bool(store.list_events()))
+        finish_parsing(window)
+    assert [event.title for event in store.list_events()] == ['Shown in the preview']
+    assert len(reader_threads) == 1 and reader_threads[0] != ui_thread

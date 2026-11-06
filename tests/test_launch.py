@@ -191,7 +191,8 @@ def test_second_command_opens_one_import_dialog_in_the_running_workspace(tmp_pat
 import json
 from pathlib import Path
 import sys
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QElapsedTimer, QTimer
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 import debacal.__main__ as launch
 from debacal.import_dialog import ImportDialog
@@ -208,6 +209,12 @@ def window_without_network(*args, **options):
     return window
 
 def review_and_cancel(self):
+    elapsed = QElapsedTimer()
+    elapsed.start()
+    while not self.preview_ready and elapsed.elapsed() < 5000:
+        QApplication.processEvents()
+        QTest.qWait(5)
+    assert self.preview_ready
     reviews.append({
         'files': [self.files.item(index).toolTip() for index in range(self.files.count())],
         'calendar': self.calendar.currentData(),
