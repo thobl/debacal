@@ -141,6 +141,36 @@ def test_blank_timed_hover_snaps_line_and_formats_compact_time_label(surfaces, d
     assert widget.hover_time is None and widget.grab().toImage() == original
 
 
+@pytest.mark.parametrize('days', [[FIRST], DAYS])
+def test_single_click_keeps_the_same_light_hover_guide_without_moving(surfaces, days):
+    _, make = surfaces
+    widget = make(days=days)
+    point = timed_point(widget, 0, 10, 15)
+    QTest.mouseMove(widget, point)
+    original = widget.grab().toImage()
+    created = QSignalSpy(widget.create_requested)
+    for _ in range(2):
+        QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+        assert widget.time_feedback() == (0, 10 * 60 + 15, False)
+        assert widget.grab().toImage() == original
+        QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=point)
+        assert widget.time_feedback() == (0, 10 * 60 + 15, False)
+        assert widget.grab().toImage() == original
+    assert created.count() == 0 and widget.drag is None and widget.ghost is None
+
+
+def test_pending_click_hover_disappears_on_leave_and_release_outside(surfaces):
+    _, make = surfaces
+    widget = make()
+    point = timed_point(widget, 0, 10, 15)
+    QTest.mouseMove(widget, point)
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+    QApplication.sendEvent(widget, QEvent(QEvent.Type.Leave))
+    assert widget.hover_time is None and widget.time_feedback() is None
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=QPoint(-10, point.y()))
+    assert widget.hover_time is None and widget.time_feedback() is None
+
+
 def test_hover_guide_disappears_on_event_drag_and_placement(surfaces):
     _, make = surfaces
     widget = make(events=[sample()])
@@ -170,7 +200,7 @@ def test_creation_drag_keeps_its_actual_start_line_label_and_exact_interval(surf
     begin, finish = (late, early) if reverse else (early, late)
     created = QSignalSpy(widget.create_requested)
     QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=begin)
-    assert widget.time_feedback() == (2, (11 * 60 + 45) if reverse else (10 * 60 + 15), True)
+    assert widget.time_feedback() == (2, (11 * 60 + 45) if reverse else (10 * 60 + 15), False)
     QTest.mouseMove(widget, finish)
     assert widget.time_feedback() == (2, 10 * 60 + 15, True)
     with patch('lebacal.calendar_widgets.text', wraps=calendar_widgets.text) as painted:

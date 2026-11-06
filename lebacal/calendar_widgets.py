@@ -279,8 +279,8 @@ class CalendarCanvas(QWidget):
         if self.drag:
             if self.drag[0] != 'create':
                 return None
-            day, minute = self.ghost[:2] if self.ghost else self.drag[3]
-            return day, minute, True
+            if self.ghost:
+                return (*self.ghost[:2], True)
         return (*self.hover_time, False) if self.hover_time is not None else None
 
     def paint_time_feedback(self, painter):
@@ -573,7 +573,8 @@ class CalendarCanvas(QWidget):
         else:
             self.day_selected.emit(day)
             if point.y() >= self.time_top:
-                self.drag = ('create', None, point, self.position(point))
+                self.hover_time = self.position(point)
+                self.drag = ('create', None, point, self.hover_time)
         self.update()
 
     def mouseMoveEvent(self, event):
@@ -606,6 +607,10 @@ class CalendarCanvas(QWidget):
             self.setCursor(Qt.CursorShape.SizeVerCursor if hit and point.y() > hit[0].bottom() - 7 and not hit[1].all_day else Qt.CursorShape.ArrowCursor)
             return
         if (point - self.drag[2]).manhattanLength() < 5:
+            if self.drag[0] == 'create' and self.ghost is None:
+                day = self.day_at(point)
+                self.hover_time = self.position(point) if day is not None and point.y() >= self.time_top and not self.hit(point) else None
+                self.update()
             return
         kind, item, origin, (old_day, old_min) = self.drag
         day, minute = self.position(point, endpoint=True)
@@ -659,6 +664,10 @@ class CalendarCanvas(QWidget):
                     self.move_scoped_requested.emit(item, start, end, event.modifiers())
         if deferred and not ghost:
             self.emit_selection(*deferred)
+        if drag and drag[0] == 'create' and not ghost and not self.placement_active and not self._placement_consumed:
+            point = event.position()
+            if self.day_at(point) is not None and point.y() >= self.time_top and not self.hit(point):
+                self.hover_time = self.position(point)
         self.update()
 
     def mouseDoubleClickEvent(self, event):
