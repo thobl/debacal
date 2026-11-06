@@ -1,0 +1,86 @@
+{
+  "reviewed_at": "2026-11-06",
+  "scope": "Read-only review of appearance.py, workspace_chrome.py, calendar_widgets.py, calendar_list.py, import_dialog.py, and import_preview.py. No production UI changes.",
+  "principles": [
+    {
+      "name": "Proximity follows meaning",
+      "application": "Keep period navigation beside the date heading, keep full-day expansion beside the view switcher, and distinguish short gaps inside groups from larger gaps between groups. Preserve these relationships when the toolbar wraps.",
+      "source": "https://www.nngroup.com/articles/gestalt-proximity/"
+    },
+    {
+      "name": "Consistent visual forms communicate consistent roles",
+      "application": "Retain segmented controls for mutually exclusive view and series-scope choices. Ordinary actions, toggles, selection, and keyboard focus should remain distinguishable rather than sharing one green treatment.",
+      "source": "https://www.nngroup.com/articles/gestalt-similarity/"
+    },
+    {
+      "name": "Typography establishes hierarchy without excessive variety",
+      "application": "Use the desktop font, a small set of roles, and a consistent scaling system. Give the current period and event titles priority; keep times and sync status legible. Review mixed stylesheet pixel sizes and painter point sizes together.",
+      "source": "https://developer.gnome.org/hig/guidelines/typography.html"
+    },
+    {
+      "name": "Low visual weight must still remain readable",
+      "application": "Use 4.5:1 as the normal-text contrast benchmark. For essential control/state indicators use the relevant 3:1 non-text benchmark. Decorative calendar gridlines need not all reach 3:1. Server colors should remain available as event accents while text is chosen for legibility.",
+      "sources": [
+        "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html",
+        "https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html"
+      ]
+    },
+    {
+      "name": "Do not communicate important state through color alone",
+      "application": "Preserve the source visibility eye icon, a distinct creation-target state, and restrained selected-event borders/bars. Supplement calendar color with source names in tooltips or other existing descriptive contexts.",
+      "source": "https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html"
+    },
+    {
+      "name": "Build on the desktop rather than a second visual platform",
+      "application": "Keep Qt widgets, native behavior, and inexpensive canvas painting. Prefer a few coherent color and spacing roles over broad custom styling. Treat GNOME guidance as relevant desktop design advice, not a proposal to migrate Qt to GTK.",
+      "source": "https://developer.gnome.org/hig/guidelines/ui-styling.html"
+    }
+  ],
+  "preserve": [
+    "Fast native desktop UI and familiar keyboard interactions",
+    "Source colors supplied by calendar servers",
+    "Separate controls for the creation calendar and calendar visibility",
+    "Semantic navigation, view, series-scope, and event-action groups",
+    "Mild event selection using weight, border, and a vertical bar",
+    "Stable sidebar/search space and navigation geometry",
+    "Compact import source field, date selection, and tooltip-only event details"
+  ],
+  "contrast_method": {
+    "calculation": "WCAG sRGB relative luminance; colors taken from code, QColor.darker() evaluated by installed PySide6, event source alpha composited over the weekday canvas before contrast calculation.",
+    "base_background": "#fafbf8",
+    "timed_event_alpha": "52/255",
+    "caveat": "These are code-level sampled states, not a complete accessibility conformance evaluation. Weekend backgrounds, candidate/preview states, rendering, screen scale, and complete keyboard/focus behavior need separate checks. WCAG ratios are used as useful readability benchmarks for this native app."
+  },
+  "contrast_samples": [
+    {"role": "Hour labels, 7–8pt", "foreground": "#89938a", "background": "#fafbf8", "ratio": 3.062},
+    {"role": "Muted text in sidebar", "foreground": "#788373", "background": "#edf0e8", "ratio": 3.444},
+    {"role": "Section/sync text in sidebar", "foreground": "#65735f", "background": "#edf0e8", "ratio": 4.371},
+    {"role": "Body text in sidebar", "foreground": "#29382f", "background": "#edf0e8", "ratio": 10.717},
+    {"role": "Checked creation target text", "foreground": "#35513d", "background": "#e0e9d8", "ratio": 7.019},
+    {"role": "Primary button", "foreground": "#ffffff", "background": "#446d50", "ratio": 5.917},
+    {"role": "Neutral hover time guide", "foreground": "#526b80", "background": "#fafbf8", "ratio": 5.358},
+    {"role": "Import unchecked date marker border", "foreground": "#97a88f", "background": "#fafbf8", "ratio": 2.432},
+    {"role": "Decorative gridline; not essential-state contrast", "foreground": "#e4e8e0", "background": "#fafbf8", "ratio": 1.195}
+  ],
+  "built_in_palette_timed_event_measurement": {
+    "source": "debacal/dialogs.py:830",
+    "rendering_source": "debacal/calendar_widgets.py:778",
+    "swatches_checked": 20,
+    "titles_below_4_5": 5,
+    "secondary_text_below_4_5": 13,
+    "examples": [
+      {"name": "Fern", "source_color": "#5c8267", "title_ratio": 5.741, "secondary_ratio": 4.415},
+      {"name": "Gold", "source_color": "#b4994f", "title_ratio": 4.272, "secondary_ratio": 3.136},
+      {"name": "Orange", "source_color": "#e28832", "title_ratio": 4.183, "secondary_ratio": 3.052},
+      {"name": "Lemon", "source_color": "#c4b939", "title_ratio": 3.462, "secondary_ratio": 2.467}
+    ],
+    "server_color_stress_example": {"source_color": "#ffff00", "title_ratio": 2.190, "secondary_ratio": 1.501, "selected_bar_against_fill_ratio": 2.190}
+  },
+  "priority_opportunities": [
+    "Make hour labels, muted text, event times, and light-source event titles legible before adding visual decoration.",
+    "Reduce competition between the large brand and current-period heading; use a restrained, consistent type hierarchy.",
+    "Unify margins and group gaps into a small spacing scale while preserving the current toolbar's semantic grouping.",
+    "Clarify keyboard focus, chosen segment, source target, and selected-event states with distinct but restrained cues.",
+    "Apply the same button, type, spacing, and selection language to import without adding an event-details pane."
+  ]
+}

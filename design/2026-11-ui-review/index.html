@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debacal — design alternatives</title>
+<style>
+  :root { color-scheme: light; --ink:#25312c; --muted:#57645e; --line:#d4ddd6; --accent:#365c46; --paper:#fff; --bg:#f3f5f2; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; }
+  header, main, footer { max-width:1560px; margin:auto; padding:24px 32px; }
+  header { padding-bottom:16px; }
+  .eyebrow { color:var(--accent); font-size:13px; font-weight:650; letter-spacing:.04em; }
+  h1 { font-size:32px; line-height:1.2; letter-spacing:-.8px; margin:8px 0 12px; }
+  h2 { font-size:21px; margin:0 0 10px; letter-spacing:-.3px; }
+  h3 { font-size:17px; margin:0 0 8px; }
+  p { margin:0 0 12px; max-width:88ch; }
+  .muted, small { color:var(--muted); }
+  a { color:var(--accent); text-underline-offset:3px; }
+  button, select, input { font:inherit; accent-color:var(--accent); }
+  button, select { min-height:38px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:7px; padding:7px 12px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); background:#eff4ef; }
+  button[aria-pressed="true"] { background:#e2ece3; border-color:var(--accent); color:#274a35; box-shadow:inset 0 0 0 1px var(--accent); }
+  :focus-visible { outline:3px solid #426a9d; outline-offset:3px; }
+  .concepts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin:0 0 20px; }
+  .concept { text-align:left; padding:16px; display:flex; flex-direction:column; align-items:flex-start; gap:9px; }
+  .concept strong { font-size:18px; }
+  .concept span { color:var(--muted); font-size:14px; line-height:1.5; }
+  .concept .swatches { display:flex; align-items:center; gap:6px; }
+  .swatches i { width:20px; height:20px; border-radius:50%; border:1px solid #adb7ac; }
+  .tools { display:flex; flex-wrap:wrap; align-items:center; gap:16px 24px; margin-bottom:14px; }
+  .tools label { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .tools .group { display:flex; gap:6px; align-items:center; }
+  .tools .group > span { color:var(--muted); margin-right:4px; font-size:14px; }
+  .stage { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:18px; }
+  .stage.compare { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  figure { margin:0; min-width:0; background:var(--paper); border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  figcaption { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:14px; }
+  figcaption strong { font-weight:650; }
+  .image-scroll { overflow:auto; background:#e9eeea; }
+  .image-scroll img { display:block; width:100%; height:auto; }
+  .stage.actual .image-scroll { max-height:900px; }
+  .stage.actual .image-scroll img { width:auto; max-width:none; }
+  .note { display:grid; grid-template-columns:2fr 1fr; gap:24px; padding:20px 0 26px; border-bottom:1px solid var(--line); }
+  .note p { margin-bottom:6px; }
+  .note small { display:block; font-size:14px; }
+  .review { display:grid; grid-template-columns:1fr 1fr; gap:32px; padding-top:26px; }
+  ul, ol { padding-left:21px; margin:0; }
+  li { margin:7px 0; }
+  .readability { margin-top:24px; padding:20px; background:var(--paper); border:1px solid var(--line); border-radius:9px; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; font-size:14px; }
+  th, td { border-bottom:1px solid var(--line); padding:10px 12px; text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  .chip { display:inline-block; width:18px; height:18px; vertical-align:middle; border-radius:4px; margin-right:8px; border:1px solid #a2a99e; }
+  details { border-top:1px solid var(--line); margin-top:24px; padding-top:18px; }
+  summary { cursor:pointer; font-weight:650; }
+  details ul { margin-top:12px; }
+  footer { font-size:14px; color:var(--muted); border-top:1px solid var(--line); margin-top:24px; }
+  code { background:#e6ece7; border-radius:4px; padding:2px 5px; font-size:.9em; }
+  .visually-hidden { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
+  [hidden] { display:none !important; }
+  @media(max-width:900px) { header,main,footer { padding:20px 16px; } .concepts { gap:8px; } .concept { padding:12px; } .stage.compare,.review,.note { grid-template-columns:1fr; } h1 { font-size:27px; } }
+  @media(max-width:580px) { .concepts { grid-template-columns:1fr; } .concept { gap:5px; } .concept .swatches { display:none; } .tools { gap:12px; } }
+  @media print { .tools { display:none; } .stage.actual .image-scroll img { width:100%; } .stage.actual .image-scroll { max-height:none; } details { break-inside:avoid; } }
+</style>
+<header>
+  <div class="eyebrow">DEBACAL · DESIGN STUDY · 6 NOVEMBER 2026</div>
+  <h1>Three directions, with the same calendar underneath</h1>
+  <p>These are native Qt mockups made from the current app. Compare the proposals with the existing interface, then switch views to check density, readability, and consistency.</p>
+  <p class="muted">The app is unchanged. Every screenshot uses the same synthetic events and an in-memory database; no accounts or personal calendar data are involved.</p>
+</header>
+<main>
+  <div class="concepts" role="group" aria-label="Design direction">
+    <button class="concept" data-concept="a" aria-pressed="false">
+      <strong>A · Familiar refinement</strong>
+      <span>The current warm green character, with stronger text contrast and a clearer size hierarchy. The smallest layout change.</span>
+      <span class="swatches" aria-hidden="true"><i style="background:#fafbf8"></i><i style="background:#edf0e8"></i><i style="background:#416c51"></i><i style="background:#26362e"></i></span>
+    </button>
+    <button class="concept" data-concept="b" aria-pressed="true">
+      <strong>B · Calendar first</strong>
+      <span>Date navigation and View share the first row. Selection and Events have a quieter second row. Neutral surfaces and less sidebar framing.</span>
+      <span class="swatches" aria-hidden="true"><i style="background:#ffffff"></i><i style="background:#f6f7f8"></i><i style="background:#475f52"></i><i style="background:#27313a"></i></span>
+    </button>
+    <button class="concept" data-concept="c" aria-pressed="false">
+      <strong>C · Clear and compact</strong>
+      <span>Lighter event cards with source-color stripes, larger event text, restrained selection, and a slimmer sidebar. Keeps the compact header.</span>
+      <span class="swatches" aria-hidden="true"><i style="background:#ffffff"></i><i style="background:#f4f6f7"></i><i style="background:#587c67"></i><i style="background:#28343c"></i></span>
+    </button>
+  </div>
+
+  <div class="tools">
+    <label>Example
+      <select id="state">
+        <option value="week">Week · 1440 × 960</option>
+        <option value="narrow">Smaller window · 1030 × 690</option>
+        <option value="month">Month · 1440 × 960</option>
+        <option value="yellow">Bright yellow calendar · 1440 × 960</option>
+        <option value="import">Import · 980 × 680</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="compare"> Compare with current</label>
+    <div class="group" role="group" aria-label="Screenshot size"><span>Size</span><button id="fit" aria-pressed="true">Fit</button><button id="actual" aria-pressed="false">100%</button></div>
+  </div>
+  <div id="stage" class="stage">
+    <figure id="baseline" hidden>
+      <figcaption><strong>Current app</strong><a id="current-link" href="images/current-week.png" target="_blank" rel="noopener">Open full size ↗</a></figcaption>
+      <div class="image-scroll"><img id="current-image" src="images/current-week.png" width="1440" height="960" alt="Current Debacal interface with sample events"></div>
+    </figure>
+    <figure>
+      <figcaption><strong id="proposal-title">B · Calendar first</strong><a id="proposal-link" href="images/b-week.png" target="_blank" rel="noopener">Open full size ↗</a></figcaption>
+      <div class="image-scroll"><img id="proposal-image" src="images/b-week.png" width="1440" height="960" alt="Calendar-first proposal with sample events"></div>
+    </figure>
+  </div>
+  <div class="note" aria-live="polite">
+    <div><h3 id="note-title">B · Calendar first</h3><p id="note-body"></p><small id="state-note"></small></div>
+    <div><h3>Tradeoff</h3><p id="tradeoff"></p></div>
+  </div>
+
+  <div class="review">
+    <section>
+      <h2>What is already working</h2>
+      <ul>
+        <li>Navigation sits beside the period; View, Selection, and Events have distinct semantic groups.</li>
+        <li>Segmented controls communicate one choice within each group.</li>
+        <li>Calendar creation target and visibility are separate. Search has stable space in the sidebar.</li>
+        <li>Selection keeps the calendar’s hue, using a border and a vertical bar. All-day events span days.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Where I would refine it</h2>
+      <ul>
+        <li><strong>Readability first.</strong> Some hour labels, secondary text, and light-colored event text are too faint.</li>
+        <li><strong>A calmer hierarchy.</strong> Give the current period priority over branding, then event titles over metadata.</li>
+        <li><strong>More deliberate spacing.</strong> Use smaller gaps within groups and larger gaps between them; remove redundant boxes.</li>
+        <li><strong>Consistent states.</strong> Keep source color, selected events, chosen controls, and keyboard focus visually distinct.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="readability">
+    <h2>Why the color treatment matters</h2>
+    <p>The current event painter derives text color from the calendar color. That works for some calendars but breaks down for light colors. All three proposals retain the source hue while choosing dark text independently.</p>
+    <table>
+      <thead><tr><th>Current sampled state</th><th>Contrast</th><th>Design implication</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chip" style="background:#89938a"></span>Hour labels on calendar background</td><td>3.06 : 1</td><td>Darker metadata, with a legible minimum size.</td></tr>
+        <tr><td><span class="chip" style="background:#788373"></span>Muted sidebar text</td><td>3.44 : 1</td><td>Secondary should still be easy to read.</td></tr>
+        <tr><td><span class="chip" style="background:#ffff00"></span>Yellow calendar event title / time</td><td>2.19 / 1.50 : 1</td><td>Keep the calendar hue in the fill or stripe, not the text.</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">These are code-derived samples using Qt colors and alpha compositing, not a complete accessibility audit. The normal-text benchmark is <a href="https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html">4.5 : 1</a>. Decorative gridlines can remain quiet; essential state indicators require separate consideration.</p>
+  </section>
+
+  <details>
+    <summary>Design principles and sources</summary>
+    <ul>
+      <li><a href="https://www.nngroup.com/articles/gestalt-proximity/">Nielsen Norman Group · Proximity</a> — spacing communicates which controls belong together, including when a layout wraps.</li>
+      <li><a href="https://www.nngroup.com/articles/gestalt-similarity/">Nielsen Norman Group · Similarity</a> — consistent appearance for consistent roles; distinct treatments for actions and exclusive choices.</li>
+      <li><a href="https://developer.gnome.org/hig/guidelines/typography.html">GNOME HIG · Typography</a> — use the desktop font and a small set of meaningful type roles rather than many tiny styles.</li>
+      <li><a href="https://developer.gnome.org/hig/principles.html">GNOME HIG · Principles</a> — respect attention, make frequent actions easy to reach, and disclose complexity when needed.</li>
+      <li><a href="https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html">W3C · Text contrast</a> and <a href="https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html">non-text contrast</a> — useful readability benchmarks for text, focus, and essential indicators.</li>
+      <li><a href="https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html">W3C · Use of color</a> — source colors are helpful, while selection and visibility still need recognizable shapes or controls.</li>
+    </ul>
+    <p style="margin-top:16px">GNOME guidance informs the desktop design review; the proposals remain Qt. The prototypes reuse existing icons and workflows rather than introducing a separate UI framework.</p>
+  </details>
+  <details>
+    <summary>How to judge the examples</summary>
+    <ol>
+      <li>Compare A, B, and C at full size. Which feels most comfortable for daily use?</li>
+      <li>Check the smaller window: B’s extra row costs vertical calendar space; C’s larger text truncates more long titles.</li>
+      <li>Switch to bright yellow: event titles, times, and the selected outline should remain readable.</li>
+      <li>Check Month and Import: the visual language should carry across, while date inclusion remains clear.</li>
+    </ol>
+    <p style="margin-top:16px">My starting recommendation is A’s restrained layout and warmth, combined with C’s neutral event text and lighter card fills. B is an alternative if the date-and-view relationship should be stronger. These choices can be mixed; they are not three all-or-nothing redesigns.</p>
+    <p class="muted">These are static rendering experiments. They do not demonstrate changed interactions, dark mode, all languages, every display scale, or complete accessibility conformance. Long-title clipping and the existing import-date selection behavior are preserved for honest comparison.</p>
+  </details>
+</main>
+<footer>
+  <p>20 screenshots · same sample data · no production changes. <a href="README.txt">Reproduce the examples</a> · <a href="audit-data.json">Detailed review and contrast samples</a></p>
+</footer>
+<script>
+  const concepts = {
+    a: {title:'A · Familiar refinement', body:'Keeps the existing layout and warm green surfaces. A smaller brand, darker metadata, slightly larger text, and shared spacing make the period and events easier to scan. Source-colored fills remain, with neutral event text.', tradeoff:'The lowest disruption, but it retains much of the current framing and offers less visual separation between app controls and the calendar.'},
+    b: {title:'B · Calendar first', body:'Places navigation, the period, and View together on the first row. Selection and Events share a quieter second row. A neutral sidebar, white canvas, and unboxed agenda reduce visual competition around the calendar.', tradeoff:'The hierarchy is clearer, but the persistent second row uses about 48 pixels more height in a wide window.'},
+    c: {title:'C · Clear and compact', body:'Keeps the compact header while making event cards near-white. Calendar colors move mainly to the source stripe. Larger, neutral text and a slim sidebar create a clearer reading surface; selection remains a restrained outline and bar.', tradeoff:'Light fills make calendars less distinguishable at a glance than full tints. Larger text also means more truncation in narrow columns.'}
+  };
+  const states = {
+    week:{name:'Week view',width:1440,height:960,note:'Selected: “Plan the week”. The check mark on a candidate slot is shown in its hover state. The connected all-day bar is the same event in every proposal.'},
+    narrow:{name:'Smaller window',width:1030,height:690,note:'The same week at 1030 × 690. Compare toolbar wrapping, sidebar density, and the space left for events.'},
+    month:{name:'Month view',width:1440,height:960,note:'The same source colors and selection treatment in a denser view. No new month-view behavior is implied.'},
+    yellow:{name:'Yellow calendar contrast test',width:1440,height:960,note:'Only the Work calendar color changes to #ffff00. This deliberately tests a server-provided color that is difficult for the current text-color formula.'},
+    import:{name:'Import preview',width:980,height:680,note:'The same four synthetic events, with “Plan the week” excluded. The compact source field, date selection, and tooltip-only details are retained.'}
+  };
+  let selected='b';
+  const byId=id=>document.getElementById(id);
+  function update() {
+    const state=byId('state').value, concept=concepts[selected], sample=states[state];
+    document.querySelectorAll('[data-concept]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.concept===selected)));
+    byId('proposal-title').textContent=concept.title;
+    byId('note-title').textContent=concept.title;
+    byId('note-body').textContent=concept.body;
+    byId('tradeoff').textContent=concept.tradeoff;
+    byId('state-note').textContent=sample.note;
+    for(const [prefix,key,title] of [['current','current','Current app'],['proposal',selected,concept.title]]) {
+      const src=`images/${key}-${state}.png`, img=byId(prefix+'-image');
+      img.src=src; img.width=sample.width; img.height=sample.height;
+      img.alt=`${title}: ${sample.name}, synthetic calendar data`;
+      byId(prefix+'-link').href=src;
+    }
+    byId('baseline').hidden=!byId('compare').checked;
+    byId('stage').classList.toggle('compare',byId('compare').checked);
+    location.hash=selected+'/'+state+(byId('compare').checked?'/compare':'');
+  }
+  document.querySelectorAll('[data-concept]').forEach(button=>button.addEventListener('click',()=>{selected=button.dataset.concept;update();}));
+  ['state','compare'].forEach(id=>byId(id).addEventListener('change',update));
+  function scale(actual) {
+    byId('stage').classList.toggle('actual',actual);
+    byId('fit').setAttribute('aria-pressed',String(!actual));
+    byId('actual').setAttribute('aria-pressed',String(actual));
+  }
+  byId('fit').addEventListener('click',()=>scale(false));
+  byId('actual').addEventListener('click',()=>scale(true));
+  const parts=location.hash.slice(1).split('/');
+  if(concepts[parts[0]]) selected=parts[0];
+  if(states[parts[1]]) byId('state').value=parts[1];
+  byId('compare').checked=parts[2]==='compare';
+  update();
+</script>
+</html>
