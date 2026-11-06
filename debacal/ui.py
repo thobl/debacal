@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from queue import SimpleQueue, Empty
-from collections import deque
+from collections import deque, OrderedDict
 import calendar as monthlib
 import math
 
@@ -77,6 +77,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.nav_digits = None
         self.select_mode = False
         self._search_index = None
+        self._events_revision = None
+        self._range_cache = OrderedDict()
+        self._filter_masters = {}
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(80)
+        self.search_timer.timeout.connect(self.run_search)
         self._revealing_search_result = False
         self._search_selection_active = False
         self._search_row_ids = set()
@@ -156,14 +163,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def refresh(self, calendars=False):
         if self._closed:
             return
-        if not self._revealing_search_result:
+        revision = self.store.events_revision()
+        if revision != self._events_revision:
+            self._events_revision = revision
+            self._range_cache.clear()
+            self._filter_masters.clear()
             self._search_index = None
             self.results.invalidate()
         cals = self.store.list_calendars()
         days = self.dates()
         if self.selected_day not in days:
             self.selected_day = self.anchor
-        self.range_events = self.store.query_occurrences(at(days[0]), at(days[-1] + timedelta(days=1)), [c.id for c in cals if c.visible])
+        self.range_events = self.query_view_events(days, cals, revision)
         self.visible_events = self.filter_calendar_events(self.range_events)
         refs = [value for reference in self.selection.refs
                 if (value := self.store.get_occurrence(reference.id)) is not None]
@@ -188,7 +199,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.all_day_canvas.set_data(days[:7], self.visible_events, cals)
         self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
         self.month.set_data(days[0], self.anchor.month, self.visible_events, cals)
-        self.results.preferences = self.preferences
+        self.results.update_context(cals, self.preferences)
         self.results.set_range(at(days[0]), at(days[-1] + timedelta(days=1)))
         self.stack.setCurrentIndex(1 if self.view == 'month' else 0)
         for name, btn in self.view_buttons.items():
@@ -202,6 +213,23 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if not self._revealing_search_result:
             self.run_search()
         self.update_sync_status()
+
+    def query_view_events(self, days, calendars, revision):
+        identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
+        begin, end = at(days[0]), at(days[-1] + timedelta(days=1))
+        key = revision, begin.timestamp(), end.timestamp(), identifiers
+        events = self._range_cache.get(key)
+        if events is not None:
+            self._range_cache.move_to_end(key)
+            return list(events)
+        events = self.store.query_occurrences(begin, end, identifiers)
+        # Bound both page count and occurrence count: a dense calendar should
+        # not retain arbitrarily many old pages or visibility combinations.
+        if len(events) <= 20_000:
+            self._range_cache[key] = tuple(events)
+            while len(self._range_cache) > 8 or sum(map(len, self._range_cache.values())) > 20_000:
+                self._range_cache.popitem(last=False)
+        return events
 
     def update_hints(self):
         def key(action):
@@ -885,6 +913,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def run_search(self, *_):
         if self._revealing_search_result:
             return
+        self.search_timer.stop()
+        self.results.setEnabled(True)
         query = self.search.text().strip()
         self.results_heading.setText('Search results' if query else 'Next events')
         if query:
@@ -895,6 +925,19 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.apply_search_filter()
         self.sync_search_selection()
 
+    def search_changed(self, *_):
+        # Programmatic queries and clearing stay immediate. Actual typing is
+        # coalesced so a burst of keys does one result/tree update.
+        if self.search.isModified() and self.search.text().strip():
+            self.search_timer.start()
+            self.results.setEnabled(False)
+        else:
+            self.run_search()
+
+    def flush_search(self):
+        if self.search_timer.isActive():
+            self.run_search()
+
     def toggle_search_filter(self):
         self.store.set_setting('filter_calendar_by_search', self.filter_search.isChecked())
         self.apply_search_filter()
@@ -903,11 +946,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         query = self.search.text().strip()
         if not self.filter_search.isChecked() or not query:
             return list(events)
-        masters = {}
         for event in events:
-            if event.series_id and event.series_id not in masters:
-                masters[event.series_id] = self.store.get_event(event.series_id)
-        return [event for event in events if event_matches_query(event, query, masters.get(event.series_id))]
+            if event.series_id and event.series_id not in self._filter_masters:
+                self._filter_masters[event.series_id] = self.store.get_event(event.series_id)
+        return [event for event in events if event_matches_query(event, query, self._filter_masters.get(event.series_id))]
 
     def apply_search_filter(self):
         events = self.filter_calendar_events(getattr(self, 'range_events', ()))
@@ -943,6 +985,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
 
     def cycle_search_result(self, direction):
+        self.flush_search()
         self.results.cycle(direction)
         self.results.setFocus()
 
@@ -1043,7 +1086,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def exit_search(self):
         self.search.clear()
-        self.run_search()
+        self.flush_search()
         (self.month if self.view == 'month' else self.canvas).setFocus()
 
     def add_calendar(self, calendar=None):
@@ -1132,7 +1175,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.engine.sync_now()
 
     def update_sync_status(self):
-        pending = len(self.store.pending_changes())
+        pending = self.store.count_pending_changes()
         self.sync_btn.setEnabled(bool(self.engine) and not self._sync_running)
         self.sync_btn.setToolTip('Syncing in background…' if self._sync_running else
                                  ('Sync calendars (' + self.bindings.get('sync', '') + ')' if self.engine else
@@ -1174,7 +1217,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if not self.engine:
             lines.append('Demo mode is offline. Choose Open my calendars to use your persistent workspace.' if self.demo_mode else 'Sync is disabled in this workspace.')
         for calendar in self.store.list_calendars():
-            pending = len(self.store.pending_changes(calendar.id))
+            pending = self.store.count_pending_changes(calendar.id)
             cached = self.store.count_events(calendar.id)
             lines.append(f'{calendar.name} · {calendar.kind} · {cached} cached event series · {pending} pending change(s)')
             if calendar.id in self._sync_errors:
@@ -1342,6 +1385,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.focus_search()
             return True
         searching = focus in (self.search, self.results)
+        if searching and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.flush_search()
         if event.key() == Qt.Key.Key_Escape:
             if searching or (self.search.text() and self.results.isVisible()):
                 self.exit_search()
@@ -1477,6 +1522,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.sync_timer.stop()
         self.clock_timer.stop()
         self.shortcut_timer.stop()
+        self.search_timer.stop()
+        self._range_cache.clear()
         if self.engine:
             self.engine.close()
         if self.tray_icon:

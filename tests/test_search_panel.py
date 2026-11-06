@@ -170,7 +170,7 @@ def test_matching_detached_override_is_grouped_under_its_master(workspace):
 def test_query_cache_and_expanded_pages_survive_refresh(workspace):
     _, store, panel = workspace
     store.apply('Create', [event(recurrence_rule='FREQ=DAILY;COUNT=250')])
-    with patch.object(store, 'list_events', wraps=store.list_events) as reads:
+    with patch.object(store, 'event_search_index', wraps=store.event_search_index) as reads:
         panel.populate('needle')
         parent = panel.item(0)
         parent.setExpanded(True)

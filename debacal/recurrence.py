@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
+from heapq import merge
 from typing import Iterable
 from urllib.parse import quote, unquote
 from zoneinfo import ZoneInfo
@@ -162,10 +163,56 @@ def canonical_rule(rule: str, master: Event) -> str:
     return ";".join(parts)
 
 
-def recurrence_set(master: Event):
+def _seek_rule(rule: str, start: datetime, after: datetime | None) -> tuple[str, datetime]:
+    """Skip whole simple periods without changing the rule's local phase.
+
+    dateutil starts iteration at DTSTART even for xafter(). Calendar rules with
+    count-sensitive filters or complex month/year constraints retain that exact
+    path; plain daily/weekly schedules can start close to the requested window.
+    """
+    if after is None:
+        return rule, start
+    parts = dict(piece.split("=", 1) for piece in rule.split(";"))
+    if set(parts) - {"FREQ", "INTERVAL", "COUNT", "UNTIL", "WKST", "BYDAY"}:
+        return rule, start
+    frequency = parts.get("FREQ")
+    if frequency not in {"DAILY", "WEEKLY"}:
+        return rule, start
+    if "COUNT" in parts and "BYDAY" in parts:
+        weekday = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")[start.weekday()]
+        if frequency != "WEEKLY" or parts["BYDAY"] != weekday:
+            return rule, start
+    interval = int(parts.get("INTERVAL", "1"))
+    period_days = interval * (7 if frequency == "WEEKLY" else 1)
+    elapsed = after.astimezone(start.tzinfo).replace(tzinfo=None) - start.replace(tzinfo=None)
+    skipped = max(0, elapsed.days // period_days - 1)
+    if not skipped:
+        return rule, start
+    if "COUNT" in parts:
+        remaining = int(parts["COUNT"]) - skipped
+        if remaining <= 0:
+            return "", start
+        parts["COUNT"] = str(remaining)
+    return ";".join(f"{key}={value}" for key, value in parts.items()), start + timedelta(days=period_days * skipped)
+
+
+def recurrence_set(master: Event, *, after: datetime | None = None):
+    """Return standard recurrence dates, optionally seeking a requested suffix.
+
+    With ``after`` only values at/after that boundary are guaranteed complete;
+    callers inspecting recurrence history should omit it. RDATE and EXDATE
+    remain unchanged, including explicitly added dates before DTSTART.
+    """
+    return _recurrence_set(master, after=after)
+
+
+def _recurrence_set(master: Event, *, after: datetime | None = None, include_dates: bool = True):
+    if after is not None and (after.tzinfo is None or after.utcoffset() is None):
+        raise ValueError("The recurrence boundary must include a timezone.")
     rules = rruleset()
     start = master.start.astimezone(event_zone(master))
-    rules.rdate(start)
+    if include_dates:
+        rules.rdate(start)
     if master.recurrence_rule:
         rule = canonical_rule(master.recurrence_rule, master)
         if master.all_day:
@@ -189,11 +236,17 @@ def recurrence_set(master: Event):
         if any(part.upper() in {"FREQ=SECONDLY", "FREQ=MINUTELY"} for part in rule.split(";")):
             raise RecurrenceError("Secondly and minutely recurrence rules are not supported.")
         try:
-            rules.rrule(rrulestr(rule, dtstart=start))
+            # Parse the original first so seeking cannot hide an invalid rule
+            # (for example an exhausted COUNT with an invalid BYDAY).
+            parsed = rrulestr(rule, dtstart=start)
+            sought_rule, sought_start = _seek_rule(rule, start, after)
+            if sought_rule:
+                rules.rrule(parsed if sought_start == start else rrulestr(sought_rule, dtstart=sought_start))
         except (ValueError, TypeError, OverflowError) as exc:
             raise RecurrenceError(f"Invalid recurrence rule: {exc}") from exc
-    for key in master.recurrence_dates:
-        rules.rdate(key_datetime(key, master))
+    if include_dates:
+        for key in master.recurrence_dates:
+            rules.rdate(key_datetime(key, master))
     for key in master.excluded_dates:
         rules.exdate(key_datetime(key, master))
     return rules
@@ -410,9 +463,12 @@ def overlaps(event: Event, start: datetime, end: datetime) -> bool:
     return event_start < end.timestamp() and event_end > start.timestamp()
 
 
-def expand_series(master: Event, start: datetime, end: datetime, *, limit: int = 10000) -> list[Event]:
+def expand_series(master: Event, start: datetime, end: datetime, *, limit: int = 10000,
+                  truncate: bool = False) -> list[Event]:
     if start.tzinfo is None or end.tzinfo is None or end.timestamp() <= start.timestamp():
         raise ValueError("Occurrence range must have timezone-aware, ordered boundaries.")
+    if truncate and limit <= 0:
+        return []
     if not master.recurring:
         return [master] if overlaps(master, start, end) else []
     zone = event_zone(master)
@@ -429,22 +485,46 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         if overlaps(item, start, end):
             result[item.id] = item
     try:
-        for generated in recurrence_set(master).xafter(lower, inc=True):
+        # dateutil orders explicit dates sharing a ZoneInfo by wall time; during
+        # a repeated hour that can put fold=1 before an earlier UTC fold=0 date.
+        # Merge UTC-sorted finite dates with the rule's valid chronological
+        # stream so both the exclusive range boundary and top-N stop are safe.
+        rules = _recurrence_set(master, after=lower, include_dates=False)
+        initial = master.start.astimezone(zone)
+        if initial.fold and master.recurrence_rule and initial.timestamp() >= lower.timestamp():
+            # Keep dateutil's existing rule-owned DTSTART deduplication. Its
+            # generated anchor uses fold=0, even when DTSTART carries fold=1;
+            # splitting the streams must not create an extra COUNT occurrence.
+            anchor = rules.before(initial, inc=True)
+            if anchor is not None and anchor.replace(tzinfo=None) == initial.replace(tzinfo=None):
+                initial = anchor
+        explicit = [initial, *(key_datetime(key, master) for key in master.recurrence_dates)]
+        explicit.sort(key=lambda value: value.timestamp())
+        finite = (value for value in explicit if value.timestamp() >= lower.timestamp())
+        regular = (value for value in rules.xafter(lower, inc=True) if _valid_wall_time(value))
+        for generated in merge(finite, regular, key=lambda value: value.timestamp()):
             if generated.timestamp() >= end.timestamp():
                 break
+            if truncate and len(result) >= limit:
+                earliest = sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))[:limit]
+                result = {item.id: item for item in earliest}
+                if generated.timestamp() > earliest[-1].start.timestamp():
+                    break
             key = recurrence_key(generated, master.all_day)
             if key in master.recurrence_overrides or key in excluded or not _valid_wall_time(generated):
                 continue
             item = occurrence(master, generated, key)
             if overlaps(item, start, end):
                 result[item.id] = item
-            if len(result) > limit:
+            if not truncate and len(result) > limit:
                 raise RecurrenceError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
     except (OverflowError, TypeError) as exc:
         raise RecurrenceError(f"Could not expand recurrence: {exc}") from exc
-    if len(result) > limit:
+    if not truncate and len(result) > limit:
         raise RecurrenceError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
-    return sorted(result.values(), key=lambda item: (item.start.timestamp(), item.id))
+    values = sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id)
+                    if truncate else (item.start.timestamp(), item.id))
+    return values[:limit] if truncate else values
 
 
 def expand_events(events: Iterable[Event], start: datetime, end: datetime, *, limit: int = 10000) -> list[Event]:

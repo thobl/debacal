@@ -118,7 +118,7 @@ def test_search_field_arrows_reveal_and_wrap_without_rebuilding_query_or_index(w
     _, window, store, _ = workspace
     events = [sample(str(index), day=day) for index, day in enumerate((0, 12, 35))]
     window.apply_events('Create search targets', events)
-    with patch.object(store, 'list_events', wraps=store.list_events) as reads:
+    with patch.object(store, 'event_search_index', wraps=store.event_search_index) as reads:
         search(window)
         index = window.results._index
         items = [window.results.item(row) for row in range(window.results.count())]
@@ -134,9 +134,7 @@ def test_search_field_arrows_reveal_and_wrap_without_rebuilding_query_or_index(w
             assert window.results.isVisible()
             assert [window.results.item(row) for row in range(window.results.count())] == items
             assert window.results._index is index
-        # Calendar reveals query their displayed date range; the unfiltered
-        # read that builds the search index must occur only once.
-        assert sum(not call.args and not call.kwargs for call in reads.call_args_list) == 1
+        assert reads.call_count == 1
 
 
 def test_results_arrows_wrap_and_skip_result_limit_placeholder(workspace):

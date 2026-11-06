@@ -92,7 +92,7 @@ class WorkspaceChrome:
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName('Search events')
-        self.search.textChanged.connect(self.run_search)
+        self.search.textChanged.connect(self.search_changed)
         search_row.addWidget(self.search, 1)
         self.filter_search = self.icon_button('filter', 'Filter calendar to match search',
                                               self.toggle_search_filter, search_row)

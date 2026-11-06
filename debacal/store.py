@@ -73,22 +73,63 @@ class Store:
             );
         """)
         with self._transaction():
-            if "recurring" not in {row["name"] for row in self.connection.execute("PRAGMA table_info(events)")}:
+            columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(events)")}
+            if "recurring" not in columns:
                 self.connection.execute("ALTER TABLE events ADD COLUMN recurring INTEGER NOT NULL DEFAULT 0")
-            self.connection.execute("CREATE INDEX IF NOT EXISTS events_recurring ON events(recurring)")
+            for name, declaration in (("group_id", "TEXT"), ("candidate", "INTEGER NOT NULL DEFAULT 0"),
+                                      ("search_text", "TEXT NOT NULL DEFAULT ''")):
+                if name not in columns:
+                    self.connection.execute(f"ALTER TABLE events ADD COLUMN {name} {declaration}")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_recurring_end ON events(recurring,end,start)")
             # Earlier versions could save one-date authoring expressions as
             # ordinary events. They now need the same projection/edit path as
             # larger date sets; keep the indexed flag aligned with the model.
-            for row in self.connection.execute(
-                "SELECT id,data FROM events WHERE recurring=0 AND data LIKE ?", ('%"schedule_expression"%',)
-            ).fetchall():
-                try:
-                    value = json.loads(row['data'])
-                    has_expression = isinstance(value, dict) and bool(value.get('schedule_expression'))
-                except (ValueError, TypeError):
-                    continue
-                if has_expression:
-                    self.connection.execute('UPDATE events SET recurring=1 WHERE id=?', (row['id'],))
+            # Run the JSON backfill once, rather than decoding the complete
+            # ordinary-event table whenever a background sync connection opens.
+            query_backfill = not self.get_setting("event_query_indexes_v1", False)
+            search_backfill = not self.get_setting("event_search_index_v1", False)
+            if query_backfill or search_backfill:
+                for row in self.connection.execute("SELECT id,data,recurring FROM events").fetchall():
+                    try:
+                        value = json.loads(row["data"])
+                        if not isinstance(value, dict):
+                            continue
+                    except (ValueError, TypeError):
+                        continue
+                    fields, values = [], []
+                    if query_backfill:
+                        fields.extend(("recurring=?", "group_id=?", "candidate=?"))
+                        values.extend((not value.get("series_id") and bool(value.get("recurrence_rule") or value.get("recurrence_dates")
+                                                                          or value.get("recurrence_overrides") or value.get("schedule_expression")),
+                                       value.get("group_id"), bool(value.get("candidate"))))
+                    if search_backfill:
+                        fields.append("search_text=?")
+                        values.append(self._search_projection(value))
+                    self.connection.execute(f"UPDATE events SET {','.join(fields)} WHERE id=?", [*values, row["id"]])
+                if query_backfill:
+                    self.set_setting("event_query_indexes_v1", True)
+                if search_backfill:
+                    self.set_setting("event_search_index_v1", True)
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_calendar_recurring_end ON events(calendar_id,recurring,end,start)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_groups ON events(calendar_id,group_id,start,end,id) WHERE group_id IS NOT NULL")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_candidates ON events(calendar_id,group_id) WHERE candidate=1")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS outbox_calendar ON outbox(calendar_id,id)")
+            self.connection.execute("CREATE TABLE IF NOT EXISTS event_revisions (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)")
+            self.connection.execute("INSERT OR IGNORE INTO event_revisions(id,version) VALUES (1,0)")
+            # These counters live in the same transaction as each event write.
+            # Unlike data_version/total_changes they ignore settings, visibility,
+            # outbox acknowledgments and unrelated ingestion metadata.
+            for action in ("INSERT", "UPDATE", "DELETE"):
+                condition = ""
+                if action == "UPDATE":
+                    condition = " WHEN " + " OR ".join(
+                        f"old.{name} IS NOT new.{name}"
+                        for name in ("id", "calendar_id", "start", "end", "data", "recurring", "group_id", "candidate")
+                    )
+                self.connection.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS event_revision_{action.lower()} AFTER {action} ON events"
+                    f"{condition} BEGIN UPDATE event_revisions SET version=version+1 WHERE id=1; END"
+                )
             if not self.connection.execute("SELECT 1 FROM calendars LIMIT 1").fetchone():
                 self._write_calendar(Calendar("local", "Personal", "#4f7865"))
 
@@ -232,10 +273,60 @@ class Store:
             row = self.connection.execute("SELECT data FROM events WHERE id=?", (event_id,)).fetchone()
             return Event.from_dict(json.loads(row[0])) if row else None
 
+    def get_events(self, event_ids: Iterable[str]) -> list[Event]:
+        """Fetch only requested resources; missing IDs are omitted."""
+        keys = list(dict.fromkeys(event_ids))
+        result = []
+        with self._lock:
+            for offset in range(0, len(keys), 500):
+                chunk = keys[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                result.extend(Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                    f"SELECT data FROM events WHERE id IN ({placeholders})", chunk,
+                ))
+        return result
+
+    @staticmethod
+    def _search_projection(value: Event | dict[str, Any]) -> str:
+        if isinstance(value, Event):
+            fields = (value.title, value.description, value.location)
+            overrides, excluded = value.recurrence_overrides, value.excluded_dates
+        else:
+            fields = tuple(str(value.get(field, "") or "") for field in ("title", "description", "location"))
+            overrides, excluded = value.get("recurrence_overrides", {}), value.get("excluded_dates", ())
+        segments = [" ".join(fields).casefold()]
+        excluded = set(excluded or ())
+        if not isinstance(overrides, dict):
+            overrides = {}
+        segments.extend(" ".join(str(payload.get(field, "") or "") for field in
+                                 ("title", "description", "location")).casefold()
+                        for key, payload in overrides.items() if key not in excluded and isinstance(payload, dict))
+        # The separator avoids normal text matches crossing from a master to
+        # an exception. This is a candidate index; callers still exactly match
+        # each loaded master/override before showing a result.
+        return "\0".join(segments)
+
+    def event_search_index(self) -> list[tuple[str, str, str]]:
+        """Read lightweight literal-match candidates without decoding Events."""
+        with self._lock:
+            return [tuple(row) for row in self.connection.execute(
+                "SELECT id,calendar_id,search_text FROM events ORDER BY start,end,id"
+            )]
+
     def count_events(self, calendar_id: str) -> int:
         """Count cached masters without parsing potentially quarantined rows."""
         with self._lock:
             return self.connection.execute('SELECT COUNT(*) FROM events WHERE calendar_id=?', (calendar_id,)).fetchone()[0]
+
+    def revision(self) -> tuple[int, int]:
+        """A connection-local token covering both local and external writes."""
+        with self._lock:
+            return self.connection.execute("PRAGMA data_version").fetchone()[0], self.connection.total_changes
+
+    def events_revision(self) -> int:
+        """A persistent event-only revision, shared across Store connections."""
+        with self._lock:
+            return self.connection.execute("SELECT version FROM event_revisions WHERE id=1").fetchone()[0]
 
     def list_events(
         self, start: datetime | None = None, end: datetime | None = None,
@@ -244,7 +335,7 @@ class Store:
         clauses, params = [], []
         if start is not None:
             self._validate_datetime(start)
-            clauses.append("(end > ? OR (end = start AND start >= ?))")
+            clauses.append("end >= ? AND (end > ? OR end = start)")
             params.extend((start.timestamp(), start.timestamp()))
         if end is not None:
             self._validate_datetime(end)
@@ -263,6 +354,16 @@ class Store:
         with self._lock:
             return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
 
+    def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
+        """Load a legacy group without decoding unrelated calendar resources."""
+        if not group_id:
+            return []
+        with self._lock:
+            return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                "SELECT data FROM events WHERE calendar_id=? AND group_id=? ORDER BY start,end,id",
+                (calendar_id, group_id),
+            )]
+
     def query_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None) -> list[Event]:
         """Query a view without materializing a series into stored events."""
         from .recurrence import expand_events_safe
@@ -273,18 +374,73 @@ class Store:
         ids = list(calendar_ids) if calendar_ids is not None else None
         if ids == []:
             return []
-        with self._lock:
-            ordinary = [event for event in self.list_events(start, end, ids) if not event.recurring]
-            query, params = "SELECT data FROM events WHERE recurring=1", []
-            if ids is not None:
-                query += " AND calendar_id IN (" + ",".join("?" for _ in ids) + ")"
-                params.extend(ids)
-            masters = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
+        ordinary, masters = self._occurrence_sources(start, end, ids)
         events, failures = expand_events_safe(ordinary + masters, start, end)
+        self._quarantine_expansion_failures(failures)
+        return events
+
+    def _occurrence_sources(self, start: datetime, end: datetime, ids: list[str] | None,
+                            ordinary_limit: int | None = None) -> tuple[list[Event], list[Event]]:
+        ordinary_query = "SELECT data FROM events WHERE recurring=0 AND end>=? AND (end>? OR end=start) AND start<?"
+        ordinary_params = [start.timestamp(), start.timestamp(), end.timestamp()]
+        query, params = "SELECT data FROM events WHERE recurring=1", []
+        if ids is not None:
+            condition = " AND calendar_id IN (" + ",".join("?" for _ in ids) + ")"
+            ordinary_query += condition
+            ordinary_params.extend(ids)
+            query += condition
+            params.extend(ids)
+        if ordinary_limit is not None:
+            ordinary_query += " ORDER BY start,end,id LIMIT ?"
+            ordinary_params.append(ordinary_limit)
+        with self._lock:
+            own_transaction = not self.connection.in_transaction
+            if own_transaction:
+                self.connection.execute("BEGIN")
+            try:
+                ordinary = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(ordinary_query, ordinary_params)]
+                masters = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
+            finally:
+                if own_transaction:
+                    self.connection.rollback()
+        return ordinary, masters
+
+    def _quarantine_expansion_failures(self, failures) -> None:
         for master, error in failures:
             resource_id = hashlib.sha256((master.ical_uid or master.id).encode()).hexdigest()[:12]
             self.set_quarantined_resource(master.calendar_id, resource_id, master.raw_ics or '', str(error))
-        return events
+
+    def upcoming_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
+                             *, limit: int = 10) -> list[Event]:
+        """Return only the earliest overlapping events, without expanding a full view."""
+        from .recurrence import RecurrenceError, expand_series
+        self._validate_datetime(start)
+        self._validate_datetime(end)
+        if end.timestamp() <= start.timestamp():
+            raise ValueError("Occurrence range end must follow its start.")
+        if type(limit) is not int or limit < 0:
+            raise ValueError("The upcoming event limit must be a nonnegative integer.")
+        ids = list(calendar_ids) if calendar_ids is not None else None
+        if not limit or ids == []:
+            return []
+        result, masters = self._occurrence_sources(start, end, ids, ordinary_limit=limit)
+        key = lambda event: (event.start.timestamp(), event.end.timestamp(), event.id)
+        failures = []
+        for master in masters:
+            try:
+                upper = end
+                if len(result) >= limit:
+                    # Later starts cannot enter the current top N. Keep a tiny
+                    # exclusive interval for equal-start ties and ongoing events.
+                    cutoff = min(end.timestamp(), max(start.timestamp(), result[-1].start.timestamp()) + 0.000001)
+                    if cutoff > start.timestamp():
+                        upper = datetime.fromtimestamp(cutoff, end.tzinfo)
+                result.extend(expand_series(master, start, upper, limit=limit, truncate=True))
+                result = sorted(result, key=key)[:limit]
+            except (ValueError, TypeError, OverflowError, KeyError):
+                failures.append((master, RecurrenceError("Unsupported or invalid recurrence rule.")))
+        self._quarantine_expansion_failures(failures)
+        return sorted(result, key=key)
 
     def get_occurrence(self, event_id: str) -> Event | None:
         from .recurrence import split_occurrence_id, key_datetime, recurrence_set, occurrence, recurrence_key
@@ -300,7 +456,7 @@ class Store:
                 start = key_datetime(key, master)
                 if key in master.recurrence_overrides:
                     return occurrence(master, start, key)
-                previous = recurrence_set(master).before(start, inc=True)
+                previous = recurrence_set(master, after=start).before(start, inc=True)
                 if previous is None or recurrence_key(previous, master.all_day) != key:
                     return None
                 return occurrence(master, start, key)
@@ -368,8 +524,10 @@ class Store:
                 )
             alternatives = []
             if master.group_id:
-                alternatives = [event.id for event in self.list_events(calendar_ids=[master.calendar_id])
-                                if event.id != master.id and event.group_id == master.group_id and event.candidate]
+                alternatives = [row[0] for row in self.connection.execute(
+                    "SELECT id FROM events WHERE calendar_id=? AND group_id=? AND candidate=1 AND id<>?",
+                    (master.calendar_id, master.group_id, master.id),
+                )]
             return self.apply(label, [chosen], alternatives)
 
     @staticmethod
@@ -677,10 +835,12 @@ class Store:
             from .recurrence import recurrence_set
             recurrence_set(event)
         self.connection.execute(
-            """INSERT INTO events(id,calendar_id,start,end,data,recurring) VALUES (?,?,?,?,?,?)
+            """INSERT INTO events(id,calendar_id,start,end,data,recurring,group_id,candidate,search_text) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET calendar_id=excluded.calendar_id,
-               start=excluded.start,end=excluded.end,data=excluded.data,recurring=excluded.recurring""",
-            (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), self._json(event.to_dict()), event.recurring),
+               start=excluded.start,end=excluded.end,data=excluded.data,recurring=excluded.recurring,
+               group_id=excluded.group_id,candidate=excluded.candidate,search_text=excluded.search_text""",
+            (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), self._json(event.to_dict()),
+             event.recurring, event.group_id, event.candidate, self._search_projection(event)),
         )
 
     def _snapshot(self, ids: Iterable[str]) -> dict[str, dict[str, Any] | None]:
@@ -864,6 +1024,27 @@ class Store:
             return [dict(row) | {"payload": json.loads(row["payload"]) if row["payload"] else None}
                     for row in self.connection.execute(query + " ORDER BY id", params)]
 
+    def count_pending_changes(self, calendar_id: str | None = None) -> int:
+        """Count queued resources without decoding their calendar payloads."""
+        with self._lock:
+            query, params = "SELECT COUNT(*) FROM outbox", ()
+            if calendar_id is not None:
+                query += " WHERE calendar_id=?"
+                params = (calendar_id,)
+            return self.connection.execute(query, params).fetchone()[0]
+
+    def _pending_rows(self, ids: Iterable[str]) -> list[sqlite3.Row]:
+        """Load only row identities needed for transactional conflict guards."""
+        keys = list(set(ids))
+        rows = []
+        for offset in range(0, len(keys), 500):
+            chunk = keys[offset:offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows.extend(self.connection.execute(
+                f"SELECT id,event_id,calendar_id FROM outbox WHERE event_id IN ({placeholders})", chunk,
+            ))
+        return rows
+
     def acknowledge_change(self, change_id: int) -> None:
         with self._transaction():
             self.connection.execute("DELETE FROM outbox WHERE id=?", (change_id,))
@@ -874,8 +1055,7 @@ class Store:
         if len(ids) != len(set(ids)):
             raise ValueError("An event may appear only once in a remote update.")
         with self._transaction():
-            pending_ids = {change["event_id"] for change in self.pending_changes()}
-            if pending_ids.intersection(ids):
+            if self._pending_rows(ids):
                 raise HistoryConflict("Remote changes conflict with pending local edits.")
             self._restore({event.id: event.to_dict() for event in upserts} | {event_id: None for event_id in delete_ids}, enqueue=False)
 
@@ -901,7 +1081,7 @@ class Store:
         with self._transaction():
             if self.get_event(event_id) != expected:
                 raise HistoryConflict("This event changed after the conflict was reviewed. Review it again.")
-            pending = self.pending_changes()
+            pending = self._pending_rows([event_id, *ids])
             reviewed = set(reviewed_change_ids)
             current = {change["id"] for change in pending
                        if change["event_id"] == event_id and change["calendar_id"] == calendar_id}

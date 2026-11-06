@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from collections import OrderedDict
 import calendar
 from heapq import merge
 from html import escape
 from itertools import chain, islice
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QItemSelectionModel
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QStyle, QStyleOptionViewItem,
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import Event
-from .recurrence import occurrence, recurrence_key, recurrence_set
+from .recurrence import occurrence, recurrence_key, recurrence_set, overlaps
 from .timeutil import local_zone, now
 
 
@@ -161,6 +162,22 @@ class SearchPanel(QTreeWidget):
         self._row_scopes = {}
         self._prefetched = {}
         self._context_budget = CONTEXT_SCAN_LIMIT
+        self._context_signature = None
+        self._presentation_revision = 0
+        self._data_revision = None
+        self._cache_generation = 0
+        self._query_cache = OrderedDict()
+        self._projection_index = False
+        self._models = OrderedDict()
+        self._entry_details = {}
+        self._representatives = OrderedDict()
+        self._override_events = {}
+        self._override_records = {}
+        self._expansion_contexts = {}
+        self._render_signature = None
+        self._agenda_caches = OrderedDict()
+        self._agenda_render_key = None
+        self._items_by_id = {}
         self._updating = False
         self._mouse_selecting = False
         self.currentItemChanged.connect(self._current_changed)
@@ -174,6 +191,46 @@ class SearchPanel(QTreeWidget):
 
     def invalidate(self):
         self._index = None
+        self._cache_generation += 1
+        self._query_cache.clear()
+        self._models.clear()
+        self._entry_details.clear()
+        self._representatives.clear()
+        self._override_events.clear()
+        self._override_records.clear()
+        self._render_signature = None
+        self._agenda_caches.clear()
+
+    def _check_data_revision(self):
+        revision = getattr(self.store, 'events_revision', None)
+        if callable(revision):
+            value = revision()
+            if value != self._data_revision:
+                self.invalidate()
+                self._data_revision = value
+
+    def update_context(self, calendars, preferences):
+        """Update row presentation without discarding the searchable events."""
+        calendars = tuple(calendars)
+        signature = (calendars, preferences)
+        if signature == self._context_signature:
+            return False
+        self._context_signature = signature
+        self._presentation_revision += 1
+        self.preferences = preferences
+        self._calendars = {calendar.id: calendar for calendar in calendars}
+        for item in self._all_rows():
+            effective = item.data(EVENT_ROLE)
+            source = self._masters.get(item.data(MASTER_ROLE)) if self.is_series_root(item) else effective
+            if source is None:
+                continue
+            calendar = self._calendars.get(source.calendar_id)
+            item.setData(COLOR_ROLE, calendar.color if calendar else '#788373')
+            if effective is not None:
+                item.setData(SUBTITLE_ROLE, self._when(effective))
+                item.setToolTip(0, self._event_tooltip(source, effective))
+        self.viewport().update()
+        return True
 
     def set_range(self, start, end):
         if end <= start:
@@ -232,8 +289,11 @@ class SearchPanel(QTreeWidget):
         identifiers = set(identifiers)
         blocked = self.blockSignals(True)
         try:
-            for item in self._all_rows():
-                item.setSelected(bool(self.event_id(item) in identifiers))
+            current = self.selected_row_ids()
+            for identifier in current ^ identifiers:
+                item = self._items_by_id.get(identifier)
+                if item is not None:
+                    item.setSelected(identifier in identifiers)
         finally:
             self.blockSignals(blocked)
 
@@ -261,7 +321,7 @@ class SearchPanel(QTreeWidget):
 
     def row_item(self, event_id):
         """Find a loaded row, including a child of a collapsed series."""
-        return next((item for item in self._all_rows() if self.event_id(item) == event_id), None)
+        return self._items_by_id.get(event_id)
 
     def is_series_root(self, row):
         return self.row_scope(row) == 'group'
@@ -289,24 +349,154 @@ class SearchPanel(QTreeWidget):
 
     matches_event = staticmethod(event_matches_query)
 
+    def _ensure_index(self):
+        if self._index is not None:
+            return
+        projection = getattr(self.store, 'event_search_index', None)
+        self._projection_index = callable(projection) and callable(getattr(self.store, 'get_events', None))
+        if self._projection_index:
+            self._index = projection()
+            present = {identity for identity, _calendar, _text in self._index}
+            self._expansion_contexts = {key: value for key, value in self._expansion_contexts.items() if key in present}
+            return
+        entries = []
+        for master in self.store.list_events():
+            overrides = [(key, payload, ' '.join(str(payload.get(field, '') or '') for field in
+                          ('title', 'description', 'location')).casefold())
+                         for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates]
+            entries.append((master, self._searchable(master), overrides))
+        self._index = entries
+        present = {master.id for master, _, _ in entries}
+        self._expansion_contexts = {key: value for key, value in self._expansion_contexts.items() if key in present}
+
+    def _matching_indices(self, query):
+        if query in self._query_cache:
+            self._query_cache.move_to_end(query)
+            return self._query_cache[query]
+        parents = [key for key in self._query_cache if key in query]
+        candidates = self._query_cache[max(parents, key=len)] if parents else range(len(self._index))
+        if self._projection_index:
+            matches = [index for index in candidates if query in self._index[index][2]]
+        else:
+            matches = [index for index in candidates if query in self._index[index][1]
+                       or (self._index[index][2] and any(query in text for _key, _payload, text in self._index[index][2]))]
+        self._query_cache[query] = matches
+        while len(self._query_cache) > 8:
+            self._query_cache.popitem(last=False)
+        return matches
+
+    def _load_models(self, indices):
+        identities = [self._index[index][0] for index in indices]
+        missing = [identity for identity in identities if identity not in self._models]
+        if missing:
+            for event in self.store.get_events(missing):
+                self._models[event.id] = event
+        for identity in identities:
+            if identity in self._models:
+                self._models.move_to_end(identity)
+        while len(self._models) > 1024:
+            identity, _event = self._models.popitem(last=False)
+            self._entry_details.pop(identity, None)
+            self._override_records.pop(identity, None)
+            self._override_events.pop(identity, None)
+
+    def _index_entry(self, index):
+        if not self._projection_index:
+            return self._index[index]
+        identity = self._index[index][0]
+        master = self._models.get(identity)
+        if master is None:
+            return None
+        if identity not in self._entry_details:
+            overrides = [(key, payload, ' '.join(str(payload.get(field, '') or '') for field in
+                          ('title', 'description', 'location')).casefold())
+                         for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates]
+            self._entry_details[identity] = (master, self._searchable(master), overrides)
+        return self._entry_details[identity]
+
+    def _matching_descriptions(self, query, matching):
+        result = []
+        for offset in range(0, len(matching), 256):
+            batch = matching[offset:offset + 256]
+            if self._projection_index:
+                self._load_models(batch)
+            for index in batch:
+                entry = self._index_entry(index)
+                if entry is None:
+                    continue
+                _master, searchable, overrides = entry
+                keys = None if query in searchable else tuple(key for key, _payload, text in overrides if query in text)
+                if keys == ():
+                    continue
+                if len(result) == 200:
+                    return result, True
+                result.append((index, keys, entry))
+        return result, False
+
+    def _override_event(self, master, key, payload):
+        values = self._override_events.setdefault(master.id, {})
+        if key not in values:
+            values[key] = Event.from_dict(payload)
+        return values[key]
+
+    def _context_floor(self, master_id):
+        return self._expansion_contexts.get(master_id, self._range[0] if self._range else now())
+
+    def _representative(self, master):
+        floor = self._context_floor(master.id)
+        key = (master.id, floor)
+        if key not in self._representatives:
+            try:
+                self._representatives[key] = next(self._occurrences(master, floor=floor), None)
+            except (ValueError, OverflowError):
+                self._representatives[key] = None
+            while len(self._representatives) > 2048:
+                self._representatives.popitem(last=False)
+        self._representatives.move_to_end(key)
+        return self._representatives[key]
+
+    def _set_representative(self, item, master, representative):
+        item.setData(EVENT_ROLE, representative)
+        if representative is not None:
+            self._events_by_id[self.event_id(item)] = representative
+            item.setData(SUBTITLE_ROLE, self._when(representative))
+            item.setToolTip(0, self._event_tooltip(master, representative))
+        else:
+            self._events_by_id.pop(self.event_id(item), None)
+
+    def _refresh_unopened_contexts(self):
+        self._context_budget = CONTEXT_SCAN_LIMIT
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            master = self._masters.get(item.data(MASTER_ROLE))
+            if master is not None and master.recurring and not item.childCount() and not isinstance(item.data(MORE_ROLE), list):
+                self._set_representative(item, master, self._representative(master))
+
     def populate(self, query):
+        self._check_data_revision()
+        self.update_context(self.store.list_calendars(), self.preferences)
         query = query.strip().casefold()
-        if query == self._query and self._index is not None and not self._context_changed:
+        if query:
+            self._ensure_index()
+            matching = self._matching_indices(query)
+            descriptions, more = self._matching_descriptions(query, matching)
+            signature = (self._cache_generation, True, tuple((index, keys) for index, keys, _entry in descriptions), more)
+        else:
+            matching, descriptions = [], []
+            signature = (self._cache_generation, False, (), False)
+        if not self.agenda_mode and signature == self._render_signature:
+            if self._context_changed:
+                self._refresh_unopened_contexts()
+            self._query, self._context_changed = query, False
             return self.count()
         selected = self.selected_ids()
         current_id = self.event_id(self.currentItem())
-        if self._index is None and query:
-            self._calendars = {calendar.id: calendar for calendar in self.store.list_calendars()}
-            self._index = []
-            for master in self.store.list_events():
-                overrides = [Event.from_dict(payload) for key, payload in master.recurrence_overrides.items()
-                             if key not in master.excluded_dates]
-                self._index.append((master, self._searchable(master), overrides))
         blocked = self.blockSignals(True)
         self._updating = True
         try:
             self.agenda_mode = False
             super().clear()
+            self._items_by_id.clear()
             self._states.clear()
             self._masters.clear()
             self._events_by_id.clear()
@@ -315,41 +505,24 @@ class SearchPanel(QTreeWidget):
             self._context_budget = CONTEXT_SCAN_LIMIT
             self._query = query
             self._context_changed = False
+            self._render_signature = signature
             if not query:
                 return 0
-            matches = 0
-            for master, searchable, overrides in self._index:
-                matching_overrides = [event for event in overrides if event_matches_query(event, query)]
-                if query not in searchable and not matching_overrides:
-                    continue
-                if matches >= 200:
-                    self._placeholder(None, 'First 200 results', 'Refine your search to see more.')
-                    break
-                matches += 1
+            for index, override_keys, entry in descriptions:
+                master, _searchable, overrides = entry
                 item = self._event_item(master)
                 self._masters[master.id] = master
-                if query not in searchable:
-                    matching_overrides.sort(key=lambda event: event.start.astimezone(timezone.utc))
-                    item.setData(SUBTITLE_ROLE, 'Matching dated occurrence · expand to inspect')
-                    item.setData(MORE_ROLE, matching_overrides)
-                    representative = matching_overrides[0]
+                if override_keys is not None:
+                    keys = set(override_keys)
+                    values = [self._override_event(master, key, payload) for key, payload, _text in overrides if key in keys]
+                    values.sort(key=lambda event: event.start.astimezone(timezone.utc))
+                    item.setData(MORE_ROLE, values)
+                    representative = values[0]
                 elif master.recurring:
-                    try:
-                        iterator = self._occurrences(master)
-                        representative = next(iterator, None)
-                        self._prefetched[master.id] = chain((representative,), iterator) if representative else iter(())
-                    except (ValueError, OverflowError):
-                        representative = None
+                    representative = self._representative(master)
                 else:
                     representative = master
-                item.setData(EVENT_ROLE, representative)
-                if representative is not None:
-                    self._events_by_id[self.event_id(item)] = representative
-                    self._events_by_id[master.id] = representative
-                    item.setData(SUBTITLE_ROLE, self._when(representative))
-                    item.setToolTip(0, self._event_tooltip(master, representative))
-                else:
-                    self._events_by_id.pop(self.event_id(item), None)
+                self._set_representative(item, master, representative)
                 self.addTopLevelItem(item)
                 if master.recurring:
                     item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
@@ -357,52 +530,88 @@ class SearchPanel(QTreeWidget):
                         for _ in range(self._pages.get(master.id, 1)):
                             self._load_page(item, remember=False)
                         item.setExpanded(True)
-            if not matches:
+            if not descriptions:
                 self._placeholder(None, 'No matching events', 'Try another title, place, or note.')
-            for item in self._all_rows():
-                if self.event_id(item) in selected:
+            elif more:
+                self._placeholder(None, 'First 200 results', 'Refine your search to see more.')
+            if current_id in self._items_by_id:
+                self.setCurrentItem(self._items_by_id[current_id], 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            for identifier in selected:
+                item = self._items_by_id.get(identifier)
+                if item is not None:
                     item.setSelected(True)
-                if current_id and self.event_id(item) == current_id:
-                    self.setCurrentItem(item)
             return self.count()
         finally:
             self._updating = False
             self.blockSignals(blocked)
 
     def populate_upcoming(self, start, *, days=30, limit=10):
-        """Use the same space for the next dated events when search is empty."""
-        calendars = self.store.list_calendars()
-        events = self.store.query_occurrences(start, start + timedelta(days=days),
-                                              [calendar.id for calendar in calendars if calendar.visible])
-        events.sort(key=lambda event: (event.start.timestamp(), event.end.timestamp(), event.id))
+        """Show bounded earliest overlaps, reusing a precise minute-wide cache."""
+        if type(limit) is not int or limit < 0:
+            raise ValueError('The upcoming event limit must be nonnegative.')
+        self._check_data_revision()
+        calendars = tuple(self.store.list_calendars())
+        self.update_context(calendars, self.preferences)
+        visible = tuple(sorted(calendar.id for calendar in calendars if calendar.visible))
+        end = start + timedelta(days=days)
+        if end <= start:
+            raise ValueError('The upcoming range must end after its start.')
+        identity = (self._cache_generation, visible, days, limit)
+        cache = self._agenda_caches.get(identity)
+        if cache is not None:
+            self._agenda_caches.move_to_end(identity)
+        instant = lambda value: value.astimezone(timezone.utc)
+        reusable = (cache is not None and cache['identity'] == identity
+                    and instant(cache['start']) <= instant(start)
+                    and instant(end) <= instant(cache['end']))
+        events = [event for event in cache['events'] if overlaps(event, start, end)] if reusable else []
+        if not reusable or (len(events) < limit and not cache['exhausted']):
+            # A little lookahead covers normal refreshes within this minute.
+            # If many short events expire, refill instead of returning too few.
+            padded = instant(end).replace(second=0, microsecond=0) + timedelta(minutes=1)
+            padded = padded.astimezone(end.tzinfo)
+            fetch_limit = max(1, limit * 2)
+            values = self.store.upcoming_occurrences(start, padded, visible, limit=fetch_limit) if limit else []
+            self._agenda_caches[identity] = {'identity': identity, 'start': start, 'end': padded,
+                                             'events': tuple(values), 'exhausted': len(values) < fetch_limit}
+            self._agenda_caches.move_to_end(identity)
+            while len(self._agenda_caches) > 8:
+                self._agenda_caches.popitem(last=False)
+            events = [event for event in values if overlaps(event, start, end)]
+        events = events[:limit]
+        render_key = (self._cache_generation, tuple(event.id for event in events), days)
+        if self.agenda_mode and render_key == self._agenda_render_key:
+            return len(events)
         selected, current_id = self.selected_ids(), self.event_id(self.currentItem())
         blocked = self.blockSignals(True)
         self._updating = True
         try:
             self.agenda_mode = True
             self._query = None
-            self._calendars = {calendar.id: calendar for calendar in calendars}
+            self._agenda_render_key = render_key
             super().clear()
+            self._items_by_id.clear()
             self._events_by_id.clear()
             self._row_scopes.clear()
             self._masters.clear()
             self._states.clear()
             self._prefetched.clear()
-            for event in events[:limit]:
+            for event in events:
                 item = self._event_item(event)
                 self.addTopLevelItem(item)
                 item.setSelected(event.id in selected)
                 if event.id == current_id:
-                    self.setCurrentItem(item)
+                    self.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
             if not events:
                 self._placeholder(None, 'No upcoming events', f'Next {days} days · visible calendars')
         finally:
             self._updating = False
             self.blockSignals(blocked)
-        return min(len(events), limit)
+        return len(events)
 
     def _event_item(self, event):
         item = _ResultItem([event.title])
+        self._items_by_id[event.id] = item
         item.setData(Qt.ItemDataRole.UserRole, event.id)
         item.setData(EVENT_ROLE, event)
         self._events_by_id[event.id] = event
@@ -449,14 +658,15 @@ class SearchPanel(QTreeWidget):
             parent.addChild(item)
         return item
 
-    def _occurrences(self, master):
+    def _occurrences(self, master, *, floor=None):
         if impossible_monthday_filter(master.recurrence_rule):
             # DTSTART/RDATE still belong to the standard resource. Only the
             # provably empty generator is omitted from this private search copy.
             master = replace(master, recurrence_rule='')
-        rules = recurrence_set(master)
+        if floor is None:
+            floor = self._range[0] if self._range else now()
+        rules = recurrence_set(master, after=floor)
         iterator = iter(rules)
-        floor = self._range[0] if self._range else now()
         found = None
         for _ in range(min(CONTEXT_SCAN_LIMIT, self._context_budget)):
             self._context_budget -= 1
@@ -467,7 +677,7 @@ class SearchPanel(QTreeWidget):
                 found = candidate
                 break
         if found is None:
-            iterator, floor = iter(rules), None
+            iterator, floor = iter(recurrence_set(master)), None
         else:
             iterator = chain((found,), iterator)
         def normal():
@@ -478,11 +688,18 @@ class SearchPanel(QTreeWidget):
                 if start.astimezone(timezone.utc).astimezone(start.tzinfo).replace(tzinfo=None) != start.replace(tzinfo=None):
                     continue
                 yield occurrence(master, start, key)
-        detached = [Event.from_dict(payload) for key, payload in master.recurrence_overrides.items()
-                    if key not in master.excluded_dates]
-        if floor is not None:
-            detached = [event for event in detached if event.start.timestamp() >= floor.timestamp()]
-        detached.sort(key=lambda event: event.start.astimezone(timezone.utc))
+        if master.id not in self._override_records:
+            records = []
+            for key, payload in master.recurrence_overrides.items():
+                if key in master.excluded_dates:
+                    continue
+                start = payload['start']
+                start = datetime.fromisoformat(start) if isinstance(start, str) else start
+                records.append((start.astimezone(timezone.utc), key, payload))
+            self._override_records[master.id] = sorted(records, key=lambda record: record[0])
+        detached = (self._override_event(master, key, payload)
+                    for start, key, payload in self._override_records[master.id]
+                    if floor is None or start >= floor.astimezone(timezone.utc))
         return merge(normal(), detached, key=lambda event: event.start.astimezone(timezone.utc))
 
     def _load_page(self, item, *, remember=True):
@@ -491,6 +708,7 @@ class SearchPanel(QTreeWidget):
             return
         state = self._states.get(master_id)
         if state is None:
+            self._expansion_contexts.setdefault(master_id, self._range[0] if self._range else now())
             matching = item.data(MORE_ROLE)
             try:
                 if isinstance(matching, list):
@@ -499,7 +717,7 @@ class SearchPanel(QTreeWidget):
                     iterator = self._prefetched.pop(master_id)
                 else:
                     self._context_budget = CONTEXT_SCAN_LIMIT
-                    iterator = self._occurrences(self._masters[master_id])
+                    iterator = self._occurrences(self._masters[master_id], floor=self._expansion_contexts[master_id])
             except (ValueError, OverflowError):
                 self._placeholder(item, 'Dates unavailable', 'This event needs review before its dates can be shown.')
                 return

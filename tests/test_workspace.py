@@ -134,7 +134,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
 
     def test_search_reuses_index_and_refresh_invalidates_it(self):
         self.window.apply_events("Create", [self.event()])
-        with patch.object(self.store, "list_events", wraps=self.store.list_events) as reads:
+        with patch.object(self.store, "event_search_index", wraps=self.store.event_search_index) as reads:
             self.window.search.setText("st")
             self.window.search.setText("study")
             self.assertEqual(reads.call_count, 1)

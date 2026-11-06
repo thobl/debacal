@@ -101,28 +101,27 @@ def test_check_click_confirms_once_without_selecting_creating_or_dragging(surfac
     selected, moved = QSignalSpy(widget.selected_scoped), QSignalSpy(widget.move_scoped_requested)
     created, days = QSignalSpy(widget.create_requested), QSignalSpy(widget.day_selected)
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
-    assert confirmed.count() == 0 and widget._confirm_timer.isActive()
+    assert confirmed.count() == 1 and confirmed.at(0) == ['candidate']
     assert selected.count() == moved.count() == created.count() == days.count() == 0
     assert widget.drag is None and widget.ghost is None
-    widget._confirm_timer.timeout.emit()
-    assert confirmed.count() == 1 and confirmed.at(0) == ['candidate']
-    widget._confirm_timer.timeout.emit()
     assert confirmed.count() == 1
     assert [item.to_dict() for item in widget.events] == before
 
 
-def test_single_click_uses_real_qt_timer_and_emits_before_timeout_limit(surfaces):
+def test_single_click_emits_on_release_without_waiting_for_double_click_interval(surfaces):
     _, _, make = surfaces
     widget = make()
     control = select(widget)
     confirmed = QSignalSpy(widget.confirm_requested)
-    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
-    assert confirmed.wait(QApplication.doubleClickInterval() + 200)
-    assert confirmed.count() == 1 and not widget._confirm_timer.isActive()
+    point = control.center().toPoint()
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert confirmed.count() == 0
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert confirmed.count() == 1
 
 
 @pytest.mark.parametrize('kind', ['week', 'month', 'all-day'])
-def test_real_double_click_sequence_edits_without_confirming_or_collapsing_selection(surfaces, kind):
+def test_check_double_click_confirms_once_without_editing_or_collapsing_selection(surfaces, kind):
     _, _, make = surfaces
     widget = make(kind)
     widget.set_selection({'candidate', 'another-selected-id'})
@@ -132,11 +131,10 @@ def test_real_double_click_sequence_edits_without_confirming_or_collapsing_selec
     selected = QSignalSpy(widget.selected_scoped)
     point = control.center().toPoint()
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=point)
-    assert widget._confirm_timer.isActive()
+    assert confirmed.count() == 1
     QTest.mouseDClick(widget, Qt.MouseButton.LeftButton, pos=point)
-    assert not widget._confirm_timer.isActive()
-    widget._confirm_timer.timeout.emit()
-    assert confirmed.count() == 0 and edited.count() == 1
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert confirmed.count() == 1 and edited.count() == 0
     assert selected.count() == 0
     assert widget.selected_ids == {'candidate', 'another-selected-id'}
 
@@ -152,18 +150,17 @@ def test_dragging_off_check_control_cancels_without_starting_an_event_drag(surfa
     QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=start)
     QTest.mouseMove(widget, finish)
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=finish)
-    widget._confirm_timer.timeout.emit()
     assert confirmed.count() == moved.count() == selected.count() == 0
     assert widget.drag is None and widget.ghost is None
 
 
 @pytest.mark.parametrize('change', ['selection', 'data', 'placement', 'hide'])
-def test_pending_confirmation_is_cancelled_when_its_context_changes(surfaces, change):
+def test_pressed_confirmation_is_cancelled_when_its_context_changes(surfaces, change):
     _, _, make = surfaces
     widget = make()
     control = select(widget)
     confirmed = QSignalSpy(widget.confirm_requested)
-    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
     if change == 'selection':
         widget.set_selection(set())
     elif change == 'data':
@@ -173,9 +170,49 @@ def test_pending_confirmation_is_cancelled_when_its_context_changes(surfaces, ch
         widget.set_preview([sample()])
     else:
         widget.hide()
-    assert not widget._confirm_timer.isActive()
-    widget._confirm_timer.timeout.emit()
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
     assert confirmed.count() == 0
+
+
+@pytest.mark.parametrize('kind', ['week', 'month', 'all-day'])
+def test_check_double_click_is_consumed_after_synchronous_confirmation_refresh(surfaces, kind):
+    _, _, make = surfaces
+    widget = make(kind)
+    control = select(widget)
+    confirmed, edited = QSignalSpy(widget.confirm_requested), QSignalSpy(widget.edit_scoped_requested)
+    created = QSignalSpy(widget.create_requested)
+    def refresh(_event_id):
+        events = [replace(sample(kind), candidate=False)]
+        calendars = list(widget.calendars.values())
+        if isinstance(widget, AllDayCanvas):
+            widget.set_data(DAYS, events, calendars)
+        elif isinstance(widget, MonthCanvas):
+            widget.set_data(FIRST, 11, events, calendars)
+        else:
+            widget.set_data(DAYS, events, calendars)
+        widget.set_selection({'candidate'})
+        widget.grab()
+    widget.confirm_requested.connect(refresh)
+    point = control.center().toPoint()
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert confirmed.count() == 1 and widget.confirm_hits == []
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseDClick(widget, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert confirmed.count() == 1 and edited.count() == created.count() == 0
+
+
+@pytest.mark.parametrize('kind', ['week', 'month', 'all-day'])
+def test_body_double_click_edits_and_never_confirms(surfaces, kind):
+    _, _, make = surfaces
+    widget = make(kind)
+    select(widget)
+    rect = next(rect for rect, item, *_rest in widget.hits if item.id == 'candidate')
+    point = QPoint(int(rect.left() + 12), int(rect.center().y()))
+    confirmed, edited = QSignalSpy(widget.confirm_requested), QSignalSpy(widget.edit_scoped_requested)
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseDClick(widget, Qt.MouseButton.LeftButton, pos=point)
+    assert edited.count() == 1 and confirmed.count() == 0
 
 
 @pytest.mark.parametrize('restriction', ['event-read-only', 'calendar-read-only', 'subscription'])

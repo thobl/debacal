@@ -321,14 +321,34 @@ Tests cover year rollover and bounded pattern parsing, overlapping intervals,
 timezones, atomic history and selective undo, durable outbox races, ICS recurrence
 exceptions, sync conflict handling, and Qt editing/rendering/drag workflows.
 
+For a disposable large-calendar interaction benchmark:
+
+```sh
+.venv/bin/python scripts/benchmark_ui.py --events 10000 --series 200 --iterations 3
+```
+
+This creates synthetic data in memory with synchronization disabled, then measures
+view switches, calendar visibility, typing/search completion, and slot confirmation,
+including paints. `--output /tmp/timings.json` saves the results; `--source-root`
+compares another checkout with the same workload, and `--profile` saves cProfile data.
+Timing depends on the machine and Qt backend. Tests separately check bounded reads,
+layout reuse, and correct invalidation after edits, undo, and remote writes.
+
+Calendar pages and paint geometry are reused when their inputs stay unchanged.
+An event-only SQLite revision invalidates those caches across sync connections;
+visibility changes do not rebuild the event search index. Search uses a lightweight
+case-folded projection and loads complete events only for matching candidates.
+Existing databases build that projection once on upgrade without changing events.
+Typing is coalesced over 80 ms; arrows and Enter finish any pending search immediately.
+Slot confirmation acts on release without waiting for the double-click interval.
+
 ## Remaining work
 
 * Live provider integration tests and OAuth.
 * Broader recurrence and timezone interoperability, including advanced custom rules.
   Custom non-IANA timezone definitions, detached-only imports without a master,
   EXRULE, RANGE=THISANDFUTURE and sub-minute rules currently fail explicitly.
-* Larger-calendar profiling and avoiding expensive work on the UI thread for
-  unusually large batches and global search.
+* Progressive handling of exceptionally large import/edit batches on the UI thread.
 * Distribution packaging, accessibility audit, event copying,
   and automated end-to-end checks on a Linux desktop.
 

@@ -136,7 +136,9 @@ def selection_roots(store, refs: Iterable[Event], scope: str) -> list[Event]:
         else:
             roots[master.id] = master
     for (calendar_id, group_id), reference in groups.items():
-        for member in store.list_events(calendar_ids=[calendar_id]):
+        members = (store.list_group_events(calendar_id, group_id) if hasattr(store, 'list_group_events')
+                   else store.list_events(calendar_ids=[calendar_id]))
+        for member in members:
             if member.group_id != group_id or (scope == "future" and member.start.timestamp() < reference.start.timestamp()):
                 continue
             previous = roots.get(member.id)
@@ -153,14 +155,19 @@ def affected_visible(store, refs: Iterable[Event], scope: str, visible_events: I
         whole = {root.id for root in roots if is_whole_root(root)}
         return {event.id for event in visible_events if event.id in explicit or _master_id(event) in whole}
     by_master = {_master_id(root): root for root in roots}
+    future_boundaries = {}
     result = set()
     for event in visible_events:
         root = by_master.get(_master_id(event))
         if root is None:
             continue
         if scope == "future" and not is_whole_root(root):
-            master = store.get_event(_master_id(event))
-            if master is None or _nominal(event, master) < _nominal(root, master):
+            master_id = _master_id(event)
+            if master_id not in future_boundaries:
+                master = store.get_event(master_id)
+                future_boundaries[master_id] = (master, _nominal(root, master) if master is not None else None)
+            master, boundary = future_boundaries[master_id]
+            if master is None or _nominal(event, master) < boundary:
                 continue
         result.add(event.id)
     return result
