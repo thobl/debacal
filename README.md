@@ -124,12 +124,12 @@ without it. Existing imported definitions are retained. UTC events export offlin
   series; an occurrence-only title, place, or note match includes that occurrence.
   Selections hidden by the filter are cleared.
   `/` remains a calendar shortcut for search with the default bindings.
-* **History:** `Ctrl+Z` undoes; `Ctrl+Shift+Z` redoes. Operation history can undo an earlier
+* **History:** `Ctrl+Z` undoes; `Ctrl+Y` redoes. Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
 * **Controls:** date navigation sits beside the current month and range. The
-  labeled toolbar groups View (including full-day expansion), Selection, and
-  Events (new event, undo, redo, history, selection export). Hover over icons for their meaning and
+  labeled toolbar groups View (including full-day expansion), Selection (modes
+  and selection export), and Events (new event, undo, redo, history). Hover over icons for their meaning and
   current shortcut. Import/export and adding sources sit beside Calendars; right-click
   a calendar for its source and file actions. The gear opens Preferences.
   Sync has a fixed position at the bottom of the sidebar; click

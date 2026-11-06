@@ -203,18 +203,18 @@ def test_too_dense_view_explains_range_limit_without_quarantining_a_valid_series
     assert store.list_quarantined_resources() == []
 
 
-def test_redo_uses_only_ctrl_shift_z(desktop):
+def test_redo_uses_only_ctrl_y(desktop):
     _, window, store = desktop
     source = Event('event', 'local', 'Review', START, START + timedelta(hours=1))
     window.apply_events('Create', [source])
     window.canvas.setFocus()
     QTest.keyClick(window.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert store.list_events() == []
-    QTest.keyClick(window.canvas, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
-    assert store.list_events() == []
     QTest.keyClick(window.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert store.list_events() == []
+    QTest.keyClick(window.canvas, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
     assert store.list_events() == [source]
-    assert window.redo_button.toolTip() == 'Redo (Ctrl+Shift+Z)'
+    assert window.redo_button.toolTip() == 'Redo (Ctrl+Y)'
     assert 'redo_alternative' not in window.bindings
 
 
@@ -248,24 +248,29 @@ def test_disabled_redo_shortcut_stays_disabled_on_upgrade(desktop):
         app.processEvents()
 
 
-@pytest.mark.parametrize('saved,expected', [
-    ({'redo': 'Ctrl+Y', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Ctrl+Shift+Z'),
-    ({'redo': 'Ctrl+Y', 'redo_alternative': 'Alt+R'}, 'Alt+R'),
-    ({'redo': 'Alt+R', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Alt+R'),
-    ({'redo': '', 'redo_alternative': ''}, ''),
-    ({'redo': 'Ctrl+Y', 'history': 'Ctrl+Shift+Z'}, ''),
-    ({'redo': 'Ctrl+Y', 'history': 'Ctrl+Shift+Z, H'}, ''),
+@pytest.mark.parametrize('version,saved,expected', [
+    (3, {'redo': 'Ctrl+Y', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Ctrl+Y'),
+    (3, {'redo': 'Ctrl+Y', 'redo_alternative': 'Alt+R'}, 'Alt+R'),
+    (3, {'redo': 'Alt+R', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Alt+R'),
+    (3, {'redo': '', 'redo_alternative': ''}, ''),
+    (3, {'redo': 'Ctrl+Y', 'history': 'Ctrl+Y'}, ''),
+    (3, {'redo': 'Ctrl+Y', 'history': 'Ctrl+Y, H'}, ''),
+    (4, {'redo': 'Ctrl+Shift+Z'}, 'Ctrl+Y'),
+    (4, {'redo': 'Alt+R'}, 'Alt+R'),
+    (4, {'redo': ''}, ''),
+    (4, {'redo': 'Ctrl+Shift+Z', 'history': 'Ctrl+Y'}, ''),
+    (4, {'redo': 'Ctrl+Shift+Z', 'history': 'Ctrl+Y, H'}, ''),
 ])
-def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(desktop, saved, expected):
+def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(desktop, version, saved, expected):
     app, _, store = desktop
-    store.set_setting('keybindings_version', 3)
+    store.set_setting('keybindings_version', version)
     store.set_setting('keybindings', saved)
     other = MainWindow(store, enable_sync=False)
     try:
         assert other.bindings['redo'] == expected
         assert 'redo_alternative' not in other.bindings
         assert 'redo_alternative' not in store.get_setting('keybindings')
-        assert store.get_setting('keybindings_version') == 4
+        assert store.get_setting('keybindings_version') == 5
         if 'history' in saved:
             assert other.bindings['history'] == saved['history']
         validate_bindings(other.bindings)

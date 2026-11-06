@@ -34,7 +34,7 @@ DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
     'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'year_view': 'Y', 'full_day': 'F',
-    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
+    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Y',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
     'edit_single': '', 'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
     'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'cycle_scope': 'Alt+S',
@@ -128,12 +128,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     saved_bindings[action] = ''
             store.set_setting('keybindings', saved_bindings)
             store.set_setting('keybindings_version', 3)
-        if store.get_setting('keybindings_version', 0) < 4:
+        if store.get_setting('keybindings_version', 0) < 5:
             alternative = saved_bindings.pop('redo_alternative', None)
             if saved_bindings.get('redo') in (None, 'Ctrl+Y', 'Ctrl+Shift+Z'):
                 # Consolidate former defaults into one action. Retain a custom
                 # alternative when the primary action still used a default.
-                if alternative and alternative != 'Ctrl+Shift+Z':
+                if alternative and alternative not in ('Ctrl+Y', 'Ctrl+Shift+Z'):
                     saved_bindings['redo'] = alternative
                 else:
                     saved_bindings.pop('redo', None)
@@ -143,7 +143,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                            for value in saved_bindings.values()):
                         saved_bindings['redo'] = ''
             store.set_setting('keybindings', saved_bindings)
-            store.set_setting('keybindings_version', 4)
+            store.set_setting('keybindings_version', 5)
         self.bindings = DEFAULT_BINDINGS | saved_bindings
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
