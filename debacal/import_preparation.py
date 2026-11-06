@@ -110,6 +110,13 @@ class PreparedImport:
     def event_count(self) -> int:
         return len(self.events)
 
+    def with_selection(self, selection) -> PreparedImport:
+        """Filter reviewed reports on a worker without reading their sources again."""
+        if selection.all_selected and not selection.choices:
+            return self
+        return PreparedImport(tuple(replace(item, report=selection.filter_report(item.report))
+                                    if item.report is not None else item for item in self.items))
+
     def initial_month(self, preferences: Preferences, today: date | None = None) -> date:
         """Prefer an ongoing/upcoming occurrence over an old recurring anchor."""
         today = today or now().date()
@@ -204,7 +211,7 @@ def prepare_sources(sources) -> PreparedImport:
                 raise ValueError('Choose a calendar file smaller than 20 MB.')
             if byte_count > MAX_PENDING_IMPORT_BYTES:
                 raise ValueError('Import exceeds 60 MB in total. Choose fewer files.')
-            report = parse_ics_report(data, PREVIEW_CALENDAR_ID)
+            report = parse_ics_report(data, PREVIEW_CALENDAR_ID, repair_missing_uids=True)
             if event_count + len(report.events) > MAX_IMPORT_EVENTS:
                 raise ValueError('Import exceeds 50,000 events. Choose fewer files.')
             event_count += len(report.events)

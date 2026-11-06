@@ -52,10 +52,12 @@ def _safe_reason(exc):
         return "Unsupported timezone definition."
     if "end" in message and "before" in message:
         return "Event ends before its start."
+    if "uid is missing" in message:
+        return "Event UID is missing."
     return "Unsupported or malformed event resource."
 
 
-def parse_report(data, calendar_id, *, limit=10000, use_full=True):
+def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missing_uids=False):
     """Split UID resources before decoding so one bad event cannot abort peers."""
     lines = fallback.unfolded(data)
     if not lines or "BEGIN:VCALENDAR" not in lines or "END:VCALENDAR" not in lines:
@@ -84,8 +86,26 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True):
     if len(event_blocks) > limit:
         raise ValueError(f"Import exceeds {limit:,} event components.")
     grouped = {}
+    generated_uids, duplicate_counts = set(), {}
+    used_uids = {_uid_of(block) for block in event_blocks if _uid_of(block)}
     for index, block in enumerate(event_blocks):
         uid = _uid_of(block)
+        if not uid and repair_missing_uids and _property_of(block, "RECURRENCE-ID") is None:
+            # Some file exporters omit UID altogether. Repair standalone
+            # masters for a reviewed import, but never guess which series an
+            # unidentified detached exception belongs to. Stable content IDs
+            # also make importing the same file again idempotent.
+            fingerprint = hashlib.sha256("\n".join(block).encode()).hexdigest()
+            ordinal = duplicate_counts.get(fingerprint, 0)
+            while True:
+                uid = "urn:uuid:" + str(uuid5(NAMESPACE_URL, f"debacal:import:missing-uid:{fingerprint}:{ordinal}"))
+                ordinal += 1
+                if uid not in used_uids:
+                    break
+            duplicate_counts[fingerprint] = ordinal
+            used_uids.add(uid)
+            generated_uids.add(uid)
+            block = _with_uid(block, uid)
         grouped.setdefault(uid or f"missing-uid-{index}", []).append(block)
     events, issues, rejected = [], [], []
     for key, group in grouped.items():
@@ -98,6 +118,8 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True):
                 raise ValueError("Event UID is missing.")
             parsed = parse(raw, calendar_id, limit=limit, use_full=use_full)
             events.extend(parsed)
+            if uid in generated_uids and parsed:
+                issues.append(ResourceIssue(resource_id, "Missing event UID; generated a stable identifier for import."))
         except (ValueError, TypeError, KeyError, OverflowError) as exc:
             reason = _safe_reason(exc)
             issues.append(ResourceIssue(resource_id, reason))
@@ -202,7 +224,7 @@ def _blocks(data):
     return header, blocks
 
 
-def _uid_of(block):
+def _property_of(block, name):
     depth = 0
     for line in block:
         left, _, value = line.partition(":")
@@ -213,9 +235,29 @@ def _uid_of(block):
         if marker == "END":
             depth -= 1
             continue
+        if depth == 1 and left.split(";")[0].upper() == name:
+            return value
+    return None
+
+
+def _uid_of(block):
+    return fallback.text(_property_of(block, "UID") or "")
+
+
+def _with_uid(block, uid):
+    """Replace an empty event UID while keeping nested alarm UIDs intact."""
+    result, depth = [block[0], "UID:" + uid], 1
+    for line in block[1:]:
+        left, _, value = line.partition(":")
+        marker = left.upper()
         if depth == 1 and left.split(";")[0].upper() == "UID":
-            return fallback.text(value)
-    return ""
+            continue
+        result.append(line)
+        if marker == "BEGIN":
+            depth += 1
+        elif marker == "END":
+            depth -= 1
+    return result
 
 
 def _resource_for_uid(data, uid, *, synthetic=False):

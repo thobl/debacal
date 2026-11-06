@@ -8,7 +8,7 @@ from threading import Event as ThreadEvent, get_ident
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -429,3 +429,103 @@ def test_confirmation_imports_the_exact_preview_snapshot_after_file_changes(desk
         finish_parsing(window)
     assert [event.title for event in store.list_events()] == ['Shown in the preview']
     assert len(reader_threads) == 1 and reader_threads[0] != ui_thread
+
+
+def click_import_event(app, dialog, event):
+    canvas = dialog.preview.canvas
+    canvas.grab()
+    rect = next(rect for rect, item in canvas.hits if item.id == event.id)
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())
+    wait_for(app, lambda: dialog.preview_ready)
+
+
+def test_import_preview_deselection_keeps_standard_series_with_one_excluded_date(desktop):
+    app, window, store = desktop
+    start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+    series = Event('series', 'source', 'Weekly meeting', start, start + timedelta(hours=1),
+                   recurrence_rule='FREQ=WEEKLY;COUNT=3')
+    excluded = []
+
+    def review(dialog):
+        dialog.show()
+        wait_for(app, lambda: dialog.preview_ready)
+        occurrences = sorted(dialog._page.events, key=lambda event: event.start)
+        excluded.append(occurrences[1].start)
+        geometry = dialog.preview.canvas.geometry()
+        click_import_event(app, dialog, occurrences[1])
+        assert not dialog.selection.is_selected(occurrences[1])
+        assert dialog.preview.canvas.geometry() == geometry
+        assert not hasattr(dialog.preview, 'details') and not store.list_events()
+        return accept_request(dialog)
+
+    with patch.object(ImportDialog, 'exec', review):
+        window.import_data(export_ics([series]))
+        wait_for(app, lambda: bool(store.list_events()))
+        finish_parsing(window)
+    imported = store.list_events()[0]
+    assert imported.recurrence_rule == series.recurrence_rule and len(imported.excluded_dates) == 1
+    dates = store.query_occurrences(start - timedelta(days=1), start + timedelta(days=30))
+    assert [event.start for event in dates] == [start, start + timedelta(days=14)]
+    assert excluded[0] not in [event.start for event in dates]
+
+
+def test_chosen_dates_survive_month_navigation_and_import_as_finite_recurrence(desktop):
+    app, window, store = desktop
+    start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+    series = Event('series', 'source', 'Selected dates', start, start + timedelta(hours=1),
+                   recurrence_rule='FREQ=WEEKLY')
+    selected = []
+
+    def review(dialog):
+        dialog.show()
+        wait_for(app, lambda: dialog.preview_ready)
+        QTest.mouseClick(dialog.preview.none_button, Qt.MouseButton.LeftButton)
+        wait_for(app, lambda: dialog.preview_ready)
+        assert not dialog.import_button.isEnabled()
+        QTest.mouseClick(dialog.preview.next_button, Qt.MouseButton.LeftButton)
+        wait_for(app, lambda: dialog._page.month.month == 12)
+        december = next(event for event in dialog._page.events if event.start.month == 12)
+        selected.append(december.start)
+        click_import_event(app, dialog, december)
+        QTest.mouseClick(dialog.preview.previous_button, Qt.MouseButton.LeftButton)
+        wait_for(app, lambda: dialog._page.month.month == 11)
+        november = next(event for event in dialog._page.events if event.start.month == 11)
+        selected.append(november.start)
+        click_import_event(app, dialog, november)
+        assert dialog.selection.is_selected(december) and dialog.selection.is_selected(november)
+        return accept_request(dialog)
+
+    with patch.object(ImportDialog, 'exec', review):
+        window.import_data(export_ics([series]))
+        wait_for(app, lambda: bool(store.list_events()))
+        finish_parsing(window)
+    imported = store.list_events()[0]
+    assert not imported.recurrence_rule and len(imported.recurrence_dates) == 1
+    occurrences = store.query_occurrences(start - timedelta(days=1), start + timedelta(days=730))
+    assert sorted(event.start for event in occurrences) == sorted(selected)
+
+
+def test_date_checkbox_excludes_all_events_starting_that_day_without_splitting_spans(desktop):
+    app, window, store = desktop
+    start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+    events = [Event('timed', 'source', 'Morning', start, start + timedelta(hours=1)),
+              Event('point', 'source', 'Reminder', start + timedelta(hours=3), start + timedelta(hours=3)),
+              Event('span', 'source', 'Several days', start.replace(hour=0), start.replace(hour=0) + timedelta(days=4), all_day=True),
+              Event('later', 'source', 'Keep this date', start + timedelta(days=6), start + timedelta(days=6,hours=1))]
+
+    def review(dialog):
+        dialog.show()
+        wait_for(app, lambda: dialog.preview_ready)
+        canvas = dialog.preview.canvas
+        cell = canvas.day_rect(start.date())
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton,
+                         pos=QPoint(round(cell.left() + 14), round(cell.top() + 7)))
+        wait_for(app, lambda: dialog.preview_ready)
+        assert len(dialog._import_choice.events) == 1
+        return accept_request(dialog)
+
+    with patch.object(ImportDialog, 'exec', review):
+        window.import_data(export_ics(events))
+        wait_for(app, lambda: bool(store.list_events()))
+        finish_parsing(window)
+    assert [event.title for event in store.list_events()] == ['Keep this date']

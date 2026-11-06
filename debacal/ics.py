@@ -80,10 +80,14 @@ def parse_ics(data: str | bytes, calendar_id: str, window_start=None, window_end
     return list(report.events)
 
 
-def parse_ics_report(data: str | bytes, calendar_id: str, *, limit: int = 10000):
-    """Return healthy resources and private per-resource quarantine details."""
+def parse_ics_report(data: str | bytes, calendar_id: str, *, limit: int = 10000, repair_missing_uids=False):
+    """Return healthy resources and private per-resource quarantine details.
+
+    Reviewed file imports may opt into stable missing-UID repair. Remote sync
+    keeps the strict default so an invalid resource cannot acquire a new identity.
+    """
     from .ics_resources import parse_report
-    return parse_report(data, calendar_id, limit=limit)
+    return parse_report(data, calendar_id, limit=limit, repair_missing_uids=repair_missing_uids)
 
 
 def export_ics(events: Iterable[Event]) -> bytes:

@@ -19,6 +19,7 @@ from .dialogs import FormDialog
 from .import_sources import ImportSource
 from .import_preparation import prepare_sources, PREVIEW_CALENDAR_ID
 from .import_preview import ImportPreview
+from .import_selection import ImportSelection, display_date
 from .preferences import Preferences
 from .timeutil import local_zone
 
@@ -46,14 +47,17 @@ class ImportDialog(FormDialog):
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-import-preview')
         self._owns_executor = executor is None
         self._active = True
-        self._load_future = self._page_future = None
+        self._load_future = self._page_future = self._selection_future = None
         self._requested_month = None
         self._pages = OrderedDict()
         self._page = None
         self._warnings = ()
         self.preview_ready = False
         self.prepared_import = None
+        self.selection = ImportSelection()
+        self._import_choice = None
         self.selected_prepared = None
+        self.selected_selection = None
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(30)
         self._preview_timer.timeout.connect(self._poll_preview)
@@ -100,6 +104,10 @@ class ImportDialog(FormDialog):
 
         self.preview = ImportPreview(self.preferences)
         self.preview.month_requested.connect(self._request_month)
+        self.preview.occurrence_toggled.connect(self._toggle_occurrence)
+        self.preview.date_toggled.connect(self._toggle_date)
+        self.preview.selection_all_requested.connect(self._select_all)
+        self.preview.selection_month_requested.connect(self._select_month)
         outer.addWidget(self.preview, 1)
         status = QHBoxLayout()
         self.summary = QLabel()
@@ -129,6 +137,8 @@ class ImportDialog(FormDialog):
         outer.addWidget(self.buttons)
         self.configure_keyboard([self.browse_button, self.files, self.calendar],
                                 [self.import_button, self.cancel_button], self.save)
+        self.setTabOrder(self.calendar, self.preview.canvas)
+        self.setTabOrder(self.preview.canvas, self.import_button)
         if sources is None:
             self.set_paths(paths)
         else:
@@ -168,12 +178,14 @@ class ImportDialog(FormDialog):
         super().showEvent(event)
 
     def _start_preview(self):
-        for future in (self._load_future, self._page_future):
+        for future in (self._load_future, self._page_future, self._selection_future):
             if future is not None:
                 future.cancel()
-        self._load_future = self._page_future = None
+        self._load_future = self._page_future = self._selection_future = None
         self.preview_ready = False
         self.prepared_import = None
+        self._import_choice = None
+        self.selection.select_all()
         self._page = None
         self._requested_month = None
         self._pages.clear()
@@ -198,11 +210,73 @@ class ImportDialog(FormDialog):
     def _destination_changed(self, *_):
         if self._page is not None:
             self.preview.set_events(self._page.month, self._page.events, self._preview_calendars())
+            self._render_selection()
         self._update_import_button()
 
     def _update_import_button(self):
         self.import_button.setEnabled(bool(self.preview_ready and self.prepared_import
-                                          and self.prepared_import.event_count and self.calendar.currentData()))
+                                          and self._selection_future is None and self._import_choice
+                                          and self._import_choice.event_count and self.calendar.currentData()))
+
+    def _toggle_occurrence(self, event):
+        self.selection.toggle(event)
+        self._prepare_selection()
+
+    def _toggle_date(self, day):
+        if self._page is not None:
+            self.selection.toggle_date(day, self._page.events)
+            self._prepare_selection()
+
+    def _select_all(self, selected):
+        self.selection.select_all() if selected else self.selection.select_none()
+        self._prepare_selection()
+
+    def _select_month(self, month):
+        if self._page is None or self._page.month != month.replace(day=1):
+            return
+        self.selection.select_none()
+        self.selection.set_selected((event for event in self._page.events
+                                     if display_date(event).replace(day=1) == self._page.month), True)
+        self._prepare_selection()
+
+    def _render_selection(self):
+        if self._page is not None:
+            self.preview.set_selection({event.id for event in self._page.events if self.selection.is_selected(event)})
+
+    def _prepare_selection(self):
+        if self._selection_future is not None:
+            self._selection_future.cancel()
+            self._selection_future = None
+        self._import_choice = None
+        self.preview_ready = False
+        self._render_selection()
+        if self.prepared_import is not None:
+            snapshot = self.selection.snapshot(masters=self.prepared_import.events)
+            if snapshot.all_selected and not snapshot.choices:
+                self._import_choice = self.prepared_import
+                self.preview_ready = self._page is not None
+            else:
+                self._selection_future = self._executor.submit(self.prepared_import.with_selection, snapshot)
+                self._preview_timer.start()
+        self._update_summary()
+        self._update_import_button()
+
+    def _update_summary(self):
+        if self._page is None:
+            return
+        if self._import_choice is None:
+            self.summary.setText('Updating selected dates…')
+            return
+        included = sum(self.selection.is_selected(event) for event in self._page.events)
+        count = self._import_choice.event_count
+        if not self.prepared_import.event_count:
+            self.summary.setText('No importable events found.')
+            return
+        if not count:
+            self.summary.setText('No dates included.')
+            return
+        self.summary.setText(f'{count} event' + ('' if count == 1 else 's') +
+                             f' ready · {included} of {len(self._page.events)} in view included')
 
     def _request_month(self, month):
         self._requested_month = month.replace(day=1)
@@ -227,6 +301,7 @@ class ImportDialog(FormDialog):
             future, self._load_future = self._load_future, None
             try:
                 self.prepared_import, page, first = future.result()
+                self._prepare_selection()
                 self.preview.set_first_date(first)
                 if self._requested_month is not None and self._requested_month != page.month:
                     self._request_month(self._requested_month)
@@ -240,7 +315,16 @@ class ImportDialog(FormDialog):
                 self._show_page(future.result())
             except Exception as exc:
                 self._preview_failed(exc)
-        if self._load_future is None and self._page_future is None:
+        if self._selection_future is not None and self._selection_future.done():
+            future, self._selection_future = self._selection_future, None
+            try:
+                self._import_choice = future.result()
+                self.preview_ready = self._page is not None
+                self._update_summary()
+                self._update_import_button()
+            except Exception as exc:
+                self._preview_failed(exc)
+        if self._load_future is None and self._page_future is None and self._selection_future is None:
             self._preview_timer.stop()
 
     def _show_page(self, page):
@@ -251,11 +335,10 @@ class ImportDialog(FormDialog):
         while len(self._pages) > 3:
             self._pages.popitem(last=False)
         self.preview.set_events(page.month, page.events, self._preview_calendars())
+        self._render_selection()
         self.preview.set_loading(False)
-        self.preview_ready = True
-        count = self.prepared_import.event_count
-        self.summary.setText((f'{count} event' + ('' if count == 1 else 's') + f' ready · {len(page.events)} in view'
-                              if count else 'No importable events found.'))
+        self.preview_ready = self._selection_future is None
+        self._update_summary()
         self._warnings = tuple(dict.fromkeys((*self.prepared_import.warnings, *page.warnings)))
         self.issues_button.setText(f'Review issues ({len(self._warnings)})')
         self.issues_button.setVisible(bool(self._warnings))
@@ -287,7 +370,7 @@ class ImportDialog(FormDialog):
     def _finish_preview(self, *_):
         self._active = False
         self._preview_timer.stop()
-        for future in (self._load_future, self._page_future):
+        for future in (self._load_future, self._page_future, self._selection_future):
             if future is not None:
                 future.cancel()
         if self._owns_executor:
@@ -314,8 +397,12 @@ class ImportDialog(FormDialog):
         if self.prepared_import is None or not self.prepared_import.event_count:
             self.show_error('No importable events found. Review the issues or choose another calendar file.')
             return
+        if self._import_choice is None or not self._import_choice.event_count:
+            self.show_error('Select at least one event or date to import.')
+            return
         self.selected_paths = self._paths
         self.selected_sources = self._sources
         self.selected_calendar_id = self.calendar.currentData()
-        self.selected_prepared = self.prepared_import
+        self.selected_prepared = self._import_choice
+        self.selected_selection = self.selection.snapshot(masters=self.prepared_import.events)
         self.accept()

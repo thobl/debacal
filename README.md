@@ -62,9 +62,18 @@ Opening one or more `.ics` files shows an import dialog with the selected
 creation calendar as its destination. Choose a different writable calendar or
 cancel before anything is imported. A compact source field leaves room for a
 month preview showing the incoming events, recurring dates, and connected
-all-day spans. Navigate months or click an event/day to inspect its details;
-the preview is read-only. Changing the destination updates the preview color.
+all-day spans. Tooltips show event details. Click an event to include/exclude
+that occurrence, or click a day to toggle events starting on that date.
+Multi-day events remain whole. **All**, **None**, and **This month** set the
+starting selection; exclusions stay visible, dimmed and crossed out. Choices
+persist while navigating months. Changing the destination updates the preview color.
+Excluding dates from a series retains its standard rule with EXDATE; explicitly
+choosing a few occurrences imports only those dates, as a finite RDATE series
+or an individual event. The preview does not edit the source calendar.
 Unreadable files and unsupported entries are listed under **Review issues**.
+Imports can repair events lacking UID identifiers by assigning stable IDs;
+this is reported as an informational warning. Remote sync retains strict UID
+validation, and importing the same file again uses the same generated IDs.
 The same dialog opens if Debacal is already
 running; file paths are delivered to that window instead of starting another
 sync engine. Requests received during another dialog wait their turn. File reads

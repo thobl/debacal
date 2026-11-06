@@ -1444,7 +1444,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 if self.apply_events('Import ' + str(len(events)) + ' event(s)', events):
                     detail = f'Imported {len(events)} event resource(s).'
                     if report.issues:
-                        detail += f' {len(report.issues)} resource issue(s); skipped resources were not imported.'
+                        detail += f' {len(report.issues)} import warning(s).'
+                        if report.rejected:
+                            detail += f' {len(report.rejected)} unsupported event resource(s) were skipped.'
                         self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
                     self.show_notice(detail)
             except Exception as exc:
