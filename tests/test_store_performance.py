@@ -11,7 +11,7 @@ import pytest
 
 from debacal.models import Calendar, Event
 from debacal.recurrence import (
-    expand_series, occurrence, recurrence_key, recurrence_set,
+    RecurrenceRangeError, expand_events, expand_series, occurrence, recurrence_key, recurrence_set,
 )
 from debacal.store import HistoryConflict, Store
 
@@ -352,3 +352,33 @@ def test_fold_rule_anchor_does_not_create_an_extra_count_occurrence():
     actual = expand_series(master, lower, lower + timedelta(days=1))
     assert len(actual) == len(expected) == 1
     assert actual[0].start.timestamp() == expected[0].timestamp()
+
+
+def test_annual_aggregate_does_not_exhaust_other_valid_series_or_quarantine_them():
+    first = datetime(2026, 1, 1, 9, tzinfo=timezone.utc)
+    lower, upper = first.replace(hour=0), first.replace(year=2027, hour=0)
+    with Store(":memory:") as store:
+        masters = [event(f"daily-{number}", start=first, end=first + timedelta(hours=1), recurrence_rule="FREQ=DAILY")
+                   for number in range(30)]
+        store.apply_remote(masters)
+        values = store.query_occurrences(lower, upper)
+        assert len(values) == 30 * 365
+        assert {value.series_id for value in values} == {master.id for master in masters}
+        assert store.list_quarantined_resources() == []
+        assert store.history() == [] and store.count_pending_changes() == 0
+        # Clipboard/preview expansion keeps its explicit aggregate safety bound.
+        with pytest.raises(RecurrenceRangeError, match="exceeds"):
+            expand_events(masters, lower, upper)
+
+
+def test_single_dense_resource_raises_range_error_without_quarantining_valid_data():
+    first = datetime(2000, 1, 1, 9, tzinfo=timezone.utc)
+    master = event(start=first, end=first + timedelta(hours=1), recurrence_rule="FREQ=DAILY;COUNT=10001")
+    with Store(":memory:") as store:
+        store.apply_remote([master])
+        revision = store.events_revision()
+        with pytest.raises(RecurrenceRangeError, match="smaller date range"):
+            store.query_occurrences(first.replace(hour=0), first.replace(year=2028, hour=0))
+        assert store.list_quarantined_resources() == []
+        assert store.get_event(master.id) == master and store.events_revision() == revision
+        assert store.history() == [] and store.count_pending_changes() == 0

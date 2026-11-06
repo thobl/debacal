@@ -23,6 +23,10 @@ class RecurrenceError(ValueError):
     pass
 
 
+class RecurrenceRangeError(RecurrenceError):
+    """A valid schedule exceeds the requested projection's work budget."""
+
+
 def event_zone(event: Event):
     return ZoneInfo(event.timezone_id) if event.timezone_id else event.start.tzinfo
 
@@ -517,11 +521,11 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
             if overlaps(item, start, end):
                 result[item.id] = item
             if not truncate and len(result) > limit:
-                raise RecurrenceError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
+                raise RecurrenceRangeError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
     except (OverflowError, TypeError) as exc:
         raise RecurrenceError(f"Could not expand recurrence: {exc}") from exc
     if not truncate and len(result) > limit:
-        raise RecurrenceError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
+        raise RecurrenceRangeError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
     values = sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id)
                     if truncate else (item.start.timestamp(), item.id))
     return values[:limit] if truncate else values
@@ -532,16 +536,23 @@ def expand_events(events: Iterable[Event], start: datetime, end: datetime, *, li
     for master in events:
         result.extend(expand_series(master, start, end, limit=max(0, limit - len(result))))
         if len(result) > limit:
-            raise RecurrenceError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
+            raise RecurrenceRangeError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
     return sorted(result, key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))
 
 
 def expand_events_safe(events: Iterable[Event], start: datetime, end: datetime, *, limit: int = 10000):
-    """Expand independent masters while isolating malformed legacy resources."""
+    """Isolate malformed resources; guard each valid resource independently.
+
+    A broad view may contain many independent daily series. Their aggregate
+    size does not invalidate later resources. A single excessively dense series
+    instead raises an explicit range error, never an ingestion/quarantine issue.
+    """
     result, issues = [], []
     for master in events:
         try:
-            result.extend(expand_series(master, start, end, limit=max(0, limit - len(result))))
+            result.extend(expand_series(master, start, end, limit=limit))
+        except RecurrenceRangeError:
+            raise
         except (ValueError, TypeError, OverflowError, KeyError) as exc:
             issues.append((master, RecurrenceError("Unsupported or invalid recurrence rule.")))
     return sorted(result, key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id)), tuple(issues)

@@ -33,10 +33,10 @@ from .search_panel import MORE_ROLE, event_matches_query
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
-    'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'full_day': 'F',
-    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
+    'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'year_view': 'Y', 'full_day': 'F',
+    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Y', 'redo_alternative': 'Ctrl+Shift+Z',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
-    'edit_single': '', 'preferences': 'Ctrl+,',
+    'edit_single': '', 'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
     'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'cycle_scope': 'Alt+S',
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
@@ -116,6 +116,21 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     saved_bindings[action] = ''
             store.set_setting('keybindings', saved_bindings)
             store.set_setting('keybindings_version', 2)
+        if store.get_setting('keybindings_version', 0) < 3:
+            if saved_bindings.get('redo') == 'Ctrl+Shift+Z':
+                saved_bindings.pop('redo')
+            elif saved_bindings.get('redo') == '':
+                saved_bindings.setdefault('redo_alternative', '')
+            for action in ('year_view', 'redo', 'redo_alternative', 'export_selection'):
+                if action in saved_bindings:
+                    continue
+                sequence = QKeySequence(DEFAULT_BINDINGS[action])
+                if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
+                                   or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
+                       for other, value in saved_bindings.items() if other != action):
+                    saved_bindings[action] = ''
+            store.set_setting('keybindings', saved_bindings)
+            store.set_setting('keybindings_version', 3)
         self.bindings = DEFAULT_BINDINGS | saved_bindings
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
@@ -145,12 +160,36 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.configure_auto_sync()
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.canvas.update)
+        self.clock_timer.timeout.connect(self.year.update)
         self.clock_timer.start(60_000)
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
         QTimer.singleShot(1500, self.startup_sync)
 
+    @property
+    def event_surfaces(self):
+        return self.canvas, self.month, self.all_day_canvas, self.year
+
+    @property
+    def day_surfaces(self):
+        return self.header, *self.event_surfaces
+
+    def active_canvas(self):
+        return self.year if self.view == 'year' else self.month if self.view == 'month' else self.canvas
+
+    def update_creation_target(self):
+        calendar = self.store.get_default_calendar()
+        for widget in self.day_surfaces:
+            widget.set_creation_calendar(calendar)
+
+    def fit_year(self):
+        if not self._closed and self.view == 'year':
+            self.year.setMinimumHeight(self.year.heightForWidth(self.year_scroll.viewport().width()))
+
     def dates(self):
+        if self.view == 'year':
+            first = self.anchor.replace(month=1, day=1)
+            return [first + timedelta(days=offset) for offset in range(366 if monthlib.isleap(first.year) else 365)]
         if self.view == 'day':
             return [self.anchor]
         if self.view == 'week':
@@ -174,7 +213,16 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         days = self.dates()
         if self.selected_day not in days:
             self.selected_day = self.anchor
-        self.range_events = self.query_view_events(days, cals, revision)
+        from .recurrence import RecurrenceRangeError
+        try:
+            self.range_events = self.query_view_events(days, cals, revision)
+        except RecurrenceRangeError as exc:
+            self.range_events = []
+            self.selection.clear()
+            self.selected_id = None
+            self._search_selection_active = False
+            self._search_row_ids.clear()
+            self.show_notice(str(exc))
         self.visible_events = self.filter_calendar_events(self.range_events)
         refs = [value for reference in self.selection.refs
                 if (value := self.store.get_occurrence(reference.id)) is not None]
@@ -184,31 +232,36 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if previous:
                 self.selection.select(previous)
         self.selected_id = self.selection.primary.id if self.selection.primary else None
-        self.heading.setText(self.preferences.format_month(self.anchor))
+        self.heading.setText(str(self.anchor.year) if self.view == 'year' else self.preferences.format_month(self.anchor))
         self.heading.setToolTip(self.heading.text())
         self.range_label.setText(self.preferences.format_date(days[0], weekday=self.view == 'day')
                                 + (' — ' + self.preferences.format_date(days[-1]) if self.view != 'day' else ''))
         self.mini.set_preferences(self.preferences)
         self.mini.setSelectedDate(QDate(self.selected_day.year, self.selected_day.month, self.selected_day.day))
         self.header.days = days[:7]
-        for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
+        for widget in self.day_surfaces:
             widget.set_preferences(self.preferences)
             widget.set_selected_day(self.selected_day)
         self.header.update()
-        self.canvas.set_data(days[:7], self.visible_events, cals)
-        self.all_day_canvas.set_data(days[:7], self.visible_events, cals)
-        self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
-        self.month.set_data(days[0], self.anchor.month, self.visible_events, cals)
+        if self.view == 'year':
+            self.year.set_data(self.anchor.year, self.visible_events, cals)
+        else:
+            self.canvas.set_data(days[:7], self.visible_events, cals)
+            self.all_day_canvas.set_data(days[:7], self.visible_events, cals)
+            self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
+            self.month.set_data(days[0], self.anchor.month, self.visible_events, cals)
         self.results.update_context(cals, self.preferences)
         self.results.set_range(at(days[0]), at(days[-1] + timedelta(days=1)))
-        self.stack.setCurrentIndex(1 if self.view == 'month' else 0)
+        self.stack.setCurrentIndex({'day': 0, 'week': 0, 'month': 1, 'year': 2}[self.view])
         for name, btn in self.view_buttons.items():
             btn.setChecked(name == self.view)
-        self.full_day_button.setEnabled(self.view != 'month')
+        self.full_day_button.setEnabled(self.view in ('day', 'week'))
         self.refresh_calendar_list(cals)
+        self.update_creation_target()
         self.sync_selection()
         self.render_placement()
         self.fit_calendar()
+        self.fit_year()
         self.update_hints()
         if not self._revealing_search_result:
             self.run_search()
@@ -225,9 +278,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         events = self.store.query_occurrences(begin, end, identifiers)
         # Bound both page count and occurrence count: a dense calendar should
         # not retain arbitrarily many old pages or visibility combinations.
-        if len(events) <= 20_000:
+        if len(events) <= 50_000:
             self._range_cache[key] = tuple(events)
-            while len(self._range_cache) > 8 or sum(map(len, self._range_cache.values())) > 20_000:
+            while len(self._range_cache) > 8 or sum(map(len, self._range_cache.values())) > 50_000:
                 self._range_cache.popitem(last=False)
         return events
 
@@ -276,6 +329,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def set_creation_calendar(self, calendar_id):
         self.store.set_default_calendar(calendar_id)
         self.refresh_calendar_list(self.store.list_calendars())
+        self.update_creation_target()
 
     def calendar_menu(self, calendar_id, point):
         calendar = self.store.get_calendar(calendar_id)
@@ -311,14 +365,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.fit_calendar()
 
     def fit_calendar(self):
-        if not self._closed and self.view != 'month':
+        if not self._closed and self.view in ('day', 'week'):
             # Leave one pixel for integer rounding before Qt sees the minimum
             # size. Clamping afterward can repeatedly show/hide a scrollbar.
             height = max(1, self.scroll.viewport().height() - 1)
             self.canvas.fit_to_viewport(height, full_day=self.full_day)
 
     def toggle_full_day(self):
-        if self.view == 'month':
+        if self.view not in ('day', 'week'):
             return
         self.full_day = not self.full_day
         self.full_day_button.setChecked(self.full_day)
@@ -344,7 +398,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._search_selection_active = False
             self._search_row_ids.clear()
             self.selection.clear()
-            self.selected_id = self.canvas.selected_id = self.month.selected_id = None
+            self.selected_id = None
+            for widget in self.event_surfaces:
+                widget.selected_id = None
             self.select_mode = False
             self.nav_day, self.nav_digits = None, ''
             self._shortcut_pending.clear()
@@ -354,7 +410,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.refresh()
         else:
             self.mini.setSelectedDate(QDate(day.year, day.month, day.day))
-            for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
+            for widget in self.day_surfaces:
                 widget.set_selected_day(day)
             self.sync_selection()
             self.update_hints()
@@ -362,6 +418,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def open_day(self, day):
         self.select_day(day)
         self.set_view('day')
+
+    def open_month(self, day):
+        self.select_day(day)
+        self.set_view('month')
 
     def today(self):
         self.go_date(now().date())
@@ -371,7 +431,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_row_ids.clear()
         self.selection.clear()
         self.selected_id = None
-        if self.view == 'month':
+        if self.view == 'year':
+            year = min(9998, max(1, self.anchor.year + direction))
+            day = min(self.selected_day.day, monthlib.monthrange(year, self.selected_day.month)[1])
+            self.anchor = self.selected_day = self.selected_day.replace(year=year, day=day)
+        elif self.view == 'month':
             value = self.anchor.year * 12 + self.anchor.month - 1 + direction
             year, month = divmod(value, 12)
             self.anchor = self.anchor.replace(year=year, month=month + 1, day=min(self.anchor.day, monthlib.monthrange(year, month + 1)[1]))
@@ -471,12 +535,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         except (ValueError, KeyError, OverflowError):
             self.selected_ids = set()
         self.selected_id = self.selection.primary.id if self.selection.primary else None
-        for widget in (self.canvas, self.month, self.all_day_canvas):
+        for widget in self.event_surfaces:
             widget.selected_id = self.selected_id
             widget.set_selection(self.selected_ids)
             widget.set_scope(self.operation_scope())
         self.sync_search_selection()
         self.update_scope_hint()
+        self.export_selection_button.setEnabled(bool(self.selection.refs))
 
     def sync_search_selection(self):
         if self.results.agenda_mode:
@@ -627,6 +692,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def ensure_event_visible(self, event_id):
         """Keep the current scroll unless the selected event is outside it."""
+        if self.view == 'year':
+            self.year_scroll.parentWidget().layout().activate()
+            rect = self.year.ensure_event_visible(event_id)
+            if rect is not None:
+                self.year_scroll.ensureVisible(round(rect.center().x()), round(rect.center().y()), 12, 12)
+            return
         if self.view == 'month':
             return
         self.scroll.parentWidget().layout().activate()
@@ -786,15 +857,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             selection = self.read_event_clipboard()
             calendar = self.store.get_default_calendar()
             if calendar is None or calendar.read_only or calendar.kind == 'ics':
-                raise ValueError('Choose a writable default calendar before pasting events.')
+                raise ValueError('Select a writable calendar before pasting events.')
             self.cancel_paste(clear_notice=False)
             self.pending_paste = PastePlacement(selection, calendar.id, target or self.paste_target(selection), scope or 'group')
             self._paste_mouse_origin = QCursor.pos()
-            for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
+            for widget in self.day_surfaces:
                 widget.placement_active = True
             self.render_placement()
             self.fit_calendar()
-            (self.month if self.view == 'month' else self.canvas).setFocus()
+            self.active_canvas().setFocus()
             self.show_notice(self.pending_paste.error or 'Move to position the selection. Click or Enter places it; Escape cancels.')
         except (ValueError, TypeError, KeyError, OverflowError) as exc:
             self.show_notice(str(exc))
@@ -808,14 +879,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             except (ValueError, OverflowError) as exc:
                 events = []
                 self.pending_paste.error = str(exc)
-        for widget in (self.canvas, self.month, self.all_day_canvas):
+        for widget in self.event_surfaces:
             widget.set_preview(events)
 
     def move_paste_preview(self, target, source=None):
         pending = self.pending_paste
         if pending is None or QCursor.pos() == self._paste_mouse_origin:
             return
-        if source in (self.month, self.header, self.all_day_canvas):
+        if source in (self.month, self.header, self.all_day_canvas, self.year):
             day = target.date()
             initial = pending.clipboard.reference.start
             if not pending.clipboard.reference.all_day:
@@ -844,7 +915,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def cancel_paste(self, clear_notice=True):
         self.pending_paste = None
         self._paste_mouse_origin = None
-        for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
+        for widget in self.day_surfaces:
             widget.placement_active = False
         self.render_placement()
         if clear_notice:
@@ -874,6 +945,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         menu.addAction('Edit selection', lambda: self.edit_event(event_id))
         menu.addAction('Delete selection', lambda: self.delete_event(event_id))
         menu.addAction('Copy selection', lambda: self.copy_event(event_id))
+        menu.addAction('Export selection as .ics…', self.export_selection)
         modes = menu.addMenu('Selection mode')
         for label, mode in (('One event', 'single'), ('All in series', 'group'), ('This and following', 'future')):
             action = modes.addAction(label, lambda checked=False, value=mode: self.set_selection_mode(value))
@@ -967,10 +1039,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self.visible_events = events
         cals, days = self.store.list_calendars(), self.dates()
-        self.canvas.set_data(days[:7], events, cals)
-        self.all_day_canvas.set_data(days[:7], events, cals)
-        self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
-        self.month.set_data(days[0], self.anchor.month, events, cals)
+        if self.view == 'year':
+            self.year.set_data(self.anchor.year, events, cals)
+        else:
+            self.canvas.set_data(days[:7], events, cals)
+            self.all_day_canvas.set_data(days[:7], events, cals)
+            self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
+            self.month.set_data(days[0], self.anchor.month, events, cals)
         self.sync_selection()
         self.render_placement()
         self.fit_calendar()
@@ -1078,25 +1153,23 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def activate_search_result(self, event_id):
         if self.reveal_search_result(event_id):
-            (self.month if self.view == 'month' else self.canvas).setFocus()
+            self.active_canvas().setFocus()
 
     def open_search_result(self, item):
         if self.reveal_search_result(item):
-            (self.month if self.view == 'month' else self.canvas).setFocus()
+            self.active_canvas().setFocus()
 
     def exit_search(self):
         self.search.clear()
         self.flush_search()
-        (self.month if self.view == 'month' else self.canvas).setFocus()
+        self.active_canvas().setFocus()
 
     def add_calendar(self, calendar=None):
-        default = self.store.get_default_calendar()
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
-            credentials=self.engine.credentials if self.engine else None, default_calendar_id=default.id if default else None)
+            credentials=self.engine.credentials if self.engine else None)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 password_set = False
-                chosen_default = None
                 credential_save = None
                 for calendar in dialog.result_calendars:
                     # Discovery can be repeated without adding duplicate sources.
@@ -1105,13 +1178,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         calendar = replace(calendar, id=existing.id, visible=existing.visible,
                             use_server_color=existing.use_server_color, color=existing.color)
                     self.store.save_calendar(calendar)
-                    if chosen_default is None and calendar.kind != 'ics' and not calendar.read_only:
-                        chosen_default = calendar.id
                     if self.engine and dialog.password.text() and not password_set:
                         credential_save = self.engine.set_password(calendar.id, dialog.password.text(), remember=dialog.remember_password.isChecked())
                         password_set = True
-                if dialog.make_default.isChecked() and chosen_default:
-                    self.store.set_default_calendar(chosen_default)
                 self.refresh(calendars=True)
                 if dialog.result_calendar.kind != 'local':
                     if credential_save is not None:
@@ -1159,6 +1228,20 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             Path(path).write_bytes(export_ics(self.store.list_events(calendar_ids=[calendar.id])))
             self.show_notice('Calendar exported to ' + path)
         except (OSError, ValueError, ImportError) as exc:
+            self.show_notice(str(exc))
+
+    def export_selection(self):
+        if not self.selection.refs:
+            self.show_notice('Select events to export.')
+            return
+        try:
+            from .selection_export import export_selection
+            data = export_selection(self.store, self.selection.refs, self.operation_scope())
+            path, _ = QFileDialog.getSaveFileName(self, 'Export selected events', 'selected-events.ics', 'Calendar files (*.ics)')
+            if path:
+                Path(path).write_bytes(data)
+                self.show_notice('Selected events exported to ' + path)
+        except (OSError, ValueError, KeyError, OverflowError, ImportError) as exc:
             self.show_notice(str(exc))
 
     def sync_now(self):
@@ -1318,7 +1401,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             dialog.deleteLater()
 
     def start_selection(self):
-        if self.view == 'month':
+        if self.view in ('month', 'year'):
             self.set_view('week')
         self.select_mode = True
         self.nav_day = None
@@ -1356,10 +1439,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                    Qt.Key.Key_Meta: Qt.KeyboardModifier.MetaModifier}.get(event.key())
             if bit:
                 modifiers = (modifiers | bit if event.type() == QEvent.Type.KeyPress else modifiers & ~bit)
-            for widget in (self.canvas, self.month, self.all_day_canvas):
+            for widget in self.event_surfaces:
                 widget.set_drag_modifiers(modifiers)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
+        if event.type() == QEvent.Type.Resize and hasattr(self, 'year_scroll') and obj is self.year_scroll.viewport():
+            QTimer.singleShot(0, self.fit_year)
         if (event.type() != QEvent.Type.KeyPress or not self.isActiveWindow()
                 or QApplication.activeModalWidget() or QApplication.activePopupWidget()):
             return super().eventFilter(obj, event)
@@ -1469,8 +1554,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             'today': self.today, 'previous': lambda: self.navigate(-1), 'next': lambda: self.navigate(1),
             'day_view': lambda: self.set_view('day'), 'week_view': lambda: self.set_view('week'),
             'full_day': self.toggle_full_day,
-            'month_view': lambda: self.set_view('month'), 'select_event': self.start_selection,
-            'undo': self.undo, 'redo': self.redo, 'history': self.show_history,
+            'month_view': lambda: self.set_view('month'), 'year_view': lambda: self.set_view('year'), 'select_event': self.start_selection,
+            'undo': self.undo, 'redo': self.redo, 'redo_alternative': self.redo, 'history': self.show_history,
+            'export_selection': self.export_selection,
             'shortcuts': self.show_shortcuts, 'sync': self.sync_now,
             'select_left': lambda: self.select_by_arrow('left'), 'select_right': lambda: self.select_by_arrow('right'),
             'select_up': lambda: self.select_by_arrow('up'), 'select_down': lambda: self.select_by_arrow('down'),

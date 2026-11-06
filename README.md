@@ -59,8 +59,15 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 ## Workflow
 
-* **Day / week / month:** switch with the toolbar or `D`, `W`, `M`. `H`/`L`
-  move backward/forward; `T` returns to today. Click the mini calendar to jump.
+* **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
+  `H`/`L` move backward/forward by the current view's period; `T` returns to today.
+  The navigation buttons keep their position as month labels change.
+  Click the mini calendar to jump.
+* **Year overview:** twelve month cards show calendar-colored event markers.
+  Click a month heading to open Month view, or a marker to select its event;
+  Ctrl+click adds to the selection. Double-click a day to create an all-day event.
+  Right-click a day to inspect its events or open Day view. Search and paste
+  previews work in Year view too; small windows scroll the overview.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
   selection. Highlights keep the calendar color, with a thicker border and bar.
   Escape clears the selection. Clicking empty space clears it too.
@@ -78,7 +85,7 @@ without it. Existing imported definitions are retained. UTC events export offlin
   Ctrl+drag copies it; a small **+** marks a copy while dragging, including when
   Ctrl is pressed or released without moving. Drag a timed event's bottom edge
   to resize. Hover over empty timed space for a light snapped-time guide;
-  creation drags also show their starting time.
+  creation drags also show their starting time and the selected creation calendar's color.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
@@ -112,12 +119,12 @@ without it. Existing imported definitions are retained. UTC events export offlin
   series; an occurrence-only title, place, or note match includes that occurrence.
   Selections hidden by the filter are cleared.
   `/` remains a calendar shortcut for search with the default bindings.
-* **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier
+* **History:** `Ctrl+Z` undoes; `Ctrl+Y` or `Ctrl+Shift+Z` redoes. Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
 * **Controls:** date navigation sits beside the current month and range. The
   labeled toolbar groups View (including full-day expansion), Selection, and
-  Events (new event, undo, redo, history). Hover over icons for their meaning and
+  Events (new event, undo, redo, history, selection export). Hover over icons for their meaning and
   current shortcut. Import/export and adding sources sit beside Calendars; right-click
   a calendar for its source and file actions. The gear opens Preferences.
   Sync has a fixed position at the bottom of the sidebar; click
@@ -263,15 +270,23 @@ the master series.
 
 ### Import, subscriptions, and CalDAV
 
-**Import .ics** asks for a writable destination; **Export .ics** exports a chosen
-calendar. Imports preserve recurring masters and exceptions; occurrences are
+**Import .ics** asks for a writable destination; **Export .ics** beside Calendars
+exports a chosen calendar. The Events toolbar's **Export selected events**
+(`Ctrl+Shift+E`) and an event's context menu export the selection instead. This
+follows the one/all/following mode and preserves standard recurrence where applicable.
+Exporting separate occurrences gives them independent identities so they remain
+separate when imported. Exports leave the source events and clipboard unchanged.
+Imports preserve recurring masters and exceptions; occurrences are
 expanded only for the displayed date range. An import is undoable and does not
 truncate an infinite series to a fixed window. The offline codec supports ordinary
 VEVENTs and named IANA zones; unsupported custom timezone definitions fail clearly.
 
 **Add calendar** supports local calendars, read-only ICS URLs, and CalDAV accounts.
 Enter a server/account URL (including a Nextcloud base URL), username and app
-password, then **Discover calendars**. Select which discovered calendars to add.
+password, then **Discover calendars**. Select which discovered calendars to add;
+their names come from the server. No account-level calendar name or default-calendar
+choice is requested. Choose the creation calendar afterward by clicking its name
+in the sidebar. Local calendars and ICS subscriptions still have a name field.
 Remote work runs in a separate thread. **Remember in the system keyring** saves
 the account password through Secret Service, KWallet, or the platform credential
 store. Calendars in the same account share that password, including after restart.

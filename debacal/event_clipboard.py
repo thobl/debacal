@@ -99,7 +99,7 @@ class EventClipboard:
     def __post_init__(self) -> None:
         if self.view_origin is not None and (not isinstance(self.view_origin, date) or isinstance(self.view_origin, datetime)):
             raise ValueError("The clipboard view origin must be a calendar date.")
-        if self.view_kind not in {None, "day", "week", "month"} or type(self.exact_selection) is not bool:
+        if self.view_kind not in {None, "day", "week", "month", "year"} or type(self.exact_selection) is not bool:
             raise ValueError("The clipboard view or selection context is invalid.")
         masters = tuple(Event.from_dict(event.to_dict()) for event in self.masters)
         if not masters or any(event.series_id for event in masters):

@@ -207,6 +207,12 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
             except StopIteration:
                 raise ValueError("This selected series contains no dated occurrences.") from None
         detached = next((event for event in snapshots if event.id == primary.id and not event.recurring), None)
+        if detached is None and scope == "future" and primary.series_id:
+            # The last RDATE can become an ordinary tail. Its resource ID is
+            # still the master's, while the reviewed reference is an occurrence.
+            detached = next((event for event in snapshots
+                             if event.id == primary.series_id and not event.recurring
+                             and event.start.timestamp() == key_datetime(primary.recurrence_id, event).timestamp()), None)
         primary = detached if detached is not None else _resolve(tuple(snapshots), primary)
         return EventClipboard(tuple(snapshots), primary, view_origin=view_origin,
                               view_kind=view_kind, exact_selection=True)

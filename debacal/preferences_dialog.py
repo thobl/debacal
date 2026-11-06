@@ -11,13 +11,11 @@ from .shortcuts import KeyboardShortcutsEditor
 
 
 class PreferencesDialog(QDialog):
-    def __init__(self, preferences: Preferences, parent=None, calendars=None, default_calendar_id=None,
-                 bindings=None, default_bindings=None):
+    def __init__(self, preferences: Preferences, parent=None, bindings=None, default_bindings=None):
         super().__init__(parent)
         self.setWindowTitle('Preferences')
         self.resize(640, 570)
         self.result_preferences = preferences
-        self.result_default_calendar_id = default_calendar_id
         outer = QVBoxLayout(self)
         self.tabs = QTabWidget()
         outer.addWidget(self.tabs, 1)
@@ -49,16 +47,6 @@ class PreferencesDialog(QDialog):
         form.addRow('Start of week', self.week_start)
         form.addRow('Date format', self.date_format)
         form.addRow('Time format', self.time_format)
-        self.default_calendar = None
-        if calendars is not None:
-            self.default_calendar = QComboBox()
-            for calendar in calendars:
-                if calendar.kind != 'ics' and not calendar.read_only:
-                    self.default_calendar.addItem(calendar.name, calendar.id)
-            index = self.default_calendar.findData(default_calendar_id)
-            if index >= 0:
-                self.default_calendar.setCurrentIndex(index)
-            form.addRow('Default event calendar', self.default_calendar)
         self.preview = QLabel()
         self.preview.setWordWrap(True)
         self.preview.setProperty('muted', True)
@@ -200,7 +188,5 @@ class PreferencesDialog(QDialog):
             self.error.setText(str(error))
             return
         self.result_preferences, self.result_bindings = preferences, bindings
-        if self.default_calendar:
-            self.result_default_calendar_id = self.default_calendar.currentData()
         self.error.clear()
         self.accept()

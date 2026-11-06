@@ -127,6 +127,7 @@ class DayHeader(QWidget):
         self.navigation_day = None
         self.navigation_digits = ''
         self.selected_day = None
+        self.creation_calendar = None
         self.placement_active = False
         self._placement_consumed = False
         self.setFixedHeight(84)
@@ -152,6 +153,16 @@ class DayHeader(QWidget):
     def set_selected_day(self, day):
         self.selected_day = day
         self.update()
+
+    def set_creation_calendar(self, calendar):
+        self.creation_calendar = (calendar if calendar is not None and not calendar.read_only
+                                  and calendar.kind != 'ics' else None)
+        self.update()
+
+    def creation_color(self):
+        calendar = self.creation_calendar
+        color = QColor(calendar.color) if calendar is not None else QColor(GREEN)
+        return color if color.isValid() else QColor(GREEN)
 
     def day_at(self, point):
         if not self.days or point.x() < self.gutter or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
@@ -247,6 +258,7 @@ class CalendarCanvas(QWidget):
         self.selected_id = None
         self.selected_ids = set()
         self.selected_day = None
+        self.creation_calendar = None
         self.scope = 'single'
         self.preview_events = []
         self.placement_active = False
@@ -300,6 +312,9 @@ class CalendarCanvas(QWidget):
     def set_scope(self, scope):
         self.scope = scope if scope in ('single', 'group', 'future') else 'single'
         self.update()
+
+    set_creation_calendar = DayHeader.set_creation_calendar
+    creation_color = DayHeader.creation_color
 
     def set_preview(self, events):
         self.preview_events = list(events)
@@ -506,7 +521,8 @@ class CalendarCanvas(QWidget):
         width = (self.width() - self.gutter) / len(self.days)
         x = self.gutter + day * width
         y = self.time_top + (minute / 60 - self.start_hour) * self.hour_height
-        color = QColor(GREEN)
+        accent = self.creation_color()
+        color = QColor(accent)
         color.setAlpha(210 if creating else 125)
         painter.setPen(QPen(color, 1.5 if creating else 1))
         painter.drawLine(QPointF(x + 3, y), QPointF(x + width - 3, y))
@@ -514,10 +530,13 @@ class CalendarCanvas(QWidget):
         scale = display_scale(self)
         label_width = min(width - 12, max(46, len(label) * 7 + 10) * scale)
         rect = QRectF(x + 6, min(max(self.time_top + 2, y - 22 * scale), self.height() - 23 * scale), label_width, 20 * scale)
-        painter.setPen(QPen(GREEN if creating else LINE, 1))
-        painter.setBrush(QColor('#e7efdf') if creating else BG)
+        painter.setPen(QPen(accent if creating else LINE, 1))
+        fill = QColor('#e7efdf')
+        if accent != GREEN:
+            fill.setHslF(accent.hslHueF(), min(fill.hslSaturationF(), accent.hslSaturationF()), fill.lightnessF())
+        painter.setBrush(fill if creating else BG)
         painter.drawRoundedRect(rect, 3, 3)
-        text(painter, rect, label, GREEN, 8, creating, Qt.AlignmentFlag.AlignCenter)
+        text(painter, rect, label, accent, 8, creating, Qt.AlignmentFlag.AlignCenter)
 
     def _refit(self):
         if self._viewport_height is not None and not self.drag:
@@ -682,13 +701,19 @@ class CalendarCanvas(QWidget):
             if 0 <= day < len(self.days):
                 rect = QRectF(self.gutter + day * w + 3, self.time_top + (start_min / 60 - self.start_hour) * self.hour_height,
                               w - 6, max(12, (end_min - start_min) / 60 * self.hour_height))
-                p.setPen(QPen(GREEN, 2, Qt.PenStyle.DashLine))
-                p.setBrush(QColor(80, 130, 90, 45))
+                creating = self.drag and self.drag[0] == 'create'
+                item = self.drag[1] if self.drag and not creating else None
+                calendar = self.calendars.get(item.calendar_id) if item is not None else None
+                color = self.creation_color() if creating else QColor(calendar.color) if calendar else QColor(GREEN)
+                fill = QColor(80, 130, 90, 45) if creating and self.creation_calendar is None else QColor(color)
+                fill.setAlpha(45)
+                p.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
+                p.setBrush(fill)
                 p.drawRoundedRect(rect, 5, 5)
                 if self.drag and self.drag[0] != 'create':
                     scope = self.scope
                     label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
-                    text(p, rect.adjusted(5, 0, -5, 0), label, GREEN, 8, True)
+                    text(p, rect.adjusted(5, 0, -5, 0), label, color, 8, True)
         self.paint_time_feedback(p)
         self.paint_copy_badge(p)
         p.end()
@@ -1002,6 +1027,7 @@ class MonthCanvas(QWidget):
         self.selected_id = None
         self.selected_ids = set()
         self.selected_day = None
+        self.creation_calendar = None
         self.scope = 'single'
         self.preview_events = []
         self.placement_active = False
@@ -1032,6 +1058,8 @@ class MonthCanvas(QWidget):
 
     set_selection = CalendarCanvas.set_selection
     set_scope = CalendarCanvas.set_scope
+    set_creation_calendar = CalendarCanvas.set_creation_calendar
+    creation_color = CalendarCanvas.creation_color
     emit_selection = CalendarCanvas.emit_selection
     edit_hit = CalendarCanvas.edit_hit
     set_drag_modifiers = CalendarCanvas.set_drag_modifiers

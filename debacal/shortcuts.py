@@ -7,6 +7,7 @@ LABELS = {
     'scope_single': 'Select one event', 'scope_all': 'Select all in series',
     'scope_following': 'Select this and following', 'cycle_scope': 'Cycle selection mode',
     'edit_single': 'Edit one event (optional)', 'previous': 'Previous page', 'next': 'Next page',
+    'redo_alternative': 'Redo (alternative)', 'export_selection': 'Export selected events',
 }
 
 

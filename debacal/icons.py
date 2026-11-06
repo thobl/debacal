@@ -13,6 +13,7 @@ _SHAPES = {
     'day': '<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 7h14"/>',
     'week': '<rect x="2" y="3" width="16" height="14" rx="2"/><path d="M2 7h16M7 7v10M13 7v10"/>',
     'month': '<rect x="2" y="3" width="16" height="14" rx="2"/><path d="M2 7h16M2 12h16M7 7v10M13 7v10"/>',
+    'year': '<rect x="2" y="2" width="16" height="16" rx="2"/><path d="M6 2v16M10 2v16M14 2v16M2 7h16M2 12h16"/>',
     'today': '<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 7h14M7 1v4M13 1v4"/><circle cx="10" cy="12" r="2"/>',
     'single': '<rect x="5" y="5" width="10" height="10" rx="2"/>',
     'series': '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M13 4H6a2 2 0 0 0-2 2v7M10 1H3a2 2 0 0 0-2 2v7"/>',

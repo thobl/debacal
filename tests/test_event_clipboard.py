@@ -37,6 +37,25 @@ def test_single_copy_detaches_occurrence_and_cannot_restore_series_on_group_past
         assert pasted[0].id != master.id and pasted[0].ical_uid != master.ical_uid
 
 
+def test_year_view_context_roundtrips_and_preserves_captured_schedule():
+    from datetime import date
+    from debacal.selection import capture_selection
+
+    master = series(calendar_id="local")
+    with Store(":memory:") as store:
+        store.apply_remote([master])
+        selected = occurrence(master, master.start + timedelta(days=14))
+        captured = capture_selection(store, [selected], "group", view_origin=date(2026, 1, 1), view_kind="year")
+        restored = EventClipboard.from_bytes(captured.to_bytes())
+        assert restored == captured and restored.view_kind == "year"
+        assert restored.view_origin == date(2026, 1, 1) and restored.exact_selection
+        pasted = restored.instantiate("group", selected.start, "destination")
+        assert len(pasted) == 1 and pasted[0].recurrence_rule == master.recurrence_rule
+        assert pasted[0].start.timestamp() == master.start.timestamp()
+        assert pasted[0].id != master.id and pasted[0].ical_uid != master.ical_uid
+        assert store.list_events() == [master] and store.history() == []
+
+
 def test_group_copy_paste_preserves_rule_exclusions_overrides_and_anchor_time():
     master = series()
     original = expand_events([master], *BOUNDS)

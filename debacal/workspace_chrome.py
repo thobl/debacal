@@ -11,6 +11,7 @@ from .dialogs import hint
 from .icons import icon
 from .mini_calendar import MiniCalendar
 from .search_panel import SearchPanel
+from .year_view import YearView
 
 
 class WorkspaceChrome:
@@ -150,23 +151,24 @@ class WorkspaceChrome:
         outer.setSpacing(10)
         header = QHBoxLayout()
         header.setSpacing(12)
-        period = QWidget()
-        period_labels = QVBoxLayout(period)
+        self.period = QWidget()
+        period_labels = QVBoxLayout(self.period)
         period_labels.setContentsMargins(0, 0, 0, 0)
         period_labels.setSpacing(3)
         self.heading = ElidedLabel()
         self.heading.setObjectName('heading')
-        self.heading.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.heading.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         period_labels.addWidget(self.heading)
         self.range_label = hint('')
         self.range_label.setWordWrap(False)
+        self.range_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         period_labels.addWidget(self.range_label)
-        header.addWidget(period)
+        header.addWidget(self.period)
         navigation = QHBoxLayout()
         navigation.setSpacing(3)
-        self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
+        self.previous_button = self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
         self.today_button = self.icon_button('today', 'Go to today', self.today, navigation, 'today')
-        self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
+        self.next_button = self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
         header.addLayout(navigation)
         header.addStretch()
         outer.addLayout(header)
@@ -176,7 +178,7 @@ class WorkspaceChrome:
         toolbar.addWidget(view_section)
         self.view_buttons = {}
         self.view_button_group = QButtonGroup(self)
-        for mode in ('day', 'week', 'month'):
+        for mode in ('day', 'week', 'month', 'year'):
             button = self.icon_button(mode, mode.capitalize() + ' view', lambda value=mode: self.set_view(value),
                                       view_row, mode + '_view')
             button.setCheckable(True)
@@ -202,8 +204,11 @@ class WorkspaceChrome:
         toolbar.addWidget(events_section)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
         self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
-        self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
+        self.redo_button = self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
         self.icon_button('history', 'Operation history', self.show_history, events_row, 'history')
+        self.export_selection_button = self.icon_button('export', 'Export selected events as .ics', self.export_selection,
+                                                        events_row, 'export_selection')
+        self.export_selection_button.setEnabled(False)
         toolbar.addStretch()
         outer.addLayout(toolbar)
         self.stack = QStackedWidget()
@@ -230,6 +235,21 @@ class WorkspaceChrome:
         self.month = MonthCanvas()
         self.month.open_day.connect(self.open_day)
         self.stack.addWidget(self.month)
+        self.year = YearView()
+        self.year_scroll = QScrollArea()
+        self.year_scroll.setWidgetResizable(True)
+        self.year_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.year_scroll.setWidget(self.year)
+        self.stack.addWidget(self.year_scroll)
+        self.year.day_selected.connect(self.select_day)
+        self.year.month_requested.connect(self.open_month)
+        self.year.open_day.connect(self.open_day)
+        self.year.selected_scoped.connect(lambda event_id, modifiers: self.select_event(
+            event_id, day=self.year.selected_day, additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
+        self.year.create_all_day_requested.connect(self.create_all_day_event)
+        self.year.context_requested.connect(self.event_menu)
+        self.year.placement_moved.connect(lambda target: self.move_paste_preview(target, self.year))
+        self.year.placement_confirmed.connect(lambda target: self.confirm_paste())
         for widget in (self.canvas, self.month, self.all_day_canvas):
             widget.create_requested.connect(self.create_event)
             widget.edit_scoped_requested.connect(self.edit_from_double_click)
@@ -294,7 +314,27 @@ class WorkspaceChrome:
             if button.property('iconOnly'):
                 size = max(30, round(32 * self.preferences.font_scale / 100))
                 button.setFixedSize(size, size)
+        alternative = self.bindings.get('redo_alternative', '')
+        if alternative and alternative != self.bindings.get('redo'):
+            self.redo_button.setToolTip(self.redo_button.toolTip() + f' · {alternative}')
+        self.update_navigation_width()
         # Large text can exceed a short window. Keep controls apart and let the
         # whole sidebar scroll in that case; ordinary calendar lists remain full.
         self.sidebar.layout().activate()
         self.sidebar.setMinimumHeight(self.sidebar.layout().minimumSize().height())
+
+    def update_navigation_width(self):
+        """Reserve every month/range label's width so repeated clicks stay put."""
+        from datetime import date
+        self.heading.ensurePolished()
+        self.range_label.ensurePolished()
+        signature = self.preferences, self.preferences.qt_locale().name(), self.heading.font().key(), self.range_label.font().key()
+        if signature == getattr(self, '_navigation_width_signature', None):
+            return
+        self._navigation_width_signature = signature
+        heading_width = max(self.heading.fontMetrics().horizontalAdvance(self.preferences.format_month(date(2026, month, 1)))
+                            for month in range(1, 13))
+        date_width = max(self.range_label.fontMetrics().horizontalAdvance(self.preferences.format_date(date(2026, month, day)))
+                         for month in range(1, 13) for day in (1, 28))
+        range_width = date_width * 2 + self.range_label.fontMetrics().horizontalAdvance(' — ')
+        self.period.setFixedWidth(max(heading_width, range_width) + 6)

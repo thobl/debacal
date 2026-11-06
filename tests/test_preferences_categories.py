@@ -9,7 +9,6 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QLocale
 from PySide6.QtWidgets import QApplication, QDialog
 
-from debacal.models import Calendar
 from debacal.preferences import Preferences
 from debacal.preferences_dialog import PreferencesDialog
 from debacal.shortcuts import KeyboardShortcutsEditor, validate_bindings
@@ -137,15 +136,9 @@ def test_restore_defaults_resets_each_category_and_shortcuts(desktop):
     assert widget.result_bindings == BINDINGS
 
 
-def test_compatible_default_calendar_selector_filters_read_only_calendars(desktop):
-    calendars = [Calendar('local', 'Personal', '#123456'),
-                 Calendar('subscription', 'Feed', '#123456', kind='ics'),
-                 Calendar('readonly', 'Read only', '#123456', kind='caldav', read_only=True),
-                 Calendar('remote', 'Work', '#123456', kind='caldav')]
-    widget = dialog(desktop, calendars=calendars, default_calendar_id='remote')
-    assert widget.default_calendar.count() == 2
-    widget.save()
-    assert widget.result_default_calendar_id == 'remote'
+def test_creation_calendar_is_selected_in_the_workspace_instead_of_preferences(desktop):
+    widget = dialog(desktop)
+    assert not hasattr(widget, 'default_calendar')
 
 
 def test_shared_shortcut_editor_accepts_empty_actions_and_rejects_prefixes(desktop):

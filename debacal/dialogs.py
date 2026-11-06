@@ -807,12 +807,14 @@ class EventDialog(FormDialog):
 
 
 class CalendarDialog(FormDialog):
-    def __init__(self, calendar=None, parent=None, allow_remote=True, credentials=None, default_calendar_id=None):
+    def __init__(self, calendar=None, parent=None, allow_remote=True, credentials=None):
         super().__init__(parent)
         self.setWindowTitle('Calendar source' if calendar else 'Add a calendar')
         self.resize(490, 360)
         self.original = calendar
         self.credentials = credentials
+        self.allow_remote = allow_remote
+        self._active_kind = None
         outer = QVBoxLayout(self)
         self.form = form = QFormLayout()
         self.name = QLineEdit(calendar.name if calendar else '')
@@ -832,7 +834,7 @@ class CalendarDialog(FormDialog):
             if self.color.findData(calendar.color) < 0:
                 self.add_color('Current · ' + calendar.color, calendar.color)
             self.color.setCurrentIndex(self.color.findData(calendar.color))
-        color_row = QWidget()
+        self.color_row = color_row = QWidget()
         colors = QHBoxLayout(color_row)
         colors.setContentsMargins(0, 0, 0, 0)
         colors.addWidget(self.color, 1)
@@ -841,9 +843,6 @@ class CalendarDialog(FormDialog):
         colors.addWidget(self.choose_color_button)
         self.use_server_color = QCheckBox('Use ser&ver color')
         self.use_server_color.setChecked(calendar.use_server_color if calendar else True)
-        self.make_default = QCheckBox('Default for new &events')
-        self.make_default.setChecked(bool(calendar and calendar.id == default_calendar_id))
-        self.make_default.setEnabled(not calendar or (calendar.kind != 'ics' and not calendar.read_only))
         self.url = QLineEdit(calendar.url if calendar else '')
         self.url.setPlaceholderText('https://cloud.example.org (account or collection URL)')
         self.username = QLineEdit(calendar.username if calendar else '')
@@ -852,12 +851,11 @@ class CalendarDialog(FormDialog):
         self.password.setPlaceholderText('Leave blank to reuse the saved account password')
         self.remember_password = QCheckBox('Remember in system &keyring')
         self.remember_password.setChecked(True)
-        for label, widget in [('&Name', self.name), ('&Type', self.kind), ('&Color', color_row), ('', self.use_server_color),
-                              ('U&RL', self.url), ('&Username', self.username), ('&Password', self.password)]:
+        for label, widget in [('&Name', self.name), ('&Type', self.kind), ('U&RL', self.url),
+                              ('&Username', self.username), ('&Password', self.password),
+                              ('', self.remember_password), ('', self.use_server_color), ('&Color', color_row)]:
             form.addRow(label, widget)
         form.labelForField(color_row).setBuddy(self.color)
-        form.addRow('', self.remember_password)
-        form.addRow('', self.make_default)
         outer.addLayout(form)
         self.source_hint = hint('Use a server URL to discover calendars, or a direct CalDAV collection URL. Saved passwords are shared by calendars in the same account. OAuth is not included.')
         if not allow_remote:
@@ -899,9 +897,9 @@ class CalendarDialog(FormDialog):
         self.use_server_color.toggled.connect(self.update_source_fields)
         for field in (self.url, self.username, self.password):
             field.textChanged.connect(self.update_primary_action)
-        self.configure_keyboard([self.name, self.kind, self.color, self.choose_color_button,
-            self.use_server_color, self.url, self.username, self.password, self.remember_password,
-            self.make_default, self.discover_button, self.discovered_list],
+        self.configure_keyboard([self.name, self.kind, self.url, self.username, self.password,
+            self.remember_password, self.use_server_color, self.color, self.choose_color_button,
+            self.discover_button, self.discovered_list],
             [self.save_button, self.cancel_button], self.save)
         self.update_source_fields()
         self.name.setFocus()
@@ -924,27 +922,37 @@ class CalendarDialog(FormDialog):
 
     def update_source_fields(self, *_):
         kind = self.kind.currentData()
+        new_account = kind == 'caldav' and self.original is None
+        if kind != self._active_kind:
+            self.error.clear()
+            self._active_kind = kind
+        self.form.setRowVisible(self.name, not new_account)
+        self.form.setRowVisible(self.url, kind != 'local')
+        self.form.labelForField(self.url).setText('Server U&RL' if new_account else 'Subscription U&RL' if kind == 'ics' else 'Calendar U&RL')
+        self.form.setRowVisible(self.username, kind == 'caldav')
+        self.form.setRowVisible(self.password, kind == 'caldav')
+        self.form.setRowVisible(self.remember_password, kind == 'caldav')
+        self.form.setRowVisible(self.use_server_color, kind == 'caldav')
         self.url.setEnabled(kind != 'local')
         self.username.setEnabled(kind == 'caldav')
         self.password.setEnabled(kind == 'caldav')
-        self.remember_password.setVisible(kind == 'caldav')
-        self.use_server_color.setVisible(kind == 'caldav')
         manual_color = kind != 'caldav' or not self.use_server_color.isChecked()
         self.color.setEnabled(manual_color)
         self.choose_color_button.setEnabled(manual_color)
-        self.make_default.setEnabled(kind != 'ics' and (not self.original or not self.original.read_only))
-        self.discover_button.setVisible(kind == 'caldav' and self.original is None)
+        self.source_hint.setVisible(kind != 'local' or not self.allow_remote)
+        self.discover_button.setVisible(new_account)
         self.update_primary_action()
 
     def update_primary_action(self, *_):
         new_account = self.kind.currentData() == 'caldav' and self.original is None
-        busy = bool(self.discovery_future and not self.discovery_future.done())
+        busy = bool(new_account and self.discovery_future and not self.discovery_future.done())
         current = bool(self.discovered and self.discovery_identity ==
                        (self.url.text().strip(), self.username.text().strip(), self.password.text()))
         self.discover_button.setEnabled(not busy)
         self.save_button.setEnabled(not busy)
         self.discover_button.setDefault(new_account and not current and not busy)
         self.save_button.setDefault(not busy and (not new_account or current))
+        self.discovered_list.setVisible(new_account and current)
 
     def discover(self):
         from .discovery import discover_calendars
@@ -975,6 +983,8 @@ class CalendarDialog(FormDialog):
         if not self.discovery_future or not self.discovery_future.done():
             return
         self.discovery_timer.stop()
+        current = (self.kind.currentData() == 'caldav' and self.original is None
+                   and self.discovery_identity == (self.url.text().strip(), self.username.text().strip(), self.password.text()))
         try:
             self.discovered = self.discovery_future.result()
             for calendar in self.discovered:
@@ -982,14 +992,16 @@ class CalendarDialog(FormDialog):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 self.discovered_list.addItem(item)
-            self.discovered_list.setVisible(bool(self.discovered))
-            if self.discovered:
+            self.discovered_list.setVisible(current and bool(self.discovered))
+            if current and self.discovered:
                 self.discovered_list.setCurrentRow(0)
                 if self.focusWidget() in (self.discover_button, self.password, self.save_button):
                     self.discovered_list.setFocus()
-            self.error.setText(f'Found {len(self.discovered)} calendar(s). Choose calendars and save.' if self.discovered else 'No event calendars found.')
+            if current:
+                self.error.setText(f'Found {len(self.discovered)} calendar(s). Choose calendars and save.' if self.discovered else 'No event calendars found.')
         except Exception as exc:
-            self.error.setText('Discovery failed: ' + str(exc))
+            if current:
+                self.error.setText('Discovery failed: ' + str(exc))
         self.update_primary_action()
 
     def finish_discovery(self, *_):
@@ -1031,7 +1043,9 @@ class CalendarDialog(FormDialog):
         self.result_calendar = Calendar(
             id=self.original.id if self.original else str(uuid4()), name=self.name.text().strip(),
             color=self.color.currentData(), visible=self.original.visible if self.original else True,
-            kind=self.kind.currentData(), url=self.url.text().strip(), username=self.username.text().strip(),
+            kind=self.kind.currentData(),
+            url=self.original.url if self.original else self.url.text().strip() if self.kind.currentData() != 'local' else '',
+            username=self.original.username if self.original else self.username.text().strip() if self.kind.currentData() == 'caldav' else '',
             read_only=self.original.read_only if self.original else False,
             server_color=(self.original.server_color or self.original.color) if self.original and self.original.kind == 'caldav' else '',
             use_server_color=self.use_server_color.isChecked() if self.kind.currentData() == 'caldav' else False,
