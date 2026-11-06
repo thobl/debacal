@@ -1,0 +1,146 @@
+[
+  {
+    "id": "weekend_color",
+    "question": "Should weekends keep a visible distinction, and can it be quieter than the bright red miniature-calendar labels?",
+    "options": [
+      {"choice": "Warm weekend tint", "benefit": "Preserves a visible weekend rhythm without saturated labels; gives the otherwise neutral calendar some warmth.", "cost": "Must remain distinct from Today and orange source-event fills; the miniature calendar needs a corresponding, restrained treatment."},
+      {"choice": "Cool weekend tint", "benefit": "Keeps date labels neutral and separates weekends through the grid surface.", "cost": "Can resemble disabled or outside-month dates if those surfaces use the same gray."},
+      {"choice": "Muted red weekend labels", "benefit": "Retains a recognizable calendar convention for users who know it, while allowing a quiet white grid.", "cost": "Red also appears in errors and destructive actions; those roles need sufficient differences in context and prominence."},
+      {"choice": "No extra weekend color", "benefit": "Minimizes competing accents and leaves source events dominant.", "cost": "Removes an at-a-glance cue the existing app provides; the weekday text must carry the distinction."}
+    ],
+    "recommendation": "Show the warm, cool, and muted-red treatments as genuine alternatives. I slightly favor muted red in the miniature and a faint weekend surface in the main grid; removing the cue entirely is not necessary.",
+    "confidence": "context dependent",
+    "reason": "The issue is excessive salience, not the mere existence of another color. Weekend dates remain identifiable through their labels, so color can be a useful supplementary cue. The choice should also survive dense month and year views.",
+    "sources": ["https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html", "https://www.nngroup.com/articles/consistency-and-standards/"]
+  },
+  {
+    "id": "palette_roles",
+    "question": "Which other colors are accidental outliers, and which deserve distinct semantic roles?",
+    "options": [
+      {"choice": "Neutral chrome plus semantic accents", "benefit": "Separates calendar-source colors from Today, keyboard focus, errors, and the current-time marker.", "cost": "Requires naming and testing those roles rather than declaring all non-neutral colors inconsistent."},
+      {"choice": "One interface accent", "benefit": "Creates a very restrained interface with fewer color decisions.", "cost": "Today, selected controls, selection, and current time may become harder to distinguish if one green treatment carries everything."},
+      {"choice": "Warmer overall neutral palette", "benefit": "Allows the faint green and warm-white surfaces to feel intentional rather than residual styling.", "cost": "Needs coordinated input, popup, sidebar, weekend, and canvas colors; changing only the main background would leave mismatches."}
+    ],
+    "recommendation": "Keep server source colors and readable event ink in every direction. Compare deliberate interface palettes around that constraint. Fix inherited fragments such as unmatched popup/input backgrounds; do not automatically neutralize the meaningful current-time accent.",
+    "confidence": "constraint",
+    "reason": "The user's source-color preference and readable text constrain the alternatives; the number and warmth of interface accents do not. WCAG contrast guidance is a useful native-app benchmark, not a conformance claim based on a screenshot.",
+    "sources": ["https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html", "https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html"]
+  },
+  {
+    "id": "sources_versus_events",
+    "question": "Should Calendars and Next events align as matching lists, or look different because they represent different things?",
+    "options": [
+      {"choice": "Distinct source controls and agenda", "benefit": "Compact source rows with swatches and a current-source mark read as controls; event rows with dates read as content.", "cost": "Introduces two component grammars and can require more deliberate spacing to keep the sidebar coherent."},
+      {"choice": "Shared list language", "benefit": "Aligned color bars and text create an orderly sidebar and make source associations easy to scan.", "cost": "Identical selected rows can imply that selecting a calendar and selecting an event have the same meaning."},
+      {"choice": "Shared typography, distinct markers", "benefit": "Keeps a common text grid while using a swatch/check for sources and a stripe or timeline for events.", "cost": "The distinction is subtler and may depend on clear headings and secondary date text."}
+    ],
+    "recommendation": "Explore distinct source controls versus a shared list language. My preference is shared typography with distinct markers. Align comparable content within each component; cross-list bar alignment is optional when the markers communicate different roles.",
+    "confidence": "strong preference",
+    "reason": "Different does not mean inconsistent. The chosen creation calendar is a persistent setting for future events; a selected event is a transient object affected by the next operation. Visual similarity should reveal shared source identity without hiding that difference.",
+    "sources": ["https://www.nngroup.com/articles/gestalt-similarity/", "https://www.nngroup.com/articles/consistency-and-standards/"]
+  },
+  {
+    "id": "header_alignment",
+    "question": "How should the two-line date heading, navigation, and labeled button groups align without the heading feeling top-heavy?",
+    "options": [
+      {"choice": "Two explicit alignment rows", "benefit": "Aligns the period title with group labels and the date range with the buttons; the structure is easy to inspect.", "cost": "Mathematical baseline alignment can still look unbalanced because the large heading carries much more visual weight."},
+      {"choice": "Optically centered date block", "benefit": "Balances the title/range block against the complete control groups, with navigation beside the date.", "cost": "A small intentional offset may be necessary; the rows will not share every baseline."},
+      {"choice": "Separate stable control band", "benefit": "Provides one unambiguous place for View, Selection, and Events at every width.", "cost": "Consumes another row even when the window is wide and changes the visual emphasis of the calendar header."}
+    ],
+    "recommendation": "Keep navigation beside the period and keep the three control groups together. Compare baseline alignment with optical centering; I lean toward optical centering. If wrapping is needed, wrap the group pack predictably rather than distributing groups around spare space.",
+    "confidence": "strong preference",
+    "reason": "Predictable placement is more consequential than choosing one exact baseline. GNOME's header guidance supports functional grouping, but it is not a pixel-layout mandate for this Qt content header.",
+    "sources": ["https://www.nngroup.com/articles/gestalt-proximity/", "https://developer.gnome.org/hig/patterns/containers/header-bars.html"]
+  },
+  {
+    "id": "list_surfaces_and_states",
+    "question": "Do the sidebar lists need lighter containers, and should their selection backgrounds and borders match?",
+    "options": [
+      {"choice": "Both lists lightly surfaced", "benefit": "Makes the two list regions explicit and separates their scrollable contents from surrounding controls.", "cost": "Adds framing and can leave a conspicuous empty box beneath a short agenda; identical surfaces may overstate equal roles."},
+      {"choice": "Source-control surface, open agenda", "benefit": "Emphasizes persistent source settings while allowing the agenda to read as a chronological stream of content.", "cost": "Requires intentional differences in row state and spacing so it does not appear to be incomplete styling."},
+      {"choice": "Both lists open", "benefit": "Reduces container edges and gives more room to the content.", "cost": "Section boundaries and selected rows must work through headings, spacing, and state markers alone."}
+    ],
+    "recommendation": "Do not equate fewer boxes with better design. Compare an explicit source-control region against an open agenda, and a coherent shared-list alternative. Keep hover, keyboard focus, current creation source, and event selection distinguishable even if some share a base fill.",
+    "confidence": "context dependent",
+    "reason": "A container can make grouping clearer; removing it can reduce visual burden. Either may win here. A persistent current-source marker and transient event-selection surface need not be identical to be consistent.",
+    "sources": ["https://www.nngroup.com/articles/common-region/", "https://developer.gnome.org/hig/patterns/containers/boxed-lists.html"]
+  },
+  {
+    "id": "button_borders",
+    "question": "Which buttons need borders, and should action, option, and eye controls all share the same treatment?",
+    "options": [
+      {"choice": "Frameless icon actions, surfaced options", "benefit": "Keeps common actions quiet while segmented choices visibly expose their persistent state.", "cost": "Some icon actions may be harder to discover; their hover, focus, tooltip, and hit areas must remain clear."},
+      {"choice": "Light borders on all controls", "benefit": "Makes click targets apparent and gives the interface a conventional desktop-control appearance.", "cost": "A long row of small boxed icons adds edges and can weaken the distinction between actions and mutually exclusive options."},
+      {"choice": "Mostly flat controls with active markers", "benefit": "Supports a restrained typographic direction with less surrounding chrome.", "cost": "Selected options and visibility states need particularly clear markers; a hover-only border is insufficient for keyboard focus."}
+    ],
+    "recommendation": "I favor frameless momentary actions and a quiet shared surface for mutually exclusive choices. The eye can remain a separate toggle with eye/eye-off states. Keep focus visible in every option; do not require every control to have an identical border.",
+    "confidence": "strong preference",
+    "reason": "Buttons perform actions, segmented controls choose a mode, and eyes toggle visibility. Different treatments can explain those differences. W3C guidance explicitly allows recognizable controls without a visible boundary; focus still needs its own indication.",
+    "sources": ["https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html", "https://developer.gnome.org/hig/patterns/containers/header-bars.html"]
+  },
+  {
+    "id": "spacing_and_dividers",
+    "question": "Are section gaps, heading-to-content spacing, margins, and padding enough to establish hierarchy, or would dividers help?",
+    "options": [
+      {"choice": "Whitespace-led sections", "benefit": "Keeps the sidebar light with a clear larger gap before a section and smaller gap below its heading.", "cost": "A sparse or very tall list can make those relationships less obvious; generous gaps consume short-window height."},
+      {"choice": "Compact sections with a few dividers", "benefit": "Makes boundaries explicit without requiring large empty gaps.", "cost": "Repeated full-width lines can over-segment a narrow sidebar and compete with the calendar's own grid."},
+      {"choice": "Surface-led grouping", "benefit": "Uses a shared background region to keep a heading and its content together.", "cost": "Needs consistent internal padding and adds another layer of surfaces to manage."}
+    ],
+    "recommendation": "Use a small spacing vocabulary as a starting point: 4px for tight label gaps, 8px within groups, 16–24px between sections, and 16–24px outer margins. Add dividers where dense content needs them, not as a universal rule. These exact numbers remain adjustable.",
+    "confidence": "context dependent",
+    "reason": "The useful relationship is more space between unrelated groups than within them. Proximity, dividers, and surfaces are alternative grouping tools; a 4px grid does not prove that a layout is balanced.",
+    "sources": ["https://www.nngroup.com/articles/gestalt-proximity/", "https://www.nngroup.com/articles/common-region/"]
+  },
+  {
+    "id": "corner_radii",
+    "question": "Should borders and corner radii be uniform, or vary according to the component?",
+    "options": [
+      {"choice": "One modest radius", "benefit": "Produces a simple, coherent shape language and removes arbitrary differences among similar controls.", "cost": "The same radius can feel excessive on tiny marks and too slight on a large container."},
+      {"choice": "A small set of role-based radii", "benefit": "Allows compact controls, event cards, and outer containers to have appropriate shapes while remaining related.", "cost": "Each exception needs a purpose; a long list of near-identical radius values would recreate the original problem."},
+      {"choice": "Mostly square, typographic treatment", "benefit": "Reduces the card-like appearance and emphasizes calendar geometry.", "cost": "Can feel more austere and needs another way to distinguish selected controls from grid cells."}
+    ],
+    "recommendation": "For the B-based directions, start with 4px controls/events and 6px outer segmented groups, while allowing square calendar cells. Also show a flatter direction. Different radii are acceptable when they reflect nesting or role; there is no principle requiring one universal radius.",
+    "confidence": "context dependent",
+    "reason": "Consistency means a recognizable rule for comparable elements. The radius values themselves are an aesthetic and density choice, not an accessibility threshold or proven usability optimum.",
+    "sources": ["https://www.nngroup.com/articles/consistency-and-standards/", "https://www.nngroup.com/articles/gestalt-similarity/"]
+  },
+  {
+    "id": "all_day_creation",
+    "question": "Does the ALL DAY lane make the repeated + All day strip redundant, or does that strip provide useful discoverability?",
+    "options": [
+      {"choice": "Keep a persistent creation affordance", "benefit": "New users can immediately see where to add an all-day event, including when the lane is already occupied.", "cost": "Repeating the label across seven days consumes height and adds competing text."},
+      {"choice": "Integrate creation into the all-day lane", "benefit": "Removes the duplicate row while a subtle plus on hover or keyboard focus reveals the action in the relevant day.", "cost": "The action is less apparent before interaction, and occupied lanes need a clear creation target."},
+      {"choice": "Lane only, with familiar creation gestures", "benefit": "Provides the quietest header and preserves the maximum area for events.", "cost": "Double-click creation is hidden knowledge; a tooltip alone does not expose it to every user."}
+    ],
+    "recommendation": "I favor an integrated affordance rather than either a full duplicate strip or no cue at all. Keep a usable empty area and keyboard-visible plus in the fixed all-day lane. Retaining a persistent small plus is reasonable if first-use discoverability matters more than saving a few pixels.",
+    "confidence": "context dependent",
+    "reason": "Redundancy can help learning. The existing strip is not automatically wrong, but its full row of repeated words is expensive. The alternative needs to demonstrate discovery and creation when several multi-day events already fill the lane.",
+    "sources": ["https://www.nngroup.com/articles/gestalt-proximity/", "https://www.nngroup.com/articles/consistency-and-standards/"]
+  },
+  {
+    "id": "calendar_header_grid",
+    "question": "Should the week-view column lines continue through the date header, or is a break there useful?",
+    "options": [
+      {"choice": "Continuous columns", "benefit": "Strengthens the connection between each date, its all-day events, and its timed events.", "cost": "The date header can look more like a table and compete with event boundaries."},
+      {"choice": "Quiet floating date header", "benefit": "Separates date navigation from event plotting and gives large date numbers more breathing room.", "cost": "The underlying columns must still align exactly; accidental offsets become harder to notice and easier to introduce."},
+      {"choice": "Grid begins at the all-day lane", "benefit": "Keeps date labels open while making all event-bearing surfaces one continuous calendar grid.", "cost": "Introduces an intentional transition that must be consistent across days and window widths."}
+    ],
+    "recommendation": "Show continuous and quiet-header alternatives rather than treating the previous line breaks as a defect. I slightly prefer starting the grid at the all-day lane. In every option, align the actual column geometry through headers, all-day lanes, and the timed viewport, including scrollbar space.",
+    "confidence": "context dependent",
+    "reason": "A broken line can express a boundary between labels and content. Geometry must agree; line continuity is optional. Decorative gridlines should not be confused with essential control-state indicators when applying contrast guidance.",
+    "sources": ["https://www.nngroup.com/articles/common-region/", "https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html"]
+  },
+  {
+    "id": "weekday_typography",
+    "question": "Should weekday labels use identical font sizes in week and month view?",
+    "options": [
+      {"choice": "Identical weekday role", "benefit": "Makes switching views feel especially coherent and removes an unexplained typographic difference.", "cost": "A size comfortable in a week header may take disproportionate space in dense month or year layouts."},
+      {"choice": "Deliberately different density roles", "benefit": "Week labels support prominent daily columns, while smaller month labels preserve room for six rows of events.", "cost": "The size change needs to remain modest and should not result from unrelated hard-coded pixel and point values."},
+      {"choice": "Adaptive size within a shared type scale", "benefit": "Can preserve readability at broad widths and compactness when columns narrow.", "cost": "Text may appear to jump during resizing; language changes and font scaling need testing."}
+    ],
+    "recommendation": "Use the same family, case, weight, and color role first. Identical size is a sensible default, while a modest, intentional density difference is also defensible. Avoid shrinking below comfortable reading size or wrapping weekday names merely to preserve an arbitrary measurement.",
+    "confidence": "context dependent",
+    "reason": "Different does not mean inconsistent: a month header and a week header serve related but differently dense layouts. Typography guidance favors a small number of meaningful roles, not identical sizes for every related label.",
+    "sources": ["https://developer.gnome.org/hig/guidelines/typography.html"]
+  }
+]
