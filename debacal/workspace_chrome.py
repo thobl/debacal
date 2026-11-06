@@ -1,7 +1,7 @@
 """Workspace layout and controls, separate from event and synchronization logic."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLineEdit,
+    QWidget, QBoxLayout, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLineEdit,
     QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
@@ -12,6 +12,39 @@ from .icons import icon
 from .mini_calendar import MiniCalendar
 from .search_panel import SearchPanel
 from .year_view import YearView
+
+
+class WorkspaceHeader(QWidget):
+    """Keep controls on the title line only when their measured widths fit."""
+
+    def __init__(self, title, controls):
+        super().__init__()
+        self.title, self.controls = title, controls
+        self.inline = None
+        self.row = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
+        self.row.setContentsMargins(0, 0, 0, 0)
+        self.row.setSpacing(12)
+        self.row.setSizeConstraint(QBoxLayout.SizeConstraint.SetNoConstraint)
+        self.row.addWidget(title, 1, Qt.AlignmentFlag.AlignTop)
+        self.row.addWidget(controls, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def minimumSizeHint(self):
+        # A wide layout must not increase the window's minimum width and then
+        # prevent the resize that would let this header wrap onto two lines.
+        return QSize(0, self.row.minimumSize().height())
+
+    def reflow(self):
+        needed = self.title.minimumSizeHint().width() + self.controls.sizeHint().width() + self.row.spacing()
+        inline = self.width() >= needed
+        if inline != self.inline:
+            self.inline = inline
+            self.row.setDirection(QBoxLayout.Direction.LeftToRight if inline else QBoxLayout.Direction.TopToBottom)
+            self.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reflow()
 
 
 class WorkspaceChrome:
@@ -132,6 +165,7 @@ class WorkspaceChrome:
 
     def toolbar_section(self, title):
         section = QWidget()
+        section.setAccessibleName(title)
         column = QVBoxLayout(section)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(3)
@@ -143,14 +177,36 @@ class WorkspaceChrome:
         column.addLayout(buttons)
         return section, buttons
 
+    def segmented_control(self, row):
+        control = QWidget()
+        control.setObjectName('segmentedControl')
+        buttons = QHBoxLayout(control)
+        buttons.setContentsMargins(3, 3, 3, 3)
+        buttons.setSpacing(0)
+        row.addWidget(control)
+        return control, buttons
+
+    @staticmethod
+    def style_segments(buttons):
+        for index, button in enumerate(buttons):
+            button.setProperty('segment', 'first' if index == 0 else 'last' if index == len(buttons) - 1 else 'middle')
+
     def build_workspace(self, root):
         area = QWidget()
         root.addWidget(area, 1)
         outer = QVBoxLayout(area)
         outer.setContentsMargins(18, 18, 18, 8)
         outer.setSpacing(10)
-        header = QHBoxLayout()
+        title_widget = QWidget()
+        header = QHBoxLayout(title_widget)
+        header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(12)
+        navigation = QHBoxLayout()
+        navigation.setSpacing(3)
+        self.previous_button = self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
+        self.today_button = self.icon_button('today', 'Go to today', self.today, navigation, 'today')
+        self.next_button = self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
+        header.addLayout(navigation)
         self.period = QWidget()
         period_labels = QVBoxLayout(self.period)
         period_labels.setContentsMargins(0, 0, 0, 0)
@@ -164,44 +220,42 @@ class WorkspaceChrome:
         self.range_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         period_labels.addWidget(self.range_label)
         header.addWidget(self.period)
-        navigation = QHBoxLayout()
-        navigation.setSpacing(3)
-        self.previous_button = self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
-        self.today_button = self.icon_button('today', 'Go to today', self.today, navigation, 'today')
-        self.next_button = self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
-        header.addLayout(navigation)
         header.addStretch()
-        outer.addLayout(header)
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(20)
+        self.toolbar = QWidget()
+        toolbar = QHBoxLayout(self.toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(16)
         view_section, view_row = self.toolbar_section('View')
-        toolbar.addWidget(view_section)
+        self.view_control, view_segments = self.segmented_control(view_row)
         self.view_buttons = {}
         self.view_button_group = QButtonGroup(self)
         for mode in ('day', 'week', 'month', 'year'):
             button = self.icon_button(mode, mode.capitalize() + ' view', lambda value=mode: self.set_view(value),
-                                      view_row, mode + '_view')
+                                      view_segments, mode + '_view')
             button.setCheckable(True)
             self.view_button_group.addButton(button)
             self.view_buttons[mode] = button
+        self.style_segments(list(self.view_buttons.values()))
+        view_row.addSpacing(5)
         self.full_day_button = self.icon_button('expand', 'Expand to show all 24 hours', self.toggle_full_day,
                                                 view_row, 'full_day')
         self.full_day_button.setCheckable(True)
         self.full_day_button.setChecked(self.full_day)
         selection_section, selection_row = self.toolbar_section('Selection')
-        toolbar.addWidget(selection_section)
+        self.selection_control, selection_segments = self.segmented_control(selection_row)
         self.selection_buttons = {}
         self.selection_button_group = QButtonGroup(self)
         for mode, title, symbol, binding in (
                 ('single', 'Select one event', 'single', 'scope_single'),
                 ('group', 'Select all in a series', 'series', 'scope_all'),
                 ('future', 'Select this and following events', 'following', 'scope_following')):
-            button = self.icon_button(symbol, title, lambda value=mode: self.set_selection_mode(value), selection_row, binding)
+            button = self.icon_button(symbol, title, lambda value=mode: self.set_selection_mode(value), selection_segments, binding)
             button.setCheckable(True)
             self.selection_button_group.addButton(button)
             self.selection_buttons[mode] = button
+        self.style_segments(list(self.selection_buttons.values()))
         events_section, events_row = self.toolbar_section('Events')
-        toolbar.addWidget(events_section)
+        events_row.setContentsMargins(0, 3, 0, 3)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
         self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
         self.redo_button = self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
@@ -209,8 +263,10 @@ class WorkspaceChrome:
         self.export_selection_button = self.icon_button('export', 'Export selected events as .ics', self.export_selection,
                                                         events_row, 'export_selection')
         self.export_selection_button.setEnabled(False)
-        toolbar.addStretch()
-        outer.addLayout(toolbar)
+        for section in (events_section, selection_section, view_section):
+            toolbar.addWidget(section)
+        self.workspace_header = WorkspaceHeader(title_widget, self.toolbar)
+        outer.addWidget(self.workspace_header)
         self.stack = QStackedWidget()
         week = QWidget()
         week_layout = QVBoxLayout(week)
@@ -318,6 +374,7 @@ class WorkspaceChrome:
         if alternative and alternative != self.bindings.get('redo'):
             self.redo_button.setToolTip(self.redo_button.toolTip() + f' · {alternative}')
         self.update_navigation_width()
+        self.workspace_header.reflow()
         # Large text can exceed a short window. Keep controls apart and let the
         # whole sidebar scroll in that case; ordinary calendar lists remain full.
         self.sidebar.layout().activate()

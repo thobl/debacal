@@ -66,6 +66,8 @@ without it. Existing imported definitions are retained. UTC events export offlin
 * **Year overview:** twelve month cards show calendar-colored event markers.
   Click a month heading to open Month view, or a marker to select its event;
   Ctrl+click adds to the selection. Double-click a day to create an all-day event.
+  Click a week number to open that week. Week numbers appear in Month and
+  Day/Week views too, and can be switched off in Appearance preferences.
   Right-click a day to inspect its events or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
@@ -82,10 +84,13 @@ without it. Existing imported definitions are retained. UTC events export offlin
   fits 08:00–18:00 and expands to include visible events. The vertical expansion
   button (`F`) in the View group shows all
   24 hours; small windows can still scroll. Drag an event to move the selection;
-  Ctrl+drag copies it; a small **+** marks a copy while dragging, including when
+  Ctrl+drag copies it into the selected creation calendar; move previews keep
+  each event's original calendar color and copy previews use the target color.
+  A small **+** marks a copy while dragging, including when
   Ctrl is pressed or released without moving. Drag a timed event's bottom edge
   to resize. Hover over empty timed space for a light snapped-time guide;
-  creation drags also show their starting time and the selected creation calendar's color.
+  the hover guide uses a readable color independent of calendars. Creation drags
+  show their starting time and the selected creation calendar's color.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
@@ -137,7 +142,11 @@ without it. Existing imported definitions are retained. UTC events export offlin
   sync status stays fixed.
 * **Preferences:** General groups date language (system, English, German), week
   start, date format, and time format. Interface labels remain in English.
-  Appearance controls text size, mini-calendar week numbers, and the usual
+  Language changes month and weekday names independently of date/time format
+  and week start. System language follows Qt's preferred UI languages, while
+  regional date/time defaults follow the OS formatting locale (`LC_TIME` on
+  Linux, with `LC_ALL` taking precedence). Preferences shows the detected values.
+  Appearance controls text size, week numbers across calendar views, and the usual
   visible hours; the time grid still expands for events outside those hours.
   Sync groups automatic sync intervals and conflict notifications. Keyboard
   shortcuts (`F1`) lets you remap actions and selection-mode keys, with duplicate
@@ -258,7 +267,7 @@ instance restores the editable definition and its authoring timezone, even when
 its display timezone differs. See the [metadata protocol](docs/SYNC.md#custom-series-metadata-between-debacal-instances).
 
 For alternatives, check **Alternative slots**. Regular repeating and chosen-date
-series can both be alternatives. Select the chosen
+series can both be alternatives. Hover over or select the chosen
 occurrence and click its inline check mark: that actual slot remains as an
 ordinary event and other choices disappear as one undoable action, including
 the remaining occurrences of a candidate series. Right-click an event for whole-group editing or deletion.

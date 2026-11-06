@@ -413,11 +413,11 @@ class CanvasTests(unittest.TestCase):
         create_spy = QSignalSpy(month.create_requested)
         # Week two, Monday, on its overflow line below the visible events.
         day_height = (month.height() - 28) / 6
-        overflow = QPoint(30, int(28 + day_height + 85))
+        overflow = QPoint(month.week_gutter + 30, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=overflow)
         self.assertEqual(create_spy.count(), 1)
         self.assertEqual(create_spy.at(0)[0], datetime(2026, 11, 2, 9, tzinfo=local_zone()))
-        empty = QPoint(170, int(28 + day_height + 85))
+        empty = QPoint(month.week_gutter + 170, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=empty)
         self.assertEqual(create_spy.count(), 2)
         self.assertEqual(create_spy.at(1)[0], datetime(2026, 11, 3, 9, tzinfo=local_zone()))
@@ -472,7 +472,9 @@ class CanvasTests(unittest.TestCase):
         with patch('debacal.calendar_widgets.text', wraps=text) as draw_text:
             month.grab()
             labels = [call.args[2] for call in draw_text.call_args_list]
-            self.assertEqual(labels[:7], [month.preferences.weekday_name(day).upper() for day in [6, 0, 1, 2, 3, 4, 5]])
+            weekdays = [call.args[2] for call in draw_text.call_args_list
+                        if call.args[1].y() == 0 and call.args[1].x() >= month.week_gutter]
+            self.assertEqual(weekdays, [month.preferences.weekday_name(day).upper() for day in [6, 0, 1, 2, 3, 4, 5]])
             self.assertTrue(any(label.startswith(month.preferences.format_time(datetime(2026, 11, 2, 14)) + ' ')
                                 for label in labels))
 

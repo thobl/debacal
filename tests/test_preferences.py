@@ -6,7 +6,7 @@ from datetime import date, datetime, time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import QApplication, QDialog
@@ -76,6 +76,42 @@ class PreferencesTests(unittest.TestCase):
             self.assertEqual(Preferences().weekday_name(6, short=False), 'Sonntag')
             self.assertIn('Mi', Preferences(date_format='iso').format_date(date(2026, 11, 4), weekday=True))
 
+    def test_system_names_follow_ui_language_even_with_different_regional_language(self):
+        # Qt's system locale combines UI languages and LC_TIME. In particular,
+        # LANG=en_US plus LC_TIME=de_DE produces English uiLanguages but German
+        # dayName/monthName. A regular locale for the UI language avoids this.
+        hybrid = Mock(wraps=QLocale('de_DE'))
+        hybrid.uiLanguages.return_value = ['en-Latn-US', 'en-US', 'en']
+        with patch('debacal.preferences._system_locale', return_value=hybrid):
+            preferences = Preferences()
+            self.assertEqual(preferences.qt_locale().name(), 'en_US')
+            self.assertEqual(preferences.weekday_name(0, short=False), 'Monday')
+            self.assertEqual(preferences.month_name(1), 'January')
+            self.assertEqual(preferences.format_month(date(2026, 1, 1)), 'January 2026')
+            self.assertEqual(preferences.qt_date_pattern(), QLocale('de_DE').dateFormat(QLocale.ShortFormat))
+            self.assertEqual(preferences.format_time(time(14, 5)), '14:05')
+            self.assertEqual(preferences.first_weekday, 0)
+
+    def test_changing_language_preserves_system_date_time_and_week_start(self):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('en_US')):
+            english, german = Preferences(locale_name='en_GB'), Preferences(locale_name='de_DE')
+            self.assertEqual(english.format_date(date(2026, 11, 4)), german.format_date(date(2026, 11, 4)))
+            self.assertEqual(english.format_time(time(14, 5)), german.format_time(time(14, 5)))
+            self.assertEqual(english.first_weekday, german.first_weekday)
+            self.assertEqual(english.first_weekday, 6)
+            self.assertNotEqual(english.weekday_name(0), german.weekday_name(0))
+
+    def test_week_numbers_follow_the_thursday_in_configured_week_and_handle_bounds(self):
+        monday = Preferences(start_weekday=0)
+        sunday = Preferences(start_weekday=6)
+        self.assertEqual(monday.week_number(date(2027, 1, 3)), 53)
+        self.assertEqual(sunday.week_number(date(2027, 1, 3)), 1)
+        for first in range(7):
+            for day in (date.min, date.max):
+                self.assertIn(Preferences(start_weekday=first).week_number(day), range(1, 54))
+        self.assertTrue(Preferences().show_week_numbers)
+        self.assertFalse(Preferences.from_dict({'show_week_numbers': False}).show_week_numbers)
+
 
 class PreferencesDialogTests(unittest.TestCase):
     @classmethod
@@ -100,6 +136,21 @@ class PreferencesDialogTests(unittest.TestCase):
         dialog.save()
         self.assertEqual(dialog.result_preferences, Preferences())
         dialog.close()
+
+    def test_language_preview_keeps_system_format_and_explains_detected_language(self):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('en_US')):
+            dialog = PreferencesDialog(Preferences(locale_name='en_GB'))
+            original = dialog.preview.text()
+            dialog.locale.setCurrentIndex(dialog.locale.findData('de_DE'))
+            self.assertIn('Mittwoch', dialog.preview.text())
+            self.assertIn('11/4/26', original)
+            self.assertIn('11/4/26', dialog.preview.text())
+            self.assertIn('Sonntag', dialog.preview.text())
+            self.assertIn('English', dialog.system_locale_note.text())
+            self.assertIn('LC_TIME', dialog.system_locale_note.toolTip())
+            self.assertEqual(dialog.date_format.currentText(), 'System default')
+            self.assertEqual(dialog.week_start.currentData(), 'system')
+            dialog.close()
 
     def test_conflict_alert_preference_can_choose_desktop_or_both(self):
         dialog = PreferencesDialog(Preferences())

@@ -15,6 +15,18 @@ def _system_locale():
     return QLocale.system()
 
 
+def _system_language_locale() -> QLocale:
+    # QLocale.system() combines OS categories: its UI language can be English
+    # while LC_TIME supplies German month/day names. Reconstruct a regular
+    # locale from the preferred UI language to keep names separate from formats.
+    system = _system_locale()
+    for language in system.uiLanguages():
+        locale = QLocale(language)
+        if locale.language() != QLocale.Language.C or language in ('C', 'POSIX'):
+            return locale
+    return QLocale(system.name())
+
+
 @dataclass(frozen=True, slots=True)
 class Preferences:
     """Weekdays use Python's convention: Monday=0 through Sunday=6."""
@@ -26,7 +38,7 @@ class Preferences:
     sync_interval_minutes: int = 1
     locale_name: str = 'system'
     font_scale: int = 100
-    show_week_numbers: bool = False
+    show_week_numbers: bool = True
     visible_start_hour: int = 8
     visible_end_hour: int = 18
 
@@ -58,23 +70,31 @@ class Preferences:
             raise ValueError('Visible hours must start before they end, between 00:00 and 24:00.')
 
     def qt_locale(self) -> QLocale:
-        return _system_locale() if self.locale_name == 'system' else QLocale(self.locale_name)
+        """Locale for date names, independent of regional formatting preferences."""
+        return _system_language_locale() if self.locale_name == 'system' else QLocale(self.locale_name)
 
     @property
     def first_weekday(self) -> int:
-        return self.qt_locale().firstDayOfWeek().value - 1 if self.start_weekday == 'system' else self.start_weekday
+        return _system_locale().firstDayOfWeek().value - 1 if self.start_weekday == 'system' else self.start_weekday
 
     def week_start(self, value: date) -> date:
         return value - timedelta(days=(value.weekday() - self.first_weekday) % 7)
 
+    def week_number(self, value: date) -> int:
+        # ISO week numbers belong to Thursdays. Use the Thursday in the visible
+        # week even when its first day is configured as Sunday or Saturday.
+        start = value.toordinal() - (value.weekday() - self.first_weekday) % 7
+        thursday = start + (3 - self.first_weekday) % 7
+        return date.fromordinal(min(date.max.toordinal(), max(1, thursday))).isocalendar().week
+
     def qt_date_pattern(self) -> str:
         return {
             'european': 'dd.MM.yyyy', 'iso': 'yyyy-MM-dd', 'us': 'MM/dd/yyyy',
-        }.get(self.date_format, self.qt_locale().dateFormat(QLocale.FormatType.ShortFormat))
+        }.get(self.date_format, _system_locale().dateFormat(QLocale.FormatType.ShortFormat))
 
     def qt_time_pattern(self) -> str:
         return {'24h': 'HH:mm', '12h': 'h:mm AP'}.get(
-            self.time_format, self.qt_locale().timeFormat(QLocale.FormatType.ShortFormat))
+            self.time_format, _system_locale().timeFormat(QLocale.FormatType.ShortFormat))
 
     def qt_datetime_pattern(self) -> str:
         return self.qt_date_pattern() + '   ' + self.qt_time_pattern()
@@ -84,7 +104,7 @@ class Preferences:
         return self.weekday_name(value) + ', ' + formatted if weekday else formatted
 
     def format_time(self, value: time | datetime) -> str:
-        return self.qt_locale().toString(QTime(value.hour, value.minute, value.second), self.qt_time_pattern())
+        return _system_locale().toString(QTime(value.hour, value.minute, value.second), self.qt_time_pattern())
 
     def weekday_name(self, value: date | int, *, short: bool = True) -> str:
         day = value.weekday() if isinstance(value, date) else value

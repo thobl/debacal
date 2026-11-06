@@ -25,6 +25,7 @@ SELECTED_DAY_BORDER = QColor('#91a2b8')
 SELECTED_EVENT = QColor('#dce8f5')
 SELECTED_EVENT_BORDER = QColor('#2c527c')
 CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores them.'
+HOVER_TIME_COLOR = QColor('#526b80')
 
 
 def at(day, hour=0, minute=0):
@@ -113,6 +114,7 @@ def week_spans(events, first, days=7, *, capacity=None, selected=(), primary=Non
 
 class DayHeader(QWidget):
     day_selected = Signal(object)
+    week_requested = Signal(object)
     create_all_day_requested = Signal(object, object)
     placement_moved = Signal(object)
     placement_confirmed = Signal(object)
@@ -172,8 +174,17 @@ class DayHeader(QWidget):
             return None
         return self.days[min(len(self.days) - 1, int((point.x() - self.gutter) / width))]
 
+    def week_rect(self):
+        if not self.days or not self.preferences.show_week_numbers:
+            return None
+        return QRectF(4, 8 * display_scale(self), self.gutter - 8, 45 * display_scale(self))
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            week = self.week_rect()
+            if week is not None and week.contains(event.position()) and not self.placement_active:
+                self.week_requested.emit(self.preferences.week_start(self.days[0]))
+                return
             day = self.day_at(event.position())
             if day is not None:
                 self.setFocus()
@@ -187,6 +198,9 @@ class DayHeader(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            week = self.week_rect()
+            if week is not None and week.contains(event.position()):
+                return
             day = self.day_at(event.position())
             if day is not None:
                 if self._placement_consumed:
@@ -201,6 +215,10 @@ class DayHeader(QWidget):
                 self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
 
     def mouseMoveEvent(self, event):
+        week = self.week_rect()
+        self.setToolTip('Open week ' + str(self.preferences.week_number(self.days[0]))
+                        if week is not None and week.contains(event.position()) else
+                        'Double-click to create an all-day event.')
         day = self.day_at(event.position())
         if self.placement_active and day is not None:
             self.placement_moved.emit(at(day))
@@ -212,6 +230,13 @@ class DayHeader(QWidget):
             return
         w = (self.width() - self.gutter) / len(self.days)
         scale = display_scale(self)
+        week = self.week_rect()
+        if week is not None:
+            text(p, QRectF(week.left(), week.top(), week.width(), 16 * scale), 'WEEK', MUTED, 7,
+                 align=Qt.AlignmentFlag.AlignCenter)
+            text(p, QRectF(week.left(), week.top() + 16 * scale, week.width(), 27 * scale),
+                 str(self.preferences.week_number(self.days[0])), GREEN, 14, True,
+                 Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
             today = day == now().date()
@@ -333,12 +358,14 @@ class CalendarCanvas(QWidget):
         self._bucket_cache = {}
         self._shape_cache = {}
         self._confirmable_events = {}
+        self._hovered_event_id = None
 
     def data_changed(self):
         self._data_version += 1
         self._bucket_cache.clear()
         self.invalidate_geometry()
         self._confirmable_events = {}
+        self._hovered_event_id = None
         for item in self.events:
             calendar = self.calendars.get(item.calendar_id)
             if (item.candidate and not item.read_only and calendar and not calendar.read_only
@@ -386,7 +413,8 @@ class CalendarCanvas(QWidget):
     def confirmation_event(self, event_id):
         if self.placement_active:
             return None
-        return self._confirmable_events.get(event_id) if event_id in self.selected_ids or event_id == self.selected_id else None
+        visible = event_id in self.selected_ids or event_id == self.selected_id or event_id == self._hovered_event_id
+        return self._confirmable_events.get(event_id) if visible else None
 
     def confirmation_rect(self, rect, item, preview=False, trailing=0):
         if preview or self.drag or self.confirmation_event(item.id) is None:
@@ -432,6 +460,11 @@ class CalendarCanvas(QWidget):
         return True
 
     def confirmation_hover(self, point):
+        hit = self.hit(point)
+        hovered = hit[1].id if hit else None
+        if hovered != self._hovered_event_id:
+            self._hovered_event_id = hovered
+            self.update()
         if self._confirm_pressed:
             event_id, rect, origin, cancelled = self._confirm_pressed
             cancelled = cancelled or (point - origin).manhattanLength() >= 5 or not rect.contains(point)
@@ -479,6 +512,7 @@ class CalendarCanvas(QWidget):
     def hideEvent(self, event):
         self.cancel_confirmation()
         self._recent_confirmation = None
+        self._hovered_event_id = None
         QWidget.hideEvent(self, event)
 
     def set_drag_modifiers(self, modifiers):
@@ -521,7 +555,7 @@ class CalendarCanvas(QWidget):
         width = (self.width() - self.gutter) / len(self.days)
         x = self.gutter + day * width
         y = self.time_top + (minute / 60 - self.start_hour) * self.hour_height
-        accent = self.creation_color()
+        accent = self.creation_color() if creating else HOVER_TIME_COLOR
         color = QColor(accent)
         color.setAlpha(210 if creating else 125)
         painter.setPen(QPen(color, 1.5 if creating else 1))
@@ -911,10 +945,12 @@ class CalendarCanvas(QWidget):
         self.update()
 
     def leaveEvent(self, event):
-        self.hover_time = None
+        self._hovered_event_id = None
+        if hasattr(self, 'hover_time'):
+            self.hover_time = None
         self.setToolTip('')
         self.update()
-        super().leaveEvent(event)
+        QWidget.leaveEvent(self, event)
 
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -1002,6 +1038,7 @@ class CalendarCanvas(QWidget):
 
 
 class MonthCanvas(QWidget):
+    week_requested = Signal(object)
     create_requested = Signal(object, object)
     create_all_day_requested = Signal(object, object)
     day_selected = Signal(object)
@@ -1052,6 +1089,22 @@ class MonthCanvas(QWidget):
     def header_height(self):
         return math.ceil(28 * display_scale(self))
 
+    @property
+    def week_gutter(self):
+        return math.ceil(32 * display_scale(self)) if self.preferences.show_week_numbers else 0
+
+    def week_rect(self, row):
+        if not self.week_gutter or not 0 <= row < 6:
+            return None
+        height = (self.height() - self.header_height) / 6
+        return QRectF(0, self.header_height + row * height, self.week_gutter, height)
+
+    def week_at(self, point):
+        if not self.week_gutter or not 0 <= point.x() < self.week_gutter or not self.header_height <= point.y() < self.height():
+            return None
+        row = int((point.y() - self.header_height) / ((self.height() - self.header_height) / 6))
+        return self.start + timedelta(days=7 * row)
+
     def set_selected_day(self, day):
         self.selected_day = day
         self.update()
@@ -1068,6 +1121,7 @@ class MonthCanvas(QWidget):
     data_changed = CalendarCanvas.data_changed
     invalidate_geometry = CalendarCanvas.invalidate_geometry
     resizeEvent = CalendarCanvas.resizeEvent
+    leaveEvent = CalendarCanvas.leaveEvent
     event_token = CalendarCanvas.event_token
     day_buckets = CalendarCanvas.day_buckets
     initialize_confirmation = CalendarCanvas.initialize_confirmation
@@ -1128,13 +1182,14 @@ class MonthCanvas(QWidget):
         previews = [self.ghost] if not self.preview_events and self.ghost is not None else self.preview_events
         key = (self._data_version, self._preview_version, id(self.ghost), self.start,
                self.width(), self.height(), display_scale(self), local_zone(),
-               frozenset(self.selected_ids), self.selected_id)
+               frozenset(self.selected_ids), self.selected_id, self.week_gutter)
         cached = self._shape_cache.get('month')
         if cached is not None and cached[0] == key:
             return cached[1]
         scale = display_scale(self)
         header, heading, lane, event_height = self.header_height, 32 * scale, 24 * scale, 21 * scale
-        width, height = self.width() / 7, (self.height() - header) / 6
+        gutter = self.week_gutter
+        width, height = (self.width() - gutter) / 7, (self.height() - header) / 6
         capacity = max(0, int((height - 37 * scale) / lane))
         days = [self.start + timedelta(days=index) for index in range(42)]
         _bounds, buckets = self.day_buckets(days, date_events=True)
@@ -1152,14 +1207,14 @@ class MonthCanvas(QWidget):
                                primary=self.selected_id, reserve_timed=reserve)
             used, shown = [set() for _ in range(7)], [0] * 7
             for item, lane_index, start, end, _number, before, after in spans:
-                rect = QRectF(start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
+                rect = QRectF(gutter + start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
                 commands.append(('event', rect, item, False, before, after))
                 hits.append((rect, item))
                 for index in range(start, end):
                     used[index].add(lane_index)
                     shown[index] += 1
             for index in range(7):
-                x = index * width
+                x = gutter + index * width
                 free = [slot for slot in range(capacity) if slot not in used[index]]
                 all_day_count = sum(item.all_day for item in week_buckets[index])
                 daily = timed[index]
@@ -1197,7 +1252,7 @@ class MonthCanvas(QWidget):
             preview_spans = week_spans(previews, first, capacity=capacity)
             preview_used = [set() for _ in range(7)]
             for item, lane_index, start, end, _number, before, after in preview_spans:
-                rect = QRectF(start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
+                rect = QRectF(gutter + start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
                 commands.append(('event', rect, item, True, before, after))
                 for index in range(start, end):
                     preview_used[index].add(lane_index)
@@ -1205,7 +1260,7 @@ class MonthCanvas(QWidget):
                 daily = [item for item in preview_buckets[week * 7 + index] if not item.all_day]
                 free = [slot for slot in range(capacity) if slot not in preview_used[index]]
                 for lane_index, item in zip(free, daily):
-                    rect = QRectF(index * width + 5, y + heading + lane_index * lane, width - 10, event_height)
+                    rect = QRectF(gutter + index * width + 5, y + heading + lane_index * lane, width - 10, event_height)
                     commands.append(('event', rect, item, True, False, False))
         result = commands, hits
         self._shape_cache['month'] = key, result
@@ -1217,15 +1272,23 @@ class MonthCanvas(QWidget):
         p.fillRect(self.rect(), BG)
         self.confirm_hits = []
         scale = display_scale(self)
-        width, height = self.width() / 7, (self.height() - self.header_height) / 6
+        gutter = self.week_gutter
+        width, height = (self.width() - gutter) / 7, (self.height() - self.header_height) / 6
+        if gutter:
+            text(p, QRectF(0, 0, gutter, self.header_height), 'Wk', MUTED, 7, True, Qt.AlignmentFlag.AlignCenter)
+            for row in range(6):
+                rect = self.week_rect(row)
+                text(p, QRectF(rect.left(), rect.top() + 3 * scale, rect.width(), 25 * scale),
+                     str(self.preferences.week_number(self.start + timedelta(days=7 * row))), GREEN, 8, True,
+                     Qt.AlignmentFlag.AlignCenter)
         today = now().date()
         for index in range(7):
             name = self.preferences.weekday_name(self.start + timedelta(days=index)).upper()
-            text(p, QRectF(index * width + 12, 0, width - 15, 25 * scale), name, MUTED, 8, True)
+            text(p, QRectF(gutter + index * width + 12, 0, width - 15, 25 * scale), name, MUTED, 8, True)
         # Finish every day background before drawing any bar across its neighbors.
         for index in range(42):
             day = self.start + timedelta(days=index)
-            x, y = (index % 7) * width, self.header_height + (index // 7) * height
+            x, y = gutter + (index % 7) * width, self.header_height + (index // 7) * height
             rect = QRectF(x, y, width, height)
             if day.month != self.month:
                 p.fillRect(rect, QColor('#f0f3ec'))
@@ -1253,9 +1316,9 @@ class MonthCanvas(QWidget):
         return next(((rect, item) for rect, item in reversed(self.hits) if rect.contains(point)), None)
 
     def day_at(self, point):
-        if point.y() < self.header_height or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+        if point.x() < self.week_gutter or point.y() < self.header_height or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
             return None
-        index = min(5, max(0, int((point.y() - self.header_height) / ((self.height() - self.header_height) / 6)))) * 7 + min(6, max(0, int(point.x() / (self.width() / 7))))
+        index = min(5, max(0, int((point.y() - self.header_height) / ((self.height() - self.header_height) / 6)))) * 7 + min(6, max(0, int((point.x() - self.week_gutter) / ((self.width() - self.week_gutter) / 7))))
         return self.start + timedelta(days=index)
 
     def select_day_at(self, point):
@@ -1271,6 +1334,10 @@ class MonthCanvas(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
+            return
+        week = self.week_at(event.position())
+        if week is not None and not self.placement_active:
+            self.week_requested.emit(week)
             return
         self.cancel_confirmation()
         day = self.day_at(event.position())
@@ -1345,7 +1412,9 @@ class MonthCanvas(QWidget):
             return
         day = self.day_at(point)
         if day is None:
-            self.setToolTip('')
+            week = self.week_at(point)
+            self.setToolTip('Open week ' + str(self.preferences.week_number(week)) if week is not None else '')
+            self.setCursor(Qt.CursorShape.PointingHandCursor if week is not None else Qt.CursorShape.ArrowCursor)
             return
         if self.placement_active:
             self.placement_moved.emit(self.placement_target(point))

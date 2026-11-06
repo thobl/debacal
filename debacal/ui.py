@@ -72,6 +72,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.pending_paste = None
         self._paste_mouse_origin = None
         self._drag_preview_events = []
+        self._drag_preview_request = None
         self.full_day = bool(store.get_setting('show_full_day', False))
         self.nav_day = None
         self.nav_digits = None
@@ -150,6 +151,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         root.setSpacing(0)
         self.build_sidebar(root)
         self.build_workspace(root)
+        for surface in (self.header, self.month, self.year):
+            surface.week_requested.connect(self.open_week)
         self.install_mode_shortcuts()
         self.refresh()
         self.poll_timer = QTimer(self)
@@ -422,6 +425,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def open_month(self, day):
         self.select_day(day)
         self.set_view('month')
+
+    def open_week(self, day):
+        self.select_day(day)
+        self.set_view('week')
 
     def today(self):
         self.go_date(now().date())
@@ -739,9 +746,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         event = self.event_by_id(event_id)
         if event is None:
             return
+        self._drag_preview_request = event_id, start, end, modifiers
         try:
             prepared = self.store.move_selection(self.operation_references(event), self.operation_scope(),
-                                                  event, start, end, copy=True)
+                                                  event, start, end, copy=True,
+                                                  preserve_calendars=not bool(modifiers & Qt.KeyboardModifier.ControlModifier))
             from .recurrence import expand_events
             days = self.dates()
             self._drag_preview_events = expand_events(prepared, at(days[0]), at(days[-1] + timedelta(days=1)))
@@ -751,6 +760,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def clear_drag_preview(self):
         self._drag_preview_events = []
+        self._drag_preview_request = None
         self.render_placement()
 
     def delete_event(self, event_id=None, group=None, scope=None):
@@ -1441,6 +1451,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 modifiers = (modifiers | bit if event.type() == QEvent.Type.KeyPress else modifiers & ~bit)
             for widget in self.event_surfaces:
                 widget.set_drag_modifiers(modifiers)
+            if self._drag_preview_request is not None:
+                event_id, start, end, previous = self._drag_preview_request
+                if bool(previous & Qt.KeyboardModifier.ControlModifier) != bool(modifiers & Qt.KeyboardModifier.ControlModifier):
+                    self.preview_drag(event_id, start, end, modifiers)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'year_scroll') and obj is self.year_scroll.viewport():

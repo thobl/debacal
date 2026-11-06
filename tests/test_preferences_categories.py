@@ -36,7 +36,7 @@ def dialog(desktop, preferences=None, **kwargs):
     return widget
 
 
-def test_selected_date_locale_controls_month_weekday_and_locale_defaults():
+def test_selected_date_language_controls_names_but_not_system_regional_defaults():
     with patch('debacal.preferences._system_locale', return_value=QLocale('en_US')):
         german = Preferences(locale_name='de_DE')
         english = Preferences(locale_name='en_GB')
@@ -44,11 +44,11 @@ def test_selected_date_locale_controls_month_weekday_and_locale_defaults():
         assert german.weekday_name(0, short=False) == 'Montag'
         assert german.month_name(5) == 'Mai'
         assert german.format_month(date(2027, 5, 1)) == 'Mai 2027'
-        assert german.first_weekday == 0
+        assert german.first_weekday == 6
         assert english.weekday_name(0, short=False) == 'Monday'
         assert english.month_name(date(2027, 5, 1)) == 'May'
         assert english.format_month(date(2027, 5, 1), year=False) == 'May'
-        assert english.first_weekday == 0
+        assert english.first_weekday == 6
         assert Preferences().first_weekday == 6
         assert Preferences(locale_name='de_DE', date_format='iso').format_date(date(2027, 5, 1)) == '2027-05-01'
 

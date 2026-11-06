@@ -28,10 +28,12 @@ class YearView(QWidget):
     Each day's markers summarize calendars, rather than trying to fit event
     titles into small cells. A marker selects its first (or selected) event;
     the day context menu lists up to 100 events. Month headings open the month,
-    and double-clicking any day creates an all-day event.
+    week numbers open the week, and double-clicking any day creates an all-day
+    event.
     """
     day_selected = Signal(object)
     month_requested = Signal(object)
+    week_requested = Signal(object)
     open_day = Signal(object)
     create_all_day_requested = Signal(object, object)
     selected = Signal(str)
@@ -62,14 +64,18 @@ class YearView(QWidget):
         self._geometry_key = None
         self._day_rects = {}
         self._month_rects = {}
+        self._week_rects = {}
+        self._hover_week = None
         self._marker_hits = []
         self.hits = []
         self._set_year(self.year)
         self.set_preferences(self.preferences)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setToolTip('Click a month heading to open Month view. Click a colored marker to select an event. '
-                        'Double-click a day to create an all-day event.')
+        self._default_tooltip = ('Click a month heading to open Month view, or a week number to open Week view. '
+                                 'Click a colored marker to select an event. '
+                                 'Double-click a day to create an all-day event.')
+        self.setToolTip(self._default_tooltip)
 
     @property
     def scale(self):
@@ -84,6 +90,7 @@ class YearView(QWidget):
         self._day_count = 366 if calendar.isleap(year) else 365
         self.days = [date.fromordinal(self._first_ordinal + offset) for offset in range(self._day_count)]
         self._geometry_key = None
+        self._hover_week = None
 
     def set_preferences(self, preferences):
         self.preferences = preferences
@@ -91,6 +98,7 @@ class YearView(QWidget):
         self._weekday_names = [preferences.weekday_name((preferences.first_weekday + offset) % 7)
                                for offset in range(7)]
         self._geometry_key = None
+        self._hover_week = None
         self.setMinimumWidth(math.ceil((2 * 165 + 3 * 12) * self.scale))
         self.updateGeometry()
         self.update()
@@ -218,7 +226,7 @@ class YearView(QWidget):
         if key == self._geometry_key:
             return
         self._geometry_key = key
-        self._day_rects, self._month_rects, self._marker_hits = {}, {}, []
+        self._day_rects, self._month_rects, self._week_rects, self._marker_hits = {}, {}, {}, []
         self.hits = []
         scale, columns = self.scale, self._columns(self.width())
         rows, gap = 12 // columns, 12 * scale
@@ -228,13 +236,22 @@ class YearView(QWidget):
             row, column = divmod(month - 1, columns)
             outer = QRectF(gap + column * (width + gap), gap + row * (height + gap), width, height)
             heading = QRectF(outer.x() + 10 * scale, outer.y() + 5 * scale, width - 20 * scale, 25 * scale)
-            week_width = 17 * scale if self.preferences.show_week_numbers else 0
+            week_width = 23 * scale if self.preferences.show_week_numbers else 0
             grid = QRectF(outer.x() + 6 * scale + week_width, outer.y() + 52 * scale,
                           width - 12 * scale - week_width, height - 60 * scale)
             self._month_rects[month] = (outer, heading, grid)
             cell_width, cell_height = grid.width() / 7, grid.height() / 6
             first = date(self.year, month, 1)
             offset = (first.weekday() - self.preferences.first_weekday) % 7
+            if self.preferences.show_week_numbers:
+                occupied_rows = math.ceil((offset + calendar.monthrange(self.year, month)[1]) / 7)
+                for week_row in range(occupied_rows):
+                    ordinal = first.toordinal() - offset + week_row * 7
+                    if 1 <= ordinal <= date.max.toordinal():
+                        start = date.fromordinal(ordinal)
+                        rect = QRectF(outer.x() + 4 * scale, grid.y() + week_row * cell_height,
+                                      week_width - 2 * scale, cell_height)
+                        self._week_rects[month, week_row] = (rect, start)
             for day in range(1, calendar.monthrange(self.year, month)[1] + 1):
                 index = offset + day - 1
                 row, column = divmod(index, 7)
@@ -266,6 +283,17 @@ class YearView(QWidget):
         self._ensure_geometry()
         value = self._month_rects.get(month)
         return QRectF(value[1]) if value is not None else None
+
+    def week_rect(self, month, row):
+        """Return the week-number target for a populated month row (zero based)."""
+        self._ensure_geometry()
+        value = self._week_rects.get((month, row))
+        return QRectF(value[0]) if value is not None else None
+
+    def week_at(self, point):
+        """Return the configured first day of the week under the pointer."""
+        self._ensure_geometry()
+        return next((start for rect, start in self._week_rects.values() if rect.contains(point)), None)
 
     def day_at(self, point):
         self._ensure_geometry()
@@ -321,14 +349,18 @@ class YearView(QWidget):
                 rect = QRectF(grid.x() + column * grid.width() / 7, outer.y() + 31 * scale, grid.width() / 7, 18 * scale)
                 self._text(painter, rect, label, MUTED, 7)
             if self.preferences.show_week_numbers:
-                first = date(self.year, month, 1)
-                offset = (first.weekday() - self.preferences.first_weekday) % 7
-                for row in range(6):
-                    ordinal = first.toordinal() - offset + row * 7
-                    if 1 <= ordinal <= date.max.toordinal():
-                        week = date.fromordinal(ordinal).isocalendar().week
-                        self._text(painter, QRectF(outer.x() + 4 * scale, grid.y() + row * grid.height() / 6,
-                                                  17 * scale, grid.height() / 6), str(week), MUTED, 6)
+                self._text(painter, QRectF(outer.x() + 4 * scale, outer.y() + 31 * scale,
+                                          21 * scale, 18 * scale), 'Wk', MUTED, 6)
+                for (week_month, row), (rect, start) in self._week_rects.items():
+                    if week_month != month:
+                        continue
+                    hovered = self._hover_week == (month, row)
+                    if hovered:
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QColor('#edf2e7'))
+                        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 3 * scale, 3 * scale)
+                    self._text(painter, rect, str(self.preferences.week_number(start)), GREEN if hovered else MUTED,
+                               7, hovered)
         for day, rect in self._day_rects.items():
             if not rect.intersects(event.rect()):
                 continue
@@ -380,6 +412,11 @@ class YearView(QWidget):
             if heading.contains(point):
                 self.month_requested.emit(date(self.year, month, 1))
                 return
+        week = self.week_at(point)
+        if week is not None:
+            self.setFocus()
+            self.week_requested.emit(week)
+            return
         day = self.day_at(point)
         if day is None:
             return
@@ -416,10 +453,34 @@ class YearView(QWidget):
             self.create_all_day_requested.emit(start, datetime.combine(day + timedelta(days=1), time.min, local_zone()))
 
     def mouseMoveEvent(self, event):
+        self._ensure_geometry()
+        hovered = next((key for key, (rect, _start) in self._week_rects.items()
+                        if rect.contains(event.position())), None)
+        if hovered != self._hover_week:
+            previous, self._hover_week = self._hover_week, hovered
+            for key in (previous, hovered):
+                if key in self._week_rects:
+                    self.update(self._week_rects[key][0].toAlignedRect())
+            if hovered is not None:
+                start = self._week_rects[hovered][1]
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.setToolTip(f'Open week {self.preferences.week_number(start)} · '
+                                + self.preferences.format_date(start))
+            else:
+                self.unsetCursor()
+                self.setToolTip(self._default_tooltip)
         day = self.day_at(event.position())
         if self.placement_active and day is not None:
             self.placement_moved.emit(datetime.combine(day, time.min, local_zone()))
         super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        previous, self._hover_week = self._hover_week, None
+        if previous in self._week_rects:
+            self.update(self._week_rects[previous][0].toAlignedRect())
+        self.unsetCursor()
+        self.setToolTip(self._default_tooltip)
+        super().leaveEvent(event)
 
     def contextMenuEvent(self, event):
         day = self.day_at(event.pos())

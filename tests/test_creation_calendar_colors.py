@@ -99,16 +99,18 @@ def test_target_switch_before_and_during_creation_drag_updates_ghost_and_time_la
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=finish)
 
 
-def test_hover_time_uses_the_current_target_and_header_affordance_keeps_its_style(surfaces):
+def test_hover_time_is_readable_and_independent_of_the_calendar_color(surfaces):
     widget = surfaces(days=[FIRST])
     point = timed_point(widget)
     QTest.mouseMove(widget, point)
-    for target in (RED, BLUE):
+    initial = widget.grab().toImage()
+    for target in (RED, BLUE, replace(RED, color='#ffff00')):
         widget.set_creation_calendar(target)
         with patch.object(calendar_widgets, 'text', wraps=calendar_widgets.text) as labels:
             widget.grab()
         clock = widget.preferences.format_time(datetime(2026, 11, 2, 9, 15).time())
-        assert next(call.args[3] for call in labels.call_args_list if call.args[2] == clock) == QColor(target.color)
+        assert next(call.args[3] for call in labels.call_args_list if call.args[2] == clock) == calendar_widgets.HOVER_TIME_COLOR
+        assert widget.grab().toImage() == initial
     header = surfaces('header')
     original = header.grab().toImage()
     header.set_creation_calendar(RED)

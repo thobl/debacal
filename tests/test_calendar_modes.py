@@ -137,11 +137,11 @@ def test_month_all_day_span_is_one_connected_bar_and_click_uses_its_segment_date
     bars = [(rect, item) for rect, item in widget.hits if item.id == source.id]
     assert len(bars) == 1
     rect = bars[0][0]
-    width = widget.width() / 7
+    width = (widget.width() - widget.week_gutter) / 7
     assert rect.width() == pytest.approx(3 * width - 10)
     assert widget.day_at(rect.topLeft()) == FIRST + timedelta(days=1)
     assert widget.day_at(rect.bottomRight()) == FIRST + timedelta(days=3)
-    clicked = QPoint(int(2.5 * width), int(rect.center().y()))
+    clicked = QPoint(int(widget.week_gutter + 2.5 * width), int(rect.center().y()))
     selection = QSignalSpy(widget.selected_scoped)
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=clicked)
     assert selection.count() == 1 and selection.at(0)[0] == source.id
@@ -156,7 +156,7 @@ def test_month_all_day_span_splits_only_at_week_boundary_with_continuation_arrow
         widget.grab()
     bars = [rect for rect, item in widget.hits if item.id == source.id]
     assert len(bars) == 2
-    width, height = widget.width() / 7, (widget.height() - 28) / 6
+    width, height = (widget.width() - widget.week_gutter) / 7, (widget.height() - 28) / 6
     assert bars[0].width() == pytest.approx(3 * width - 10)
     assert bars[1].width() == pytest.approx(2 * width - 10)
     assert bars[1].top() - bars[0].top() == pytest.approx(height)
@@ -198,7 +198,7 @@ def test_month_pending_all_day_spans_and_timed_ghosts_use_distinct_rows_without_
     spans = [rect for rect, item in previews if item.id == span.id]
     times = [rect for rect, item in previews if item.id == timed.id]
     assert len(spans) == len(times) == 1
-    assert spans[0].width() == pytest.approx(3 * widget.width() / 7 - 10)
+    assert spans[0].width() == pytest.approx(3 * (widget.width() - widget.week_gutter) / 7 - 10)
     assert not spans[0].intersects(times[0])
     assert {item.id for _rect, item in widget.hits} == {'existing'}
 

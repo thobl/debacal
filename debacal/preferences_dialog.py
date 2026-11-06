@@ -1,12 +1,13 @@
 """Categorized display, synchronization, and keyboard preferences."""
 from datetime import date, datetime
 
+from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout,
     QCheckBox, QSpinBox, QTabWidget, QWidget,
 )
 
-from .preferences import Preferences
+from .preferences import Preferences, _system_language_locale
 from .shortcuts import KeyboardShortcutsEditor
 
 
@@ -26,22 +27,34 @@ class PreferencesDialog(QDialog):
             self.locale.addItem(name, value)
         self.locale.setCurrentIndex(self.locale.findData(preferences.locale_name))
         form.addRow('Language for dates', self.locale)
-        note = QLabel('Changes month and weekday names and locale defaults. Interface labels remain in English.')
+        note = QLabel('Changes month and weekday names. Date format, time format, and start of week are independent. '
+                      'Interface labels remain in English.')
         note.setWordWrap(True)
         note.setProperty('muted', True)
         form.addRow(note)
+        language = _system_language_locale()
+        language_name = QLocale.languageToString(language.language())
+        self.system_locale_note = QLabel('System language: ' + language_name + '. Regional date/time settings: '
+                                        + Preferences().format_date(date(2026, 11, 4)) + ' · '
+                                        + Preferences().format_time(datetime(2026, 11, 4, 14, 5)) + '.')
+        self.system_locale_note.setWordWrap(True)
+        self.system_locale_note.setProperty('muted', True)
+        self.system_locale_note.setToolTip('System language follows the operating system’s preferred UI languages. '
+                                          'On Linux, LANGUAGE/LC_MESSAGES/LANG determine language, while LC_TIME '
+                                          'determines regional dates and times; LC_ALL overrides locale categories.')
+        form.addRow(self.system_locale_note)
         self.week_start = QComboBox()
-        self.week_start.addItem('Locale default', 'system')
+        self.week_start.addItem('System default', 'system')
         for day in range(7):
             self.week_start.addItem(preferences.weekday_name(day, short=False), day)
         self.week_start.setCurrentIndex(self.week_start.findData(preferences.start_weekday))
         self.date_format = QComboBox()
-        for name, value in [('Locale default', 'system'), ('European · 04.11.2026', 'european'),
+        for name, value in [('System default', 'system'), ('European · 04.11.2026', 'european'),
                             ('ISO · 2026-11-04', 'iso'), ('US · 11/04/2026', 'us')]:
             self.date_format.addItem(name, value)
         self.date_format.setCurrentIndex(self.date_format.findData(preferences.date_format))
         self.time_format = QComboBox()
-        for name, value in [('Locale default', 'system'), ('24-hour · 14:05', '24h'), ('12-hour · 2:05 PM', '12h')]:
+        for name, value in [('System default', 'system'), ('24-hour · 14:05', '24h'), ('12-hour · 2:05 PM', '12h')]:
             self.time_format.addItem(name, value)
         self.time_format.setCurrentIndex(self.time_format.findData(preferences.time_format))
         form.addRow('Start of week', self.week_start)
@@ -59,7 +72,7 @@ class PreferencesDialog(QDialog):
         self.font_scale.setSingleStep(10)
         self.font_scale.setSuffix(' %')
         self.font_scale.setValue(preferences.font_scale)
-        self.week_numbers = QCheckBox('Show week numbers in the mini calendar')
+        self.week_numbers = QCheckBox('Show week numbers in calendars')
         self.week_numbers.setChecked(preferences.show_week_numbers)
         self.visible_start = QSpinBox()
         self.visible_start.setRange(0, 23)
@@ -167,7 +180,7 @@ class PreferencesDialog(QDialog):
         self.auto_sync.setChecked(True)
         self.sync_interval.setValue(1)
         self.font_scale.setValue(100)
-        self.week_numbers.setChecked(False)
+        self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(8)
         self.visible_end.setValue(18)
         self.shortcut_editor.restore_defaults()

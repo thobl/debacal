@@ -167,6 +167,7 @@ class EventDialog(FormDialog):
         self.start, self.end = QDateTimeEdit(), QDateTimeEdit()
         for field, value in ((self.start, reference.start if reference else start),
                              (self.end, reference.end if reference else end or start + timedelta(hours=1))):
+            field.setLocale(self.preferences.qt_locale())
             field.setCalendarPopup(True)
             field.calendarWidget().setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
             field.setDisplayFormat(self.preferences.qt_datetime_pattern())
@@ -209,6 +210,7 @@ class EventDialog(FormDialog):
         self.repeat_count.setRange(1, 100000)
         self.repeat_count.setValue(10)
         self.repeat_until = QDateEdit(QDate(start.year + 1, start.month, min(start.day, 28)))
+        self.repeat_until.setLocale(self.preferences.qt_locale())
         self.repeat_until.setCalendarPopup(True)
         self.repeat_until.calendarWidget().setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
         self.repeat_until.setDisplayFormat(self.preferences.qt_date_pattern())

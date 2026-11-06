@@ -703,7 +703,7 @@ class Store:
         return list(changed.values())
 
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
-                       calendar_id=None, label="Move selected events", expected_masters=()):
+                       calendar_id=None, label="Move selected events", expected_masters=(), preserve_calendars=False):
         """Move one union atomically, or prepare fresh copies without writing."""
         from .recurrence import event_zone
         with self._transaction():
@@ -715,10 +715,11 @@ class Store:
                 zone = event_zone(selection.reference)
                 wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
                 target = (wall(selection.reference.start) + (wall(start) - wall(reference.start))).replace(tzinfo=zone)
-                calendar = self.get_calendar(calendar_id) if calendar_id else self.get_default_calendar()
-                if calendar is None or calendar.read_only or calendar.kind == "ics":
+                calendar = (self.get_calendar(reference.calendar_id) if preserve_calendars else
+                            self.get_calendar(calendar_id) if calendar_id else self.get_default_calendar())
+                if calendar is None or (not preserve_calendars and (calendar.read_only or calendar.kind == "ics")):
                     raise ValueError("Choose a writable calendar for the copied events.")
-                return selection.instantiate("group", target, calendar.id)
+                return selection.instantiate("group", target, calendar.id, preserve_calendars=preserve_calendars)
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
     def edit_selection(self, refs, scope, reference, edited, *, replace_schedule=False,

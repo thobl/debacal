@@ -189,9 +189,9 @@ def test_small_calendar_list_needs_no_scroll_and_date_navigation_stays_near_head
     status_bottom = window.status.mapTo(window, window.status.rect().bottomRight()).y()
     assert status_bottom < window.height()
     assert all(row.isVisible() for row in window.calendar_rows.values())
-    heading_right = window.heading.mapToGlobal(window.heading.rect().topRight()).x()
-    today_left = window.today_button.mapToGlobal(window.today_button.rect().topLeft()).x()
-    assert 0 < today_left - heading_right < 100
+    heading_left = window.heading.mapToGlobal(window.heading.rect().topLeft()).x()
+    navigation_right = window.next_button.mapToGlobal(window.next_button.rect().topRight()).x()
+    assert 0 < heading_left - navigation_right < 25
     assert '(T)' in window.today_button.toolTip()
     assert '(D)' in window.view_buttons['day'].toolTip()
     assert window.new_button.parentWidget() is not window.sidebar

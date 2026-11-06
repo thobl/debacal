@@ -37,6 +37,13 @@ QPushButton#calendarChoice { text-align: left; border: 1px solid transparent; pa
 QPushButton#calendarChoice:checked { border-color: #b7c8ac; background: #e0e9d8; font-weight: 600; }
 
 QPushButton[iconOnly="true"] { padding: 5px; }
+QWidget#segmentedControl { background: #edf0e8; border: 1px solid #d4ddcd; border-radius: 8px; }
+QWidget#segmentedControl QPushButton { background: transparent; border: 1px solid transparent; border-radius: 0; }
+QWidget#segmentedControl QPushButton[segment="first"] { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+QWidget#segmentedControl QPushButton[segment="last"] { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+QWidget#segmentedControl QPushButton:hover { background: #e0e7d9; }
+QWidget#segmentedControl QPushButton:checked { background: #fff; border-color: #b4c6aa; color: #35513d; }
+QWidget#segmentedControl QPushButton:pressed { background: #dce7d3; }
 QPushButton#syncStatus { text-align: left; border: none; padding: 5px 0; font-size: 11px; color: #65735f; }
 QMenu { background: #fafbf8; border: 1px solid #dce2d6; padding: 4px; }
 QMenu::item { padding: 7px 18px; }

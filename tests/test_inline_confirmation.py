@@ -1,4 +1,4 @@
-"""Candidate confirmation stays at the selected calendar event."""
+"""Candidate confirmation is available on hovered and selected calendar events."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -89,6 +89,39 @@ def test_only_selected_candidates_have_inline_confirmation_and_previews_never_do
     widget.set_selection({ordinary.id})
     widget.grab()
     assert widget.confirm_hits == []
+
+
+@pytest.mark.parametrize('kind', ['day', 'week', 'month', 'month-span', 'all-day'])
+def test_hover_check_confirms_without_selecting_the_candidate_first(surfaces, kind):
+    _, _, make = surfaces
+    widget = make(kind)
+    confirmed, selected = QSignalSpy(widget.confirm_requested), QSignalSpy(widget.selected_scoped)
+    rect = next(rect for rect, item, *_ in widget.hits if item.id == 'candidate')
+    QTest.mouseMove(widget, QPoint(1, 1))
+    QTest.mouseMove(widget, QPoint(round(rect.left() + 12), round(rect.center().y())))
+    widget.grab()
+    control = next(rect for rect, key in widget.confirm_hits if key == 'candidate')
+    assert widget.selected_id is None and not widget.selected_ids
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
+    assert confirmed.count() == 1 and selected.count() == 0
+    assert not widget.drag and not widget.ghost
+    QApplication.sendEvent(widget, QEvent(QEvent.Type.Leave))
+    widget.grab()
+    assert not widget.confirm_hits
+
+
+@pytest.mark.parametrize('kind', ['week', 'month', 'all-day'])
+def test_hover_confirmation_does_not_replace_an_unrelated_selection(surfaces, kind):
+    _, _, make = surfaces
+    widget = make(kind)
+    widget.set_selection({'unrelated'})
+    widget.grab()
+    rect = next(rect for rect, item, *_ in widget.hits if item.id == 'candidate')
+    QTest.mouseMove(widget, rect.center().toPoint())
+    widget.grab()
+    control = widget.confirm_hits[0][0]
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=control.center().toPoint())
+    assert widget.selected_ids == {'unrelated'}
 
 
 @pytest.mark.parametrize('kind', ['day', 'week', 'month', 'month-span', 'all-day'])

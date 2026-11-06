@@ -163,7 +163,7 @@ class EventClipboard:
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
             raise ValueError("The clipboard does not contain valid Debacal event snapshots.") from error
 
-    def instantiate(self, scope: str, target: datetime, calendar_id: str) -> list[Event]:
+    def instantiate(self, scope: str, target: datetime, calendar_id: str, *, preserve_calendars=False) -> list[Event]:
         """Prepare fresh resources; callers persist the entire list atomically."""
         scope = _scope(scope)
         if target.tzinfo is None or target.utcoffset() is None:
@@ -175,6 +175,7 @@ class EventClipboard:
         group_ids = {event.group_id: str(uuid4()) for event in selected if event.group_id}
         result = []
         for event in selected:
+            destination = event.calendar_id if preserve_calendars else calendar_id
             zone = event_zone(event)
             wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
             shift = (timedelta(days=(target.astimezone(zone).date() - self.reference.start.astimezone(zone).date()).days)
@@ -208,9 +209,9 @@ class EventClipboard:
             new_id = str(uuid4())
             cloned = reidentify_series(moved, new_id, new_id)
             group_id = group_ids.get(event.group_id)
-            overrides = {key: replace(Event.from_dict(payload), calendar_id=calendar_id,
+            overrides = {key: replace(Event.from_dict(payload), calendar_id=destination,
                                       read_only=False, group_id=group_id).to_dict()
                          for key, payload in cloned.recurrence_overrides.items()}
-            result.append(replace(cloned, calendar_id=calendar_id, read_only=False,
+            result.append(replace(cloned, calendar_id=destination, read_only=False,
                                   group_id=group_id, recurrence_overrides=overrides))
         return result
