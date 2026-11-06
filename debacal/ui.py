@@ -22,6 +22,7 @@ from .store import Store
 from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
+from .import_dialog import ImportDialog
 from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
@@ -47,11 +48,17 @@ EVENT_MIME = 'application/x-debacal-events+json'
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
 
-    def __init__(self, store: Store, enable_sync=True, demo_mode=False):
+    def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace=''):
         super().__init__()
         self.store = store
         self._closed = False
         self.demo_mode = demo_mode
+        self.profile_label = profile_label
+        self._import_requests = deque()
+        self._import_dialog_active = False
+        self._import_timer = QTimer(self)
+        self._import_timer.setSingleShot(True)
+        self._import_timer.timeout.connect(self._process_import_request)
         self._sync_running = False
         self._sync_errors = {}
         self._sync_issues = {}
@@ -150,8 +157,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.engine = None
         if enable_sync and store.path != ':memory:':
             from .sync import SyncEngine
-            self.engine = SyncEngine(store.path)
-        self.setWindowTitle('Debacal')
+            from .credentials import CredentialStore
+            self.engine = SyncEngine(store.path, credential_store=CredentialStore(namespace=credential_namespace))
+        self.setWindowTitle('Debacal' + (' — ' + profile_label if profile_label else ''))
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
         self.setLocale(self.preferences.qt_locale())
@@ -1222,20 +1230,59 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return calendars[labels.index(label)] if ok else None
 
     def import_ics(self, calendar_id=None):
-        calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar(writable=True)
-        if not calendar:
+        self.import_files((), calendar_id=calendar_id)
+
+    def import_files(self, paths, *, calendar_id=None):
+        """Queue a reviewed import, including requests received during another dialog."""
+        if self._closed:
             return
-        path, _ = QFileDialog.getOpenFileName(self, 'Import calendar', '', 'Calendar files (*.ics);;All files (*)')
-        if not path:
+        if isinstance(paths, (str, Path)):
+            paths = (paths,)
+        self._import_requests.append((tuple(Path(path).expanduser().absolute() for path in paths), calendar_id))
+        if not self._import_dialog_active:
+            self._import_timer.start(0)
+
+    def _process_import_request(self):
+        if self._closed or self._import_dialog_active or not self._import_requests:
             return
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            self._import_timer.start(100)
+            return
+        paths, calendar_id = self._import_requests.popleft()
+        calendar = self.store.get_default_calendar()
+        self._import_dialog_active = True
+        dialog = None
+        try:
+            dialog = ImportDialog(self.store.list_calendars(), paths,
+                                  calendar_id=calendar_id or (calendar.id if calendar else None), parent=self)
+            if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
+                target = self.store.get_calendar(dialog.selected_calendar_id)
+                if target is None or target.read_only or target.kind == 'ics':
+                    self.show_notice('Choose a writable calendar for the import.')
+                else:
+                    batch = {'remaining': len(dialog.selected_paths), 'messages': []}
+                    for path in dialog.selected_paths:
+                        self._read_import_file(path, target.id, batch=batch)
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            self._import_dialog_active = False
+            if self._import_requests and not self._closed:
+                self._import_timer.start(0)
+
+    def _read_import_file(self, path, calendar_id, *, batch=None):
         self.show_notice('Reading calendar in the background…')
         def work():
             from .ics import parse_ics_report
-            if Path(path).stat().st_size > 20_000_000:
+            with Path(path).open('rb') as source:
+                data = source.read(20_000_001)
+            if len(data) > 20_000_000:
                 raise ValueError('Choose a calendar file smaller than 20 MB.')
-            return parse_ics_report(Path(path).read_bytes(), calendar.id)
+            return parse_ics_report(data, calendar_id)
         future = self.executor.submit(work)
-        future.calendar_id = calendar.id
+        future.calendar_id = calendar_id
+        future.source_path = str(path)
+        future.import_batch = batch
         future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
     def export_ics(self, calendar_id=None):
@@ -1363,6 +1410,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         while not self.tasks.empty():
             _, future = self.tasks.get()
+            detail = ''
             try:
                 report = future.result()
                 events = report.events
@@ -1377,7 +1425,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
                     self.show_notice(detail)
             except Exception as exc:
-                self.show_notice('Import failed: ' + str(exc))
+                source = getattr(future, 'source_path', '')
+                detail = 'Import failed' + (' for ' + Path(source).name if source else '') + ': ' + str(exc)
+                self._sync_messages.append(detail)
+                self.show_notice(detail)
+            finally:
+                batch = getattr(future, 'import_batch', None)
+                if batch is not None:
+                    source = getattr(future, 'source_path', '')
+                    batch['messages'].append((Path(source).name + ': ' if source else '') + (detail or 'No events imported.'))
+                    batch['remaining'] -= 1
+                    if batch['remaining'] == 0 and len(batch['messages']) > 1:
+                        self.show_notice('Import complete · ' + ' · '.join(batch['messages']))
         if not self.engine:
             return
         updated = False
@@ -1635,6 +1694,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.clock_timer.stop()
         self.shortcut_timer.stop()
         self.search_timer.stop()
+        self._import_timer.stop()
+        self._import_requests.clear()
         self._range_cache.clear()
         if self.engine:
             self.engine.close()

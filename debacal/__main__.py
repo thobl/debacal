@@ -1,11 +1,12 @@
-"""Launch with `python -m debacal`; --demo never touches your calendar data."""
+"""Desktop startup, profile selection, and delivery to an existing instance."""
 import argparse
 from datetime import timedelta
 from pathlib import Path
 import sys
+import sqlite3
 import tempfile
 
-from PySide6.QtCore import QStandardPaths, QTimer
+from PySide6.QtCore import QEvent, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -14,6 +15,8 @@ from .models import Calendar, Event
 from .store import Store
 from .timeutil import now
 from .ui import MainWindow
+from .profiles import resolve_profile, validate_profile_name
+from .single_instance import InstanceCoordinator, InstanceError
 
 
 def seed_demo(store):
@@ -53,15 +56,66 @@ def seed_demo(store):
     store.apply('Create demonstration calendar', events)
 
 
-def main(argv=None):
+def _file_argument(value):
+    if value.startswith('file:'):
+        url = QUrl(value)
+        if not url.isLocalFile():
+            raise argparse.ArgumentTypeError('Choose a local calendar file.')
+        value = url.toLocalFile()
+    if not value or '\0' in value:
+        raise argparse.ArgumentTypeError('Choose a valid calendar file path.')
+    return Path(value).expanduser().absolute()
+
+
+def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description='A local-first Linux desktop calendar')
     parser.add_argument('--database', type=Path, help='Use a specific SQLite database')
+    profiles = parser.add_mutually_exclusive_group()
+    profiles.add_argument('--profile', type=validate_profile_name, default='default', metavar='NAME',
+                          help='Use a separate persistent profile')
+    profiles.add_argument('--test', dest='profile', action='store_const', const='testing',
+                          help='Use the separate persistent testing profile')
+    parser.add_argument('--new-instance', action='store_true',
+                        help='Allow another window for the same profile/database')
     parser.add_argument('--demo', action='store_true', help='Use disposable sample data')
     parser.add_argument('--demo-conflict', action='store_true', help='Use disposable sample data with a sync conflict to review')
     parser.add_argument('--screenshot', type=Path, help='Save a workspace screenshot and exit')
+    parser.add_argument('files', nargs='*', type=_file_argument, metavar='FILE.ics',
+                        help='Open calendar files for import')
     args = parser.parse_args(argv)
     args.demo = args.demo or args.demo_conflict
-    app = QApplication(sys.argv[:1])
+    return args
+
+
+class FileOpeningApplication(QApplication):
+    """Keep desktop file-open events until the workspace is ready to receive them."""
+    file_open_requested = Signal(str)
+
+    def __init__(self, argv):
+        self._pending_files = []
+        self._files_ready = False
+        super().__init__(argv)
+
+    def event(self, event):
+        if event.type() == QEvent.Type.FileOpen:
+            path = event.file() or event.url().toLocalFile()
+            if path:
+                path = str(Path(path).expanduser().absolute())
+                if self._files_ready:
+                    self.file_open_requested.emit(path)
+                else:
+                    self._pending_files.append(path)
+            return True
+        return super().event(event)
+
+    def enable_file_requests(self):
+        self._files_ready = True
+        pending, self._pending_files = self._pending_files, []
+        for path in pending:
+            self.file_open_requested.emit(path)
+
+
+def configure_application(app):
     app.setStyle('Fusion')
     palette = QPalette()
     for role, color in [
@@ -82,47 +136,121 @@ def main(argv=None):
     app.setApplicationName('debacal')
     app.setOrganizationName('debacal')
     app.setApplicationDisplayName('Debacal')
+
+
+def main(argv=None):
+    args = parse_arguments(argv)
+    app = FileOpeningApplication(sys.argv[:1])
+    configure_application(app)
+    profile = resolve_profile(args.profile, args.database)
     temporary = tempfile.TemporaryDirectory(prefix='debacal-demo-') if args.demo else None
-    persistent_path = args.database or Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / 'calendar.sqlite3'
-    path = Path(temporary.name) / 'demo.sqlite3' if temporary else persistent_path
-    store = Store(path)
-    if args.demo:
-        seed_demo(store)
-    window = MainWindow(store, enable_sync=not args.demo, demo_mode=args.demo)
-    if args.demo_conflict:
-        from .conflict_demo import DemoConflictEngine
-        window.engine = DemoConflictEngine(store)
-        window.anchor = window.engine.conflicts[0].local.start.date()
-        window.refresh()
-        window.poll()
-    workspaces = [(store, window)]
+    path = Path(temporary.name) / 'demo.sqlite3' if temporary else profile.database
+    workspaces, coordinators = [], []
+    window = None
+
+    def deliver_request(files):
+        if window is None or window._closed:
+            return
+        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
+        window.show()
+        target = QApplication.activeModalWidget() or window
+        target.raise_()
+        target.activateWindow()
+        if files:
+            window.import_files(files)
+
+    def claim_workspace(database, files=()):
+        if args.new_instance:
+            return None, True
+        coordinator = InstanceCoordinator(database, parent=app)
+        primary = coordinator.start(files)
+        if primary:
+            coordinator.request_received.connect(deliver_request)
+            coordinators.append(coordinator)
+        else:
+            coordinator.close()
+        return coordinator, primary
+
+    def create_workspace(database, *, demo=False):
+        store = Store(database)
+        try:
+            if demo:
+                seed_demo(store)
+            workspace = MainWindow(store, enable_sync=not demo, demo_mode=demo,
+                                   profile_label=profile.label if profile.name != 'default' else '',
+                                   credential_namespace=profile.credential_namespace)
+        except Exception:
+            store.close()
+            raise
+        workspaces.append((store, workspace))
+        return workspace
+
     def open_persistent_workspace():
-        real_store = Store(persistent_path)
-        real_window = MainWindow(real_store)
-        workspaces.append((real_store, real_window))
-        real_window.show()
-        window.close()
-    window.real_workspace_requested.connect(open_persistent_workspace)
-    window.show()
-    if args.demo:
-        window.show_notice('Offline conflict demo · click Review conflicts to compare the versions. No server is connected.' if args.demo_conflict
-                           else 'Demo workspace · temporary and offline. Choose Open my calendars to connect and sync a real account.')
-    if args.screenshot:
-        def capture():
-            args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-            saved = window.grab().save(str(args.screenshot))
-            if not saved:
-                print('Could not save screenshot.', file=sys.stderr)
-            window.close()
-            app.exit(0 if saved else 1)
-        QTimer.singleShot(350, capture)
-    code = app.exec()
-    for workspace_store, workspace_window in workspaces:
-        workspace_window.close()
-        workspace_store.close()
-    if temporary:
-        temporary.cleanup()
-    return code
+        nonlocal window
+        if not window.demo_mode:
+            return
+        old_window = window
+        persistent_coordinator = None
+        try:
+            persistent_coordinator, primary = claim_workspace(profile.database)
+            if not primary:
+                old_window.close()
+                return
+            window = create_workspace(profile.database)
+            window.show()
+            old_window.close()
+            if persistent_coordinator:
+                QTimer.singleShot(0, persistent_coordinator.enable_requests)
+        except (InstanceError, OSError, ValueError, sqlite3.Error) as exc:
+            if persistent_coordinator in coordinators:
+                persistent_coordinator.close()
+                coordinators.remove(persistent_coordinator)
+            old_window.show_notice('Could not open the workspace: ' + str(exc))
+
+    try:
+        coordinator, primary = claim_workspace(path, args.files)
+        if not primary:
+            return 0
+        window = create_workspace(path, demo=args.demo)
+        if args.demo_conflict:
+            from .conflict_demo import DemoConflictEngine
+            window.engine = DemoConflictEngine(window.store)
+            window.anchor = window.engine.conflicts[0].local.start.date()
+            window.refresh()
+            window.poll()
+        window.real_workspace_requested.connect(open_persistent_workspace)
+        app.file_open_requested.connect(lambda path: deliver_request([path]))
+        window.show()
+        QTimer.singleShot(0, app.enable_file_requests)
+        if coordinator:
+            QTimer.singleShot(0, coordinator.enable_requests)
+        elif args.files:
+            QTimer.singleShot(0, lambda: window.import_files(args.files))
+        if args.demo:
+            window.show_notice('Offline conflict demo · click Review conflicts to compare the versions. No server is connected.' if args.demo_conflict
+                               else 'Demo workspace · temporary and offline. Use the sidebar button to open your persistent profile.')
+        if args.screenshot:
+            def capture():
+                args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                saved = window.grab().save(str(args.screenshot))
+                if not saved:
+                    print('Could not save screenshot.', file=sys.stderr)
+                window.close()
+                app.exit(0 if saved else 1)
+            QTimer.singleShot(350, capture)
+        return app.exec()
+    except (InstanceError, OSError, ValueError, sqlite3.Error) as exc:
+        print('Could not start Debacal: ' + str(exc), file=sys.stderr)
+        return 1
+    finally:
+        for workspace_store, workspace_window in reversed(workspaces):
+            if not workspace_window._closed:
+                workspace_window.close()
+            workspace_store.close()
+        for coordinator in coordinators:
+            coordinator.close()
+        if temporary:
+            temporary.cleanup()
 
 
 if __name__ == '__main__':

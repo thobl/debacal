@@ -95,8 +95,14 @@ class WorkspaceChrome:
         brand_row.addWidget(brand, 1)
         self.icon_button('settings', 'Preferences', self.show_preferences, brand_row, 'preferences')
         layout.addLayout(brand_row)
+        if self.profile_label:
+            profile = QLabel(self.profile_label + ' profile')
+            profile.setObjectName('profileBadge')
+            profile.setProperty('muted', True)
+            layout.addWidget(profile)
         if self.demo_mode:
-            self.button('Open my calendars', self.real_workspace_requested.emit, layout)
+            self.button('Open ' + self.profile_label + ' profile' if self.profile_label else 'Open my calendars',
+                        self.real_workspace_requested.emit, layout)
         self.mini = MiniCalendar(self.preferences)
         self.mini.setMinimumWidth(0)
         self.mini.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)

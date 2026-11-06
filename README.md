@@ -34,6 +34,36 @@ starts with an empty Personal calendar and stores data under Qt's platform data
 directory, normally `~/.local/share/debacal/debacal/calendar.sqlite3` on Linux.
 Use `--database /path/to/calendar.sqlite3` to choose another location. Back up the
 database with the app closed (or use SQLite's backup API for a live database).
+
+Only one window normally runs for each profile/database. Calling `debacal`
+again brings its existing window forward. Use `--new-instance` to explicitly
+allow another window using the same data; profiles are the better choice for
+separate environments.
+
+```sh
+debacal --test                    # Persistent testing profile
+debacal --profile work            # Another named profile
+debacal appointment.ics           # Review a file before importing
+debacal --test one.ics two.ics    # Import into the testing profile
+```
+
+`--test` is shorthand for `--profile testing`. Named profiles start with an empty
+Personal calendar and retain their own events, settings, history, sync mirrors,
+and keyring credentials. They do not copy or reuse your normal accounts or
+passwords. Their data is stored under `profiles/NAME/calendar.sqlite3` within
+the application data directory. The window title and sidebar identify the
+profile. Unlike the offline disposable demo, testing profiles can connect to
+test calendar servers and sync normally. `--database` overrides a profile's
+database path; alternative databases also use separate keyring credentials.
+
+Opening one or more `.ics` files shows an import dialog with the selected
+creation calendar as its destination. Choose a different writable calendar or
+cancel before anything is imported. The same dialog opens if Debacal is already
+running; file paths are delivered to that window instead of starting another
+sync engine. Requests received during another dialog wait their turn. File reads
+run in the background, and an invalid file does not prevent other files from
+being imported. Imports can be undone.
+
 `--demo-conflict` opens an offline sample conflict: click **Review conflicts** to
 compare calendar previews and try a decision using disposable data.
 

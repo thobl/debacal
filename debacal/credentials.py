@@ -48,10 +48,14 @@ def account_key(calendar_or_url, username: str | None = None) -> str:
 
 
 class CredentialStore:
-    def __init__(self, backend=None):
+    def __init__(self, backend=None, *, namespace: str = ""):
         # Injected backends are for integrations/tests. Automatic selection only
         # admits OS services, even if a plaintext keyrings.alt plugin is installed.
         self._backend = backend
+        # The regular workspace retains its existing keyring entries. A named
+        # testing profile must never read, replace, or remove those credentials.
+        self.service = (SERVICE + ".profile." + hashlib.sha256(namespace.encode()).hexdigest()
+                        if namespace else SERVICE)
         self._cache_lock = RLock()
         self._io_lock = Lock()
         self._session: dict[str, str | None] = {}
@@ -115,7 +119,7 @@ class CredentialStore:
                         return self._session[key]
                     if key in self._cached:
                         return self._cached[key]
-                password = self._keyring().get_password(SERVICE, key)
+                password = self._keyring().get_password(self.service, key)
         except CredentialError:
             raise
         except Exception:
@@ -133,8 +137,8 @@ class CredentialStore:
             try:
                 with self._io_lock:
                     backend = self._keyring()
-                    if backend.get_password(SERVICE, key) is not None:
-                        backend.delete_password(SERVICE, key)
+                    if backend.get_password(self.service, key) is not None:
+                        backend.delete_password(self.service, key)
             except Exception:
                 raise CredentialError("This password is available for this session, but a previously saved account password could not be removed. Unlock the desktop keyring and save again with Remember unchecked.") from None
             finally:
@@ -151,7 +155,7 @@ class CredentialStore:
                     if self._persisted.get(key) == password:
                         return True
                     self._persisted.pop(key, None)
-                self._keyring().set_password(SERVICE, key, password)
+                self._keyring().set_password(self.service, key, password)
         except Exception:
             raise CredentialError("Could not save this account password in the desktop keyring. It is available for this session only. Unlock or enable Secret Service or KWallet and save it again.") from None
         with self._cache_lock:
@@ -168,8 +172,8 @@ class CredentialStore:
         try:
             with self._io_lock:
                 backend = self._keyring()
-                if backend.get_password(SERVICE, key) is not None:
-                    backend.delete_password(SERVICE, key)
+                if backend.get_password(self.service, key) is not None:
+                    backend.delete_password(self.service, key)
         except Exception:
             raise CredentialError("Could not remove the saved account password from the desktop keyring. Unlock it and try again.") from None
 

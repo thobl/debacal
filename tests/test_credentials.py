@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from debacal.credentials import CredentialStore, CredentialError, account_key
+from debacal.credentials import CredentialStore, CredentialError, SERVICE, account_key
 from debacal.discovery import DiscoveredCalendar
 from debacal.models import Calendar
 from debacal.store import Store
@@ -51,6 +51,28 @@ def test_account_credentials_are_shared_across_collections_and_default_ports():
     assert credentials.get(b) == "example-app-password"
     assert len(backend.writes) == 1
     assert CredentialStore(backend).get(b) == "example-app-password"
+
+
+def test_profile_credentials_cannot_read_replace_or_forget_regular_account_passwords(tmp_path):
+    from debacal.profiles import resolve_profile
+    namespace = resolve_profile("testing", data_root=tmp_path).credential_namespace
+    backend = MemoryKeyring()
+    normal = CredentialStore(backend)
+    normal.save(calendar(), "normal-password")
+    assert normal.service == SERVICE
+    testing = CredentialStore(backend, namespace=namespace)
+    assert testing.get(calendar()) is None
+    testing.save(calendar(), "testing-password")
+    assert CredentialStore(backend).get(calendar()) == "normal-password"
+    assert CredentialStore(backend, namespace=namespace).get(calendar("personal")) == "testing-password"
+    testing.forget(calendar())
+    assert CredentialStore(backend, namespace=namespace).get(calendar()) is None
+    assert CredentialStore(backend).get(calendar()) == "normal-password"
+    # Unchecking Remember removes only entries in that profile too.
+    testing.save(calendar(), "testing-again")
+    testing.save(calendar(), "session-only", remember=False)
+    assert CredentialStore(backend, namespace=namespace).get(calendar()) is None
+    assert CredentialStore(backend).get(calendar()) == "normal-password"
 
 
 def test_different_servers_logins_ports_and_nextcloud_deployments_are_isolated():
