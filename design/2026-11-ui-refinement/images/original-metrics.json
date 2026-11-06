@@ -1,0 +1,67 @@
+{
+  "week": {
+    "size": [
+      1440,
+      960
+    ],
+    "bar_x": 18,
+    "text_x": 27,
+    "list_top": 328,
+    "list_bottom": 902,
+    "heading_baseline": 42,
+    "controls_y": 56.0,
+    "range_y": 63.0
+  },
+  "narrow": {
+    "size": [
+      1030,
+      690
+    ],
+    "bar_x": 18,
+    "text_x": 27,
+    "list_top": 328,
+    "list_bottom": 632,
+    "heading_baseline": 42,
+    "controls_y": 56.0,
+    "range_y": 63.0
+  },
+  "month": {
+    "size": [
+      1440,
+      960
+    ],
+    "bar_x": 18,
+    "text_x": 27,
+    "list_top": 328,
+    "list_bottom": 902,
+    "heading_baseline": 42,
+    "controls_y": 56.0,
+    "range_y": 63.0
+  },
+  "yellow": {
+    "size": [
+      1440,
+      960
+    ],
+    "bar_x": 18,
+    "text_x": 27,
+    "list_top": 328,
+    "list_bottom": 902,
+    "heading_baseline": 42,
+    "controls_y": 56.0,
+    "range_y": 63.0
+  },
+  "search": {
+    "size": [
+      1440,
+      960
+    ],
+    "bar_x": 18,
+    "text_x": 27,
+    "list_top": 328,
+    "list_bottom": 902,
+    "heading_baseline": 42,
+    "controls_y": 56.0,
+    "range_y": 63.0
+  }
+}

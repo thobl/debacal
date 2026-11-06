@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debacal — Option B, refined</title>
+<style>
+  :root { color-scheme:light; --ink:#27313a; --muted:#596570; --line:#d4ddd7; --accent:#475f52; --paper:#fff; --bg:#f6f7f8; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--ink); background:var(--bg); font:16px/1.5 system-ui,sans-serif; }
+  header,main,footer { max-width:1560px; margin:auto; padding:24px 32px; }
+  header { padding-bottom:12px; }
+  h1 { margin:5px 0 12px; font-size:32px; line-height:1.2; letter-spacing:-.7px; }
+  h2 { margin:0 0 12px; font-size:22px; letter-spacing:-.3px; }
+  h3 { margin:0 0 6px; font-size:17px; }
+  p { margin:0 0 12px; max-width:90ch; }
+  a { color:var(--accent); text-underline-offset:3px; }
+  .muted,small { color:var(--muted); }
+  .eyebrow { color:var(--accent); font-size:13px; font-weight:650; letter-spacing:.03em; }
+  button,select,input { font:inherit; accent-color:var(--accent); }
+  button,select { min-height:38px; padding:7px 12px; color:var(--ink); background:white; border:1px solid var(--line); border-radius:6px; }
+  button { cursor:pointer; }
+  button:hover { background:#eff3f0; border-color:var(--accent); }
+  button[aria-pressed="true"] { background:#e7eee8; border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+  :focus-visible { outline:3px solid #426a9d; outline-offset:3px; }
+  .choices { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+  .choice { padding:16px; text-align:left; }
+  .choice strong { display:block; margin-bottom:6px; font-size:18px; }
+  .choice span { display:block; color:var(--muted); font-size:14px; }
+  .tools { display:flex; flex-wrap:wrap; align-items:center; gap:12px 24px; margin:0 0 16px; }
+  .tools label { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .tools .group { display:flex; align-items:center; gap:6px; }
+  .tools .group > span { margin-right:4px; color:var(--muted); font-size:14px; }
+  .stage { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-items:start; }
+  .stage.compare { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  figure { margin:0; min-width:0; border:1px solid var(--line); border-radius:8px; background:white; overflow:hidden; }
+  figcaption { padding:10px 14px; display:flex; gap:12px; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); font-size:14px; }
+  .scroll { overflow:auto; background:#edf0ee; }
+  .image { position:relative; width:100%; }
+  .image img { display:block; width:100%; height:auto; }
+  .overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .overlay line { stroke:#2466a8; stroke-width:1.25; stroke-dasharray:7 4; }
+  .stage.actual .scroll { max-height:900px; }
+  .stage.actual .image { width:max-content; }
+  .stage.actual img { width:auto; max-width:none; }
+  .caption { display:grid; grid-template-columns:2fr 1fr; gap:24px; padding:20px 0 24px; border-bottom:1px solid var(--line); }
+  .caption p { margin-bottom:8px; }
+  .rationale { padding:28px 0 0; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:15px; }
+  th,td { padding:14px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { font-weight:600; color:var(--muted); }
+  td:first-child { width:19%; font-weight:600; }
+  td:last-child { width:27%; color:var(--muted); }
+  .tokens { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin:24px 0; }
+  .card { background:white; border:1px solid var(--line); border-radius:8px; padding:20px; }
+  .palette { display:flex; flex-wrap:wrap; gap:12px 18px; margin:16px 0 0; }
+  .palette span { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .palette i { display:inline-block; width:20px; height:20px; border:1px solid #a5afa8; border-radius:4px; }
+  .card ul { margin:8px 0 0; padding-left:20px; }
+  .card li { margin:6px 0; }
+  details { border-top:1px solid var(--line); padding-top:18px; margin-top:24px; }
+  summary { cursor:pointer; font-weight:650; }
+  details ul { margin:12px 0; padding-left:22px; }
+  details li { margin:8px 0; }
+  footer { color:var(--muted); font-size:14px; margin-top:24px; border-top:1px solid var(--line); }
+  code { font-size:.9em; background:#e8eeea; padding:2px 5px; border-radius:4px; }
+  [hidden] { display:none !important; }
+  @media(max-width:950px) { header,main,footer { padding:20px 16px; } .stage.compare,.tokens,.caption { grid-template-columns:1fr; } table,tbody,tr,td { display:block; } thead { display:none; } tr { padding:10px 0; border-bottom:1px solid var(--line); } td,td:first-child,td:last-child { width:auto; padding:5px 0; border:0; } }
+  @media(max-width:580px) { .choices { grid-template-columns:1fr; gap:8px; } h1 { font-size:28px; } }
+</style>
+<header>
+  <div class="eyebrow">DEBACAL · SECOND DESIGN REVIEW · 6 NOVEMBER 2026</div>
+  <h1>Option B, refined</h1>
+  <p>B’s neutral palette and source-tinted events, with the controls kept together and the details brought into alignment. Two close sidebar treatments explore how much framing the lists need.</p>
+  <p class="muted">Mockups only; the app is unchanged. Same synthetic data in every screenshot. Turn on comparison to see the previous B beside the refinement.</p>
+</header>
+<main>
+  <div class="choices" role="group" aria-label="Sidebar treatment">
+    <button class="choice" data-variant="open" aria-pressed="true"><strong>B1 · Open lists</strong><span>Aligned rows, shared selection, and deliberate whitespace. The lighter option, with more space for content.</span></button>
+    <button class="choice" data-variant="panels" aria-pressed="false"><strong>B2 · Soft panels</strong><span>The same alignment and selection, with white surfaces and one subtle border around each list.</span></button>
+  </div>
+  <div class="tools">
+    <label>Example <select id="state"><option value="week">Week · 1440 × 960</option><option value="narrow">Smaller window · 1030 × 690</option><option value="month">Month · 1440 × 960</option><option value="search">Search · 1440 × 960</option><option value="yellow">Yellow calendar · 1440 × 960</option><option value="import">Import · 980 × 680</option></select></label>
+    <label><input id="compare" type="checkbox"> Compare with previous B</label>
+    <label><input id="guides" type="checkbox"> Alignment guides</label>
+    <div class="group" role="group" aria-label="Screenshot size"><span>Size</span><button id="fit" aria-pressed="true">Fit</button><button id="actual" aria-pressed="false">100%</button></div>
+  </div>
+  <div id="stage" class="stage">
+    <figure id="baseline" hidden><figcaption><strong>Previous B</strong><a id="original-link" href="images/original-week.png" target="_blank" rel="noopener">Full size ↗</a></figcaption><div class="scroll"><div class="image"><img id="original-image" src="images/original-week.png" width="1440" height="960" alt="Previous Option B with synthetic events"></div></div></figure>
+    <figure><figcaption><strong id="proposal-title">B1 · Open lists</strong><a id="proposal-link" href="images/open-week.png" target="_blank" rel="noopener">Full size ↗</a></figcaption><div class="scroll"><div class="image"><img id="proposal-image" src="images/open-week.png" width="1440" height="960" alt="Refined B with open sidebar lists"><svg id="overlay" class="overlay" viewBox="0 0 1440 960" aria-hidden="true" hidden></svg></div></div></figure>
+  </div>
+  <div class="caption" aria-live="polite">
+    <div><h3 id="note-title">B1 · Open lists</h3><p id="note-body"></p><p id="state-note" class="muted"></p><small id="guide-note" hidden>Blue guides are review annotations: shared color-bar/text columns, title baseline, and control/date-range centerlines. They are not part of the app.</small></div>
+    <div><h3>My preference</h3><p>Start with B1. Its alignment and spacing make the lists clear without extra containers. B2 is useful if stronger list boundaries feel more comfortable.</p></div>
+  </div>
+
+  <section class="rationale">
+    <h2>What changed, and why</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Refinement</th><th>Reason / tradeoff</th></tr></thead>
+      <tbody>
+        <tr><td>Control placement</td><td>View → Selection → Events stays in one compact group. On wide windows it sits beside the period; in a smaller window the entire group moves below it. Navigation stays immediately left of the date.</td><td>The groups keep their order and proximity rather than occupying separate ends of the screen.</td></tr>
+        <tr><td>Header alignment</td><td>The period title and group labels share a text baseline. The range and navigation align with the control row beneath. The period title is 22px rather than 24px.</td><td>Two clear alignment rows give the title less visual weight while preserving hierarchy. The date column reserves enough width for every month.</td></tr>
+        <tr><td>Color roles</td><td>Neutral weekend labels and backgrounds replace the bright red mini-calendar dates and inherited green surface fragments. Source colors remain on events and source bars; metadata uses one slate color.</td><td>A muted terracotta current-time marker is an intentional semantic accent. It now sits behind cards, so it cannot cross out an event title.</td></tr>
+        <tr><td>List alignment</td><td>Top-level calendar and agenda/search source bars share a column; names and event titles share another. Nested search occurrences keep their indentation and folding controls.</td><td>Alignment communicates their relationship to a calendar. One-line rows with eye controls versus two-line event rows already distinguish their roles.</td></tr>
+        <tr><td>Selection & surfaces</td><td>Both lists use the same quiet green row fill, subtle outline, and rounded corners. Calendar visibility stays a separate, unfilled eye control. Focus has its own dotted outline.</td><td>B1 relies on whitespace. B2 adds one light panel around each list, without boxing every row. Main-calendar selection retains the source hue.</td></tr>
+        <tr><td>Button borders</td><td>Ordinary icon actions have no resting box. Fields are outlined; exclusive choices sit inside a segmented container, with a white chosen segment. Hover adds a quiet tint.</td><td>Consistency means the same treatment for the same role, rather than a border around every clickable object.</td></tr>
+        <tr><td>Spacing & corners</td><td>A 4px spacing scale: 8px from headings to content, 16px between command groups, 24px between major sidebar sections, and 20px outer margins. Small controls and row selections use 4px corners; groups and panels use 6px.</td><td>Whitespace provides enough section separation in B1. B2 tests subtle outlines as an alternative; adding divider lines as well would be redundant.</td></tr>
+        <tr><td>All-day clutter</td><td>The repeated “+ All day” labels disappear. A single ALL DAY axis label and the pinned lane remain, along with connected multi-day bars.</td><td>Existing creation gestures remain available. A permanent action label in every day adds little once the lane is visible.</td></tr>
+        <tr><td>Grid lines</td><td>One neutral line color and continuous column boundaries through weekday headers, the all-day lane, and the hours. Pinned surfaces reserve the timed scrollbar’s width.</td><td>Continuous geometry is easier to follow. The lines remain light so the calendar does not compete with its events.</td></tr>
+        <tr><td>Typography</td><td>Weekday labels use the same 9pt semibold style in week, month, and import. Week date numbers remain larger than month-cell dates. Body text, metadata, and section labels have consistent roles.</td><td>The weekday is the same information in each view; the date number has a different hierarchy in a seven-column header versus a 42-cell month.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="tokens">
+    <section class="card"><h3>Palette roles</h3><p class="muted">Calendar source hues are data; the surrounding interface uses a small neutral and green palette.</p><div class="palette"><span><i style="background:#fff"></i>Canvas</span><span><i style="background:#f6f7f8"></i>Sidebar</span><span><i style="background:#27313a"></i>Text</span><span><i style="background:#596570"></i>Metadata</span><span><i style="background:#475f52"></i>Accent</span><span><i style="background:#e7eee8"></i>Selected row</span><span><i style="background:#e0e5e8"></i>Grid</span><span><i style="background:#9b5f56"></i>Current time</span></div></section>
+    <section class="card"><h3>What to compare</h3><ul><li>Wide versus smaller window: do the header groups feel stable and related?</li><li>Open lists versus panels: is whitespace enough to make the lists clear?</li><li>Search: do selected rows read consistently with the creation calendar?</li><li>Week versus month: is the shared typography and line work calmer?</li><li>Yellow calendar: titles and times should stay readable.</li></ul></section>
+  </div>
+  <details><summary>Scope, sources, and reproduction</summary><p style="margin-top:12px">These are static native Qt renderings, using an in-memory database, disabled sync, and synthetic events frozen to 6 November 2026. No production files, profiles, or calendar data were changed. This round refines B; it does not switch to C’s near-white event cards.</p><p>The prototypes check visual fit at two sizes. Long event-title clipping in narrow columns remains visible rather than being hidden. They do not establish complete accessibility or interaction conformance.</p><ul><li><a href="https://www.nngroup.com/articles/gestalt-proximity/">Proximity</a> and <a href="https://www.nngroup.com/articles/gestalt-similarity/">similarity</a> inform grouping and repeated control roles.</li><li><a href="https://developer.gnome.org/hig/guidelines/typography.html">GNOME typography guidance</a> informs the smaller set of type roles.</li><li><a href="https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html">W3C text contrast</a> and <a href="https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html">non-text contrast</a> inform readability and state indicators; decorative gridlines can stay quiet.</li></ul><p><a href="README.txt">Reproduction and file guide</a> · <a href="../2026-11-ui-review/index.html">First design study</a></p></details>
+</main>
+<footer><p>18 screenshots · two refinements plus previous B · no app changes. Alignment guides use coordinates captured from the prototype widgets.</p></footer>
+<script>
+  const METRICS = /* METRICS_START */ {"original": {"week": {"size": [1440, 960], "bar_x": 18, "text_x": 27, "list_top": 328, "list_bottom": 902, "heading_baseline": 42, "controls_y": 56.0, "range_y": 63.0}, "narrow": {"size": [1030, 690], "bar_x": 18, "text_x": 27, "list_top": 328, "list_bottom": 632, "heading_baseline": 42, "controls_y": 56.0, "range_y": 63.0}, "month": {"size": [1440, 960], "bar_x": 18, "text_x": 27, "list_top": 328, "list_bottom": 902, "heading_baseline": 42, "controls_y": 56.0, "range_y": 63.0}, "yellow": {"size": [1440, 960], "bar_x": 18, "text_x": 27, "list_top": 328, "list_bottom": 902, "heading_baseline": 42, "controls_y": 56.0, "range_y": 63.0}, "search": {"size": [1440, 960], "bar_x": 18, "text_x": 27, "list_top": 328, "list_bottom": 902, "heading_baseline": 42, "controls_y": 56.0, "range_y": 63.0}}, "open": {"week": {"size": [1440, 960], "bar_x": 36, "text_x": 48, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "narrow": {"size": [1030, 690], "bar_x": 36, "text_x": 48, "list_top": 340, "list_bottom": 630, "heading_baseline": 39, "controls_y": 130.0, "range_y": 58.0}, "month": {"size": [1440, 960], "bar_x": 36, "text_x": 48, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "yellow": {"size": [1440, 960], "bar_x": 36, "text_x": 48, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "search": {"size": [1440, 960], "bar_x": 36, "text_x": 48, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}}, "panels": {"week": {"size": [1440, 960], "bar_x": 43, "text_x": 55, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "narrow": {"size": [1030, 690], "bar_x": 43, "text_x": 55, "list_top": 340, "list_bottom": 630, "heading_baseline": 39, "controls_y": 130.0, "range_y": 58.0}, "month": {"size": [1440, 960], "bar_x": 43, "text_x": 55, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "yellow": {"size": [1440, 960], "bar_x": 43, "text_x": 55, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}, "search": {"size": [1440, 960], "bar_x": 43, "text_x": 55, "list_top": 340, "list_bottom": 900, "heading_baseline": 39, "controls_y": 66.0, "range_y": 66.0}}} /* METRICS_END */;
+  const variants={
+    open:{title:'B1 · Open lists',body:'Whitespace separates the sections. Shared alignment, typography, and selection make the two lists feel related, while their different row structures communicate their roles. This retains B’s open, quiet sidebar.'},
+    panels:{title:'B2 · Soft panels',body:'The same rows and controls sit inside white surfaces with a single subtle border. List boundaries are stronger, at the cost of some framing, padding, and empty space beneath short lists.'}
+  };
+  const states={
+    week:{name:'Week',width:1440,height:960,note:'Personal is the creation calendar; “Weekly reflection” is selected in the agenda and calendar. The candidate check mark is shown on hover.'},
+    narrow:{name:'Smaller window',width:1030,height:690,note:'The entire command group wraps below the period, in the same order. Only the agenda needs to scroll; the source calendars remain fully visible.'},
+    month:{name:'Month',width:1440,height:960,note:'Weekday labels match week view. Date numbers are smaller because they label individual month cells rather than major columns.'},
+    search:{name:'Search',width:1440,height:960,note:'A real search for “work” replaces the agenda in the same space. Row selection uses the same surface as the calendar creation target.'},
+    yellow:{name:'Bright yellow calendar',width:1440,height:960,note:'Work’s source color is deliberately set to #ffff00. Source hues remain visible while event text stays neutral and readable.'},
+    import:{name:'Import',width:980,height:680,note:'Four synthetic events, one excluded. The source field, controls, weekday labels, and grid use the same neutral visual language.'}
+  };
+  let selected='open';
+  const $=id=>document.getElementById(id);
+  function update(){
+    const state=$('state').value, data=states[state], variant=variants[selected];
+    document.querySelectorAll('[data-variant]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.variant===selected)));
+    $('proposal-title').textContent=variant.title;
+    $('note-title').textContent=variant.title;
+    $('note-body').textContent=variant.body;
+    $('state-note').textContent=data.note;
+    for(const [prefix,key,title] of [['original','original','Previous B'],['proposal',selected,variant.title]]){
+      const path=`images/${key}-${state}.png`,img=$(prefix+'-image');
+      img.src=path;img.width=data.width;img.height=data.height;img.alt=`${title}, ${data.name}, synthetic events`;
+      $(prefix+'-link').href=path;
+    }
+    $('baseline').hidden=!$('compare').checked;
+    $('stage').classList.toggle('compare',$('compare').checked);
+    const metrics=METRICS[selected]?.[state],show=$('guides').checked&&Boolean(metrics);
+    $('overlay').toggleAttribute('hidden',!show);$('guide-note').hidden=!show;
+    $('overlay').setAttribute('viewBox',`0 0 ${data.width} ${data.height}`);
+    $('overlay').innerHTML=show?[
+      `<line x1="${metrics.bar_x}" x2="${metrics.bar_x}" y1="${metrics.list_top}" y2="${metrics.list_bottom}"/>`,
+      `<line x1="${metrics.text_x}" x2="${metrics.text_x}" y1="${metrics.list_top}" y2="${metrics.list_bottom}"/>`,
+      `<line x1="300" x2="${data.width-20}" y1="${metrics.heading_baseline}" y2="${metrics.heading_baseline}"/>`,
+      `<line x1="300" x2="${data.width-20}" y1="${metrics.controls_y}" y2="${metrics.controls_y}"/>`,
+      ...(metrics.range_y===metrics.controls_y?[]:[`<line x1="300" x2="650" y1="${metrics.range_y}" y2="${metrics.range_y}"/>`])
+    ].join(''):'';
+    location.hash=selected+'/'+state+($('compare').checked?'/compare':'');
+  }
+  document.querySelectorAll('[data-variant]').forEach(button=>button.addEventListener('click',()=>{selected=button.dataset.variant;update();}));
+  ['state','compare','guides'].forEach(id=>$(id).addEventListener('change',update));
+  function scale(actual){$('stage').classList.toggle('actual',actual);$('fit').setAttribute('aria-pressed',String(!actual));$('actual').setAttribute('aria-pressed',String(actual));}
+  $('fit').addEventListener('click',()=>scale(false));$('actual').addEventListener('click',()=>scale(true));
+  const parts=location.hash.slice(1).split('/');
+  if(variants[parts[0]])selected=parts[0];
+  if(states[parts[1]])$('state').value=parts[1];
+  $('compare').checked=parts[2]==='compare';
+  update();
+</script>
+</html>
