@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from lebacal.credentials import CredentialStore
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.store import HistoryConflict, Store
-from lebacal.sync import SyncEngine
-from lebacal.vdirsyncer_backend import BridgeConflict, BridgeResult, VdirsyncerBackend, _digest, semantic
-from lebacal.vdirsyncer_hook import conflict
+from debacal.credentials import CredentialStore
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.store import HistoryConflict, Store
+from debacal.sync import SyncEngine
+from debacal.vdirsyncer_backend import BridgeConflict, BridgeResult, VdirsyncerBackend, _digest, semantic
+from debacal.vdirsyncer_hook import conflict
 
 
 def event(title="Local version"):
@@ -189,7 +189,7 @@ def test_installed_vdir_cli_guards_delete_race_and_honors_fresh_review(tmp_path,
     cli = pytest.importorskip("vdirsyncer.cli")
     from vdirsyncer.cli.utils import storage_names
     from vdirsyncer.storage.filesystem import FilesystemStorage
-    from lebacal.vdirsyncer_runner import install_write_guard
+    from debacal.vdirsyncer_runner import install_write_guard
 
     class RemoteFilesystem(FilesystemStorage):
         def __init__(self, url, **kwargs):

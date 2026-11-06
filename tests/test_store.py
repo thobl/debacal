@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from lebacal.models import Calendar, Event
-from lebacal.store import HistoryConflict, Store
+from debacal.models import Calendar, Event
+from debacal.store import HistoryConflict, Store
 
 
 def event(event_id="a", calendar_id="local", **changes):

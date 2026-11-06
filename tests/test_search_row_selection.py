@@ -12,11 +12,11 @@ from PySide6.QtCore import Qt, QCoreApplication, QEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from lebacal.models import Event
-from lebacal.preferences import Preferences
-from lebacal.recurrence import expand_series, recurrence_key
-from lebacal.search_panel import SearchPanel, MORE_ROLE, SUBTITLE_ROLE, page_size
-from lebacal.store import Store
+from debacal.models import Event
+from debacal.preferences import Preferences
+from debacal.recurrence import expand_series, recurrence_key
+from debacal.search_panel import SearchPanel, MORE_ROLE, SUBTITLE_ROLE, page_size
+from debacal.store import Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
@@ -27,8 +27,8 @@ def workspace():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     errors = []
-    with patch('lebacal.search_panel.local_zone', return_value=ZONE), \
-         patch('lebacal.search_panel.now', return_value=START), \
+    with patch('debacal.search_panel.local_zone', return_value=ZONE), \
+         patch('debacal.search_panel.now', return_value=START), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         panel = SearchPanel(store, Preferences())
         panel.resize(400, 600)

@@ -70,7 +70,7 @@ class DiscoveryHTTP:
             if _origin(url) != self.origin:
                 raise DiscoveryError("The server redirected discovery to a different origin. Enter that server URL directly.")
             request = Request(url, data=body, method="PROPFIND", headers={
-                "Content-Type": "application/xml; charset=utf-8", "Depth": depth, "User-Agent": "Lebacal/0.1",
+                "Content-Type": "application/xml; charset=utf-8", "Depth": depth, "User-Agent": "Debacal/0.1",
             })
             try:
                 response = self.opener.open(request, timeout=15)

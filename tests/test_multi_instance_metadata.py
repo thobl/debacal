@@ -15,14 +15,14 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog
-from lebacal.ics import parse_ics
-from lebacal.ics_fallback import folded, unfolded
-from lebacal.models import Calendar
-from lebacal.patterns import expand_sequence
-from lebacal.recurrence import base_schedule_starts, expand_series
-from lebacal.store import Store
-from lebacal.vdirsyncer_backend import VdirsyncerBackend, semantic
+from debacal.dialogs import EventDialog
+from debacal.ics import parse_ics
+from debacal.ics_fallback import folded, unfolded
+from debacal.models import Calendar
+from debacal.patterns import expand_sequence
+from debacal.recurrence import base_schedule_starts, expand_series
+from debacal.store import Store
+from debacal.vdirsyncer_backend import VdirsyncerBackend, semantic
 from test_vdirsyncer import FakeCLI
 
 
@@ -30,7 +30,7 @@ ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2027, 3, 20, 9, tzinfo=ZONE)
 REGULAR = '  4*(+2)  '
 IRREGULAR = '+5d 11:00-2.4.2027 +3d'
-METADATA = {'X-LEBACAL-PATTERN', 'X-LEBACAL-PATTERN-VERSION', 'X-LEBACAL-PATTERN-ANCHOR'}
+METADATA = {'X-DEBACAL-PATTERN', 'X-DEBACAL-PATTERN-VERSION', 'X-DEBACAL-PATTERN-ANCHOR'}
 
 
 def instants(values):
@@ -67,7 +67,7 @@ def workspaces(tmp_path):
     app = QApplication.instance() or QApplication([])
     cli = FakeCLI()
     instances, dialogs = [], []
-    with patch('lebacal.dialogs.local_zone', return_value=ZONE):
+    with patch('debacal.dialogs.local_zone', return_value=ZONE):
         for name in ('installation-a', 'installation-b'):
             store = Store(tmp_path / (name + '.sqlite'))
             calendar = Calendar(name + '-calendar', 'Shared test calendar', '#123456', kind='caldav',
@@ -129,7 +129,7 @@ def test_custom_configuration_roundtrips_bidirectionally_across_installations(wo
     original = create(a, editor, literal)
     assert bool(original.recurrence_rule) == (literal == REGULAR)
     assert a.sync().sent == 1
-    # Another client may add metadata that Lebacal must preserve while editing.
+    # Another client may add metadata that Debacal must preserve while editing.
     cli.remote[original.ical_uid] = cli.remote[original.ical_uid].replace(
         'END:VEVENT', 'X-OTHER-CLIENT-FLAG:retained\nEND:VEVENT')
     assert b.sync().received == 1
@@ -137,7 +137,7 @@ def test_custom_configuration_roundtrips_bidirectionally_across_installations(wo
     assert imported.calendar_id == b.calendar.id != original.calendar_id
     assert imported.id != original.id
     assert_definition(imported, original)
-    with patch('lebacal.dialogs.local_zone', return_value=display_zone):
+    with patch('debacal.dialogs.local_zone', return_value=display_zone):
         reopened = editor(b, imported)
         assert reopened.pattern.text() == literal
         assert instants(reopened.sequence_starts()) == instants(base_schedule_starts(original))
@@ -175,7 +175,7 @@ def test_text_only_configuration_change_is_published_without_changing_standard_d
     a.sync()
     b.sync()
     imported = b.resource(original.ical_uid)
-    with patch('lebacal.dialogs.local_zone', return_value=display_zone):
+    with patch('debacal.dialogs.local_zone', return_value=display_zone):
         dialog = editor(b, imported)
         literal = '  4*(+2)  '
         dialog.pattern.setText(literal)
@@ -201,7 +201,7 @@ def test_other_machine_previous_display_date_preserves_original_fixed_anchor(wor
     a.sync()
     b.sync()
     imported = b.resource(original.ical_uid)
-    with patch('lebacal.dialogs.local_zone', return_value=ZoneInfo('UTC')):
+    with patch('debacal.dialogs.local_zone', return_value=ZoneInfo('UTC')):
         dialog = editor(b, imported)
         assert dialog.start.date().toPython() == initial.date() - timedelta(days=1)
         assert dialog.pattern.text() == literal
@@ -264,8 +264,8 @@ def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_res
         assert instants(expand_sequence(reopened.pattern.text(), received.start)) == instants(base_schedule_starts(received))
 
 
-@pytest.mark.parametrize('stripped', [METADATA, {'X-LEBACAL-PATTERN'}, {'X-LEBACAL-PATTERN-VERSION'},
-                                     {'X-LEBACAL-PATTERN-ANCHOR'}], ids=['all', 'literal', 'version', 'anchor'])
+@pytest.mark.parametrize('stripped', [METADATA, {'X-DEBACAL-PATTERN'}, {'X-DEBACAL-PATTERN-VERSION'},
+                                     {'X-DEBACAL-PATTERN-ANCHOR'}], ids=['all', 'literal', 'version', 'anchor'])
 def test_server_stripped_annotations_keep_standard_schedule_editable(workspaces, stripped):
     a, b, cli, editor = workspaces
     original = create(a, editor, IRREGULAR)
@@ -280,9 +280,9 @@ def test_server_stripped_annotations_keep_standard_schedule_editable(workspaces,
     b.sync()
     for instance in (a, b):
         received = instance.resource(original.ical_uid)
-        assert received.schedule_expression == ('' if 'X-LEBACAL-PATTERN' in stripped else original.schedule_expression)
-        assert received.schedule_syntax == (1 if 'X-LEBACAL-PATTERN-VERSION' in stripped else 2)
-        assert received.expression_anchor == ('' if 'X-LEBACAL-PATTERN-ANCHOR' in stripped else original.expression_anchor)
+        assert received.schedule_expression == ('' if 'X-DEBACAL-PATTERN' in stripped else original.schedule_expression)
+        assert received.schedule_syntax == (1 if 'X-DEBACAL-PATTERN-VERSION' in stripped else 2)
+        assert received.expression_anchor == ('' if 'X-DEBACAL-PATTERN-ANCHOR' in stripped else original.expression_anchor)
         assert schedule(received) == schedule(original)
         assert received.timezone_id == original.timezone_id
         reopened = editor(instance, received)

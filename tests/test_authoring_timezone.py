@@ -12,12 +12,12 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Event
-from lebacal.patterns import expand_sequence
-from lebacal.recurrence import base_schedule_starts, expand_series, schedule_fields
-from lebacal.store import Store
+from debacal.dialogs import EventDialog
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Event
+from debacal.patterns import expand_sequence
+from debacal.recurrence import base_schedule_starts, expand_series, schedule_fields
+from debacal.store import Store
 
 
 BERLIN = ZoneInfo('Europe/Berlin')
@@ -48,9 +48,9 @@ def editors():
     app = QApplication.instance() or QApplication([])
     widgets = []
     store = Store(':memory:')
-    with patch('lebacal.dialogs.local_zone', return_value=UTC), \
-         patch('lebacal.series_preview.local_zone', return_value=UTC), \
-         patch('lebacal.calendar_widgets.local_zone', return_value=UTC):
+    with patch('debacal.dialogs.local_zone', return_value=UTC), \
+         patch('debacal.series_preview.local_zone', return_value=UTC), \
+         patch('debacal.calendar_widgets.local_zone', return_value=UTC):
         def create(master=None, *, selected=None, scope='group', start=START):
             selected = selected or (occurrences(master)[0] if master else None)
             dialog = EventDialog(store.list_calendars(), selected.start if selected else start,
@@ -214,7 +214,7 @@ def test_all_day_imported_dates_do_not_follow_timezone_date_conversion(editors):
     _, create, click = editors
     initial = datetime(2026, 11, 7, tzinfo=BERLIN)
     source = authored('2*+1d', initial, all_day=True)
-    with patch('lebacal.ics.local_timezone', return_value=UTC):
+    with patch('debacal.ics.local_timezone', return_value=UTC):
         master = parse_ics(export_ics([source]), 'local')[0]
     dialog = create(master)
     assert dialog.start.date().toPython() == initial.date()

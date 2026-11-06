@@ -2,10 +2,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from queue import Empty
 
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.store import Store
-from lebacal.sync import PreconditionFailed, RemoteResource, SyncEngine
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.store import Store
+from debacal.sync import PreconditionFailed, RemoteResource, SyncEngine
 
 
 class FakeTransport:
@@ -157,7 +157,7 @@ def test_ics_subscription_refresh_and_failed_refresh_preserve_cache(tmp_path, mo
     store = Store(path)
     store.save_calendar(Calendar("feed", "Feed", "#abcdef", kind="ics", url="https://calendar.test/events.ics"))
     body = export_ics([replace(event(), id="feed-event", calendar_id="feed")])
-    monkeypatch.setattr("lebacal.sync.urlopen", lambda *a, **k: io.BytesIO(body))
+    monkeypatch.setattr("debacal.sync.urlopen", lambda *a, **k: io.BytesIO(body))
     engine = SyncEngine(path)
     try:
         assert not any(m.kind == "error" for m in synchronize(engine))
@@ -176,7 +176,7 @@ def test_ics_subscription_refresh_and_failed_refresh_preserve_cache(tmp_path, mo
 def test_caldav_adapter_uses_conditional_http_headers(monkeypatch):
     import sys
     from types import SimpleNamespace
-    from lebacal.sync import CalDAVTransport
+    from debacal.sync import CalDAVTransport
     calls = []
     class Client:
         def __init__(self, **kwargs):
@@ -209,7 +209,7 @@ def test_external_client_stripping_extensions_preserves_local_identity(tmp_path)
         synchronize(engine)
         href = transport.new_href("e1")
         data = export_ics([replace(event(), title="External edit")]).decode()
-        data = "\r\n".join(line for line in data.splitlines() if not line.startswith("X-LEBACAL-"))
+        data = "\r\n".join(line for line in data.splitlines() if not line.startswith("X-DEBACAL-"))
         transport.resources[href] = RemoteResource(href, '"external"', data)
         synchronize(engine)
         assert [e.id for e in store.list_events(calendar_ids=["remote"])] == ["e1"]

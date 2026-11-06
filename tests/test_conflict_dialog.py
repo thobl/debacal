@@ -13,13 +13,13 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.conflict_dialog import ConflictDialog
-from lebacal.models import Calendar, Event
-from lebacal.preferences import Preferences
-from lebacal.preferences_dialog import PreferencesDialog
-from lebacal.store import Store
-from lebacal.sync import SyncConflict
-from lebacal.ui import MainWindow
+from debacal.conflict_dialog import ConflictDialog
+from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
+from debacal.preferences_dialog import PreferencesDialog
+from debacal.store import Store
+from debacal.sync import SyncConflict
+from debacal.ui import MainWindow
 
 
 @pytest.fixture

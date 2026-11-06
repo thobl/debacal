@@ -12,11 +12,11 @@ from pathlib import Path
 import os
 from subprocess import CompletedProcess
 
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.store import Store
-from lebacal.vdirsyncer_backend import VdirsyncerBackend
-from lebacal.vdirsyncer_hook import conflict as conflict_command
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.store import Store
+from debacal.vdirsyncer_backend import VdirsyncerBackend
+from debacal.vdirsyncer_hook import conflict as conflict_command
 
 
 def sample(title="Original", id="event"):
@@ -46,7 +46,7 @@ class FakeCLI:
             return json.loads(config.get(section, key))
         pair = arguments[-1]
         assert "password =" not in config_path.read_text()
-        assert "LEBACAL_VDIR_PASSWORD" in env
+        assert "DEBACAL_VDIR_PASSWORD" in env
         assert kwargs.get("pass_fds")
         os.fstat(kwargs["pass_fds"][0])  # The subprocess retains the live calendar lock.
         assert not config.has_option("storage remote", "item_types"), "Use complete PROPFIND inventory, not server event filtering"
@@ -100,12 +100,12 @@ class FakeCLI:
                     local[uid] = b
             elif a is not None:
                 if changed_a:
-                    policy_file = env.get("LEBACAL_VDIR_WRITE_POLICY")
+                    policy_file = env.get("DEBACAL_VDIR_WRITE_POLICY")
                     if policy_file:
                         import asyncio
                         from types import SimpleNamespace
                         from vdirsyncer.exceptions import PreconditionFailed
-                        from lebacal.vdirsyncer_runner import install_write_guard
+                        from debacal.vdirsyncer_runner import install_write_guard
                         class Remote:
                             async def upload(self, item):
                                 return "new", "etag"
@@ -131,10 +131,10 @@ class FakeCLI:
 
     @staticmethod
     def ident(data):
-        from lebacal.vdirsyncer_backend import raw_uid
+        from debacal.vdirsyncer_backend import raw_uid
         if uid := raw_uid(data):
             return uid
-        from lebacal.ics_fallback import unfolded, text
+        from debacal.ics_fallback import unfolded, text
         return next((text(line.partition(":")[2]) for line in unfolded(data) if line.startswith("UID:")), FakeCLI.hash(data))
 
     @staticmethod
@@ -369,7 +369,7 @@ def test_installed_vdir_upload_guard_blocks_recreation_before_http_delegate(tmp_
     dav = pytest.importorskip("vdirsyncer.storage.dav")
     from vdirsyncer.vobject import Item
     from vdirsyncer.exceptions import PreconditionFailed
-    from lebacal.vdirsyncer_runner import install_write_guard
+    from debacal.vdirsyncer_runner import install_write_guard
     calls = []
     async def delegate(self, item):
         calls.append(item)
@@ -416,7 +416,7 @@ def test_relative_database_paths_produce_absolute_vdir_configuration(tmp_path, m
 
 
 def test_default_sync_engine_uses_vdir_and_reports_missing_backend_truthfully(tmp_path):
-    from lebacal.sync import SyncEngine
+    from debacal.sync import SyncEngine
     store, calendar, cli, backend = setup(tmp_path)
     cli.remote["event"] = export_ics([sample()]).decode()
     engine = SyncEngine(store.path, vdir_backend=backend)
@@ -443,8 +443,8 @@ def test_default_sync_engine_uses_vdir_and_reports_missing_backend_truthfully(tm
 
 def test_stale_displayed_conflict_cannot_authorize_unseen_server_version(tmp_path):
     import pytest
-    from lebacal.store import HistoryConflict
-    from lebacal.vdirsyncer_backend import semantic
+    from debacal.store import HistoryConflict
+    from debacal.vdirsyncer_backend import semantic
     store, calendar, cli, backend = setup(tmp_path)
     displayed = make_conflict(store, calendar, cli, backend)
     cli.remote["event"] = export_ics([replace(sample(), title="Unseen server version")]).decode()
@@ -458,7 +458,7 @@ def test_stale_displayed_conflict_cannot_authorize_unseen_server_version(tmp_pat
 
 
 def test_saved_conflicts_restore_without_network_or_password_after_restart(tmp_path):
-    from lebacal.sync import SyncEngine
+    from debacal.sync import SyncEngine
     store, calendar, cli, backend = setup(tmp_path)
     make_conflict(store, calendar, cli, backend)
     calls_before = len(cli.calls)
@@ -619,7 +619,7 @@ def test_unclosed_remote_component_is_never_inferred_deleted_and_other_uid_sends
 
 def test_supplied_calendar_import_query_and_candidate_bridge(tmp_path):
     import pytest
-    from lebacal.ics import parse_ics_report
+    from debacal.ics import parse_ics_report
     reproduction = Path(__file__).resolve().parents[1] / "large-calendar.ics"
     if not reproduction.exists():
         pytest.skip("The user's private reproduction calendar is not included")

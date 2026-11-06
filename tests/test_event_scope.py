@@ -2,7 +2,7 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from lebacal.event_scope import (
+from debacal.event_scope import (
     DEFAULT_SCOPE_MODIFIERS, expanded_scope_bindings,
     normalize_scope_modifiers, scope_from_modifiers,
 )

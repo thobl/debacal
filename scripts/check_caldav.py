@@ -19,18 +19,18 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lebacal.discovery import discover_calendars
-from lebacal.ics import export_ics, parse_ics, patch_ics
-from lebacal.models import Calendar, Event
-from lebacal.sync import CalDAVTransport
-from lebacal.store import Store
-from lebacal.vdirsyncer_backend import VdirsyncerBackend
+from debacal.discovery import discover_calendars
+from debacal.ics import export_ics, parse_ics, patch_ics
+from debacal.models import Calendar, Event
+from debacal.sync import CalDAVTransport
+from debacal.store import Store
+from debacal.vdirsyncer_backend import VdirsyncerBackend
 
 
 def check_vdirsyncer(calendar, password, event):
     """Exercise the same outbox/mirror bridge used by the desktop application."""
     uid = event.ical_uid
-    with tempfile.TemporaryDirectory(prefix="lebacal-live-check-") as directory:
+    with tempfile.TemporaryDirectory(prefix="debacal-live-check-") as directory:
         with Store(Path(directory) / "calendar.sqlite3") as store:
             store.save_calendar(calendar)
             backend = VdirsyncerBackend(store.path)
@@ -54,11 +54,11 @@ def check_vdirsyncer(calendar, password, event):
                 returned = remote_item()
                 assert returned and returned.ical_uid == uid and returned.recurrence_rule == event.recurrence_rule
                 master = store.get_event(event.id)
-                store.apply("Edit live test series", [replace(master, title="Lebacal integration test updated (safe to remove)")])
+                store.apply("Edit live test series", [replace(master, title="Debacal integration test updated (safe to remove)")])
                 instances = [item for item in store.query_occurrences(event.start - timedelta(days=1), event.start + timedelta(days=30))
                              if item.ical_uid == uid]
                 assert len(instances) == 3
-                store.edit_occurrence(instances[1], replace(instances[1], title="Lebacal integration test exception (safe to remove)",
+                store.edit_occurrence(instances[1], replace(instances[1], title="Debacal integration test exception (safe to remove)",
                                                             start=instances[1].start + timedelta(minutes=30),
                                                             end=instances[1].end + timedelta(minutes=30)))
                 store.delete_occurrence(instances[2])
@@ -87,8 +87,8 @@ def check_vdirsyncer(calendar, password, event):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default=os.environ.get("LEBACAL_TEST_CALDAV_URL", ""), help="Server URL (or LEBACAL_TEST_CALDAV_URL)")
-    parser.add_argument("--username", default=os.environ.get("LEBACAL_TEST_CALDAV_USERNAME", ""), help="Account name (or LEBACAL_TEST_CALDAV_USERNAME)")
+    parser.add_argument("--url", default=os.environ.get("DEBACAL_TEST_CALDAV_URL", ""), help="Server URL (or DEBACAL_TEST_CALDAV_URL)")
+    parser.add_argument("--username", default=os.environ.get("DEBACAL_TEST_CALDAV_USERNAME", ""), help="Account name (or DEBACAL_TEST_CALDAV_USERNAME)")
     parser.add_argument("--write-test", action="store_true", help="Create/update/delete one uniquely named test event")
     parser.add_argument("--backend", choices=("vdirsyncer", "direct"), default="vdirsyncer",
                         help="Test the application's default bridge, or the explicit legacy direct transport")
@@ -96,9 +96,9 @@ def main():
     args = parser.parse_args()
     server = args.url
     username = args.username
-    password = os.environ.get("LEBACAL_TEST_CALDAV_PASSWORD", "")
+    password = os.environ.get("DEBACAL_TEST_CALDAV_PASSWORD", "")
     if not server or not username:
-        parser.error("Supply --url and --username, or set LEBACAL_TEST_CALDAV_URL and LEBACAL_TEST_CALDAV_USERNAME.")
+        parser.error("Supply --url and --username, or set DEBACAL_TEST_CALDAV_URL and DEBACAL_TEST_CALDAV_USERNAME.")
     if not password:
         password = getpass.getpass("CalDAV app password: ")
     if not password:
@@ -114,7 +114,7 @@ def main():
                         username=username, read_only=collection.read_only)
     if not args.write_test:
         if args.backend == "vdirsyncer":
-            with tempfile.TemporaryDirectory(prefix="lebacal-read-check-") as directory:
+            with tempfile.TemporaryDirectory(prefix="debacal-read-check-") as directory:
                 with Store(Path(directory) / "calendar.sqlite3") as store:
                     store.save_calendar(calendar)
                     result = VdirsyncerBackend(store.path).sync(store, calendar, password)
@@ -126,9 +126,9 @@ def main():
             finally:
                 transport.close()
         return 0
-    uid = "lebacal-integration-" + str(uuid4())
+    uid = "debacal-integration-" + str(uuid4())
     start = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=7)
-    event = Event(uid, calendar.id, "Lebacal integration test (safe to remove)", start, start + timedelta(minutes=15),
+    event = Event(uid, calendar.id, "Debacal integration test (safe to remove)", start, start + timedelta(minutes=15),
                   ical_uid=uid, recurrence_rule="FREQ=WEEKLY;COUNT=3")
     if args.backend == "vdirsyncer":
         check_vdirsyncer(calendar, password, event)
@@ -139,7 +139,7 @@ def main():
         saved = transport.put(href, export_ics([event]))
         parsed = parse_ics(saved.data, calendar.id)
         assert len(parsed) == 1 and parsed[0].ical_uid == uid and parsed[0].recurrence_rule == event.recurrence_rule
-        edited = replace(parsed[0], title="Lebacal integration test updated (safe to remove)",
+        edited = replace(parsed[0], title="Debacal integration test updated (safe to remove)",
                          excluded_dates=((start + timedelta(days=7)).isoformat(),))
         saved = transport.put(href, patch_ics(saved.data, edited), etag=saved.etag)
         returned = parse_ics(saved.data, calendar.id)[0]

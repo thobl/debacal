@@ -153,7 +153,7 @@ def _key(value, tz):
 
 def _schedule_syntax(component):
     try:
-        version = int(fallback.prop(component, "X-LEBACAL-PATTERN-VERSION", "1"))
+        version = int(fallback.prop(component, "X-DEBACAL-PATTERN-VERSION", "1"))
     except (ValueError, TypeError):
         raise ValueError("Custom schedule syntax version must be 1 or 2.") from None
     if version not in {1, 2}:
@@ -270,9 +270,9 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             # RFC 5545: DATE without an end lasts one day; DATE-TIME without
             # an end is a point, not an invented one-hour appointment.
             event_end = event_start + (timedelta(days=1) if all_day else timedelta(0))
-        event_id = str(uuid5(NAMESPACE_URL, f"lebacal:{calendar_id}:{uid}:"))
-        if fallback.prop(master_component, "X-LEBACAL-CALENDAR") == calendar_id:
-            event_id = fallback.prop(master_component, "X-LEBACAL-ID", event_id)
+        event_id = str(uuid5(NAMESPACE_URL, f"debacal:{calendar_id}:{uid}:"))
+        if fallback.prop(master_component, "X-DEBACAL-CALENDAR") == calendar_id:
+            event_id = fallback.prop(master_component, "X-DEBACAL-ID", event_id)
         params = master_component["DTSTART"][0][0]
         timezone_id = str(params.get("TZID", "")) or getattr(event_start.tzinfo, "key", "")
         if timezone_id:
@@ -284,15 +284,15 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             id=event_id, calendar_id=calendar_id,
             title=fallback.prop(master_component, "SUMMARY", "Untitled event"), start=event_start, end=event_end,
             description=fallback.prop(master_component, "DESCRIPTION"), location=fallback.prop(master_component, "LOCATION"),
-            group_id=fallback.prop(master_component, "X-LEBACAL-GROUP") or None,
-            candidate=fallback.prop(master_component, "X-LEBACAL-CANDIDATE").upper() == "TRUE",
+            group_id=fallback.prop(master_component, "X-DEBACAL-GROUP") or None,
+            candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz) for value in _decoded(master_component, "EXDATE", tz)),
             raw_ics=_resource_for_uid(data, uid, synthetic="UID" not in master_component),
-            schedule_expression=fallback.prop(master_component, "X-LEBACAL-PATTERN"),
-            expression_anchor=fallback.prop(master_component, "X-LEBACAL-PATTERN-ANCHOR"),
+            schedule_expression=fallback.prop(master_component, "X-DEBACAL-PATTERN"),
+            expression_anchor=fallback.prop(master_component, "X-DEBACAL-PATTERN-ANCHOR"),
             schedule_syntax=_schedule_syntax(master_component),
         )
         overrides, exclusions = {}, set(master.excluded_dates)
@@ -408,10 +408,10 @@ def _known_lines(event, uid, recurrence_id=""):
             lines.append(f"DTEND;TZID={event.timezone_id}:{event.end.astimezone(zone):%Y%m%dT%H%M%S}")
     lines.insert(0, "UID:" + fallback.escaped(uid))
     if event.schedule_expression and not recurrence_id:
-        lines.append("X-LEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))
-        lines.append("X-LEBACAL-PATTERN-VERSION:" + str(event.schedule_syntax))
+        lines.append("X-DEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))
+        lines.append("X-DEBACAL-PATTERN-VERSION:" + str(event.schedule_syntax))
     if event.expression_anchor and not recurrence_id:
-        lines.append("X-LEBACAL-PATTERN-ANCHOR:" + fallback.escaped(event.expression_anchor))
+        lines.append("X-DEBACAL-PATTERN-ANCHOR:" + fallback.escaped(event.expression_anchor))
     if recurrence_id:
         lines.append(_date_property("RECURRENCE-ID", recurrence_id))
     elif event.recurrence_rule:
@@ -448,9 +448,9 @@ def _timezone_definition(timezone_id, first_date, last_date):
 
 def _patch_block(block, event, uid, recurrence_id=""):
     known = {"UID", "SUMMARY", "DTSTART", "DTEND", "DURATION", "DTSTAMP", "DESCRIPTION", "LOCATION",
-             "X-LEBACAL-ID", "X-LEBACAL-CALENDAR", "X-LEBACAL-GROUP", "X-LEBACAL-CANDIDATE",
+             "X-DEBACAL-ID", "X-DEBACAL-CALENDAR", "X-DEBACAL-GROUP", "X-DEBACAL-CANDIDATE",
              "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"}
-    known.update({"X-LEBACAL-PATTERN", "X-LEBACAL-PATTERN-ANCHOR", "X-LEBACAL-PATTERN-VERSION"})
+    known.update({"X-DEBACAL-PATTERN", "X-DEBACAL-PATTERN-ANCHOR", "X-DEBACAL-PATTERN-VERSION"})
     result, nested = ["BEGIN:VEVENT"], 0
     for line in block[1:-1]:
         key = line.split(":", 1)[0].split(";")[0].upper()
@@ -466,7 +466,7 @@ def _patch_block(block, event, uid, recurrence_id=""):
 def serialize_resource(event):
     from .ics import local_timezone
     raw = event.raw_ics
-    header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Lebacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
+    header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
     uid = event.ical_uid or event.id
     event_blocks = [b for b in blocks if b[0] == "BEGIN:VEVENT"]
     masters, detached = [], {}
@@ -517,7 +517,7 @@ def export(events):
                     continue
                 seen_timezones.add(identity)
             components.extend(block)
-    return fallback.folded(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lebacal//Local-first calendar//EN", "CALSCALE:GREGORIAN",
+    return fallback.folded(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN",
                             *components, "END:VCALENDAR"])
 
 

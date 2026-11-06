@@ -13,7 +13,7 @@ from threading import Lock, RLock
 from urllib.parse import urlsplit
 
 
-SERVICE = "lebacal.calendar-account.v1"
+SERVICE = "debacal.calendar-account.v1"
 
 
 class CredentialError(ValueError):

@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_events, recurrence_key
-from lebacal.store import HistoryConflict, Store
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_events, recurrence_key
+from debacal.store import HistoryConflict, Store
 
 
 BERLIN = ZoneInfo("Europe/Berlin")

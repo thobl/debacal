@@ -14,10 +14,10 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.models import Calendar, Event
-from lebacal.dialogs import EventDialog
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.models import Calendar, Event
+from debacal.dialogs import EventDialog
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo("Europe/Berlin")
@@ -81,7 +81,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         locked = self.event("locked", group_id="group", read_only=True)
         self.store.apply_remote([selected, locked])
         self.window.refresh()
-        with patch("lebacal.ui.EventDialog") as editor:
+        with patch("debacal.ui.EventDialog") as editor:
             self.window.edit_event(selected.id, group=True)
             editor.assert_not_called()
         self.assertIn("read-only", self.window.notice.text())
@@ -153,8 +153,8 @@ class WorkspaceRegressionTests(unittest.TestCase):
             self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted, dialog.error.text())
             return dialog.result()
         with patch.object(EventDialog, 'exec', save_dialog), \
-                patch('lebacal.ui.local_zone', return_value=ZONE), \
-                patch('lebacal.dialogs.local_zone', return_value=ZONE):
+                patch('debacal.ui.local_zone', return_value=ZONE), \
+                patch('debacal.dialogs.local_zone', return_value=ZONE):
             self.window.edit_event(selected.id, group=True)
         moved = self.store.get_event(later.id).start.astimezone(ZONE)
         self.assertEqual(moved.date(), date(2026, 11, 9))
@@ -176,8 +176,8 @@ class WorkspaceRegressionTests(unittest.TestCase):
             return dialog.result()
 
         with patch.object(EventDialog, 'exec', new=save_dialog), \
-                patch('lebacal.ui.local_zone', return_value=ZONE), \
-                patch('lebacal.dialogs.local_zone', return_value=ZONE):
+                patch('debacal.ui.local_zone', return_value=ZONE), \
+                patch('debacal.dialogs.local_zone', return_value=ZONE):
             self.window.edit_event(event_id, group=group)
         return scopes
 

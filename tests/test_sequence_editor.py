@@ -11,12 +11,12 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Event
-from lebacal.preferences import Preferences
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.dialogs import EventDialog
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Event
+from debacal.preferences import Preferences
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -28,7 +28,7 @@ def editor():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets = []
-    with patch('lebacal.dialogs.local_zone', return_value=ZONE), patch('lebacal.ui.local_zone', return_value=ZONE):
+    with patch('debacal.dialogs.local_zone', return_value=ZONE), patch('debacal.ui.local_zone', return_value=ZONE):
         def create(start=START, **kwargs):
             dialog = EventDialog(store.list_calendars(), start, start + timedelta(minutes=90),
                                  preferences=Preferences(0, 'european', '24h'), **kwargs)

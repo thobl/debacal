@@ -43,7 +43,7 @@ DEFAULT_BINDINGS = {
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
 } | DEFAULT_MODE_BINDINGS
-EVENT_MIME = 'application/x-lebacal-events+json'
+EVENT_MIME = 'application/x-debacal-events+json'
 
 STYLE = '''
 QWidget { font-family: "Sans Serif"; font-size: 13px; color: #29382f; }
@@ -128,13 +128,13 @@ class MainWindow(QMainWindow):
         if saved_bindings.get('search') == '/':
             saved_bindings['search'] = 'Ctrl+F'
         self.bindings = DEFAULT_BINDINGS | saved_bindings
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lebacal-files')
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
         self.engine = None
         if enable_sync and store.path != ':memory:':
             from .sync import SyncEngine
             self.engine = SyncEngine(store.path)
-        self.setWindowTitle('Lebacal · a little room for your time')
+        self.setWindowTitle('Debacal · a little room for your time')
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
         self.setStyleSheet(STYLE)
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(side)
         layout.setContentsMargins(20, 28, 20, 20)
         layout.setSpacing(13)
-        brand = QLabel('lebacal')
+        brand = QLabel('debacal')
         brand.setObjectName('brand')
         layout.addWidget(brand)
         layout.addWidget(hint('A little room for your time.'))
@@ -1409,7 +1409,7 @@ class MainWindow(QMainWindow):
         if mode in ('desktop', 'both') and desktop_available:
             if self.tray_icon is None:
                 self.tray_icon = QSystemTrayIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation), self)
-                self.tray_icon.setToolTip('Lebacal · calendar conflicts')
+                self.tray_icon.setToolTip('Debacal · calendar conflicts')
                 self.tray_icon.messageClicked.connect(self.show_conflicts)
                 self.tray_icon.show()
             self.tray_icon.showMessage('Calendar conflict', message.message, QSystemTrayIcon.MessageIcon.Information)

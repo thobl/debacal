@@ -13,10 +13,10 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog, ShortcutsDialog
-from lebacal.models import Event
-from lebacal.recurrence import expand_series, recurrence_key
-from lebacal.store import Store
+from debacal.dialogs import EventDialog, ShortcutsDialog
+from debacal.models import Event
+from debacal.recurrence import expand_series, recurrence_key
+from debacal.store import Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
@@ -29,7 +29,7 @@ def editors():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets = []
-    with patch('lebacal.dialogs.local_zone', return_value=ZONE):
+    with patch('debacal.dialogs.local_zone', return_value=ZONE):
         def create(master=None, selected=None, **kwargs):
             dialog = EventDialog(store.list_calendars(), selected.start if selected else START,
                                  event=selected, series=master, **kwargs)

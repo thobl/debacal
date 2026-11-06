@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def conflict(directory, left, right):
-    from lebacal.ics import patch_ics
-    from lebacal.vdirsyncer_backend import _digest, atomic_write, parsed_one, semantic
+    from debacal.ics import patch_ics
+    from debacal.vdirsyncer_backend import _digest, atomic_write, parsed_one, semantic
     local_data, remote_data = Path(left).read_text(), Path(right).read_text()
     local, remote = parsed_one(local_data), parsed_one(remote_data)
     if local.ical_uid != remote.ical_uid:
@@ -37,7 +37,7 @@ def conflict(directory, left, right):
 def main(argv=None):
     args = argv if argv is not None else sys.argv[1:]
     if args == ["password"]:
-        password = os.environ.get("LEBACAL_VDIR_PASSWORD", "")
+        password = os.environ.get("DEBACAL_VDIR_PASSWORD", "")
         if not password:
             return 1
         sys.stdout.write(password)

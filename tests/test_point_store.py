@@ -3,8 +3,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from lebacal.models import Event
-from lebacal.store import Store
+from debacal.models import Event
+from debacal.store import Store
 
 
 START = datetime(2026, 11, 10, 10, tzinfo=timezone.utc)

@@ -142,7 +142,7 @@ class VdirsyncerBackend:
         found = str(local) if local.is_file() else shutil.which("vdirsyncer")
         if not found and not self._injected_runner:
             raise ValueError("vdirsyncer is not installed in this Python environment or on PATH. "
-                             "Install the project dependencies, then restart Lebacal.")
+                             "Install the project dependencies, then restart Debacal.")
         return [found or "vdirsyncer"]
 
     @contextmanager
@@ -153,7 +153,7 @@ class VdirsyncerBackend:
             try:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                raise ValueError("Another Lebacal process is already syncing this calendar.") from None
+                raise ValueError("Another Debacal process is already syncing this calendar.") from None
             try:
                 yield stream.fileno()
             finally:
@@ -193,12 +193,12 @@ class VdirsyncerBackend:
             arguments.append("--force-delete")
         arguments.append("pull" if pull else "push")
         environment = os.environ.copy()
-        environment["LEBACAL_VDIR_PASSWORD"] = password
+        environment["DEBACAL_VDIR_PASSWORD"] = password
         if not (pull or bootstrap or calendar.read_only):
             # Preserve the maintained CLI while preventing its implicit
             # recreation of an edited event concurrently deleted on the server.
             arguments = [sys.executable, str(Path(__file__).with_name("vdirsyncer_runner.py")), *arguments[1:]]
-            environment["LEBACAL_VDIR_WRITE_POLICY"] = str(path / "write-policy.json")
+            environment["DEBACAL_VDIR_WRITE_POLICY"] = str(path / "write-policy.json")
         try:
             discover = [*self._command(), "--config", str(config), "discover", "--no-list", "pull" if pull else "push"]
             discovery = self.runner(discover, env=environment, capture_output=True, text=True,
@@ -211,12 +211,12 @@ class VdirsyncerBackend:
                                  stdin=subprocess.DEVNULL, timeout=120, check=False,
                                  pass_fds=(self._active_lock_fd,))
         except FileNotFoundError:
-            raise ValueError("vdirsyncer could not be started. Install it in the Python environment used to launch Lebacal.") from None
+            raise ValueError("vdirsyncer could not be started. Install it in the Python environment used to launch Debacal.") from None
         except subprocess.TimeoutExpired:
             raise ValueError("vdirsyncer timed out after two minutes. Local changes remain queued.") from None
         finally:
-            environment.pop("LEBACAL_VDIR_PASSWORD", None)
-            environment.pop("LEBACAL_VDIR_WRITE_POLICY", None)
+            environment.pop("DEBACAL_VDIR_PASSWORD", None)
+            environment.pop("DEBACAL_VDIR_WRITE_POLICY", None)
         output = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
         if password:
             output = output.replace(password, "[redacted]")
@@ -228,7 +228,7 @@ class VdirsyncerBackend:
         unknown = False
         for file in sorted(path.glob("*.ics")):
             data = file.read_bytes().decode("utf-8-sig", errors="replace")
-            # Inventory via PROPFIND includes tasks and journals. Lebacal does
+            # Inventory via PROPFIND includes tasks and journals. Debacal does
             # not edit these resources; preserve their files unchanged instead
             # of filtering the server listing or treating them as malformed.
             try:

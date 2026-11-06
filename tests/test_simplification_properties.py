@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal import patterns
-from lebacal.patterns import simplify_sequence
+from debacal import patterns
+from debacal.patterns import simplify_sequence
 
 
 UTC = timezone.utc

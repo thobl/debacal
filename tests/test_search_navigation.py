@@ -12,11 +12,11 @@ from PySide6.QtCore import Qt, QEvent, QCoreApplication
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_series, recurrence_key
-from lebacal.store import Store
-from lebacal.selection import selection_roots
-from lebacal.ui import MainWindow
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_series, recurrence_key
+from debacal.store import Store
+from debacal.selection import selection_roots
+from debacal.ui import MainWindow
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
@@ -28,9 +28,9 @@ def workspace():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     windows, errors = [], []
-    with patch('lebacal.ui.local_zone', return_value=ZONE), \
-         patch('lebacal.ui.now', return_value=START), \
-         patch('lebacal.calendar_widgets.local_zone', return_value=ZONE), \
+    with patch('debacal.ui.local_zone', return_value=ZONE), \
+         patch('debacal.ui.now', return_value=START), \
+         patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         window = MainWindow(store, enable_sync=False)
         windows.append(window)

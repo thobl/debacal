@@ -13,14 +13,14 @@ from PySide6.QtWidgets import QApplication, QDialog
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 
-from lebacal.dialogs import EventDialog
-from lebacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, badge, text
-from lebacal.preferences import Preferences
-from lebacal.series_preview import SeriesPreview
-from lebacal.models import Calendar, Event
-from lebacal.store import Store
-from lebacal.timeutil import local_zone
-from lebacal.ui import MainWindow
+from debacal.dialogs import EventDialog
+from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, badge, text
+from debacal.preferences import Preferences
+from debacal.series_preview import SeriesPreview
+from debacal.models import Calendar, Event
+from debacal.store import Store
+from debacal.timeutil import local_zone
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo("Europe/Berlin")
@@ -33,7 +33,7 @@ class DialogTests(unittest.TestCase):
 
     def setUp(self):
         self.store = Store(":memory:")
-        self.zone_patch = patch("lebacal.dialogs.local_zone", return_value=ZONE)
+        self.zone_patch = patch("debacal.dialogs.local_zone", return_value=ZONE)
         self.zone_patch.start()
         self.callback_errors = []
         self.exception_patch = patch("sys.excepthook", side_effect=lambda _, value, __: self.callback_errors.append(value))
@@ -267,7 +267,7 @@ class CanvasTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.zone_patch = patch("lebacal.calendar_widgets.local_zone", return_value=ZONE)
+        self.zone_patch = patch("debacal.calendar_widgets.local_zone", return_value=ZONE)
         self.zone_patch.start()
         self.callback_errors = []
         self.exception_patch = patch("sys.excepthook", side_effect=lambda _, value, __: self.callback_errors.append(value))
@@ -428,7 +428,7 @@ class CanvasTests(unittest.TestCase):
         self.widgets.append(header)
         header.resize(1042, 66)
         header.days = [date(2026, 11, 2) + timedelta(days=index) for index in range(7)]
-        with patch('lebacal.calendar_widgets.badge', wraps=badge) as draw_badge:
+        with patch('debacal.calendar_widgets.badge', wraps=badge) as draw_badge:
             header.grab()
             self.assertFalse(draw_badge.called)
             header.set_navigation(True, 2, '8')
@@ -445,7 +445,7 @@ class CanvasTests(unittest.TestCase):
         events = [self.event('first'), self.event('second', hour=11),
                   self.event('tuesday', day=date(2026, 11, 3))]
         canvas = self.canvas(events=events)
-        with patch('lebacal.calendar_widgets.badge', wraps=badge) as draw_badge:
+        with patch('debacal.calendar_widgets.badge', wraps=badge) as draw_badge:
             canvas.grab()
             self.assertFalse(draw_badge.called)
             canvas.set_navigation(True)
@@ -469,7 +469,7 @@ class CanvasTests(unittest.TestCase):
         month.resize(1050, 700)
         month.set_preferences(Preferences(start_weekday=6, date_format='iso', time_format='12h'))
         month.set_data(date(2026, 11, 1), 11, [self.event('afternoon', hour=14)], self.calendars)
-        with patch('lebacal.calendar_widgets.text', wraps=text) as draw_text:
+        with patch('debacal.calendar_widgets.text', wraps=text) as draw_text:
             month.grab()
             labels = [call.args[2] for call in draw_text.call_args_list]
             self.assertEqual(labels[:7], [month.preferences.weekday_name(day).upper() for day in [6, 0, 1, 2, 3, 4, 5]])

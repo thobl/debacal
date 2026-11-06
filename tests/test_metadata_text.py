@@ -5,11 +5,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.ics import export_ics, parse_ics, patch_ics
-from lebacal.ics_fallback import parse as parse_fallback, unfolded
-from lebacal.models import Event
-from lebacal.patterns import expand_sequence
-from lebacal.recurrence import schedule_fields, rules_equivalent
+from debacal.ics import export_ics, parse_ics, patch_ics
+from debacal.ics_fallback import parse as parse_fallback, unfolded
+from debacal.models import Event
+from debacal.patterns import expand_sequence
+from debacal.recurrence import schedule_fields, rules_equivalent
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -61,7 +61,7 @@ def test_long_folded_definition_and_metadata_only_patch_preserve_text(parse, sep
     assert final.schedule_expression == edited.schedule_expression
     assert rules_equivalent(final.recurrence_rule, original.recurrence_rule, original)
     assert final.recurrence_dates == original.recurrence_dates
-    assert sum(line.startswith('X-LEBACAL-PATTERN:') for line in unfolded(patched)) == 1
+    assert sum(line.startswith('X-DEBACAL-PATTERN:') for line in unfolded(patched)) == 1
 
 
 @pytest.mark.parametrize('newline', ['\r\n', '\n', '\r'])

@@ -2,7 +2,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from lebacal.discovery import DiscoveryError, _fallback_discover, discover_calendars
+from debacal.discovery import DiscoveryError, _fallback_discover, discover_calendars
 
 
 def response(href, props):
@@ -72,7 +72,7 @@ def test_installed_caldav_discovery_preserves_metadata_and_rejects_foreign_origi
         def propfind(self, url, props):
             return url, multistatus(response(url, '<d:resourcetype><c:calendar/></d:resourcetype><d:displayname>Shared</d:displayname><a:calendar-color>#aa3344ff</a:calendar-color><d:current-user-privilege-set><d:privilege><d:read/></d:privilege></d:current-user-privilege-set>'))
     monkeypatch.setitem(sys.modules, "caldav", SimpleNamespace(DAVClient=Client))
-    monkeypatch.setattr("lebacal.discovery.DiscoveryHTTP", HTTP)
+    monkeypatch.setattr("debacal.discovery.DiscoveryHTTP", HTTP)
     found = discover_calendars("https://cloud.test", "unused", "unused")
     assert found[0].name == "Shared"
     assert found[0].color == "#aa3344"

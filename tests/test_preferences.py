@@ -11,26 +11,26 @@ from unittest.mock import patch
 from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.preferences import Preferences, format_date, format_time
-from lebacal.preferences_dialog import PreferencesDialog
-from lebacal.store import Store
+from debacal.preferences import Preferences, format_date, format_time
+from debacal.preferences_dialog import PreferencesDialog
+from debacal.store import Store
 
 
 class PreferencesTests(unittest.TestCase):
     def test_system_defaults_follow_os_locale(self):
-        with patch('lebacal.preferences._system_locale', return_value=QLocale('en_US')):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('en_US')):
             preferences = Preferences()
             self.assertEqual(preferences.first_weekday, 6)
             self.assertEqual(preferences.week_start(date(2026, 11, 4)), date(2026, 11, 1))
             self.assertIn('PM', preferences.format_time(time(14, 5)))
-        with patch('lebacal.preferences._system_locale', return_value=QLocale('de_DE')):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('de_DE')):
             preferences = Preferences()
             self.assertEqual(preferences.first_weekday, 0)
             self.assertEqual(preferences.week_start(date(2026, 11, 4)), date(2026, 11, 2))
             self.assertEqual(preferences.format_time(time(14, 5)), '14:05')
 
     def test_explicit_formats_override_system(self):
-        with patch('lebacal.preferences._system_locale', return_value=QLocale('en_US')):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('en_US')):
             preferences = Preferences(start_weekday=0, date_format='european', time_format='24h')
             self.assertEqual(preferences.format_date(date(2026, 11, 4)), '04.11.2026')
             self.assertEqual(preferences.format_time(time(14, 5)), '14:05')
@@ -72,7 +72,7 @@ class PreferencesTests(unittest.TestCase):
                 Preferences(**values)
 
     def test_localized_weekday_names(self):
-        with patch('lebacal.preferences._system_locale', return_value=QLocale('de_DE')):
+        with patch('debacal.preferences._system_locale', return_value=QLocale('de_DE')):
             self.assertEqual(Preferences().weekday_name(6, short=False), 'Sonntag')
             self.assertIn('Mi', Preferences(date_format='iso').format_date(date(2026, 11, 4), weekday=True))
 

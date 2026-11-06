@@ -6,11 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.ics import parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_series, recurrence_key
-from lebacal.store import Store
-from lebacal.vdirsyncer_backend import VdirsyncerBackend
+from debacal.ics import parse_ics
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_series, recurrence_key
+from debacal.store import Store
+from debacal.vdirsyncer_backend import VdirsyncerBackend
 from test_vdirsyncer import FakeCLI
 
 
@@ -57,7 +57,7 @@ def test_explicit_authoring_removal_reaches_other_instance_without_resurrection(
         result = bridge_b.sync(b, cal_b, "synthetic-session")
         assert result.sent == 1 and not result.conflicts and not result.issues
         remote = cli.remote[source.ical_uid]
-        assert "X-LEBACAL-PATTERN" not in remote
+        assert "X-DEBACAL-PATTERN" not in remote
         assert timetable(parse_ics(remote, "reader")[0]) == original_dates
 
         result = bridge_a.sync(a, cal_a, "synthetic-session")

@@ -110,11 +110,11 @@ def event_lines(event):
             dates.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
     result = ["BEGIN:VEVENT", f"UID:{escaped(event.id)}", f"DTSTAMP:{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}",
               f"SUMMARY:{escaped(event.title)}", *dates, f"DESCRIPTION:{escaped(event.description)}",
-              f"LOCATION:{escaped(event.location)}", f"X-LEBACAL-ID:{escaped(event.id)}", f"X-LEBACAL-CALENDAR:{escaped(event.calendar_id)}"]
+              f"LOCATION:{escaped(event.location)}", f"X-DEBACAL-ID:{escaped(event.id)}", f"X-DEBACAL-CALENDAR:{escaped(event.calendar_id)}"]
     if event.group_id:
-        result.append(f"X-LEBACAL-GROUP:{escaped(event.group_id)}")
+        result.append(f"X-DEBACAL-GROUP:{escaped(event.group_id)}")
     if event.candidate:
-        result.append("X-LEBACAL-CANDIDATE:TRUE")
+        result.append("X-DEBACAL-CANDIDATE:TRUE")
     return [*result, "END:VEVENT"]
 
 

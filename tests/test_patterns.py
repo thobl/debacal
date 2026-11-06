@@ -3,8 +3,8 @@ import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from lebacal import legacy_patterns
-from lebacal.patterns import (
+from debacal import legacy_patterns
+from debacal.patterns import (
     PatternError, describe_pattern, expand_pattern, expand_sequence,
     reconstruct_pattern, reconstruct_sequence, serialize_sequence,
     shift_schedule_expression,
@@ -132,7 +132,7 @@ class SequenceTests(unittest.TestCase):
 
     def test_limits_are_checked_before_executing_or_allocating_large_repeats(self):
         self.assertEqual(len(expand_sequence('499*+1d', ANCHOR)), 500)
-        with patch('lebacal.patterns._relative', side_effect=AssertionError('must not execute')):
+        with patch('debacal.patterns._relative', side_effect=AssertionError('must not execute')):
             for expression in ['500*+1d', '999999999999999999*+1', '9999*(9999*(+1))',
                                '(' * 9 + '+1' + ')' * 9, '+1 ' * 3000]:
                 with self.subTest(expression=expression), self.assertRaises(PatternError):

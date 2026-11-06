@@ -8,12 +8,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.event_clipboard import EventClipboard
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_events
-from lebacal.selection import EventSelection, affected_visible, capture_selection, selection_roots
-from lebacal.store import HistoryConflict, Store
+from debacal.event_clipboard import EventClipboard
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_events
+from debacal.selection import EventSelection, affected_visible, capture_selection, selection_roots
+from debacal.store import HistoryConflict, Store
 
 
 ZONE = ZoneInfo("Europe/Berlin")
@@ -473,7 +473,7 @@ def test_raw_unbounded_master_capture_does_not_materialize_occurrences(store):
     a = repeating("a", recurrence_rule="FREQ=WEEKLY")
     store.apply("Create", [a])
     selected = occurrences(store, a.id)[3]
-    with patch("lebacal.recurrence.expand_series", side_effect=AssertionError("Do not flatten")):
+    with patch("debacal.recurrence.expand_series", side_effect=AssertionError("Do not flatten")):
         clip = capture_selection(store, [a], "single", reference=selected)
     assert clip.masters == (a,) and clip.reference.id == selected.id
     assert clip.masters[0].recurrence_rule == "FREQ=WEEKLY"

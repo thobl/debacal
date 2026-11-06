@@ -12,10 +12,10 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
-from lebacal.calendar_widgets import MonthCanvas
-from lebacal.models import Calendar, Event
-from lebacal.preferences import Preferences
-from lebacal.series_preview import SeriesPreview, text
+from debacal.calendar_widgets import MonthCanvas
+from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
+from debacal.series_preview import SeriesPreview, text
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -120,7 +120,7 @@ class PreviewTests(unittest.TestCase):
         preferences = Preferences(6, 'iso', '12h')
         preview = self.preview([self.event()], preferences)
         self.assertEqual(preview.grid_start, date(2026, 11, 1))
-        with patch('lebacal.series_preview.text', wraps=text) as draw_text:
+        with patch('debacal.series_preview.text', wraps=text) as draw_text:
             preview.grid.grab()
             labels = [call.args[2] for call in draw_text.call_args_list]
             self.assertEqual(labels[:7], [preferences.weekday_name(day).upper() for day in [6, 0, 1, 2, 3, 4, 5]])

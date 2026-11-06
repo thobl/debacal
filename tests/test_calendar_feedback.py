@@ -12,10 +12,10 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
-from lebacal import calendar_widgets
-from lebacal.calendar_widgets import AllDayCanvas, CalendarCanvas, MonthCanvas
-from lebacal.models import Calendar, Event
-from lebacal.preferences import Preferences
+from debacal import calendar_widgets
+from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, MonthCanvas
+from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -37,8 +37,8 @@ def surfaces():
     app = QApplication.instance() or QApplication([])
     widgets, errors = [], []
     calendars = [Calendar('local', 'Personal', '#5f8a67')]
-    with patch('lebacal.calendar_widgets.local_zone', return_value=ZONE), \
-         patch('lebacal.calendar_widgets.now', return_value=datetime(2026, 11, 6, 12, tzinfo=ZONE)), \
+    with patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
+         patch('debacal.calendar_widgets.now', return_value=datetime(2026, 11, 6, 12, tzinfo=ZONE)), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         def make(kind='timed', events=(), *, days=DAYS):
             widget = {'timed': CalendarCanvas, 'month': MonthCanvas, 'all-day': AllDayCanvas}[kind]()
@@ -127,7 +127,7 @@ def test_blank_timed_hover_snaps_line_and_formats_compact_time_label(surfaces, d
     QTest.mouseMove(widget, point)
     assert widget.hover_time == (0, 9 * 60 + 15)
     assert widget.time_feedback() == (0, 9 * 60 + 15, False)
-    with patch('lebacal.calendar_widgets.text', wraps=calendar_widgets.text) as painted:
+    with patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as painted:
         guided = widget.grab().toImage()
     expected = widget.preferences.format_time(time(9, 15))
     labels = [call.args[1] for call in painted.call_args_list if call.args[2] == expected]
@@ -203,7 +203,7 @@ def test_creation_drag_keeps_its_actual_start_line_label_and_exact_interval(surf
     assert widget.time_feedback() == (2, (11 * 60 + 45) if reverse else (10 * 60 + 15), False)
     QTest.mouseMove(widget, finish)
     assert widget.time_feedback() == (2, 10 * 60 + 15, True)
-    with patch('lebacal.calendar_widgets.text', wraps=calendar_widgets.text) as painted:
+    with patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as painted:
         widget.grab()
     assert any(call.args[2] == widget.preferences.format_time(time(10, 15)) for call in painted.call_args_list)
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=finish)

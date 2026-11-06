@@ -274,7 +274,7 @@ def _single_occurrence_raw(master: Event, reference: Event) -> str:
     merged = inherited | specific
     removed = {'PROPERTY:' + name for name in (
         'RECURRENCE-ID', 'RRULE', 'RDATE', 'EXDATE',
-        'X-LEBACAL-PATTERN', 'X-LEBACAL-PATTERN-ANCHOR', 'X-LEBACAL-PATTERN-VERSION',
+        'X-DEBACAL-PATTERN', 'X-DEBACAL-PATTERN-ANCHOR', 'X-DEBACAL-PATTERN-VERSION',
     )}
     template = ['BEGIN:VEVENT', *(line for key in order if key not in removed for line in merged[key]), 'END:VEVENT']
     retained = [block for block in blocks if block[0] != 'BEGIN:VEVENT']

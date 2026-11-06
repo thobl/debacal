@@ -16,7 +16,7 @@ Install or update the project dependencies and use the persistent workspace:
 
 ```sh
 uv sync --extra dev
-uv run lebacal
+uv run debacal
 ```
 
 Demo mode is explicitly temporary and offline. It disables Sync and remote source
@@ -35,7 +35,7 @@ Demo workspaces never contact a server. To explore a conflict with temporary
 sample data, run:
 
 ```sh
-uv run lebacal --demo-conflict
+uv run debacal --demo-conflict
 ```
 
 Click **Review conflicts** to inspect the local and server versions in calendar
@@ -170,15 +170,15 @@ New named-zone RRULE exports generate VTIMEZONE through the declared `icalendar`
 dependency. Definitions cover 1970–2100 by default and extend to master dates;
 imported definitions and unknown event metadata are retained.
 
-## Custom series metadata between Lebacal instances
+## Custom series metadata between Debacal instances
 
 Each authored series carries these properties on its master VEVENT:
 
 | Property | Meaning |
 | --- | --- |
-| `X-LEBACAL-PATTERN` | Exact custom sequence text, including its formatting. |
-| `X-LEBACAL-PATTERN-VERSION` | Language version: `2` is the current sequential syntax; `1` is the legacy syntax. |
-| `X-LEBACAL-PATTERN-ANCHOR` | Initial calendar date in ISO `YYYY-MM-DD` form. |
+| `X-DEBACAL-PATTERN` | Exact custom sequence text, including its formatting. |
+| `X-DEBACAL-PATTERN-VERSION` | Language version: `2` is the current sequential syntax; `1` is the legacy syntax. |
+| `X-DEBACAL-PATTERN-ANCHOR` | Initial calendar date in ISO `YYYY-MM-DD` form. |
 
 For example, part of a fortnightly resource is:
 
@@ -186,9 +186,9 @@ For example, part of a fortnightly resource is:
 DTSTART;TZID=Europe/Berlin:20261107T090000
 DTEND;TZID=Europe/Berlin:20261107T100000
 RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=5
-X-LEBACAL-PATTERN:4*+2
-X-LEBACAL-PATTERN-VERSION:2
-X-LEBACAL-PATTERN-ANCHOR:2026-11-07
+X-DEBACAL-PATTERN:4*+2
+X-DEBACAL-PATTERN-VERSION:2
+X-DEBACAL-PATTERN-ANCHOR:2026-11-07
 ```
 
 The initial time and authoring zone come from DTSTART/TZID, with VTIMEZONE
@@ -198,7 +198,7 @@ Unicode whitespace inside a definition is preserved as text. These properties
 are per series, rather than a global VCALENDAR setting. Detached exceptions use
 the master definition.
 
-Another Lebacal instance restores the definition even when its local calendar
+Another Debacal instance restores the definition even when its local calendar
 IDs or display timezone differ. Sequence clock times continue to use the series'
 original authoring zone; the editor identifies that zone while showing Starts
 and Ends in the local display zone. For a current version-2 definition matching
@@ -253,7 +253,7 @@ shared baseline during the test.
 ```
 
 The helper prompts for the password (or accepts
-`LEBACAL_TEST_CALDAV_PASSWORD` from the environment). Default operation is discovery
+`DEBACAL_TEST_CALDAV_PASSWORD` from the environment). Default operation is discovery
 and a read-only pull through the default vdirsyncer bridge.
 Use `--write-test` to exercise a uniquely named test resource and clean up only
 that resource. The helper's default write backend is vdirsyncer; the explicit

@@ -5,10 +5,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.event_clipboard import EventClipboard, MAX_CLIPBOARD_BYTES
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_events, occurrence, recurrence_key
-from lebacal.store import Store
+from debacal.event_clipboard import EventClipboard, MAX_CLIPBOARD_BYTES
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_events, occurrence, recurrence_key
+from debacal.store import Store
 
 
 BERLIN = ZoneInfo("Europe/Berlin")

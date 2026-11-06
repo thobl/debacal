@@ -8,12 +8,12 @@ from unittest.mock import patch
 import pytest
 from PySide6.QtWidgets import QApplication, QTextEdit
 
-from lebacal.dialogs import CalendarDialog
-from lebacal.models import Calendar
-from lebacal.store import Store
-from lebacal.sync import SyncMessage
-from lebacal.ui import MainWindow
-from lebacal.dialogs import EventDialog
+from debacal.dialogs import CalendarDialog
+from debacal.models import Calendar
+from debacal.store import Store
+from debacal.sync import SyncMessage
+from debacal.ui import MainWindow
+from debacal.dialogs import EventDialog
 from datetime import datetime, timedelta, timezone
 
 
@@ -92,7 +92,7 @@ def test_sync_status_includes_actionable_error_details(workspace):
     def inspect(dialog):
         captured.append(dialog.findChild(QTextEdit).toPlainText())
         return 0
-    with patch('lebacal.ui.QDialog.exec', inspect):
+    with patch('debacal.ui.QDialog.exec', inspect):
         window.show_sync_status()
     assert 'authentication is required' in captured[0]
 
@@ -100,7 +100,7 @@ def test_sync_status_includes_actionable_error_details(workspace):
 def test_desktop_conflicts_fall_back_to_in_app_when_unavailable(workspace):
     window, _ = workspace
     window.preferences = replace(window.preferences, conflict_notifications='desktop')
-    with patch('lebacal.ui.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
+    with patch('debacal.ui.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
         window.notify_conflict(SyncMessage('conflict', 'An event changed on both sides.'))
     assert 'changed on both sides' in window.notice.text()
 

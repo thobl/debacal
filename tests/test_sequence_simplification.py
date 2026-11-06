@@ -4,7 +4,7 @@ import random
 import unittest
 from zoneinfo import ZoneInfo
 
-from lebacal.patterns import (
+from debacal.patterns import (
     PatternError, expand_sequence, reconstruct_sequence, serialize_sequence, simplify_sequence,
 )
 

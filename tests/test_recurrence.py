@@ -4,9 +4,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.models import Calendar, Event
-from lebacal.recurrence import expand_event, recurrence_key, RecurrenceError, updated_series, rules_equivalent
-from lebacal.store import Store, HistoryConflict
+from debacal.models import Calendar, Event
+from debacal.recurrence import expand_event, recurrence_key, RecurrenceError, updated_series, rules_equivalent
+from debacal.store import Store, HistoryConflict
 
 
 BERLIN = ZoneInfo("Europe/Berlin")

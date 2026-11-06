@@ -6,11 +6,11 @@ import sys
 
 import pytest
 
-from lebacal.credentials import CredentialStore, CredentialError, account_key
-from lebacal.discovery import DiscoveredCalendar
-from lebacal.models import Calendar
-from lebacal.store import Store
-from lebacal.sync import SyncEngine
+from debacal.credentials import CredentialStore, CredentialError, account_key
+from debacal.discovery import DiscoveredCalendar
+from debacal.models import Calendar
+from debacal.store import Store
+from debacal.sync import SyncEngine
 
 
 class MemoryKeyring:
@@ -251,7 +251,7 @@ def test_subscription_quarantines_one_bad_uid_without_dropping_healthy_or_cached
                 "DTSTART:20261110T090000Z\r\nDTEND:20261110T100000Z\r\nEND:VEVENT\r\n"
                 "BEGIN:VEVENT\r\nUID:broken\r\nSUMMARY:Cached version\r\n"
                 "DTSTART:20261110T100000Z\r\nDTEND:" + broken_end + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
-    monkeypatch.setattr("lebacal.sync.urlopen", lambda *_args, **_kwargs: io.BytesIO(body[0].encode()))
+    monkeypatch.setattr("debacal.sync.urlopen", lambda *_args, **_kwargs: io.BytesIO(body[0].encode()))
     store = Store(tmp_path / "feed.sqlite")
     store.save_calendar(Calendar("feed", "Feed", "#123456", kind="ics", url="https://feed.example/calendar.ics"))
     engine = SyncEngine(store.path, vdir_backend=CaptureBridge(), credential_store=CredentialStore(MemoryKeyring()))

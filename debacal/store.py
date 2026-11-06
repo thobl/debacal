@@ -112,7 +112,7 @@ class Store:
         with self._lock:
             nested = self.connection.in_transaction
             self._transaction_sequence += 1
-            savepoint = f"lebacal_{self._transaction_sequence}"
+            savepoint = f"debacal_{self._transaction_sequence}"
             try:
                 self.connection.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
                 yield

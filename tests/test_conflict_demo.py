@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from lebacal.conflict_demo import DemoConflictEngine
-from lebacal.models import Event
-from lebacal.store import Store
+from debacal.conflict_demo import DemoConflictEngine
+from debacal.models import Event
+from debacal.store import Store
 
 
 @pytest.fixture

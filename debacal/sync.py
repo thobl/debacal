@@ -143,7 +143,7 @@ class SyncEngine:
                 from .discovery import discover_calendars
                 self._metadata_discoverer = discover_calendars
         self._vdir_backend = vdir_backend
-        self._thread = Thread(target=self._run, name="lebacal-sync", daemon=True)
+        self._thread = Thread(target=self._run, name="debacal-sync", daemon=True)
         self._thread.start()
 
     @property
@@ -179,7 +179,7 @@ class SyncEngine:
             if self._queued or self._stop.is_set():
                 if self._worker_error:
                     self._emit("error", self._worker_error)
-                    self._emit("finished", "Sync worker is unavailable; restart Lebacal after fixing the error.")
+                    self._emit("finished", "Sync worker is unavailable; restart Debacal after fixing the error.")
                 return
             self._queued = True
         self._jobs.put(("sync", None))
@@ -304,7 +304,7 @@ class SyncEngine:
         parsed = urlparse(calendar.url)
         if parsed.scheme not in {"https", "http"} or not parsed.netloc:
             raise ValueError("A subscription needs an HTTP(S) URL.")
-        request = Request(calendar.url, headers={"User-Agent": "Lebacal/0.1"})
+        request = Request(calendar.url, headers={"User-Agent": "Debacal/0.1"})
         with urlopen(request, timeout=20) as response:
             data = response.read(10 * 1024 * 1024 + 1)
         if len(data) > 10 * 1024 * 1024:

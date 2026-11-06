@@ -9,13 +9,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import CalendarDialog, EventDialog
-from lebacal.ics import export_ics, parse_ics
-from lebacal.models import Calendar, Event
-from lebacal.patterns import expand_pattern, expand_sequence
-from lebacal.legacy_patterns import expand_pattern as expand_legacy_pattern
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.dialogs import CalendarDialog, EventDialog
+from debacal.ics import export_ics, parse_ics
+from debacal.models import Calendar, Event
+from debacal.patterns import expand_pattern, expand_sequence
+from debacal.legacy_patterns import expand_pattern as expand_legacy_pattern
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 10, tzinfo=ZONE)
@@ -26,7 +26,7 @@ def desktop():
     app = QApplication.instance() or QApplication([])
     windows = []
     with Store(':memory:') as store:
-        with patch('lebacal.dialogs.local_zone', return_value=ZONE):
+        with patch('debacal.dialogs.local_zone', return_value=ZONE):
             yield store, windows
         for window in reversed(windows):
             window.close()

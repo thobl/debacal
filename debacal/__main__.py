@@ -1,4 +1,4 @@
-"""Launch with `python -m lebacal`; --demo never touches your calendar data."""
+"""Launch with `python -m debacal`; --demo never touches your calendar data."""
 import argparse
 from datetime import timedelta
 from pathlib import Path
@@ -79,10 +79,10 @@ def main(argv=None):
     ]:
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
-    app.setApplicationName('lebacal')
-    app.setOrganizationName('lebacal')
-    app.setApplicationDisplayName('Lebacal')
-    temporary = tempfile.TemporaryDirectory(prefix='lebacal-demo-') if args.demo else None
+    app.setApplicationName('debacal')
+    app.setOrganizationName('debacal')
+    app.setApplicationDisplayName('Debacal')
+    temporary = tempfile.TemporaryDirectory(prefix='debacal-demo-') if args.demo else None
     persistent_path = args.database or Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / 'calendar.sqlite3'
     path = Path(temporary.name) / 'demo.sqlite3' if temporary else persistent_path
     store = Store(path)

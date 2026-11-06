@@ -12,12 +12,12 @@ from PySide6.QtCore import QPoint, Qt, QCoreApplication, QEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog, ShortcutsDialog
-from lebacal.event_clipboard import EventClipboard
-from lebacal.ics import export_ics
-from lebacal.models import Calendar, Event
-from lebacal.store import Store
-from lebacal.ui import MainWindow, EVENT_MIME, DEFAULT_BINDINGS
+from debacal.dialogs import EventDialog, ShortcutsDialog
+from debacal.event_clipboard import EventClipboard
+from debacal.ics import export_ics
+from debacal.models import Calendar, Event
+from debacal.store import Store
+from debacal.ui import MainWindow, EVENT_MIME, DEFAULT_BINDINGS
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -36,8 +36,8 @@ def workspace():
                    recurrence_rule='FREQ=WEEKLY;BYDAY=MO;COUNT=5')
     store.apply('Create baseline', [master])
     errors, windows = [], []
-    with patch('lebacal.ui.local_zone', return_value=ZONE), patch('lebacal.dialogs.local_zone', return_value=ZONE), \
-         patch('lebacal.calendar_widgets.local_zone', return_value=ZONE), \
+    with patch('debacal.ui.local_zone', return_value=ZONE), patch('debacal.dialogs.local_zone', return_value=ZONE), \
+         patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         window = MainWindow(store, enable_sync=False)
         windows.append(window)

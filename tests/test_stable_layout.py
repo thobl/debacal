@@ -11,9 +11,9 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
-from lebacal.models import Event
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.models import Event
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo("Europe/Berlin")
@@ -29,8 +29,8 @@ def settle(app):
 def workspace():
     app = QApplication.instance() or QApplication([])
     errors = []
-    with patch("lebacal.ui.local_zone", return_value=ZONE), \
-            patch("lebacal.calendar_widgets.local_zone", return_value=ZONE), \
+    with patch("debacal.ui.local_zone", return_value=ZONE), \
+            patch("debacal.calendar_widgets.local_zone", return_value=ZONE), \
             patch("sys.excepthook", side_effect=lambda _, error, __: errors.append(error)):
         store = Store(":memory:")
         window = MainWindow(store, enable_sync=False)

@@ -13,11 +13,11 @@ from PySide6.QtCore import QCoreApplication, QDate, QEvent, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog
-from lebacal.event_clipboard import EventClipboard
-from lebacal.models import Event
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.dialogs import EventDialog
+from debacal.event_clipboard import EventClipboard
+from debacal.models import Event
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo("Europe/Berlin")
@@ -28,11 +28,11 @@ FIXED_NOW = datetime(2026, 11, 4, 13, 47, 29, tzinfo=ZONE)
 def workspace():
     app = QApplication.instance() or QApplication([])
     callback_errors = []
-    with patch("lebacal.ui.local_zone", return_value=ZONE), \
-            patch("lebacal.dialogs.local_zone", return_value=ZONE), \
-            patch("lebacal.calendar_widgets.local_zone", return_value=ZONE), \
-            patch("lebacal.ui.now", return_value=FIXED_NOW), \
-            patch("lebacal.calendar_widgets.now", return_value=FIXED_NOW), \
+    with patch("debacal.ui.local_zone", return_value=ZONE), \
+            patch("debacal.dialogs.local_zone", return_value=ZONE), \
+            patch("debacal.calendar_widgets.local_zone", return_value=ZONE), \
+            patch("debacal.ui.now", return_value=FIXED_NOW), \
+            patch("debacal.calendar_widgets.now", return_value=FIXED_NOW), \
             patch("sys.excepthook", side_effect=lambda _, value, __: callback_errors.append(value)):
         store = Store(":memory:")
         window = MainWindow(store, enable_sync=False)

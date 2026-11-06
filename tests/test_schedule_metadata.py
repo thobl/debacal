@@ -8,10 +8,10 @@ from tempfile import TemporaryDirectory
 import unittest
 from zoneinfo import ZoneInfo
 
-from lebacal.models import Calendar, Event
-from lebacal.patterns import expand_sequence, serialize_sequence
-from lebacal.recurrence import base_schedule_starts, expand_event, schedule_fields
-from lebacal.store import Store
+from debacal.models import Calendar, Event
+from debacal.patterns import expand_sequence, serialize_sequence
+from debacal.recurrence import base_schedule_starts, expand_event, schedule_fields
+from debacal.store import Store
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -27,7 +27,7 @@ def custom_event(expression=LITERAL, *, candidate=False, calendar_id='local', an
 
 
 def legacy_event(expression='3(Mo X)'):
-    from lebacal.legacy_patterns import expand_pattern
+    from debacal.legacy_patterns import expand_pattern
     days = expand_pattern(expression, ANCHOR.date())
     starts = [datetime.combine(day, ANCHOR.timetz()) for day in days]
     return Event('legacy', 'local', 'Old seminar', starts[0], starts[0] + timedelta(hours=1),
@@ -155,7 +155,7 @@ class ExpressionTests(unittest.TestCase):
             self.assertEqual((ordinary.schedule_expression, ordinary.expression_anchor, ordinary.schedule_syntax), ('', '', 1))
 
     def test_legacy_relative_day_move_uses_legacy_language_until_explicit_conversion(self):
-        from lebacal.legacy_patterns import expand_pattern
+        from debacal.legacy_patterns import expand_pattern
         with Store(':memory:') as store:
             master = legacy_event()
             store.apply('Create legacy', [master])
@@ -258,7 +258,7 @@ class ScheduleSynthesisTests(unittest.TestCase):
             import recurring_ical_events
         except ImportError:
             self.skipTest('Independent optional recurrence library is unavailable')
-        from lebacal.ics import export_ics, parse_ics
+        from debacal.ics import export_ics, parse_ics
         cases = [(LITERAL, ANCHOR), ('4*+2', ANCHOR), ('4*+1m', ANCHOR),
                  ('14:30 08:15-8.11.2026 12:05-15.11.2026', ANCHOR),
                  ('08:30-1.10.2026 +1d 12:00', ANCHOR),

@@ -1,4 +1,4 @@
-# Lebacal
+# Debacal
 
 A native Linux desktop calendar built around immediate local edits, keyboard
 navigation, interoperable recurrence, irregular event groups, and alternative time slots. See the [implementation plan](docs/PLAN.md)
@@ -14,9 +14,9 @@ Python 3.11+ and a Linux desktop are required. With [uv](https://docs.astral.sh/
 
 ```sh
 uv sync --extra dev
-uv run lebacal --demo
-uv run lebacal --demo-conflict
-uv run lebacal
+uv run debacal --demo
+uv run debacal --demo-conflict
+uv run debacal
 ```
 
 Or use a virtual environment:
@@ -24,14 +24,14 @@ Or use a virtual environment:
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/lebacal --demo
+.venv/bin/debacal --demo
 ```
 
 `--demo` is explicitly offline and uses a disposable database; your calendars are
 untouched. Choose **Open my calendars** to leave the demo, or launch without
 `--demo` to connect and synchronize a remote calendar. Normal mode
 starts with an empty Personal calendar and stores data under Qt's platform data
-directory, normally `~/.local/share/lebacal/lebacal/calendar.sqlite3` on Linux.
+directory, normally `~/.local/share/debacal/debacal/calendar.sqlite3` on Linux.
 Use `--database /path/to/calendar.sqlite3` to choose another location. Back up the
 database with the app closed (or use SQLite's backup API for a live database).
 `--demo-conflict` opens an offline sample conflict: click **Review conflicts** to
@@ -43,7 +43,7 @@ A `.venv` with system packages allows offline local/ICS use:
 
 ```sh
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
-.venv/bin/python -m lebacal --demo
+.venv/bin/python -m debacal --demo
 ```
 
 On a fresh machine, install dependencies using one of the standard commands above.
@@ -221,11 +221,11 @@ weekday selection), monthly and yearly schedules with interval/count/end-date
 controls. **Advanced rule** exposes standard RRULE text for schedules beyond those
 controls.
 
-Custom sequence definitions also synchronize between Lebacal instances. The ICS
+Custom sequence definitions also synchronize between Debacal instances. The ICS
 master stores the exact expression, language version and anchor in
-`X-LEBACAL-PATTERN` properties alongside standard RRULE/RDATE fields. Another
+`X-DEBACAL-PATTERN` properties alongside standard RRULE/RDATE fields. Another
 instance restores the editable definition and its authoring timezone, even when
-its display timezone differs. See the [metadata protocol](docs/SYNC.md#custom-series-metadata-between-lebacal-instances).
+its display timezone differs. See the [metadata protocol](docs/SYNC.md#custom-series-metadata-between-debacal-instances).
 
 For alternatives, check **Alternative slots**. Regular repeating and chosen-date
 series can both be alternatives. Select the chosen
@@ -291,7 +291,7 @@ that gap remain unverified; see the audit details in the sync documentation.
 
 ```sh
 QT_QPA_PLATFORM=offscreen python -m pytest
-QT_QPA_PLATFORM=offscreen python -m lebacal --demo --screenshot /tmp/lebacal.png
+QT_QPA_PLATFORM=offscreen python -m debacal --demo --screenshot /tmp/debacal.png
 ```
 
 Tests cover year rollover and bounded pattern parsing, overlapping intervals,

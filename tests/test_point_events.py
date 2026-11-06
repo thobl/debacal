@@ -13,15 +13,15 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.calendar_widgets import CalendarCanvas, MonthCanvas
-from lebacal.dialogs import EventDialog
-from lebacal.layout import layout_events
-from lebacal.models import Calendar, Event
-from lebacal.preferences import Preferences
-from lebacal.recurrence import expand_series, overlaps
-from lebacal.series_preview import SeriesPreview
-from lebacal.store import Store
-from lebacal.ui import MainWindow
+from debacal.calendar_widgets import CalendarCanvas, MonthCanvas
+from debacal.dialogs import EventDialog
+from debacal.layout import layout_events
+from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
+from debacal.recurrence import expand_series, overlaps
+from debacal.series_preview import SeriesPreview
+from debacal.store import Store
+from debacal.ui import MainWindow
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -84,9 +84,9 @@ class PointViewTests(unittest.TestCase):
         self.callback_errors = []
         self.exception_patch = patch('sys.excepthook', side_effect=lambda _, value, __: self.callback_errors.append(value))
         self.exception_patch.start()
-        self.canvas_zone = patch('lebacal.calendar_widgets.local_zone', return_value=ZONE)
-        self.preview_zone = patch('lebacal.series_preview.local_zone', return_value=ZONE)
-        self.dialog_zone = patch('lebacal.dialogs.local_zone', return_value=ZONE)
+        self.canvas_zone = patch('debacal.calendar_widgets.local_zone', return_value=ZONE)
+        self.preview_zone = patch('debacal.series_preview.local_zone', return_value=ZONE)
+        self.dialog_zone = patch('debacal.dialogs.local_zone', return_value=ZONE)
         self.canvas_zone.start()
         self.preview_zone.start()
         self.dialog_zone.start()

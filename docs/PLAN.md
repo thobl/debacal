@@ -1,4 +1,4 @@
-# Lebacal implementation plan
+# Debacal implementation plan
 
 ## Goal
 

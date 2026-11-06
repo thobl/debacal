@@ -777,7 +777,7 @@ class CalendarDialog(QDialog):
         self.discovered = []
         self.discovery_identity = None
         self.discovery_future = None
-        self.discovery_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lebacal-discovery')
+        self.discovery_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-discovery')
         self.discovery_timer = QTimer(self)
         self.discovery_timer.setInterval(100)
         self.discovery_timer.timeout.connect(self.poll_discovery)

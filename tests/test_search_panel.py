@@ -16,11 +16,11 @@ from PySide6.QtCore import Qt, QCoreApplication, QEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from lebacal.models import Calendar, Event
-from lebacal.preferences import Preferences
-from lebacal.recurrence import expand_series
-from lebacal.search_panel import SearchPanel, SUBTITLE_ROLE, COLOR_ROLE, MORE_ROLE, impossible_monthday_filter
-from lebacal.store import Store
+from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
+from debacal.recurrence import expand_series
+from debacal.search_panel import SearchPanel, SUBTITLE_ROLE, COLOR_ROLE, MORE_ROLE, impossible_monthday_filter
+from debacal.store import Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
@@ -31,8 +31,8 @@ def workspace():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     errors = []
-    with patch('lebacal.search_panel.local_zone', return_value=ZONE), \
-         patch('lebacal.search_panel.now', return_value=START), \
+    with patch('debacal.search_panel.local_zone', return_value=ZONE), \
+         patch('debacal.search_panel.now', return_value=START), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         panel = SearchPanel(store, Preferences())
         panel.resize(390, 600)
@@ -252,10 +252,10 @@ def test_empty_hourly_monthday_generator_keeps_explicit_dates_without_hanging_or
     script = textwrap.dedent('''
         from datetime import datetime, timedelta, timezone
         from PySide6.QtWidgets import QApplication
-        from lebacal.models import Event
-        from lebacal.preferences import Preferences
-        from lebacal.search_panel import SearchPanel
-        from lebacal.store import Store
+        from debacal.models import Event
+        from debacal.preferences import Preferences
+        from debacal.search_panel import SearchPanel
+        from debacal.store import Store
         app = QApplication([])
         store = Store(':memory:')
         start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)

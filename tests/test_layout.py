@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 from zoneinfo import ZoneInfo
 
-from lebacal.layout import layout_events
+from debacal.layout import layout_events
 
 
 @dataclass

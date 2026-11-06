@@ -11,11 +11,11 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lebacal.dialogs import EventDialog
-from lebacal.models import Event
-from lebacal.patterns import expand_sequence
-from lebacal.preferences import Preferences
-from lebacal.store import Store
+from debacal.dialogs import EventDialog
+from debacal.models import Event
+from debacal.patterns import expand_sequence
+from debacal.preferences import Preferences
+from debacal.store import Store
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -27,7 +27,7 @@ def editors():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets, errors = [], []
-    with patch('lebacal.dialogs.local_zone', return_value=ZONE), patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
+    with patch('debacal.dialogs.local_zone', return_value=ZONE), patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         def create(start=START, event=None, series=None, edit_scope='single'):
             reference = series or event
             if reference:

@@ -13,8 +13,8 @@ from PySide6.QtGui import QContextMenuEvent, QColor
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
-from lebacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas
-from lebacal.models import Calendar, Event
+from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas
+from debacal.models import Calendar, Event
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -33,8 +33,8 @@ def surfaces():
     app = QApplication.instance() or QApplication([])
     widgets, errors = [], []
     calendars = [Calendar('local', 'Color', '#ed7135')]
-    with patch('lebacal.calendar_widgets.local_zone', return_value=ZONE), \
-         patch('lebacal.calendar_widgets.now', return_value=datetime(2026, 11, 5, 12, 30, tzinfo=ZONE)), \
+    with patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
+         patch('debacal.calendar_widgets.now', return_value=datetime(2026, 11, 5, 12, 30, tzinfo=ZONE)), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         def make(kind, events=()):
             widget = {'timed': CalendarCanvas, 'month': MonthCanvas, 'all-day': AllDayCanvas, 'header': DayHeader}[kind]()

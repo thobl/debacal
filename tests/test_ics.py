@@ -3,8 +3,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from lebacal.ics import export_ics, parse_ics, patch_ics, has_recurrence
-from lebacal.models import Event
+from debacal.ics import export_ics, parse_ics, patch_ics, has_recurrence
+from debacal.models import Event
 
 
 UTC = timezone.utc
@@ -84,7 +84,7 @@ END:VCALENDAR
     assert events[0].recurrence_rule == "FREQ=WEEKLY;COUNT=4"
     assert len(events[0].excluded_dates) == 1
     assert len(events[0].recurrence_overrides) == 1
-    from lebacal.recurrence import expand_events
+    from debacal.recurrence import expand_events
     occurrences = expand_events(events, datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC))
     assert [event.start.hour for event in occurrences] == [9, 11, 9]
     assert [event.start.utcoffset() for event in occurrences] == [timedelta(hours=2), timedelta(hours=1), timedelta(hours=1)]
@@ -144,7 +144,7 @@ END:VCALENDAR
 
 
 def test_external_extension_text_is_escaped_in_offline_export():
-    from lebacal import ics_fallback
+    from debacal import ics_fallback
     start = datetime(2026, 11, 10, 9, tzinfo=UTC)
     original = Event("id,;\\\n", "calendar,;\\\n", "Title", start, start + timedelta(hours=1),
                      group_id="external,;\\\ngroup")
@@ -154,7 +154,7 @@ def test_external_extension_text_is_escaped_in_offline_export():
 
 
 def test_recurrence_identity_is_independent_of_timezone_representation():
-    from lebacal.ics import occurrence_key
+    from debacal.ics import occurrence_key
     from datetime import date
     local = datetime(2026, 11, 10, 9, tzinfo=ZoneInfo("Europe/Berlin"))
     assert occurrence_key(local) == occurrence_key(local.astimezone(UTC))
@@ -162,7 +162,7 @@ def test_recurrence_identity_is_independent_of_timezone_representation():
 
 
 def test_full_and_offline_backends_have_identical_recurring_ids():
-    from lebacal import ics, ics_fallback
+    from debacal import ics, ics_fallback
     if ics.ICalendar is None:
         pytest.skip("Full icalendar backend is not installed in this offline environment")
     raw = """BEGIN:VCALENDAR
@@ -200,7 +200,7 @@ END:VCALENDAR
 
 
 def test_all_day_until_stays_date_on_wire_and_expands_inclusively():
-    from lebacal.recurrence import expand_events
+    from debacal.recurrence import expand_events
     raw = """BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
@@ -226,7 +226,7 @@ END:VCALENDAR
 
 def test_detached_edit_and_exclusion_roundtrip_preserve_unknown_metadata():
     from dataclasses import replace
-    from lebacal.recurrence import expand_events
+    from debacal.recurrence import expand_events
     raw = """BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
@@ -286,7 +286,7 @@ END:VCALENDAR
 
 def test_named_zone_rule_export_fails_clearly_if_timezone_generator_is_missing(monkeypatch):
     import sys
-    from lebacal.ics_resources import _timezone_definition
+    from debacal.ics_resources import _timezone_definition
     zone = ZoneInfo("Europe/Berlin")
     start = datetime(2026, 11, 10, 9, tzinfo=zone)
     event = Event("named", "local", "Named zone", start, start + timedelta(hours=1), recurrence_rule="FREQ=WEEKLY;COUNT=5")
@@ -302,7 +302,7 @@ def test_named_zone_rule_export_fails_clearly_if_timezone_generator_is_missing(m
 
 
 def test_installed_timezone_generator_includes_vtimezone_for_new_dst_series():
-    from lebacal import ics
+    from debacal import ics
     if ics.ICalendar is None:
         pytest.skip("The maintained icalendar timezone generator is unavailable offline")
     zone = ZoneInfo("Europe/Berlin")
@@ -315,7 +315,7 @@ def test_installed_timezone_generator_includes_vtimezone_for_new_dst_series():
 
 
 def test_floating_until_uses_dtstart_zone_and_preserves_inclusive_boundary():
-    from lebacal.recurrence import expand_events
+    from debacal.recurrence import expand_events
     raw = ("BEGIN:VCALENDAR\nVERSION:2.0\n" + BERLIN_TIMEZONE +
            "BEGIN:VEVENT\nUID:naive-until\nSUMMARY:Boundary\nDTSTART;TZID=Europe/Berlin:20261020T090000\n"
            "DTEND;TZID=Europe/Berlin:20261020T100000\nRRULE:FREQ=WEEKLY;UNTIL=20261103T090000\nEND:VEVENT\nEND:VCALENDAR\n")
@@ -328,7 +328,7 @@ def test_floating_until_uses_dtstart_zone_and_preserves_inclusive_boundary():
 
 
 def test_report_isolates_invalid_uid_and_keeps_private_text_out_of_diagnostics():
-    from lebacal.ics import parse_ics_report
+    from debacal.ics import parse_ics_report
     raw = ("BEGIN:VCALENDAR\nVERSION:2.0\n"
            "BEGIN:VEVENT\nUID:good\nSUMMARY:Healthy\nDTSTART:20261110T090000Z\nEND:VEVENT\n"
            "BEGIN:VEVENT\nUID:bad\nSUMMARY:Do not disclose this title\nDTSTART:20261110T090000Z\nRRULE:FREQ=DAILY;UNTIL=garbage\nEND:VEVENT\nEND:VCALENDAR\n")
@@ -341,7 +341,7 @@ def test_report_isolates_invalid_uid_and_keeps_private_text_out_of_diagnostics()
 
 
 def test_report_preserves_truncated_resource_instead_of_empty_success():
-    from lebacal.ics import parse_ics_report
+    from debacal.ics import parse_ics_report
     raw = ("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:broken\nDTSTART:20261110T090000Z\n"
            "BEGIN:VALARM\nACTION:DISPLAY\nEND:VCALENDAR\n")
     report = parse_ics_report(raw, "local")
@@ -352,8 +352,8 @@ def test_report_preserves_truncated_resource_instead_of_empty_success():
 
 
 def test_nested_alarm_uid_never_replaces_missing_event_uid():
-    from lebacal.ics import parse_ics_report
-    from lebacal.vdirsyncer_backend import raw_uid
+    from debacal.ics import parse_ics_report
+    from debacal.vdirsyncer_backend import raw_uid
     raw = ("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nDTSTART:20261110T090000Z\n"
            "DTEND:20261110T100000Z\nBEGIN:VALARM\nUID:alarm-only\nACTION:DISPLAY\nEND:VALARM\nEND:VEVENT\nEND:VCALENDAR\n")
     report = parse_ics_report(raw, "local")
@@ -366,7 +366,7 @@ def test_nested_alarm_uid_never_replaces_missing_event_uid():
 @pytest.mark.parametrize('ending', ['', 'DTEND:20261110T100000Z\n', 'DURATION:PT0S\n'])
 def test_imported_timed_points_preserve_their_instant(use_full, ending):
     """Accept valid missing-end points and tolerate servers' explicit zero ends."""
-    from lebacal import ics_resources
+    from debacal import ics_resources
     raw = ('BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:point@example.invalid\n'
            'SUMMARY:Point\nDTSTART:20261110T100000Z\n' + ending +
            'RRULE:FREQ=WEEKLY;COUNT=2\nEND:VEVENT\nEND:VCALENDAR\n')
@@ -383,8 +383,8 @@ def test_imported_timed_points_preserve_their_instant(use_full, ending):
 
 @pytest.mark.parametrize('use_full', [False, True])
 def test_named_timezone_point_series_matches_reported_sync_failure(use_full):
-    from lebacal import ics_resources
-    from lebacal.recurrence import expand_events
+    from debacal import ics_resources
+    from debacal.recurrence import expand_events
     raw = ('BEGIN:VCALENDAR\nVERSION:2.0\n' + BERLIN_TIMEZONE +
            'BEGIN:VEVENT\nUID:zero-duration-test@example.invalid\nSUMMARY:Point\n'
            'DTSTART;TZID=Europe/Berlin:20261020T100000\n'

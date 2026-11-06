@@ -6,20 +6,20 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from lebacal.models import Event
-from lebacal.ics import export_ics, parse_ics
-from lebacal.ics_resources import _blocks, _decoded, _key, _uid_of
-from lebacal.ics_fallback import components, folded, prop
-from lebacal.event_clipboard import EventClipboard
-from lebacal.patterns import expand_sequence
-from lebacal.recurrence import (
+from debacal.models import Event
+from debacal.ics import export_ics, parse_ics
+from debacal.ics_resources import _blocks, _decoded, _key, _uid_of
+from debacal.ics_fallback import components, folded, prop
+from debacal.event_clipboard import EventClipboard
+from debacal.patterns import expand_sequence
+from debacal.recurrence import (
     RecurrenceError, base_schedule_starts, expand_series, occurrence,
     recurrence_key, schedule_fields,
 )
-from lebacal.series_operations import (
+from debacal.series_operations import (
     clone_event, detach_event, partition_series, reidentify_series, updated_future,
 )
-from lebacal.store import Store
+from debacal.store import Store
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -586,7 +586,7 @@ class RawTemplateProjectionTests(unittest.TestCase):
                 self.assertEqual(store.pending_changes(), pending)
 
     def test_invalid_master_and_detached_endpoints_are_rejected_before_normalization(self):
-        from lebacal.recurrence import updated_series
+        from debacal.recurrence import updated_series
         for kind in ('master-start', 'master-end', 'override-start', 'override-end', 'exclusion'):
             with self.subTest(kind=kind):
                 start = datetime(2027, 3, 25, 1, 30, tzinfo=ZONE)

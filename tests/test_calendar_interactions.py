@@ -12,8 +12,8 @@ from PySide6.QtGui import QContextMenuEvent, QColor
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
-from lebacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas
-from lebacal.models import Calendar, Event
+from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas
+from debacal.models import Calendar, Event
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -32,8 +32,8 @@ def widgets():
     app = QApplication.instance() or QApplication([])
     created, errors = [], []
     calendars = [Calendar('local', 'Personal', '#ffffff')]
-    with patch('lebacal.calendar_widgets.local_zone', return_value=ZONE), \
-         patch('lebacal.calendar_widgets.now', return_value=NOW), \
+    with patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
+         patch('debacal.calendar_widgets.now', return_value=NOW), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         def show(widget, width=1042, height=1640):
             created.append(widget)

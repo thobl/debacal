@@ -161,7 +161,7 @@ class EventClipboard:
                                               "view_kind": value["view_kind"], "exact_selection": value["exact_selection"]}
             return cls(tuple(Event.from_dict(event) for event in value["events"]), Event.from_dict(value["reference"]), **context)
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
-            raise ValueError("The clipboard does not contain valid Lebacal event snapshots.") from error
+            raise ValueError("The clipboard does not contain valid Debacal event snapshots.") from error
 
     def instantiate(self, scope: str, target: datetime, calendar_id: str) -> list[Event]:
         """Prepare fresh resources; callers persist the entire list atomically."""
