@@ -88,7 +88,7 @@ def test_filtering_is_pure_and_never_expands_a_master():
     assert master.to_dict() == before
 
 
-def test_repeating_suffix_removed_and_tooltips_show_safe_full_details_and_row_scope(workspace):
+def test_repeating_suffix_removed_and_tooltips_show_safe_details_without_instructions(workspace):
     store, panel = workspace
     calendar = Calendar('work', 'Work <home>', '#123456')
     store.save_calendar(calendar)
@@ -103,8 +103,9 @@ def test_repeating_suffix_removed_and_tooltips_show_safe_full_details_and_row_sc
     tooltip = root.toolTip(0)
     assert '&lt;b&gt;meeting&lt;/b&gt;' in tooltip and 'Work &lt;home&gt;' in tooltip
     assert 'Room &amp; wing' in tooltip and '2026-11-05' in tooltip
-    assert 'whole series' in tooltip and '<b>meeting</b>' not in tooltip
+    assert 'Select ' not in tooltip and 'Expand ' not in tooltip and '<b>meeting</b>' not in tooltip
     root.setExpanded(True)
     child = root.child(0)
     assert 'repeating' not in child.data(SUBTITLE_ROLE)
-    assert 'Select this occurrence.' in child.toolTip(0)
+    assert 'Select ' not in child.toolTip(0)
+    assert 'Room &amp; wing' in child.toolTip(0)

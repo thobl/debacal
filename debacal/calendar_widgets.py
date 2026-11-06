@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 from bisect import bisect_left, bisect_right
 from time import monotonic
+from html import escape
 import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
@@ -22,14 +23,36 @@ MUTED = QColor('#89938a')
 GREEN = QColor('#416c51')
 SELECTED_DAY = QColor('#edf1f8')
 SELECTED_DAY_BORDER = QColor('#91a2b8')
-SELECTED_EVENT = QColor('#dce8f5')
-SELECTED_EVENT_BORDER = QColor('#2c527c')
+COPY_BADGE_COLOR = QColor('#526b80')
 CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores them.'
 HOVER_TIME_COLOR = QColor('#526b80')
 
 
 def at(day, hour=0, minute=0):
     return datetime.combine(day, time(hour, minute), local_zone())
+
+
+def event_tooltip(event, preferences, calendar=None):
+    """Full event details without gesture instructions or interpreted markup."""
+    start = event.start if event.all_day else event.start.astimezone(local_zone())
+    end = event.end if event.all_day else event.end.astimezone(local_zone())
+    when = preferences.format_date(start.date(), weekday=True)
+    if event.all_day:
+        last = end.date() - timedelta(days=1)
+        if last > start.date():
+            when += ' — ' + preferences.format_date(last, weekday=True)
+        when += ' · All day'
+    else:
+        when += ' · ' + preferences.format_time(start)
+        if end.timestamp() != start.timestamp():
+            when += ('–' if end.date() == start.date() else
+                     ' — ' + preferences.format_date(end.date(), weekday=True) + ' · ')
+            when += preferences.format_time(end)
+    lines = [event.title, when]
+    if calendar is not None:
+        lines.append(calendar.name)
+    lines.extend(value for value in (event.location, event.description) if value)
+    return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>'
 
 
 def bucket_days(events, days, zone, date_events=False):
@@ -530,10 +553,10 @@ class CalendarCanvas(QWidget):
     def paint_copy_badge(self, painter):
         rect = self.copy_badge_rect()
         if rect is not None:
-            painter.setPen(QPen(SELECTED_EVENT_BORDER, 1.5))
+            painter.setPen(QPen(COPY_BADGE_COLOR, 1.5))
             painter.setBrush(QColor('#f8fbf3'))
             painter.drawRoundedRect(rect, 4, 4)
-            text(painter, rect, '+', SELECTED_EVENT_BORDER, 13, True, Qt.AlignmentFlag.AlignCenter)
+            text(painter, rect, '+', COPY_BADGE_COLOR, 13, True, Qt.AlignmentFlag.AlignCenter)
 
     def time_feedback(self):
         if self.placement_active:
@@ -761,13 +784,13 @@ class CalendarCanvas(QWidget):
         selected = not preview and (event.id in self.selected_ids or event.id == self.selected_id)
         confirm = self.confirmation_rect(rect, event, preview)
         fill = QColor(color)
-        fill.setAlpha(34 if preview else 70 if selected else 95 if target else 38 if event.candidate else 52)
+        fill.setAlpha(34 if preview else 95 if target else 38 if event.candidate else 52)
         p.setBrush(fill)
-        p.setPen(QPen(GREEN if target else SELECTED_EVENT_BORDER if selected else color, 3 if target or selected else 2 if preview else 1,
+        p.setPen(QPen(GREEN if target else color.darker(145) if selected else color, 3 if target else 2 if selected or preview else 1,
                       Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, 5, 5)
         if selected:
-            p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), SELECTED_EVENT_BORDER)
+            p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), color.darker(145))
         # QPainter draws no text in nonpositive label rectangles. Dense
         # overlap columns still keep their frames, but need no font/layout work.
         if rect.width() > 12 and rect.height() > 2:
@@ -777,12 +800,12 @@ class CalendarCanvas(QWidget):
             scale = display_scale(self)
             title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
             reserve = (40 if numbered else 12) + (confirm.width() + 6 * scale if confirm is not None else 0)
-            text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, SELECTED_EVENT_BORDER if selected else color.darker(145), 9, True)
+            text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, color.darker(145), 9, True)
             if rect.height() > 39 * scale:
                 value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
                 if event.candidate:
                     value += ' · option'
-                text(p, QRectF(rect.x() + 8, rect.y() + 23 * scale, rect.width() - 12, 18 * scale), value, SELECTED_EVENT_BORDER if selected else color.darker(120), 8)
+                text(p, QRectF(rect.x() + 8, rect.y() + 23 * scale, rect.width() - 12, 18 * scale), value, color.darker(120), 8)
             if rect.height() > 64 * scale and event.location:
                 text(p, QRectF(rect.x() + 8, rect.y() + 43 * scale, rect.width() - 12, 18 * scale), event.location, color.darker(120), 8)
             p.restore()
@@ -898,17 +921,13 @@ class CalendarCanvas(QWidget):
             if self.confirmation_hover(point):
                 return
             hit = self.hit(point)
-            local = hit[1].start.astimezone(local_zone()) if hit else None
             day = self.day_at(point)
             hover = self.position(point) if not hit and day is not None and point.y() >= self.time_top else None
             if hover != self.hover_time:
                 self.hover_time = hover
                 self.update()
             if hit:
-                self.setToolTip(hit[1].title + '\n' + self.preferences.format_date(local, weekday=True) + ' · '
-                                + ('All day' if hit[1].all_day else self.preferences.format_time(local)) + '\n'
-                                + hit[1].location + '\nDouble-click to edit.'
-                                + ('' if hit[1].all_day else ' Drag to move; Ctrl-drag to copy.'))
+                self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)))
             elif day is not None:
                 self.setToolTip('Double-click to add an all-day event.' if point.y() < self.time_top else
                                 'Double-click to add an event, or drag to choose its duration.')
@@ -1155,15 +1174,15 @@ class MonthCanvas(QWidget):
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
         confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
         fill = QColor(color)
-        fill.setAlpha(45 if preview else 58 if selected else 40)
-        painter.setPen(QPen(SELECTED_EVENT_BORDER if selected else color, 3 if selected else 2 if preview else 1,
+        fill.setAlpha(45 if preview else 40)
+        painter.setPen(QPen(color.darker(145) if selected else color, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine)
                        if selected or preview or item.all_day else Qt.PenStyle.NoPen)
         painter.setBrush(fill)
         painter.drawRoundedRect(rect, 3, 3)
         if selected:
-            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), SELECTED_EVENT_BORDER)
-        ink = SELECTED_EVENT_BORDER if selected else color.darker(140)
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), color.darker(145))
+        ink = color.darker(140)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:
@@ -1430,7 +1449,7 @@ class MonthCanvas(QWidget):
             return
         hit = self.hit(point)
         if hit:
-            self.setToolTip(hit[1].title + '\nDouble-click to edit. Drag to move; Ctrl-drag to copy.')
+            self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)))
             self.setCursor(Qt.CursorShape.ArrowCursor)
             return
         height = (self.height() - self.header_height) / 6
@@ -1578,17 +1597,17 @@ class AllDayCanvas(MonthCanvas):
         color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
         fill = QColor(color)
-        fill.setAlpha(36 if preview else 70 if selected else 45)
-        painter.setPen(QPen(SELECTED_EVENT_BORDER if selected else color, 3 if selected else 2 if preview else 1,
+        fill.setAlpha(36 if preview else 45)
+        painter.setPen(QPen(color.darker(145) if selected else color, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine))
         painter.setBrush(fill)
         painter.drawRoundedRect(rect, 4, 4)
         if selected:
-            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), SELECTED_EVENT_BORDER)
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), color.darker(145))
         first, last = self.days[0], self.days[-1] + timedelta(days=1)
         before, after = item.start.date() < first, item.end.date() > last
         confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
-        ink = SELECTED_EVENT_BORDER if selected else color.darker(145)
+        ink = color.darker(145)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:
@@ -1632,5 +1651,5 @@ class AllDayCanvas(MonthCanvas):
             if self.confirmation_hover(event.position()):
                 return
             hit = self.hit(event.position())
-            self.setToolTip((hit[1].title + '\nDrag to move; Ctrl-drag to copy. Double-click to edit.') if hit else
+            self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)) if hit else
                             'Double-click to add an all-day event.')

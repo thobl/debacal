@@ -66,8 +66,8 @@ without it. Existing imported definitions are retained. UTC events export offlin
 * **Year overview:** twelve month cards show calendar-colored event markers.
   Click a month heading to open Month view, or a marker to select its event;
   Ctrl+click adds to the selection. Double-click a day to create an all-day event.
-  Click a week number to open that week. Week numbers appear in Month and
-  Day/Week views too, and can be switched off in Appearance preferences.
+  Click a week number to open that week. Week numbers appear by default in
+  Month and Day/Week views too, and can be switched off in Appearance preferences.
   Right-click a day to inspect its events or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
@@ -124,7 +124,7 @@ without it. Existing imported definitions are retained. UTC events export offlin
   series; an occurrence-only title, place, or note match includes that occurrence.
   Selections hidden by the filter are cleared.
   `/` remains a calendar shortcut for search with the default bindings.
-* **History:** `Ctrl+Z` undoes; `Ctrl+Y` or `Ctrl+Shift+Z` redoes. Operation history can undo an earlier
+* **History:** `Ctrl+Z` undoes; `Ctrl+Shift+Z` redoes. Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
 * **Controls:** date navigation sits beside the current month and range. The
@@ -280,7 +280,7 @@ the master series.
 ### Import, subscriptions, and CalDAV
 
 **Import .ics** asks for a writable destination; **Export .ics** beside Calendars
-exports a chosen calendar. The Events toolbar's **Export selected events**
+exports a chosen calendar. **Export selected events** beside the Selection heading
 (`Ctrl+Shift+E`) and an event's context menu export the selection instead. This
 follows the one/all/following mode and preserves standard recurrence where applicable.
 Exporting separate occurrences gives them independent identities so they remain

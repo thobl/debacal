@@ -9,7 +9,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -247,6 +247,33 @@ def test_preview_outline_uses_its_event_calendar_even_if_creation_target_changes
     outlines = [call.args[0] for call in pens.call_args_list
                 if len(call.args) == 3 and call.args[2] == Qt.PenStyle.DashLine]
     assert outlines == [QColor(blue.color)]
+
+
+def test_year_selection_keeps_calendar_marker_color_without_blue_ink(view):
+    from PySide6.QtGui import QColor, QPen
+    source = Calendar('orange', 'Orange', '#ed7135')
+    item = event('chosen', calendar_id=source.id)
+    view.set_data(2026, [item], [source])
+    view.set_selection({item.id})
+    with patch('debacal.year_view.QPen', wraps=QPen) as pens, \
+            patch.object(view, '_text', wraps=view._text) as labels:
+        view.grab()
+    assert any(call.args[0] == QColor(source.color).darker(145) for call in pens.call_args_list if call.args)
+    assert not any(call.args[0] == QColor('#2c527c') for call in pens.call_args_list if call.args)
+    assert not any(len(call.args) > 3 and call.args[3] == QColor('#2c527c') for call in labels.call_args_list)
+
+
+def test_year_event_marker_tooltip_shows_details_without_interface_help(view):
+    from dataclasses import replace
+    source = Calendar('local', 'Personal', '#b37a4d')
+    item = replace(event('chosen'), title='A <meeting>', location='Room & garden', description='Bring notes')
+    view.set_data(2026, [item], [source])
+    marker = view.event_rect(item.id)
+    QTest.mouseMove(view, QPoint(1, 1))
+    QTest.mouseMove(view, marker.center().toPoint())
+    tooltip = view.toolTip()
+    assert 'A &lt;meeting&gt;' in tooltip and 'Room &amp; garden' in tooltip and 'Bring notes' in tooltip
+    assert not any(phrase in tooltip for phrase in ('Click ', 'Double-click', 'select an event'))
 
 
 def test_context_menu_keeps_ampersands_literal_in_event_titles(view):

@@ -209,7 +209,7 @@ def test_selected_event_uses_visible_marker_independent_of_white_calendar_color(
     widget.selected_id = existing.id
     widget.update()
     selected = widget.grab().toImage().pixelColor(point)
-    assert selected == QColor('#2c527c')
+    assert selected.rgba() == QColor('#ffffff').darker(145).rgba()
     assert selected != plain
 
 
@@ -276,6 +276,6 @@ def test_crowded_month_keeps_search_selected_event_visible_without_spilling_to_n
     day_height = (month.height() - 28) / 6
     assert rect.bottom() < 28 + 2 * day_height
     marker = QPoint(int(rect.left() + 4), int(rect.center().y()))
-    assert image.pixelColor(marker) == QColor('#2c527c')
+    assert image.pixelColor(marker).rgba() == QColor('#ffffff').darker(145).rgba()
     # All visible pills remain in their own day, including a one-row cell.
     assert all(month.day_at(rect.topLeft()) == month.day_at(rect.bottomRight()) for rect, _ in month.hits)

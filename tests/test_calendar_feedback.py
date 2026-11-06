@@ -180,7 +180,8 @@ def test_hover_guide_disappears_on_event_drag_and_placement(surfaces):
     point = hit(widget).center().toPoint()
     QTest.mouseMove(widget, point)
     assert widget.hover_time is None and widget.time_feedback() is None
-    assert 'Double-click to edit' in widget.toolTip()
+    assert sample().title in widget.toolTip()
+    assert 'Double-click' not in widget.toolTip()
     QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseMove(widget, blank)
     assert widget.time_feedback() is None

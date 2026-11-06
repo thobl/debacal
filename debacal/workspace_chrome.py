@@ -171,11 +171,15 @@ class WorkspaceChrome:
         column.setSpacing(3)
         label = QLabel(title)
         label.setObjectName('section')
-        column.addWidget(label)
+        heading = QHBoxLayout()
+        heading.setSpacing(4)
+        heading.addWidget(label)
+        heading.addStretch()
+        column.addLayout(heading)
         buttons = QHBoxLayout()
         buttons.setSpacing(3)
         column.addLayout(buttons)
-        return section, buttons
+        return section, heading, buttons
 
     def segmented_control(self, row):
         control = QWidget()
@@ -225,7 +229,7 @@ class WorkspaceChrome:
         toolbar = QHBoxLayout(self.toolbar)
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(16)
-        view_section, view_row = self.toolbar_section('View')
+        view_section, _view_heading, view_row = self.toolbar_section('View')
         self.view_control, view_segments = self.segmented_control(view_row)
         self.view_buttons = {}
         self.view_button_group = QButtonGroup(self)
@@ -241,7 +245,11 @@ class WorkspaceChrome:
                                                 view_row, 'full_day')
         self.full_day_button.setCheckable(True)
         self.full_day_button.setChecked(self.full_day)
-        selection_section, selection_row = self.toolbar_section('Selection')
+        selection_section, selection_heading, selection_row = self.toolbar_section('Selection')
+        self.export_selection_button = self.icon_button('export', 'Export selected events as .ics', self.export_selection,
+                                                        selection_heading, 'export_selection')
+        self.export_selection_button.setProperty('compactIcon', True)
+        self.export_selection_button.setEnabled(False)
         self.selection_control, selection_segments = self.segmented_control(selection_row)
         self.selection_buttons = {}
         self.selection_button_group = QButtonGroup(self)
@@ -254,15 +262,12 @@ class WorkspaceChrome:
             self.selection_button_group.addButton(button)
             self.selection_buttons[mode] = button
         self.style_segments(list(self.selection_buttons.values()))
-        events_section, events_row = self.toolbar_section('Events')
+        events_section, _events_heading, events_row = self.toolbar_section('Events')
         events_row.setContentsMargins(0, 3, 0, 3)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
         self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
         self.redo_button = self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
         self.icon_button('history', 'Operation history', self.show_history, events_row, 'history')
-        self.export_selection_button = self.icon_button('export', 'Export selected events as .ics', self.export_selection,
-                                                        events_row, 'export_selection')
-        self.export_selection_button.setEnabled(False)
         for section in (events_section, selection_section, view_section):
             toolbar.addWidget(section)
         self.workspace_header = WorkspaceHeader(title_widget, self.toolbar)
@@ -368,11 +373,12 @@ class WorkspaceChrome:
             shortcut = self.bindings.get(binding, '') if binding else ''
             button.setToolTip(title + (f' ({shortcut})' if shortcut else ''))
             if button.property('iconOnly'):
-                size = max(30, round(32 * self.preferences.font_scale / 100))
+                compact = button.property('compactIcon')
+                size = max(18 if compact else 30, round((20 if compact else 32) * self.preferences.font_scale / 100))
                 button.setFixedSize(size, size)
-        alternative = self.bindings.get('redo_alternative', '')
-        if alternative and alternative != self.bindings.get('redo'):
-            self.redo_button.setToolTip(self.redo_button.toolTip() + f' · {alternative}')
+                if compact:
+                    button.setIconSize(QSize(max(12, round(14 * self.preferences.font_scale / 100)),
+                                             max(12, round(14 * self.preferences.font_scale / 100))))
         self.update_navigation_width()
         self.workspace_header.reflow()
         # Large text can exceed a short window. Keep controls apart and let the

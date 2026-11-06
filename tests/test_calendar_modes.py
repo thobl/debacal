@@ -127,7 +127,7 @@ def test_fixed_all_day_events_are_single_connected_bars_with_clipped_continuatio
     image = widget.grab().toImage()
     for identifier in ('left', 'overlap'):
         rect = hit(widget, identifier)
-        assert image.pixelColor(int(rect.left() + 4), int(rect.center().y())) == QColor('#2c527c')
+        assert image.pixelColor(int(rect.left() + 4), int(rect.center().y()))  .rgba() == QColor(widget.calendars['local'].color).darker(145).rgba()
 
 
 def test_month_all_day_span_is_one_connected_bar_and_click_uses_its_segment_date(surfaces):
@@ -182,7 +182,7 @@ def test_month_all_day_lanes_share_cell_capacity_with_pinned_timed_selection(sur
     # Hidden all-day occurrences remain one resource each, never daily pills.
     assert len({item.id for _rect, item in widget.hits}) == len(widget.hits)
     marker = hit(widget, timed.id)
-    assert widget.grab().toImage().pixelColor(int(marker.left() + 4), int(marker.center().y())) == QColor('#2c527c')
+    assert widget.grab().toImage().pixelColor(int(marker.left() + 4), int(marker.center().y()))  .rgba() == QColor(widget.calendars['local'].color).darker(145).rgba()
 
 
 def test_month_pending_all_day_spans_and_timed_ghosts_use_distinct_rows_without_hits(surfaces):
@@ -217,9 +217,29 @@ def test_soft_multiple_selection_keeps_calendar_color_and_no_persistent_day_fill
     image = widget.grab().toImage()
     for identifier in ('event', 'second'):
         rect = hit(widget, identifier)
-        assert image.pixelColor(int(rect.left() + 4), int(rect.center().y())) == QColor('#2c527c')
+        assert image.pixelColor(int(rect.left() + 4), int(rect.center().y()))  .rgba() == QColor(widget.calendars['local'].color).darker(145).rgba()
         fill = image.pixelColor(int(rect.right() - 8), int(rect.bottom() - 5))
         assert fill.red() > fill.blue()  # Original orange calendar tint remains.
+        assert fill == before.pixelColor(int(rect.right() - 8), int(rect.bottom() - 5))
+
+
+@pytest.mark.parametrize('kind', ['timed', 'month', 'all-day'])
+def test_event_tooltip_shows_details_without_gesture_instructions(surfaces, kind):
+    _, make = surfaces
+    all_day = kind == 'all-day'
+    source = replace(sample('Planning <session>', all_day=all_day, hour=0 if all_day else 9,
+                            duration=1440 if all_day else 60),
+                     location='Room & garden', description='Bring the agenda')
+    widget = make(kind, [source])
+    rect = hit(widget, source.id)
+    QTest.mouseMove(widget, QPoint(1, 1))
+    QTest.mouseMove(widget, rect.center().toPoint())
+    tooltip = widget.toolTip()
+    assert 'Planning &lt;session&gt;' in tooltip
+    assert 'Room &amp; garden' in tooltip and 'Bring the agenda' in tooltip
+    assert widget.preferences.format_date(source.start.date()) in tooltip
+    assert 'Color' in tooltip
+    assert all(phrase not in tooltip for phrase in ('Double-click', 'Drag', 'Ctrl', 'Select '))
 
 
 def test_header_selection_day_is_state_only_while_navigation_can_highlight(surfaces):

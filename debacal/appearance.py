@@ -37,6 +37,7 @@ QPushButton#calendarChoice { text-align: left; border: 1px solid transparent; pa
 QPushButton#calendarChoice:checked { border-color: #b7c8ac; background: #e0e9d8; font-weight: 600; }
 
 QPushButton[iconOnly="true"] { padding: 5px; }
+QPushButton[compactIcon="true"] { padding: 1px; border-color: transparent; border-radius: 4px; }
 QWidget#segmentedControl { background: #edf0e8; border: 1px solid #d4ddcd; border-radius: 8px; }
 QWidget#segmentedControl QPushButton { background: transparent; border: 1px solid transparent; border-radius: 0; }
 QWidget#segmentedControl QPushButton[segment="first"] { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
 from .timeutil import local_zone, now
+from .calendar_widgets import event_tooltip
 
 
 BG = QColor('#fafbf8')
@@ -19,7 +20,6 @@ LINE = QColor('#e4e8e0')
 INK = QColor('#26362e')
 MUTED = QColor('#89938a')
 GREEN = QColor('#416c51')
-BLUE = QColor('#2c527c')
 
 
 class YearView(QWidget):
@@ -369,9 +369,9 @@ class YearView(QWidget):
             preview = bool(self._preview_summaries[offset]) if self._preview_summaries else False
             box = rect.adjusted(1 * scale, 0, -1 * scale, 0)
             if day == self.selected_day or selected or preview or day == today:
-                color = QColor('#edf1f8') if day == self.selected_day or selected else QColor('#edf2e7')
+                color = QColor('#f3f5f0') if day == self.selected_day or selected else QColor('#edf2e7')
                 painter.setBrush(color)
-                pen = QPen(BLUE if selected else QColor('#91a2b8'), 1) if day == self.selected_day or selected else QPen(Qt.PenStyle.NoPen)
+                pen = QPen(LINE, 1) if day == self.selected_day or selected else QPen(Qt.PenStyle.NoPen)
                 if preview:
                     identity = min(self._preview_summaries[offset])
                     source = self.calendars.get(identity)
@@ -382,7 +382,7 @@ class YearView(QWidget):
                 painter.setPen(pen)
                 painter.drawRoundedRect(box, 4 * scale, 4 * scale)
             number_rect = rect.adjusted(0, -2 * scale, 0, -3 * scale)
-            self._text(painter, number_rect, str(day.day), BLUE if selected else GREEN if day == today else INK,
+            self._text(painter, number_rect, str(day.day), GREEN if day == today else INK,
                        8, selected or day == today)
         for hit, _identity, day, calendar_id in self._marker_hits:
             if not hit.intersects(event.rect()):
@@ -394,7 +394,7 @@ class YearView(QWidget):
             marker = hit.adjusted(2 * scale, 2 * scale, -2 * scale, -2 * scale)
             painter.setBrush(color)
             selected = self._selected_summaries[(day - self._first).days]
-            painter.setPen(QPen(BLUE, 1) if calendar_id in selected else QPen(Qt.PenStyle.NoPen))
+            painter.setPen(QPen(color.darker(145), 1.5) if calendar_id in selected else QPen(Qt.PenStyle.NoPen))
             painter.drawRoundedRect(marker, 1 * scale, 1 * scale)
         painter.end()
 
@@ -470,6 +470,12 @@ class YearView(QWidget):
                 self.unsetCursor()
                 self.setToolTip(self._default_tooltip)
         day = self.day_at(event.position())
+        if hovered is None:
+            marker = next((identity for rect, identity, _day, _calendar in reversed(self._marker_hits)
+                           if rect.contains(event.position())), None)
+            item = self._event_map.get(marker)
+            self.setToolTip(event_tooltip(item, self.preferences, self.calendars.get(item.calendar_id))
+                            if item is not None else self._default_tooltip)
         if self.placement_active and day is not None:
             self.placement_moved.emit(datetime.combine(day, time.min, local_zone()))
         super().mouseMoveEvent(event)

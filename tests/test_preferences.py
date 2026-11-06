@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import QApplication, QDialog
 
-from debacal.preferences import Preferences, format_date, format_time
+from debacal.preferences import Preferences, SETTINGS_KEY, format_date, format_time
 from debacal.preferences_dialog import PreferencesDialog
 from debacal.store import Store
 
@@ -60,6 +60,28 @@ class PreferencesTests(unittest.TestCase):
                 preferences.save(store)
             with Store(path) as store:
                 self.assertEqual(Preferences.load(store), preferences)
+
+    def test_legacy_week_number_default_is_enabled_once_and_can_be_disabled_again(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                # Previous releases persisted false even when only unrelated
+                # preferences were changed. Preserve those other values.
+                store.set_setting(SETTINGS_KEY, {'show_week_numbers': False, 'date_format': 'iso',
+                                                'unknown_preference': {'keep': True}})
+                loaded = Preferences.load(store)
+                self.assertTrue(loaded.show_week_numbers)
+                self.assertEqual(loaded.date_format, 'iso')
+                self.assertEqual(store.get_setting(SETTINGS_KEY)['unknown_preference'], {'keep': True})
+                changes = store.connection.total_changes
+                self.assertEqual(Preferences.load(store), loaded)
+                self.assertEqual(store.connection.total_changes, changes)
+            with Store(path) as store:
+                self.assertTrue(Preferences.load(store).show_week_numbers)
+                Preferences(date_format='iso', show_week_numbers=False).save(store)
+            with Store(path) as store:
+                self.assertFalse(Preferences.load(store).show_week_numbers)
+                self.assertEqual(Preferences.load(store).date_format, 'iso')
 
     def test_invalid_settings_fall_back_per_field(self):
         self.assertEqual(Preferences.from_dict({'start_weekday': 9, 'date_format': 'iso', 'time_format': 'invalid'}),

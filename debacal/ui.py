@@ -34,7 +34,7 @@ DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
     'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'year_view': 'Y', 'full_day': 'F',
-    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Y', 'redo_alternative': 'Ctrl+Shift+Z',
+    'select_event': 'G', 'undo': 'Ctrl+Z', 'redo': 'Ctrl+Shift+Z',
     'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
     'edit_single': '', 'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
     'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'cycle_scope': 'Alt+S',
@@ -118,11 +118,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             store.set_setting('keybindings', saved_bindings)
             store.set_setting('keybindings_version', 2)
         if store.get_setting('keybindings_version', 0) < 3:
-            if saved_bindings.get('redo') == 'Ctrl+Shift+Z':
-                saved_bindings.pop('redo')
-            elif saved_bindings.get('redo') == '':
-                saved_bindings.setdefault('redo_alternative', '')
-            for action in ('year_view', 'redo', 'redo_alternative', 'export_selection'):
+            for action in ('year_view', 'export_selection'):
                 if action in saved_bindings:
                     continue
                 sequence = QKeySequence(DEFAULT_BINDINGS[action])
@@ -132,6 +128,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     saved_bindings[action] = ''
             store.set_setting('keybindings', saved_bindings)
             store.set_setting('keybindings_version', 3)
+        if store.get_setting('keybindings_version', 0) < 4:
+            alternative = saved_bindings.pop('redo_alternative', None)
+            if saved_bindings.get('redo') in (None, 'Ctrl+Y', 'Ctrl+Shift+Z'):
+                # Consolidate former defaults into one action. Retain a custom
+                # alternative when the primary action still used a default.
+                if alternative and alternative != 'Ctrl+Shift+Z':
+                    saved_bindings['redo'] = alternative
+                else:
+                    saved_bindings.pop('redo', None)
+                    sequence = QKeySequence(DEFAULT_BINDINGS['redo'])
+                    if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
+                                       or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
+                           for value in saved_bindings.values()):
+                        saved_bindings['redo'] = ''
+            store.set_setting('keybindings', saved_bindings)
+            store.set_setting('keybindings_version', 4)
         self.bindings = DEFAULT_BINDINGS | saved_bindings
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
@@ -1569,7 +1581,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             'day_view': lambda: self.set_view('day'), 'week_view': lambda: self.set_view('week'),
             'full_day': self.toggle_full_day,
             'month_view': lambda: self.set_view('month'), 'year_view': lambda: self.set_view('year'), 'select_event': self.start_selection,
-            'undo': self.undo, 'redo': self.redo, 'redo_alternative': self.redo, 'history': self.show_history,
+            'undo': self.undo, 'redo': self.redo, 'history': self.show_history,
             'export_selection': self.export_selection,
             'shortcuts': self.show_shortcuts, 'sync': self.sync_now,
             'select_left': lambda: self.select_by_arrow('left'), 'select_right': lambda: self.select_by_arrow('right'),

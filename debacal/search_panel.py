@@ -635,9 +635,6 @@ class SearchPanel(QTreeWidget):
             lines.append('Shown occurrence: ' + effective.title)
         if effective.location:
             lines.append(effective.location)
-        lines.append('Select using the current selection mode.' if self.agenda_mode else
-                     'Select the whole series. Expand to choose one date.' if event.recurring else
-                     'Select this occurrence.' if event.series_id else 'Select this event.')
         return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>'
 
     def _when(self, event):

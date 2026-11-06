@@ -203,7 +203,7 @@ def test_too_dense_view_explains_range_limit_without_quarantining_a_valid_series
     assert store.list_quarantined_resources() == []
 
 
-def test_redo_primary_and_alternative_keys_restore_the_same_operation(desktop):
+def test_redo_uses_only_ctrl_shift_z(desktop):
     _, window, store = desktop
     source = Event('event', 'local', 'Review', START, START + timedelta(hours=1))
     window.apply_events('Create', [source])
@@ -211,11 +211,11 @@ def test_redo_primary_and_alternative_keys_restore_the_same_operation(desktop):
     QTest.keyClick(window.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert store.list_events() == []
     QTest.keyClick(window.canvas, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
-    assert store.list_events() == [source]
-    QTest.keyClick(window.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert store.list_events() == []
     QTest.keyClick(window.canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
     assert store.list_events() == [source]
-    assert 'Ctrl+Y' in window.redo_button.toolTip() and 'Ctrl+Shift+Z' in window.redo_button.toolTip()
+    assert window.redo_button.toolTip() == 'Redo (Ctrl+Shift+Z)'
+    assert 'redo_alternative' not in window.bindings
 
 
 def test_new_keys_preserve_custom_shortcuts_on_upgrade(desktop):
@@ -225,7 +225,7 @@ def test_new_keys_preserve_custom_shortcuts_on_upgrade(desktop):
     other = MainWindow(store, enable_sync=False)
     try:
         assert other.bindings['new_event'] == 'Y' and other.bindings['year_view'] == ''
-        assert other.bindings['redo'] == 'Alt+R' and other.bindings['redo_alternative'] == ''
+        assert other.bindings['redo'] == 'Alt+R' and 'redo_alternative' not in other.bindings
         validate_bindings(other.bindings)
     finally:
         other.close()
@@ -240,7 +240,35 @@ def test_disabled_redo_shortcut_stays_disabled_on_upgrade(desktop):
     store.set_setting('keybindings', {'redo': ''})
     other = MainWindow(store, enable_sync=False)
     try:
-        assert other.bindings['redo'] == other.bindings['redo_alternative'] == ''
+        assert other.bindings['redo'] == '' and 'redo_alternative' not in other.bindings
+    finally:
+        other.close()
+        other.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
+
+
+@pytest.mark.parametrize('saved,expected', [
+    ({'redo': 'Ctrl+Y', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Ctrl+Shift+Z'),
+    ({'redo': 'Ctrl+Y', 'redo_alternative': 'Alt+R'}, 'Alt+R'),
+    ({'redo': 'Alt+R', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Alt+R'),
+    ({'redo': '', 'redo_alternative': ''}, ''),
+    ({'redo': 'Ctrl+Y', 'history': 'Ctrl+Shift+Z'}, ''),
+    ({'redo': 'Ctrl+Y', 'history': 'Ctrl+Shift+Z, H'}, ''),
+])
+def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(desktop, saved, expected):
+    app, _, store = desktop
+    store.set_setting('keybindings_version', 3)
+    store.set_setting('keybindings', saved)
+    other = MainWindow(store, enable_sync=False)
+    try:
+        assert other.bindings['redo'] == expected
+        assert 'redo_alternative' not in other.bindings
+        assert 'redo_alternative' not in store.get_setting('keybindings')
+        assert store.get_setting('keybindings_version') == 4
+        if 'history' in saved:
+            assert other.bindings['history'] == saved['history']
+        validate_bindings(other.bindings)
     finally:
         other.close()
         other.deleteLater()

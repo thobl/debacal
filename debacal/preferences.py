@@ -9,6 +9,7 @@ from PySide6.QtCore import QDate, QLocale, QTime
 
 
 SETTINGS_KEY = 'display_preferences'
+WEEK_NUMBERS_DEFAULT_KEY = 'week_numbers_default_version'
 
 
 def _system_locale():
@@ -149,10 +150,22 @@ class Preferences:
 
     @classmethod
     def load(cls, store) -> Preferences:
-        return cls.from_dict(store.get_setting(SETTINGS_KEY, {}))
+        with store._transaction():
+            values = store.get_setting(SETTINGS_KEY, {})
+            if store.get_setting(WEEK_NUMBERS_DEFAULT_KEY, 0) != 1:
+                # Older versions saved the previous false default with every
+                # preferences change. Enable the new default once; subsequent
+                # choices, including switching it off again, remain explicit.
+                values = dict(values) if isinstance(values, dict) else {}
+                values['show_week_numbers'] = True
+                store.set_setting(SETTINGS_KEY, values)
+                store.set_setting(WEEK_NUMBERS_DEFAULT_KEY, 1)
+            return cls.from_dict(values)
 
     def save(self, store) -> None:
-        store.set_setting(SETTINGS_KEY, self.to_dict())
+        with store._transaction():
+            store.set_setting(SETTINGS_KEY, self.to_dict())
+            store.set_setting(WEEK_NUMBERS_DEFAULT_KEY, 1)
 
 
 def format_date(value: date, preferences: Preferences | None = None, *, weekday: bool = False) -> str:
