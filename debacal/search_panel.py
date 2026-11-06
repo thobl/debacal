@@ -124,6 +124,7 @@ class SearchPanel(QTreeWidget):
     def __init__(self, store, preferences, parent=None):
         super().__init__(parent)
         self.store, self.preferences = store, preferences
+        self.agenda_mode = False
         self.setHeaderHidden(True)
         self.setColumnCount(1)
         self.setRootIsDecorated(True)
@@ -286,6 +287,7 @@ class SearchPanel(QTreeWidget):
         blocked = self.blockSignals(True)
         self._updating = True
         try:
+            self.agenda_mode = False
             super().clear()
             self._states.clear()
             self._masters.clear()
@@ -348,6 +350,38 @@ class SearchPanel(QTreeWidget):
         finally:
             self._updating = False
             self.blockSignals(blocked)
+
+    def populate_upcoming(self, start, *, days=30, limit=10):
+        """Use the same space for the next dated events when search is empty."""
+        calendars = self.store.list_calendars()
+        events = self.store.query_occurrences(start, start + timedelta(days=days),
+                                              [calendar.id for calendar in calendars if calendar.visible])
+        events.sort(key=lambda event: (event.start.timestamp(), event.end.timestamp(), event.id))
+        selected, current_id = self.selected_ids(), self.event_id(self.currentItem())
+        blocked = self.blockSignals(True)
+        self._updating = True
+        try:
+            self.agenda_mode = True
+            self._query = None
+            self._calendars = {calendar.id: calendar for calendar in calendars}
+            super().clear()
+            self._events_by_id.clear()
+            self._row_scopes.clear()
+            self._masters.clear()
+            self._states.clear()
+            self._prefetched.clear()
+            for event in events[:limit]:
+                item = self._event_item(event)
+                self.addTopLevelItem(item)
+                item.setSelected(event.id in selected)
+                if event.id == current_id:
+                    self.setCurrentItem(item)
+            if not events:
+                self._placeholder(None, 'No upcoming events', f'Next {days} days · visible calendars')
+        finally:
+            self._updating = False
+            self.blockSignals(blocked)
+        return min(len(events), limit)
 
     def _event_item(self, event):
         item = _ResultItem([event.title])

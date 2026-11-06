@@ -218,6 +218,7 @@ def test_all_day_search_selection_highlights_pinned_chip_while_grid_is_scrolled(
     event = Event('all-day-search', 'local', 'Needle all-day event', midnight,
                   midnight + timedelta(days=1), all_day=True)
     window.apply_events('Create all-day search target', [event])
+    window.resize(window.minimumWidth(), window.minimumHeight())
     if not window.full_day:
         window.toggle_full_day()
     app.processEvents()
@@ -252,7 +253,8 @@ def test_enter_commits_current_result_to_active_canvas_and_escape_exits(workspac
     assert window.selected_id == events[1].id
     assert window.search.text() == 'Needle'
     QTest.keyClick(canvas, Qt.Key.Key_Escape)
-    assert not window.search.text() and not window.results.isVisible()
+    assert not window.search.text() and window.results.agenda_mode
+    assert window.results_heading.text() == 'Next events'
     assert canvas.hasFocus()
     assert window.selected_id == events[1].id
 

@@ -4,12 +4,12 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal
+from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal, QEvent
 from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox, QButtonGroup,
-    QListWidget, QListWidgetItem, QKeySequenceEdit, QScrollArea, QWidget, QColorDialog,
+    QListWidget, QListWidgetItem, QScrollArea, QWidget, QColorDialog, QAbstractSpinBox,
 )
 
 from .models import Event, Calendar
@@ -27,7 +27,65 @@ def hint(text):
     return label
 
 
-class EventDialog(QDialog):
+class FormDialog(QDialog):
+    """Native form navigation with one explicit primary action."""
+    def configure_keyboard(self, fields, buttons, primary, reserved=()):
+        self._primary_action = primary
+        self._validation_field = None
+        for field in [*fields, *buttons]:
+            if isinstance(field, QTextEdit):
+                field.setTabChangesFocus(True)
+            else:
+                field.installEventFilter(self)
+                if isinstance(field, QAbstractSpinBox):
+                    field.lineEdit().installEventFilter(self)
+        chain = [*fields, *buttons]
+        for before, after in zip(chain, chain[1:]):
+            self.setTabOrder(before, after)
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+        self.save_shortcuts = []
+        reserved = {QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText) for value in reserved if value}
+        def conflicts(sequence):
+            return any(sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
+                       or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch for value in reserved)
+        for widget in self.findChildren(QWidget):
+            if isinstance(widget, (QLabel, QPushButton, QCheckBox)):
+                mnemonic = QKeySequence.mnemonic(widget.text())
+                if not mnemonic.isEmpty() and conflicts(mnemonic):
+                    widget.setText(widget.text().replace('&', ''))
+        for key in ('Ctrl+Return', 'Ctrl+Enter'):
+            if conflicts(QKeySequence(key)):
+                continue
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self.save)
+            self.save_shortcuts.append(shortcut)
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier):
+            if isinstance(obj, QComboBox) and obj.view().isVisible():
+                return super().eventFilter(obj, event)
+            spin = obj if isinstance(obj, QAbstractSpinBox) else obj.parent()
+            if isinstance(spin, QDateTimeEdit) and spin.calendarWidget().isVisible():
+                return super().eventFilter(obj, event)
+            if isinstance(spin, QAbstractSpinBox):
+                spin.interpretText()
+            obj.click() if isinstance(obj, QPushButton) else self._primary_action()
+            return True
+        return super().eventFilter(obj, event)
+
+    def show_error(self, message, field=None):
+        self.error.setText(str(message))
+        field = field or self._validation_field
+        if field is not None and field.isEnabled() and field.isVisible():
+            field.setFocus(Qt.FocusReason.OtherFocusReason)
+            if isinstance(field, QLineEdit):
+                field.selectAll()
+
+
+class EventDialog(FormDialog):
     """One schedule editor: rules, chosen dates and alternatives share a master."""
     mode_changed = Signal(str)
     def __init__(self, calendars, start, end=None, event=None, parent=None,
@@ -35,6 +93,7 @@ class EventDialog(QDialog):
                  scope_shortcut='Alt+S', scope_modifiers=None, scope_bindings=None, common_fields_only=False):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
+        self.setLocale(self.preferences.qt_locale())
         self.setWindowTitle('Edit event' if event else 'Create event')
         self.resize(1080, 740)
         self.original, self.series = event, series
@@ -94,7 +153,6 @@ class EventDialog(QDialog):
         else:
             mode_widget.hide()
         self.title = QLineEdit(reference.title if reference else '')
-        self.title.setPlaceholderText('What are you making time for?')
         self.calendar = QComboBox()
         for cal in calendars:
             if cal.kind != 'ics' and not cal.read_only:
@@ -116,14 +174,14 @@ class EventDialog(QDialog):
             wall = value if reference and reference.all_day else value.astimezone(local_zone())
             field.setDateTime(QDateTime(QDate(wall.year, wall.month, wall.day),
                 QTime(wall.hour, wall.minute, wall.second, wall.microsecond // 1000), QTimeZone.utc()))
-        self.all_day = QCheckBox('All-day event')
+        self.all_day = QCheckBox('All-&day event')
         self.all_day.setChecked(reference.all_day if reference else False)
         self.location = QLineEdit(reference.location if reference else '')
         self.description = QTextEdit()
         self.description.setPlainText(reference.description if reference else '')
         self.description.setMaximumHeight(70)
-        for label, field in [('Title', self.title), ('Calendar', self.calendar), ('Starts', self.start),
-                             ('Ends', self.end), ('', self.all_day), ('Location', self.location), ('Notes', self.description)]:
+        for label, field in [('&Title', self.title), ('&Calendar', self.calendar), ('Sta&rts', self.start),
+                             ('&Ends', self.end), ('', self.all_day), ('&Location', self.location), ('&Notes', self.description)]:
             form.addRow(label, field)
         self.repeat = QComboBox()
         for name, value in [('Once', ''), ('Daily', 'DAILY'), ('Weekly', 'WEEKLY'),
@@ -161,9 +219,9 @@ class EventDialog(QDialog):
         self.pattern_help = hint('')
         self.advanced_help = hint('Advanced: RRULE is the standard iCalendar recurrence rule. The regular controls generate it for you; this field is for rules the controls cannot express.')
         self.load_schedule(source)
-        for label, field in [('Schedule', self.repeat), ('Every', self.interval), ('Days', self.weekday_container),
-                             ('Ends', self.repeat_end), ('Occurrences', self.repeat_count), ('Until', self.repeat_until),
-                             ('Add events', self.pattern), ('Rule', self.custom_rule)]:
+        for label, field in [('Re&peat', self.repeat), ('E&very', self.interval), ('Days', self.weekday_container),
+                             ('End condition', self.repeat_end), ('C&ount', self.repeat_count), ('&Until', self.repeat_until),
+                             ('Se&quence', self.pattern), ('R&ule', self.custom_rule)]:
             form.addRow(label, field)
         content.addLayout(form)
         self.common_fields_help = hint('Changes to common fields and relative times apply to the selection. '
@@ -190,6 +248,12 @@ class EventDialog(QDialog):
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+        self.buttons = buttons
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.save_button.setText('Save')
+        self.cancel_button.setText('Cancel')
+        self.save_button.setToolTip('Enter saves; Ctrl+Enter also saves from Notes.')
         self.pattern.textChanged.connect(self.pattern_changed)
         self.scope.currentIndexChanged.connect(self.scope_changed)
         for signal in (self.start.dateTimeChanged, self.end.dateTimeChanged,
@@ -210,6 +274,13 @@ class EventDialog(QDialog):
             shortcut.setEnabled(bool(event and self.scope_bindings.get(action)))
             shortcut.activated.connect(lambda value=scope: self.scope.setCurrentIndex(self.scope.findData(value)))
             self.mode_shortcuts[action] = shortcut
+        self.configure_keyboard([*self.scope_buttons.values(), self.title, self.calendar, self.start, self.end,
+            self.all_day, self.location, self.description, self.repeat, self.interval, *self.weekdays,
+            self.repeat_end, self.repeat_count, self.repeat_until, self.pattern, self.custom_rule,
+            self.candidate, self.preview.previous_button, self.preview.next_button, self.preview.first_button],
+            [self.save_button, self.cancel_button], self.save,
+            [*self.scope_bindings.values(), scope_shortcut] if event else ())
+        self.save_button.setDefault(True)
         self.update_preview()
         self.title.setFocus()
         self.title.selectAll()
@@ -310,6 +381,7 @@ class EventDialog(QDialog):
         return value
 
     def value(self, field):
+        self._validation_field = field
         reference = self.edit_reference
         calendar_date = bool(self.all_day.isChecked() and reference and reference.all_day)
         if calendar_date:
@@ -457,6 +529,7 @@ class EventDialog(QDialog):
                                       else key_datetime(key, source).astimezone(zone) for key in source.recurrence_dates)]
             delta = anchor.replace(tzinfo=None) - original.replace(tzinfo=None)
             return [self.validate_time((value.replace(tzinfo=None) + delta).replace(tzinfo=anchor.tzinfo, fold=value.fold)) for value in starts]
+        self._validation_field = self.pattern
         return expand_sequence(text, anchor)
 
     def dates(self):
@@ -479,10 +552,17 @@ class EventDialog(QDialog):
     def toggle_date(self, day):
         try:
             from .patterns import simplify_sequence
-            from .recurrence import key_datetime, recurrence_key
-            starts = self.sequence_starts()
+            from .recurrence import base_schedule_starts, key_datetime, recurrence_key
+            if self.common_fields_only or (self.has_group and self.scope.currentData() == 'single'):
+                raise ValueError('Choose All or Following to change the series dates.')
+            template = self.preview.masters[0] if self.preview.masters else self.build_events()[0]
+            if self.repeat.currentData() != 'RDATE':
+                zone = self.sequence_zone()
+                starts = [value.replace(tzinfo=zone) if template.all_day else value.astimezone(zone)
+                          for value in base_schedule_starts(template, limit=500)]
+            else:
+                starts = self.sequence_starts()
             anchor = starts[0]
-            template = self.preview.masters[0] if self.preview.masters else (self.series or self.original)
             exclusions = set(template.excluded_dates if template else ())
             matching = [value for value in starts if self.sequence_calendar_day(value) == day]
             fully_excluded = matching and all(recurrence_key(value, self.all_day.isChecked()) in exclusions for value in matching)
@@ -503,9 +583,13 @@ class EventDialog(QDialog):
             self._click_anchor = anchor
             self._click_template = template
             self._setting_pattern_from_click = True
+            blocked = self.repeat.blockSignals(True), self.pattern.blockSignals(True)
             try:
+                self.repeat.setCurrentIndex(self.repeat.findData('RDATE'))
                 self.pattern.setText(expression)
             finally:
+                self.repeat.blockSignals(blocked[0])
+                self.pattern.blockSignals(blocked[1])
                 self._setting_pattern_from_click = False
             # setText emits nothing if the simplest result equals the initial
             # empty expression. That still represents an intentional date edit.
@@ -536,6 +620,7 @@ class EventDialog(QDialog):
         if kind in ('', 'RDATE'):
             return ''
         if kind == 'CUSTOM':
+            self._validation_field = self.custom_rule
             rule = self.custom_rule.text().strip().upper().removeprefix('RRULE:')
             if not rule:
                 raise ValueError('Enter a recurrence rule.')
@@ -545,6 +630,7 @@ class EventDialog(QDialog):
             names = ['MO','TU','WE','TH','FR','SA','SU']
             days = [names[index] for index, box in enumerate(self.weekdays) if box.isChecked()]
             if not days:
+                self._validation_field = self.weekdays[0]
                 raise ValueError('Choose at least one weekday.')
             rule += ';BYDAY=' + ','.join(days)
         if self.repeat_end.currentData() == 'COUNT':
@@ -552,6 +638,7 @@ class EventDialog(QDialog):
         elif self.repeat_end.currentData() == 'UNTIL':
             day = self.repeat_until.date().toPython()
             if day < start.date():
+                self._validation_field = self.repeat_until
                 raise ValueError('The last recurrence date must not precede the start.')
             until = datetime.combine(day, datetime.max.time(), start.tzinfo).astimezone(timezone.utc)
             rule += ';UNTIL=' + until.strftime('%Y%m%dT%H%M%SZ')
@@ -560,6 +647,7 @@ class EventDialog(QDialog):
     def build_events(self):
         start, end = self.value(self.start), self.value(self.end)
         if end.timestamp() < start.timestamp():
+            self._validation_field = self.end
             raise ValueError('End must not be before start.')
         source = self.schedule_source()
         kind = self.repeat.currentData()
@@ -579,6 +667,7 @@ class EventDialog(QDialog):
             from .recurrence import schedule_fields
             starts = self.sequence_starts()
             if self.all_day.isChecked() and any(value.time() != datetime.min.time() for value in starts):
+                self._validation_field = self.pattern
                 raise ValueError('Time entries require a timed event. Turn off All-day event, or use date-only steps.')
             fields = schedule_fields(starts, all_day=self.all_day.isChecked())
             rule, rdates = fields['recurrence_rule'], fields['recurrence_dates']
@@ -604,9 +693,12 @@ class EventDialog(QDialog):
             end = start + timedelta(days=days)
             if dates_changed:
                 rdates = tuple(value[:10] for value in rdates)
+        self._validation_field = self.start
         self.validate_time(start)
+        self._validation_field = self.end
         self.validate_time(end)
         if kind == 'RDATE' and dates_changed:
+            self._validation_field = self.pattern
             duration = end.replace(tzinfo=None) - start.replace(tzinfo=None)
             for value in starts:
                 finish = (value + duration) if duration > timedelta(0) else datetime.fromtimestamp(
@@ -640,6 +732,7 @@ class EventDialog(QDialog):
         event = replace(self.original, **values) if self.original else Event(**values)
         if event.recurring:
             from .recurrence import recurrence_set
+            self._validation_field = self.custom_rule if kind == 'CUSTOM' else self.pattern if kind == 'RDATE' else self.repeat
             recurrence_set(event)
         return [event]
 
@@ -693,7 +786,7 @@ class EventDialog(QDialog):
                 events = [tail] if tail else []
             self.preview.set_events(events, self.preferences)
             self.error.setText(self.preview.error)
-            self.preview.enable_date_editing(enabled and kind == 'RDATE' and not self.preview.error)
+            self.preview.enable_date_editing(enabled and not self.preview.error)
         except (ValueError, PatternError, OverflowError) as exc:
             self.preview.set_events([], self.preferences)
             self.error.setText(str(exc))
@@ -701,17 +794,19 @@ class EventDialog(QDialog):
     def save(self):
         try:
             if not self.title.text().strip():
+                self._validation_field = self.title
                 raise ValueError('Give your event a title.')
             if self.calendar.currentData() is None:
+                self._validation_field = self.calendar
                 raise ValueError('Add a writable calendar first.')
             self.result_events = self.build_events()
             self.accept()
         except (ValueError, PatternError, OverflowError) as exc:
             self.result_events = []
-            self.error.setText(str(exc))
+            self.show_error(exc)
 
 
-class CalendarDialog(QDialog):
+class CalendarDialog(FormDialog):
     def __init__(self, calendar=None, parent=None, allow_remote=True, credentials=None, default_calendar_id=None):
         super().__init__(parent)
         self.setWindowTitle('Calendar source' if calendar else 'Add a calendar')
@@ -719,7 +814,7 @@ class CalendarDialog(QDialog):
         self.original = calendar
         self.credentials = credentials
         outer = QVBoxLayout(self)
-        form = QFormLayout()
+        self.form = form = QFormLayout()
         self.name = QLineEdit(calendar.name if calendar else '')
         self.kind = QComboBox()
         self.kind.addItem('Local calendar', 'local')
@@ -741,12 +836,12 @@ class CalendarDialog(QDialog):
         colors = QHBoxLayout(color_row)
         colors.setContentsMargins(0, 0, 0, 0)
         colors.addWidget(self.color, 1)
-        self.choose_color_button = QPushButton('Choose…')
+        self.choose_color_button = QPushButton('Choose co&lor…')
         self.choose_color_button.clicked.connect(self.choose_color)
         colors.addWidget(self.choose_color_button)
-        self.use_server_color = QCheckBox('Use the calendar color from the server')
+        self.use_server_color = QCheckBox('Use ser&ver color')
         self.use_server_color.setChecked(calendar.use_server_color if calendar else True)
-        self.make_default = QCheckBox('Default calendar for new events')
+        self.make_default = QCheckBox('Default for new &events')
         self.make_default.setChecked(bool(calendar and calendar.id == default_calendar_id))
         self.make_default.setEnabled(not calendar or (calendar.kind != 'ics' and not calendar.read_only))
         self.url = QLineEdit(calendar.url if calendar else '')
@@ -755,11 +850,12 @@ class CalendarDialog(QDialog):
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setPlaceholderText('Leave blank to reuse the saved account password')
-        self.remember_password = QCheckBox('Remember in the system keyring for this account')
+        self.remember_password = QCheckBox('Remember in system &keyring')
         self.remember_password.setChecked(True)
-        for label, widget in [('Name', self.name), ('Type', self.kind), ('Color', color_row), ('', self.use_server_color),
-                              ('Source URL', self.url), ('Username', self.username), ('Password', self.password)]:
+        for label, widget in [('&Name', self.name), ('&Type', self.kind), ('&Color', color_row), ('', self.use_server_color),
+                              ('U&RL', self.url), ('&Username', self.username), ('&Password', self.password)]:
             form.addRow(label, widget)
+        form.labelForField(color_row).setBuddy(self.color)
         form.addRow('', self.remember_password)
         form.addRow('', self.make_default)
         outer.addLayout(form)
@@ -767,7 +863,7 @@ class CalendarDialog(QDialog):
         if not allow_remote:
             self.source_hint.setText('Demo calendars are temporary and offline. Choose Open my calendars in the main window to connect Nextcloud or another remote source.')
         outer.addWidget(self.source_hint)
-        self.discover_button = QPushButton('Discover calendars')
+        self.discover_button = QPushButton('&Discover calendars')
         self.discover_button.clicked.connect(self.discover)
         outer.addWidget(self.discover_button)
         self.discovered_list = QListWidget()
@@ -789,13 +885,27 @@ class CalendarDialog(QDialog):
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+        self.buttons = buttons
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.save_button.setText('Save')
+        self.cancel_button.setText('Cancel')
+        self.save_button.setToolTip('Enter saves; Ctrl+Enter also saves from any field.')
         if calendar:
             self.kind.setEnabled(False)
             self.url.setReadOnly(True)
             self.username.setReadOnly(True)
         self.kind.currentIndexChanged.connect(self.update_source_fields)
         self.use_server_color.toggled.connect(self.update_source_fields)
+        for field in (self.url, self.username, self.password):
+            field.textChanged.connect(self.update_primary_action)
+        self.configure_keyboard([self.name, self.kind, self.color, self.choose_color_button,
+            self.use_server_color, self.url, self.username, self.password, self.remember_password,
+            self.make_default, self.discover_button, self.discovered_list],
+            [self.save_button, self.cancel_button], self.save)
         self.update_source_fields()
+        self.name.setFocus()
+        self.name.selectAll()
 
     def add_color(self, name, value):
         swatch = QPixmap(16, 16)
@@ -824,6 +934,17 @@ class CalendarDialog(QDialog):
         self.choose_color_button.setEnabled(manual_color)
         self.make_default.setEnabled(kind != 'ics' and (not self.original or not self.original.read_only))
         self.discover_button.setVisible(kind == 'caldav' and self.original is None)
+        self.update_primary_action()
+
+    def update_primary_action(self, *_):
+        new_account = self.kind.currentData() == 'caldav' and self.original is None
+        busy = bool(self.discovery_future and not self.discovery_future.done())
+        current = bool(self.discovered and self.discovery_identity ==
+                       (self.url.text().strip(), self.username.text().strip(), self.password.text()))
+        self.discover_button.setEnabled(not busy)
+        self.save_button.setEnabled(not busy)
+        self.discover_button.setDefault(new_account and not current and not busy)
+        self.save_button.setDefault(not busy and (not new_account or current))
 
     def discover(self):
         from .discovery import discover_calendars
@@ -833,7 +954,7 @@ class CalendarDialog(QDialog):
             url = 'https://' + url
         parts = urlsplit(url)
         if parts.scheme not in ('https', 'http') or not parts.hostname or parts.username or parts.password:
-            self.error.setText('Use an HTTP(S) URL without embedded credentials.')
+            self.show_error('Use an HTTP(S) URL without embedded credentials.', self.url)
             return
         self.url.setText(url)
         self.discovered = []
@@ -847,13 +968,13 @@ class CalendarDialog(QDialog):
                 password = self.credentials.get(self.discovery_identity[0], self.discovery_identity[1]) or ''
             return discover_calendars(self.discovery_identity[0], self.discovery_identity[1], password)
         self.discovery_future = self.discovery_executor.submit(work)
+        self.update_primary_action()
         self.discovery_timer.start()
 
     def poll_discovery(self):
         if not self.discovery_future or not self.discovery_future.done():
             return
         self.discovery_timer.stop()
-        self.discover_button.setEnabled(True)
         try:
             self.discovered = self.discovery_future.result()
             for calendar in self.discovered:
@@ -862,9 +983,14 @@ class CalendarDialog(QDialog):
                 item.setCheckState(Qt.CheckState.Checked)
                 self.discovered_list.addItem(item)
             self.discovered_list.setVisible(bool(self.discovered))
+            if self.discovered:
+                self.discovered_list.setCurrentRow(0)
+                if self.focusWidget() in (self.discover_button, self.password, self.save_button):
+                    self.discovered_list.setFocus()
             self.error.setText(f'Found {len(self.discovered)} calendar(s). Choose calendars and save.' if self.discovered else 'No event calendars found.')
         except Exception as exc:
             self.error.setText('Discovery failed: ' + str(exc))
+        self.update_primary_action()
 
     def finish_discovery(self, *_):
         self.discovery_timer.stop()
@@ -872,8 +998,8 @@ class CalendarDialog(QDialog):
 
     def save(self):
         from urllib.parse import urlparse
-        if not self.name.text().strip() and self.kind.currentData() != 'caldav':
-            self.error.setText('Enter a calendar name.')
+        if not self.name.text().strip() and (self.kind.currentData() != 'caldav' or self.original):
+            self.show_error('Enter a calendar name.', self.name)
             return
         if self.kind.currentData() != 'local':
             url = urlparse(self.url.text().strip())
@@ -881,7 +1007,7 @@ class CalendarDialog(QDialog):
                 self.url.setText('https://' + self.url.text().strip())
                 url = urlparse(self.url.text().strip())
             if url.scheme not in ('https', 'http') or not url.hostname or url.username or url.password:
-                self.error.setText('Use an HTTP(S) URL without embedded credentials.')
+                self.show_error('Use an HTTP(S) URL without embedded credentials.', self.url)
                 return
         if self.kind.currentData() == 'caldav' and not self.original:
             if self.discovery_future and not self.discovery_future.done():
@@ -897,7 +1023,7 @@ class CalendarDialog(QDialog):
                 for index, source in enumerate(self.discovered)
                 if self.discovered_list.item(index).checkState() == Qt.CheckState.Checked]
             if not self.result_calendars:
-                self.error.setText('Select at least one calendar.')
+                self.show_error('Select at least one calendar.', self.discovered_list)
                 return
             self.result_calendar = self.result_calendars[0]
             self.accept()
@@ -965,67 +1091,47 @@ class HistoryDialog(QDialog):
 
 
 class ShortcutsDialog(QDialog):
+    """Compatibility dialog around the shared Preferences keyboard editor."""
     def __init__(self, bindings, defaults, parent=None, scope_modifiers=None):
+        from .shortcuts import KeyboardShortcutsEditor
         super().__init__(parent)
         self.setWindowTitle('Keyboard shortcuts')
         self.resize(470, 600)
         outer = QVBoxLayout(self)
-        outer.addWidget(hint('Change any shortcut below. Event navigation: press the select shortcut, a day number, then an event number and Enter. Arrow keys also select nearby events.'))
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        form = QFormLayout(content)
-        # Retain the old result attribute for stored preferences/API callers;
-        # held modifiers are no longer part of the visible interaction model.
+        self.editor = KeyboardShortcutsEditor(bindings, defaults, self)
+        self.fields = self.editors = self.editor.fields
+        self.error = self.editor.error
+        outer.addWidget(self.editor)
         self.scope_modifiers = {}
-        for key in ('all', 'following'):
-            field = QComboBox()
+        for key, value in normalize_scope_modifiers(scope_modifiers).items():
+            field = QComboBox(self)
             field.addItems(('Ctrl', 'Shift', 'Alt', 'Meta'))
-            field.setCurrentText(normalize_scope_modifiers(scope_modifiers)[key])
+            field.setCurrentText(value)
+            field.hide()
             self.scope_modifiers[key] = field
-        form.addRow(hint('Selection modes use their own shortcuts. Copy and paste keep their usual behavior inside text fields.'))
-        self.fields = {}
-        for key, value in bindings.items():
-            field = QKeySequenceEdit(QKeySequence(value))
-            self.fields[key] = field
-            form.addRow(key.replace('_', ' ').capitalize(), field)
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
-        self.error = hint('')
-        outer.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.RestoreDefaults)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+                                   | QDialogButtonBox.StandardButton.RestoreDefaults)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(lambda: self.restore_defaults(defaults))
+        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.restore_defaults)
         outer.addWidget(buttons)
 
-    def restore_defaults(self, defaults):
-        for key, field in self.fields.items():
-            field.setKeySequence(QKeySequence(defaults[key]))
+    def restore_defaults(self, defaults=None):
+        if isinstance(defaults, dict):
+            self.editor.defaults = dict(defaults)
+        self.editor.restore_defaults()
         for key, value in normalize_scope_modifiers().items():
             self.scope_modifiers[key].setCurrentText(value)
 
     def save(self):
-        bindings = {key: field.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
-                    for key, field in self.fields.items()}
+        from .shortcuts import validate_bindings
         try:
-            modifiers = normalize_scope_modifiers({key: field.currentText() for key, field in self.scope_modifiers.items()})
-            expanded = expanded_scope_bindings(bindings, modifiers)
+            bindings = self.editor.value()
+            self.result_scope_modifiers = normalize_scope_modifiers(
+                {key: field.currentText() for key, field in self.scope_modifiers.items()})
+            validate_bindings(expanded_scope_bindings(bindings, self.result_scope_modifiers))
         except ValueError as exc:
             self.error.setText(str(exc))
             return
-        used = [QKeySequence(value).toString(QKeySequence.SequenceFormat.PortableText)
-                for value in expanded.values() if value]
-        if len(used) != len(set(used)):
-            self.error.setText('Each action needs a unique shortcut.')
-            return
-        sequences = [QKeySequence(value) for value in used]
-        for index, sequence in enumerate(sequences):
-            for other in sequences[index + 1:]:
-                if (sequence.matches(other) != QKeySequence.SequenceMatch.NoMatch or
-                        other.matches(sequence) != QKeySequence.SequenceMatch.NoMatch):
-                    self.error.setText('One shortcut cannot be the start of another shortcut.')
-                    return
         self.result_bindings = bindings
-        self.result_scope_modifiers = modifiers
         self.accept()

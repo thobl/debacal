@@ -66,7 +66,7 @@ without it. Existing imported definitions are retained. UTC events export offlin
   Escape clears the selection. Clicking empty space clears it too.
 * **Create:** `N`, the New event button, double-click in any view, or drag an
   empty day/week time slot. A single click selects without creating. Double-click
-  an existing event to open the same editor as **Edit** or `E`, including the
+  an existing event to open the same editor as `E`, including the
   one/all/following controls. Double-click empty space to create a new event.
   In month view, an empty body starts a timed event at 09:00.
   Double-click a day heading, its **+ All day** area, or the day/week all-day strip
@@ -77,8 +77,8 @@ without it. Existing imported definitions are retained. UTC events export offlin
   Ctrl+drag copies it; a small **+** marks a copy while dragging, including when
   Ctrl is pressed or released without moving. Drag a timed event's bottom edge
   to resize. Hover over empty timed space for a light snapped-time guide;
-  creation drags also show their starting time. The detail row reserves its
-  space so selecting an event does not shift the calendar or its time scale.
+  creation drags also show their starting time. Selected-event details appear
+  in the sidebar without shifting the calendar or its time scale.
 * **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
   Badges appear only during selection, highlighting the chosen day and typed
   event. Multi-digit event numbers work. Arrow keys move selection and scroll
@@ -104,21 +104,36 @@ without it. Existing imported definitions are retained. UTC events export offlin
   in all-events mode. Their row highlights are independent. Ctrl+click combines
   roots and children with those meanings. Up/Down transfers focus to the results
   so Delete, copy and edit act on that selection. The query stays open while
-  browsing. Enter returns focus to the calendar; Escape closes search.
+  browsing. Enter returns focus to the calendar; Escape clears search and
+  restores the next ten events from visible calendars over the next 30 days.
+  Search and upcoming events share a sidebar panel, so searching does not resize
+  the calendar.
   `/` remains a calendar shortcut for search with the default bindings.
 * **History:** `Ctrl+Z` / `Ctrl+Shift+Z`; Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
   History survives restart. Shortcuts leave text fields' normal editing intact.
-* **Configuration:** Keyboard shortcuts (or `F1`) lets you remap actions and all
-  three selection-mode keys. Configuration survives restart; conflicting or
-  ambiguous shortcut sequences are rejected.
-* **Preferences:** choose a writable default calendar for new events, any start
-  weekday, system/European/ISO/US date
-  format, and system/12-hour/24-hour time. Defaults follow the OS locale. The
-  mini calendar, views, editor popups and displayed dates/times use these choices.
-  The default calendar has a star in the sidebar. Editing an existing event
-  retains its original calendar. Automatic syncing can be paused or enabled,
-  with an interval from 1 to 1,440 minutes; manual **Sync** remains available.
+* **Controls:** the top toolbar groups navigation, view, selection mode, and
+  full-day display. Hover over icons for their meaning and current shortcut.
+  The gear opens Preferences; the adjacent menu contains import, export, history,
+  and shortcuts. Sync has a fixed position at the bottom of the sidebar; click
+  its status text for details. Conflicts show a review icon beside the status.
+* **Creation calendar:** choose a writable calendar with **Create in** before
+  creating an event. This choice is saved and marked with a star in the calendar
+  list. Editing existing events retains their original calendars.
+* **Preferences:** General groups date language (system, English, German), week
+  start, date format, and time format. Interface labels remain in English.
+  Appearance controls text size, mini-calendar week numbers, and the usual
+  visible hours; the time grid still expands for events outside those hours.
+  Sync groups automatic sync intervals and conflict notifications. Keyboard
+  shortcuts (`F1`) lets you remap actions and selection-mode keys, with duplicate
+  and ambiguous sequences rejected. Settings survive restart.
+* **Event editor:** Tab/Shift+Tab move through the form; labels have Alt-key
+  mnemonics. Enter saves from form fields; Notes keeps Enter for a new line, and
+  Ctrl+Enter saves from anywhere. In calendar-source setup, Enter discovers a new
+  CalDAV account before saving its selected calendars. Clicking the series
+  preview switches a one-off or finite recurrence to a custom sequence, preserving
+  its existing dates; unbounded or oversized rules require an explicit finite
+  schedule before conversion.
 
 ### Working with event series
 

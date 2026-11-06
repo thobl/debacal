@@ -12,7 +12,8 @@ from PySide6.QtCore import QPoint, Qt, QCoreApplication, QEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from debacal.dialogs import EventDialog, ShortcutsDialog
+from debacal.dialogs import EventDialog
+from debacal.preferences_dialog import PreferencesDialog
 from debacal.event_clipboard import EventClipboard
 from debacal.ics import export_ics
 from debacal.models import Calendar, Event
@@ -241,13 +242,14 @@ def test_double_click_edits_existing_event_in_persistent_following_mode(workspac
 def test_configured_mode_shortcuts_and_persistence(workspace):
     app, window, store, _, _, windows = workspace
     def configure(dialog):
-        dialog.fields['scope_single'].setKeySequence('F5')
-        dialog.fields['scope_all'].setKeySequence('F6')
-        dialog.fields['scope_following'].setKeySequence('F7')
+        assert dialog.tabs.currentWidget() is dialog.shortcut_editor
+        dialog.shortcut_fields['scope_single'].setKeySequence('F5')
+        dialog.shortcut_fields['scope_all'].setKeySequence('F6')
+        dialog.shortcut_fields['scope_following'].setKeySequence('F7')
         dialog.save()
         assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
         return dialog.result()
-    with patch.object(ShortcutsDialog, 'exec', configure):
+    with patch.object(PreferencesDialog, 'exec', configure):
         window.show_shortcuts()
     assert window.bindings['scope_single'] == 'F5'
     assert window.bindings['scope_all'] == 'F6'

@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PySide6.QtCore import QDate, QLocale, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .calendar_widgets import BG, GREEN, INK, LINE, MUTED, at, text
+from .calendar_widgets import BG, GREEN, INK, LINE, MUTED, at, text, display_scale
 from .preferences import Preferences
 from .recurrence import expand_events, key_datetime, recurrence_key, recurrence_set, overlaps
 from .timeutil import local_zone, now
@@ -111,7 +111,11 @@ class SeriesPreview(QWidget):
 
     def _rebuild(self):
         self.grid_start = self.preferences.week_start(self.current_month)
-        self.month_label.setText(QLocale.system().toString(QDate(self.current_month.year, self.current_month.month, 1), 'MMMM yyyy'))
+        self.month_label.setText(self.preferences.format_month(self.current_month))
+        scale = display_scale(self)
+        self.setMinimumHeight(round(325 * scale))
+        self.grid.header_height = round(23 * scale)
+        self.grid.setMinimumHeight(round(235 * scale))
         self.error = ''
         self.total_occurrences = None
         self.anchor_dates, self.added_dates, self.excluded_dates = set(), set(), set()
@@ -174,6 +178,7 @@ class _PreviewGrid(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), BG)
         width = self.width() / 7
+        scale = display_scale(self)
         for index in range(7):
             day = preview.grid_start + timedelta(days=index)
             text(painter, QRectF(index * width, 0, width, self.header_height),
@@ -193,15 +198,15 @@ class _PreviewGrid(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
             anchor = day in preview.anchor_dates
-            text(painter, QRectF(rect.x() + 5, rect.y() + 1, rect.width() - 10, 19),
+            text(painter, QRectF(rect.x() + 5, rect.y() + 1, rect.width() - 10, 19 * scale),
                  str(day.day), MUTED if outside else GREEN if events else INK, 9, anchor)
             marker = '●' if anchor else '×' if day in preview.excluded_dates else '+' if day in preview.added_dates else ''
             if marker:
-                text(painter, QRectF(rect.right() - 20, rect.y() + 1, 16, 19), marker,
+                text(painter, QRectF(rect.right() - 20 * scale, rect.y() + 1, 16 * scale, 19 * scale), marker,
                      MUTED if day in preview.excluded_dates else GREEN, 9, True, Qt.AlignmentFlag.AlignCenter)
-            capacity = max(1, int((rect.height() - 22) / 16))
+            capacity = max(1, int((rect.height() - 22 * scale) / (16 * scale)))
             for index, event in enumerate(events[:capacity]):
-                event_rect = QRectF(rect.x() + 3, rect.y() + 21 + index * 16, rect.width() - 6, 14)
+                event_rect = QRectF(rect.x() + 3, rect.y() + 21 * scale + index * 16 * scale, rect.width() - 6, 14 * scale)
                 painter.setPen(QPen(QColor('#a27b43') if event.candidate else GREEN, 1,
                                      Qt.PenStyle.DashLine if event.candidate else Qt.PenStyle.SolidLine))
                 painter.setBrush(QColor('#fff3dc') if event.candidate else QColor('#dcebd3'))
@@ -212,9 +217,9 @@ class _PreviewGrid(QWidget):
                 text(painter, event_rect, label, GREEN, 7, False, Qt.AlignmentFlag.AlignCenter)
                 painter.restore()
             if len(events) > capacity:
-                text(painter, QRectF(rect.right() - 27, rect.y() + 1, 24, 19), '+' + str(len(events) - capacity), MUTED, 7)
+                text(painter, QRectF(rect.right() - 27 * scale, rect.y() + 1, 24 * scale, 19 * scale), '+' + str(len(events) - capacity), MUTED, 7)
             if day in preview.excluded_dates and not events:
-                text(painter, QRectF(rect.x() + 3, rect.y() + 21, rect.width() - 6, 15), 'skipped', MUTED, 7)
+                text(painter, QRectF(rect.x() + 3, rect.y() + 21 * scale, rect.width() - 6, 15 * scale), 'skipped', MUTED, 7)
         painter.end()
 
     def mousePressEvent(self, event):

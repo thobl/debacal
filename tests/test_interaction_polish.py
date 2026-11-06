@@ -74,7 +74,7 @@ def parent(window, identifier):
 
 
 @pytest.mark.parametrize('scope', ['single', 'group', 'future'])
-def test_double_click_and_edit_button_open_identical_scoped_editor(workspace, scope):
+def test_double_click_and_edit_shortcut_open_identical_scoped_editor(workspace, scope):
     app, window, store = workspace
     master = sample('series', recurring=True)
     insert(window, store, master)
@@ -86,7 +86,8 @@ def test_double_click_and_edit_button_open_identical_scoped_editor(workspace, sc
         seen.append((dialog.original.id, dialog.scope.currentData(), set(dialog.scope_buttons)))
         return QDialog.DialogCode.Rejected
     with patch.object(EventDialog, 'exec', inspect):
-        QTest.mouseClick(window.edit_button, Qt.MouseButton.LeftButton)
+        window.canvas.setFocus()
+        QTest.keyClick(window.canvas, Qt.Key.Key_E)
         rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == occurrence.id)
         QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())
         QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())

@@ -66,7 +66,8 @@ def test_sync_click_and_failure_are_visible_and_survive_refresh(workspace):
     window.sync_btn.setEnabled(True)
     window.sync_now()
     assert engine.calls == 1
-    assert window.sync_btn.text() == 'Syncing…'
+    assert 'Syncing' in window.sync_btn.toolTip()
+    assert not window.sync_btn.isEnabled()
     engine.events.put(SyncMessage('started', 'Starting synchronization'))
     engine.events.put(SyncMessage('error', 'Nextcloud: vdirsyncer is not installed', 'remote'))
     engine.events.put(SyncMessage('finished', 'Sync finished with an error'))
@@ -76,7 +77,8 @@ def test_sync_click_and_failure_are_visible_and_survive_refresh(workspace):
     window.refresh()
     assert 'Sync failed' in window.status.text()
     assert 'not installed' in window.status.toolTip()
-    assert window.sync_btn.text() == '↻ Sync'
+    assert window.sync_btn.text() == ''
+    assert window.sync_btn.isEnabled()
     engine.events.put(SyncMessage('started', 'Starting synchronization'))
     engine.events.put(SyncMessage('updated', 'Nextcloud refreshed', 'remote'))
     engine.events.put(SyncMessage('finished', 'Sync finished successfully'))

@@ -5,32 +5,31 @@ from datetime import timedelta
 from pathlib import Path
 from queue import SimpleQueue, Empty
 from collections import deque
-from uuid import uuid4
 import calendar as monthlib
 import math
 
 from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QCursor, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
-    QPushButton, QLineEdit, QScrollArea, QStackedWidget, QCalendarWidget,
-    QCheckBox, QFrame, QMenu, QDialog,
-    QDialogButtonBox, QFileDialog, QInputDialog, QTextEdit, QAbstractSpinBox,
-    QComboBox, QSizePolicy, QPlainTextEdit, QSystemTrayIcon, QStyle, QButtonGroup,
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QLineEdit, QCheckBox, QMenu, QDialog, QFileDialog, QInputDialog,
+    QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
 )
 
-from .calendar_widgets import CalendarCanvas, MonthCanvas, DayHeader, AllDayCanvas, at
-from .dialogs import EventDialog, CalendarDialog, HistoryDialog, ShortcutsDialog, hint
-from .models import Event, Calendar
+from .calendar_widgets import at
+from .dialogs import EventDialog, CalendarDialog, HistoryDialog
+from .models import Event
 from .store import Store
 from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
+from .workspace_chrome import WorkspaceChrome
+from .appearance import stylesheet
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
-from .search_panel import SearchPanel, MORE_ROLE
+from .search_panel import MORE_ROLE
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
@@ -45,41 +44,7 @@ DEFAULT_BINDINGS = {
 } | DEFAULT_MODE_BINDINGS
 EVENT_MIME = 'application/x-debacal-events+json'
 
-STYLE = '''
-QWidget { font-family: "Sans Serif"; font-size: 13px; color: #29382f; }
-QMainWindow, QDialog { background: #fafbf8; }
-QWidget#sidebar { background: #edf0e8; border-right: 1px solid #dce2d5; }
-QLabel[muted="true"] { color: #788373; font-size: 12px; }
-QLabel#brand { font-size: 25px; font-weight: 700; letter-spacing: -1px; }
-QLabel#heading { font-size: 24px; font-weight: 600; }
-QLabel#eyebrow { color: #7b8775; font-size: 10px; font-weight: 700; letter-spacing: 2px; }
-QPushButton { background: transparent; border: 1px solid #dce2d6; border-radius: 6px; padding: 7px 12px; }
-QPushButton:hover { background: #e5ebde; }
-QPushButton:pressed, QPushButton:checked { background: #e0e9d8; border-color: #b7c8ac; color: #35513d; }
-QPushButton#primary { background: #446d50; color: #fff; border: 1px solid #446d50; font-weight: 600; }
-QPushButton#primary:hover { background: #355b40; }
-QPushButton:disabled { color: #a5aea0; }
-QLineEdit, QTextEdit, QDateTimeEdit, QComboBox, QKeySequenceEdit { background: #fff; border: 1px solid #dce2d6; border-radius: 5px; padding: 6px; selection-background-color: #c9dcc1; }
-QLineEdit:focus, QTextEdit:focus { border-color: #719268; }
-QListWidget, QTreeWidget { background: #fafbf8; border: 1px solid #e1e6da; border-radius: 5px; outline: none; }
-QListWidget::item, QTreeWidget::item { padding: 8px; }
-QListWidget::item:selected, QTreeWidget::item:selected { color: #2c4835; background: #e2ebda; }
-QScrollArea { border: none; background: #fafbf8; }
-QScrollBar:vertical { background: #f0f3ec; width: 9px; }
-QScrollBar::handle:vertical { background: #cbd4c4; border-radius: 4px; min-height: 30px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QCalendarWidget QWidget { background: transparent; font-size: 11px; }
-QCalendarWidget QToolButton { color: #3b563e; border: none; padding: 2px; }
-QCalendarWidget QAbstractItemView { background: #edf0e8; alternate-background-color: #edf0e8; color: #29382f; selection-background-color: #496e50; selection-color: white; }
-QCheckBox { spacing: 9px; padding: 5px 0; }
-QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #aabb9e; border-radius: 3px; background: #fafbf8; }
-QCheckBox::indicator:checked { background: #65865b; border-color: #65865b; }
-QLabel#notice { background: #edf0dc; padding: 9px; color: #626a39; border-radius: 5px; }
-QFrame#details { background: #edf2e7; border-top: 1px solid #dce4d4; }
-'''
-
-
-class MainWindow(QMainWindow):
+class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
 
     def __init__(self, store: Store, enable_sync=True, demo_mode=False):
@@ -134,10 +99,11 @@ class MainWindow(QMainWindow):
         if enable_sync and store.path != ':memory:':
             from .sync import SyncEngine
             self.engine = SyncEngine(store.path)
-        self.setWindowTitle('Debacal · a little room for your time')
+        self.setWindowTitle('Debacal')
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
-        self.setStyleSheet(STYLE)
+        self.setLocale(self.preferences.qt_locale())
+        self.setStyleSheet(stylesheet(self.preferences.font_scale))
         central = QWidget()
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
@@ -146,9 +112,6 @@ class MainWindow(QMainWindow):
         self.build_sidebar(root)
         self.build_workspace(root)
         self.install_mode_shortcuts()
-        if not self.engine:
-            self.sync_btn.setEnabled(False)
-            self.sync_btn.setToolTip('Demo mode is offline. Open your calendars to connect a remote account.' if self.demo_mode else 'Synchronization is disabled for this workspace.')
         self.refresh()
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
@@ -162,208 +125,6 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
         QTimer.singleShot(1500, self.startup_sync)
-
-    def button(self, title, action, parent_layout=None, primary=False):
-        btn = QPushButton(title)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(lambda _=False: action())
-        if primary:
-            btn.setObjectName('primary')
-        if parent_layout:
-            parent_layout.addWidget(btn)
-        return btn
-
-    def build_sidebar(self, root):
-        side = QWidget()
-        side.setObjectName('sidebar')
-        side.setFixedWidth(230)
-        root.addWidget(side)
-        layout = QVBoxLayout(side)
-        layout.setContentsMargins(20, 28, 20, 20)
-        layout.setSpacing(13)
-        brand = QLabel('debacal')
-        brand.setObjectName('brand')
-        layout.addWidget(brand)
-        layout.addWidget(hint('A little room for your time.'))
-        layout.addSpacing(10)
-        self.new_button = self.button('+  New event', self.create_event, layout, True)
-        if self.demo_mode:
-            self.button('Open my calendars', self.real_workspace_requested.emit, layout)
-        self.mini = QCalendarWidget()
-        self.mini.setGridVisible(False)
-        self.mini.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        self.mini.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames)
-        self.mini.setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
-        self.mini.setFixedHeight(195)
-        self.mini.setMinimumWidth(0)
-        self.mini.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.mini.clicked.connect(lambda value: self.go_date(value.toPython()))
-        layout.addWidget(self.mini)
-        label = QLabel('MY CALENDARS')
-        label.setObjectName('eyebrow')
-        layout.addWidget(label)
-        self.calendar_box = QVBoxLayout()
-        self.calendar_box.setSpacing(1)
-        layout.addLayout(self.calendar_box)
-        self.button('+  Add calendar', self.add_calendar, layout)
-        layout.addWidget(hint('Right-click a calendar to edit its source.'))
-        layout.addStretch()
-        self.button('Import .ics', self.import_ics, layout)
-        self.button('Export .ics', self.export_ics, layout)
-        self.button('Operation history', self.show_history, layout)
-        self.button('Keyboard shortcuts', self.show_shortcuts, layout)
-        self.button('Preferences', self.show_preferences, layout)
-        layout.addSpacing(8)
-        layout.addWidget(hint('LOCAL FIRST\nYour edits are saved here, instantly.'))
-
-    def build_workspace(self, root):
-        area = QWidget()
-        root.addWidget(area, 1)
-        outer = QVBoxLayout(area)
-        outer.setContentsMargins(24, 25, 24, 12)
-        outer.setSpacing(12)
-        eyebrow = QLabel('MAKE TIME FOR WHAT MATTERS')
-        eyebrow.setObjectName('eyebrow')
-        outer.addWidget(eyebrow)
-        top = QHBoxLayout()
-        self.heading = QLabel()
-        self.heading.setObjectName('heading')
-        top.addWidget(self.heading)
-        top.addStretch()
-        self.search = QLineEdit()
-        self.search.setPlaceholderText('Search events   Ctrl+F')
-        self.search.setMaximumWidth(250)
-        self.search.textChanged.connect(self.run_search)
-        top.addWidget(self.search)
-        outer.addLayout(top)
-        toolbar = QHBoxLayout()
-        self.button('‹', lambda: self.navigate(-1), toolbar)
-        self.button('›', lambda: self.navigate(1), toolbar)
-        self.today_button = self.button('Today', self.today, toolbar)
-        self.range_label = hint('')
-        self.range_label.setWordWrap(False)
-        toolbar.addWidget(self.range_label)
-        toolbar.addStretch()
-        self.view_buttons = {}
-        for mode in ['day', 'week', 'month']:
-            btn = self.button(mode.capitalize(), lambda m=mode: self.set_view(m), toolbar)
-            btn.setCheckable(True)
-            self.view_buttons[mode] = btn
-        self.full_day_button = self.button('Full day', self.toggle_full_day, toolbar)
-        self.full_day_button.setCheckable(True)
-        self.full_day_button.setChecked(self.full_day)
-        self.sync_btn = self.button('↻ Sync', self.sync_now, toolbar)
-        self.button('Sync status', self.show_sync_status, toolbar)
-        self.conflict_btn = self.button('Review conflicts', self.show_conflicts, toolbar)
-        self.conflict_btn.hide()
-        outer.addLayout(toolbar)
-        selection_bar = QHBoxLayout()
-        selection_bar.addWidget(hint('Selection'))
-        self.selection_buttons = {}
-        self.selection_button_group = QButtonGroup(self)
-        for mode, label in (('single', 'One event'), ('group', 'All in series'), ('future', 'This and following')):
-            button = self.button(label, lambda value=mode: self.set_selection_mode(value), selection_bar)
-            button.setCheckable(True)
-            self.selection_button_group.addButton(button)
-            self.selection_buttons[mode] = button
-        selection_bar.addStretch()
-        outer.addLayout(selection_bar)
-        self.notice = QLabel()
-        self.notice.setTextFormat(Qt.TextFormat.PlainText)
-        self.notice.setObjectName('notice')
-        self.notice.setWordWrap(True)
-        self.notice.hide()
-        outer.addWidget(self.notice)
-        content = QHBoxLayout()
-        self.stack = QStackedWidget()
-        content.addWidget(self.stack, 1)
-        week = QWidget()
-        week_layout = QVBoxLayout(week)
-        week_layout.setContentsMargins(0, 0, 0, 0)
-        week_layout.setSpacing(0)
-        self.header = DayHeader()
-        week_layout.addWidget(self.header)
-        self.all_day_canvas = AllDayCanvas()
-        self.all_day_scroll = QScrollArea()
-        self.all_day_scroll.setWidgetResizable(True)
-        self.all_day_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.all_day_scroll.setWidget(self.all_day_canvas)
-        week_layout.addWidget(self.all_day_scroll)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.canvas = CalendarCanvas()
-        self.canvas.fixed_all_day = True
-        self.scroll.setWidget(self.canvas)
-        week_layout.addWidget(self.scroll, 1)
-        self.stack.addWidget(week)
-        self.month = MonthCanvas()
-        self.month.open_day.connect(self.open_day)
-        self.stack.addWidget(self.month)
-        for widget in [self.canvas, self.month, self.all_day_canvas]:
-            widget.create_requested.connect(self.create_event)
-            widget.edit_scoped_requested.connect(self.edit_from_double_click)
-            widget.gesture_started.connect(self.remember_selection_for_gesture)
-            widget.selected_scoped.connect(lambda event_id, modifiers, source=widget:
-                self.select_event(event_id, day=source.selected_day,
-                                  additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
-            widget.context_requested.connect(self.event_menu)
-            widget.move_scoped_requested.connect(lambda reference, start, end, modifiers:
-                self.move_event(reference.id, start, end, reference=reference,
-                                copy=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
-            widget.drag_preview_requested.connect(self.preview_drag)
-        for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
-            widget.day_selected.connect(self.select_day)
-            widget.create_all_day_requested.connect(self.create_all_day_event)
-            if hasattr(widget, 'placement_moved'):
-                widget.placement_moved.connect(lambda target, source=widget: self.move_paste_preview(target, source))
-                widget.placement_confirmed.connect(lambda target: self.confirm_paste())
-        self.results = SearchPanel(self.store, self.preferences)
-        self.results.setFixedWidth(300)
-        self.results.hide()
-        self.results.result_selected.connect(self.select_search_result)
-        self.results.activated.connect(self.activate_search_result)
-        content.addWidget(self.results)
-        outer.addLayout(content, 1)
-        self.details = QFrame()
-        self.details.setObjectName('details')
-        detail_layout = QHBoxLayout(self.details)
-        self.detail_text = QLabel()
-        self.detail_text.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_text.setWordWrap(True)
-        self.detail_text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        detail_layout.addWidget(self.detail_text, 1)
-        self.edit_button = self.button('Edit', self.edit_event, detail_layout)
-        self.single_button = self.button('Edit only this event', lambda: self.edit_event(group=False), detail_layout)
-        self.single_button.hide()
-        self.confirm_btn = self.button('Confirm this slot', self.confirm_candidate, detail_layout, True)
-        self.button('Delete', self.delete_event, detail_layout)
-        # Selection must not steal height from the time grid. Reserve the same
-        # two-line row even when hidden, and contain unusually long titles.
-        self.details.ensurePolished()
-        margins = detail_layout.contentsMargins()
-        row_height = max(self.edit_button.sizeHint().height(), self.confirm_btn.sizeHint().height(),
-                         self.detail_text.fontMetrics().lineSpacing() * 2)
-        self.details.setFixedHeight(row_height + margins.top() + margins.bottom())
-        detail_policy = self.details.sizePolicy()
-        detail_policy.setRetainSizeWhenHidden(True)
-        self.details.setSizePolicy(detail_policy)
-        self.details.hide()
-        outer.addWidget(self.details)
-        self.navigation_prompt = QLabel()
-        self.navigation_prompt.setObjectName('notice')
-        self.navigation_prompt.setWordWrap(True)
-        self.navigation_prompt.hide()
-        outer.addWidget(self.navigation_prompt)
-        self.scope_hint = hint('')
-        outer.addWidget(self.scope_hint)
-        self.update_scope_hint()
-        footer = QHBoxLayout()
-        self.keyboard_hint = hint('')
-        footer.addWidget(self.keyboard_hint, 1)
-        self.status = hint('Saved on this device')
-        footer.addWidget(self.status)
-        outer.addLayout(footer)
 
     def dates(self):
         if self.view == 'day':
@@ -394,9 +155,11 @@ class MainWindow(QMainWindow):
             if previous:
                 self.selection.select(previous)
         self.selected_id = self.selection.primary.id if self.selection.primary else None
-        self.heading.setText(self.anchor.strftime('%B %Y'))
-        self.range_label.setText(self.preferences.format_date(days[0]) + ' — ' + self.preferences.format_date(days[-1]) if self.view != 'month' else 'A little perspective on the month')
-        self.mini.setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
+        self.heading.setText(self.preferences.format_month(self.anchor))
+        self.heading.setToolTip(self.heading.text())
+        self.range_label.setText(self.preferences.format_date(days[0], weekday=self.view == 'day')
+                                + (' — ' + self.preferences.format_date(days[-1]) if self.view != 'day' else ''))
+        self.mini.set_preferences(self.preferences)
         self.mini.setSelectedDate(QDate(self.selected_day.year, self.selected_day.month, self.selected_day.day))
         self.header.days = days[:7]
         for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
@@ -412,7 +175,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1 if self.view == 'month' else 0)
         for name, btn in self.view_buttons.items():
             btn.setChecked(name == self.view)
-        self.full_day_button.setVisible(self.view != 'month')
+        self.full_day_button.setEnabled(self.view != 'month')
         if calendars or tuple(cals) != getattr(self, '_shown_calendars', ()):
             self._shown_calendars = tuple(cals)
             default_calendar = self.store.get_default_calendar()
@@ -428,22 +191,25 @@ class MainWindow(QMainWindow):
                 cb.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 cb.customContextMenuRequested.connect(lambda _, c=cal: self.add_calendar(c))
                 self.calendar_box.addWidget(cb)
+            self.refresh_creation_calendars(cals)
+            row_height = max(25, self.fontMetrics().height() + 14)
+            self.calendar_scroll.setFixedHeight(min(4, max(1, len(cals))) * row_height + 2)
         self.sync_selection()
         self.render_placement()
         self.fit_calendar()
         self.update_details()
         self.update_hints()
-        if self.search.text() and not self._revealing_search_result:
+        if not self._revealing_search_result:
             self.run_search()
         self.update_sync_status()
 
     def update_hints(self):
         def key(action):
             return self.bindings.get(action) or '—'
-        self.new_button.setText('+  New event   ' + key('new_event'))
-        self.new_button.setToolTip(key('new_event'))
+        self.update_command_tooltips()
         self.search.setPlaceholderText('Search events   ' + key('search'))
-        self.navigation_prompt.setVisible(self.select_mode)
+        self.search.setToolTip('Search titles, places, and notes (' + key('search') + ')')
+        self.message_stack.setCurrentWidget(self.navigation_prompt if self.select_mode else self.notice)
         if self.select_mode:
             if self.nav_day is None:
                 message = f'Select an event · choose a day (1–{len(self.canvas.days)}), or use the arrow keys. Esc cancels.'
@@ -453,12 +219,8 @@ class MainWindow(QMainWindow):
                 index = int(self.nav_digits or '0') - 1
                 target = options[index].title if 0 <= index < len(options) else ('No matching event' if self.nav_digits else f'{len(options)} events')
                 message = f'{self.preferences.format_date(day, weekday=True)} → event {self.nav_digits or "number"} · {target} · Enter selects · Backspace goes back · Esc cancels'
-            self.keyboard_hint.setText('Enter confirms the highlighted event · Esc cancels selection')
             self.navigation_prompt.setText(message)
-        else:
-            self.keyboard_hint.setText(f'{key("new_event")} new · {key("edit_event")} edit · '
-                                      f'{key("copy_event")}/{key("paste_event")}/{key("duplicate_event")} copy/paste/duplicate · '
-                                      f'{key("select_event")} select · {key("previous")}/{key("next")} navigate · {key("shortcuts")} shortcuts')
+            self.navigation_prompt.setToolTip(message)
         self.header.set_navigation(self.select_mode, self.nav_day, self.nav_digits or '')
         self.canvas.set_navigation(self.select_mode, self.nav_day, self.nav_digits or '')
 
@@ -466,17 +228,29 @@ class MainWindow(QMainWindow):
         from .recurrence import overlaps
         return [e for e in self.visible_events if overlaps(e, at(day), at(day + timedelta(days=1)))]
 
-    def show_preferences(self):
-        default = self.store.get_default_calendar()
-        dialog = PreferencesDialog(self.preferences, self, calendars=self.store.list_calendars(), default_calendar_id=default.id if default else None)
+    def show_preferences(self, category=None):
+        dialog = PreferencesDialog(self.preferences, self,
+                                   bindings=self.bindings, default_bindings=DEFAULT_BINDINGS)
+        if category:
+            dialog.set_category(category)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.preferences = dialog.result_preferences
             self.preferences.save(self.store)
-            if dialog.result_default_calendar_id:
-                self.store.set_default_calendar(dialog.result_default_calendar_id)
+            self.bindings = dialog.result_bindings
+            self.store.set_setting('keybindings', self.bindings)
+            self.install_mode_shortcuts()
+            self.setLocale(self.preferences.qt_locale())
+            self.setStyleSheet(stylesheet(self.preferences.font_scale))
             self.select_mode = False
             self.configure_auto_sync()
             self.refresh(calendars=True)
+
+    def change_creation_calendar(self, index):
+        calendar_id = self.creation_calendar.itemData(index)
+        if calendar_id is None:
+            return
+        self.store.set_default_calendar(calendar_id)
+        self.refresh(calendars=True)
 
     def configure_auto_sync(self):
         if self.engine and not self.demo_mode and self.preferences.auto_sync_enabled:
@@ -564,7 +338,9 @@ class MainWindow(QMainWindow):
 
     def show_notice(self, message):
         self.notice.setText(message)
-        self.notice.setVisible(bool(message))
+        self.notice.setToolTip(message)
+        if not self.select_mode:
+            self.message_stack.setCurrentWidget(self.notice)
 
     def create_event(self, start=None, end=None, all_day=False):
         if start is None:
@@ -658,6 +434,14 @@ class MainWindow(QMainWindow):
         self.update_details()
 
     def sync_search_selection(self):
+        if self.results.agenda_mode:
+            try:
+                targets = [event for _, event in self.results.selection_targets()]
+                identifiers = affected_visible(self.store, self.selection.refs, self.operation_scope(), targets)
+            except (ValueError, KeyError, OverflowError):
+                identifiers = set()
+            self.results.set_row_selection(identifiers)
+            return
         if self._search_selection_active:
             self.results.set_row_selection(self._search_row_ids)
             return
@@ -671,19 +455,8 @@ class MainWindow(QMainWindow):
 
     def update_scope_hint(self, modifiers=None):
         scope = self.selection.scope
-        label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
-        key_names = {'single': 'scope_single', 'group': 'scope_all', 'future': 'scope_following'}
         for mode, button in self.selection_buttons.items():
-            name = {'single': 'One event', 'group': 'All in series', 'future': 'This and following'}[mode]
-            shortcut = self.bindings.get(key_names[mode], '')
-            button.setText(name + (f' · {shortcut}' if shortcut else ''))
             button.setChecked(mode == scope)
-        count = len(self.selection.refs)
-        self.scope_hint.setText(f'Selection: {label}' + (f' · {count} selected' if count else '')
-                               + ' · Ctrl+click: add/remove · Ctrl+drag: copy')
-        if self._search_selection_active:
-            self.scope_hint.setText('Search selection: series rows select all; dated rows select one'
-                                    + (f' · {count} selected' if count else '') + ' · Ctrl+click: add/remove')
 
     def remember_selection_for_gesture(self, event_id):
         self._gesture_selection = (self.selection.refs, self.selection.scope, self._search_selection_active,
@@ -811,7 +584,6 @@ class MainWindow(QMainWindow):
         """Keep the current scroll unless the selected event is outside it."""
         if self.view == 'month':
             return
-        self.details.parentWidget().layout().activate()
         self.scroll.parentWidget().layout().activate()
         rects = [rect for rect, event, _ in self.canvas.rects() if event.id == event_id]
         if not rects:
@@ -830,16 +602,14 @@ class MainWindow(QMainWindow):
         visible = event is not None and bool(self.selection.refs)
         self.details.setVisible(visible)
         if visible:
-            local = event.start.astimezone(local_zone())
-            value = self.preferences.format_date(local.date(), weekday=True) + ' · ' + self.preferences.format_time(local)
+            local = event.start if event.all_day else event.start.astimezone(local_zone())
+            value = self.preferences.format_date(local.date(), weekday=True) + (' · all day' if event.all_day
+                    else ' · ' + self.preferences.format_time(local))
             self.detail_text.setText(event.title + '   ·   ' + value + ('   ·   ' + event.location if event.location else ''))
             if len(self.selection.refs) > 1:
                 self.detail_text.setText(f'{len(self.selection.refs)} selections · ' + self.detail_text.text())
             self.confirm_btn.setVisible(event.candidate)
-            linked = bool(event.group_id or event.series_id)
-            self.edit_button.setText('Edit')
-            self.edit_button.setToolTip(f"{self.bindings['edit_event']}: edit the highlighted selection")
-            self.single_button.hide()
+            self.detail_text.setToolTip(self.detail_text.text())
 
     def move_event(self, event_id, start, end, scope=None, reference=None, copy=False):
         event = reference or self.event_by_id(event_id)
@@ -1132,20 +902,17 @@ class MainWindow(QMainWindow):
         HistoryDialog(self.store, self.refresh, self).exec()
 
     def show_shortcuts(self):
-        dialog = ShortcutsDialog(self.bindings, DEFAULT_BINDINGS, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.bindings = dialog.result_bindings
-            self.store.set_setting('keybindings', self.bindings)
-            self.install_mode_shortcuts()
-            self.update_scope_hint()
-            self.update_hints()
+        self.show_preferences('keyboard')
 
     def run_search(self, *_):
         if self._revealing_search_result:
             return
         query = self.search.text().strip()
-        self.results.setVisible(bool(query))
-        self.results.populate(query)
+        self.results_heading.setText('Search results' if query else 'Next events')
+        if query:
+            self.results.populate(query)
+        else:
+            self.results.populate_upcoming(now())
         self._search_index = getattr(self.results, '_search_index', None)
         self.sync_search_selection()
 
@@ -1204,6 +971,11 @@ class MainWindow(QMainWindow):
             if not calendar.visible or not any(value.id == event.id for value in self.visible_events) or day not in self.dates():
                 self.anchor = day
                 self.refresh(calendars=not calendar.visible)
+            if self.results.agenda_mode:
+                self.select_event(event.id, day=day, additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier))
+                self.ensure_event_visible(event.id)
+                self.results.setFocus()
+                return True
             root = self.results.is_series_root(event_id)
             selected = self.store.get_event(event_id) if root else event
             if selected is None:
@@ -1254,7 +1026,7 @@ class MainWindow(QMainWindow):
 
     def exit_search(self):
         self.search.clear()
-        self.results.hide()
+        self.run_search()
         (self.month if self.view == 'month' else self.canvas).setFocus()
 
     def add_calendar(self, calendar=None):
@@ -1344,7 +1116,13 @@ class MainWindow(QMainWindow):
 
     def update_sync_status(self):
         pending = len(self.store.pending_changes())
-        self.sync_btn.setText('Syncing…' if self._sync_running else '↻ Sync')
+        self.sync_btn.setEnabled(bool(self.engine) and not self._sync_running)
+        self.sync_btn.setToolTip('Syncing in background…' if self._sync_running else
+                                 ('Sync calendars (' + self.bindings.get('sync', '') + ')' if self.engine else
+                                  ('Demo mode is offline. Open your calendars to connect a remote account.'
+                                   if self.demo_mode else 'Synchronization is disabled for this workspace.')))
+        self.conflict_btn.setEnabled(bool(self.engine and self.engine.conflicts))
+        self.conflict_btn.setVisible(bool(self.engine and self.engine.conflicts))
         if self.demo_mode:
             value = 'Demo · offline · changes are temporary'
         elif self._sync_running:
@@ -1362,7 +1140,8 @@ class MainWindow(QMainWindow):
         if pending:
             value += f' · {pending} change(s) waiting'
         self.status.setText(value)
-        self.status.setToolTip('\n'.join([*self._sync_errors.values(), *self._sync_issues.values()]) or value)
+        self.status.setToolTip(value + '\n' + ('\n'.join([*self._sync_errors.values(), *self._sync_issues.values()])
+                                              or 'Click for synchronization details.'))
 
     def show_sync_status(self):
         dialog = QDialog(self)
@@ -1461,7 +1240,7 @@ class MainWindow(QMainWindow):
                     self._sync_running = False
                     if not self._sync_errors and not self.engine.conflicts:
                         self._last_sync = now()
-        self.conflict_btn.setVisible(bool(self.engine.conflicts))
+        self.conflict_btn.setEnabled(bool(self.engine.conflicts))
         if updated:
             self.refresh()
         else:
@@ -1521,7 +1300,8 @@ class MainWindow(QMainWindow):
                 widget.set_drag_modifiers(modifiers)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
-        if event.type() != QEvent.Type.KeyPress or not self.isActiveWindow() or QApplication.activeModalWidget():
+        if (event.type() != QEvent.Type.KeyPress or not self.isActiveWindow()
+                or QApplication.activeModalWidget() or QApplication.activePopupWidget()):
             return super().eventFilter(obj, event)
         focus = QApplication.focusWidget()
         text_focus = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox))
