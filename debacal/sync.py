@@ -256,7 +256,8 @@ class SyncEngine:
                         with self._lock:
                             self._queued = False
                         if failures:
-                            message = f"Sync finished with {failures} calendar error(s). Local changes remain queued."
+                            message = (f"Sync finished with {failures} calendar error(s). Local changes remain queued. "
+                                       "Click the sync status at the bottom left for details.")
                         elif self.conflicts:
                             message = f"Sync finished; {len(self.conflicts)} conflict(s) need review."
                         elif self._issue_count:

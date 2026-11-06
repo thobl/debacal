@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import timezone
 import hashlib
+from importlib.util import find_spec
 import json
 import os
 from pathlib import Path
@@ -138,6 +139,11 @@ class VdirsyncerBackend:
     def _command(self):
         if self.executable:
             return [str(self.executable)]
+        if not self._injected_runner and find_spec("vdirsyncer") is not None:
+            # Console scripts embed an absolute interpreter path. Running the
+            # installed module survives moving this checkout/virtualenv and
+            # keeps discovery and our write guard in the same environment.
+            return [sys.executable, "-m", "vdirsyncer"]
         local = Path(sys.executable).with_name("vdirsyncer")
         found = str(local) if local.is_file() else shutil.which("vdirsyncer")
         if not found and not self._injected_runner:
@@ -186,21 +192,23 @@ class VdirsyncerBackend:
 
     def _run(self, calendar, path, password, *, pull, force_delete=False, bootstrap=False):
         config = self._config(calendar, path, pull=pull, bootstrap=bootstrap)
-        arguments = [*self._command(), "--config", str(config), "sync"]
+        command = self._command()
+        options = ["--config", str(config), "sync"]
         if pull or force_delete:
             # Pull storage is read-only on the server. Force permits its local
             # cache to become empty when the user emptied the remote calendar.
-            arguments.append("--force-delete")
-        arguments.append("pull" if pull else "push")
+            options.append("--force-delete")
+        options.append("pull" if pull else "push")
+        arguments = [*command, *options]
         environment = os.environ.copy()
         environment["DEBACAL_VDIR_PASSWORD"] = password
         if not (pull or bootstrap or calendar.read_only):
             # Preserve the maintained CLI while preventing its implicit
             # recreation of an edited event concurrently deleted on the server.
-            arguments = [sys.executable, str(Path(__file__).with_name("vdirsyncer_runner.py")), *arguments[1:]]
+            arguments = [sys.executable, str(Path(__file__).with_name("vdirsyncer_runner.py")), *options]
             environment["DEBACAL_VDIR_WRITE_POLICY"] = str(path / "write-policy.json")
         try:
-            discover = [*self._command(), "--config", str(config), "discover", "--no-list", "pull" if pull else "push"]
+            discover = [*command, "--config", str(config), "discover", "--no-list", "pull" if pull else "push"]
             discovery = self.runner(discover, env=environment, capture_output=True, text=True,
                                     stdin=subprocess.DEVNULL, timeout=120, check=False,
                                     pass_fds=(self._active_lock_fd,))
@@ -211,7 +219,12 @@ class VdirsyncerBackend:
                                  stdin=subprocess.DEVNULL, timeout=120, check=False,
                                  pass_fds=(self._active_lock_fd,))
         except FileNotFoundError:
-            raise ValueError("vdirsyncer could not be started. Install it in the Python environment used to launch Debacal.") from None
+            raise ValueError("The vdirsyncer launcher or its Python interpreter could not be found. "
+                             "If its virtual environment was moved, recreate or reinstall that environment; "
+                             "install vdirsyncer in the Python environment used to launch Debacal.") from None
+        except PermissionError:
+            raise ValueError("The vdirsyncer launcher could not be executed. Check its execute permission "
+                             "or install vdirsyncer in the Python environment used to launch Debacal.") from None
         except subprocess.TimeoutExpired:
             raise ValueError("vdirsyncer timed out after two minutes. Local changes remain queued.") from None
         finally:

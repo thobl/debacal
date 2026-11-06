@@ -10,7 +10,11 @@ import hashlib
 import json
 from pathlib import Path
 import os
+import subprocess
 from subprocess import CompletedProcess
+import sys
+
+import pytest
 
 from debacal.ics import export_ics, parse_ics
 from debacal.models import Calendar, Event
@@ -170,6 +174,50 @@ def setup(tmp_path):
 
 def sync(store, calendar, backend):
     return backend.sync(store, calendar, "session-secret")
+
+
+def test_installed_module_runs_despite_a_broken_console_launcher(tmp_path, monkeypatch):
+    pytest.importorskip("vdirsyncer")
+    broken = tmp_path / "vdirsyncer"
+    broken.write_text('#!/nonexistent/moved-environment/bin/python\nraise SystemExit(99)\n')
+    broken.chmod(0o755)
+    monkeypatch.setattr('debacal.vdirsyncer_backend.shutil.which', lambda _name: str(broken))
+    backend = VdirsyncerBackend(tmp_path / 'calendar.sqlite')
+    command = backend._command()
+    assert command == [sys.executable, '-m', 'vdirsyncer']
+    result = subprocess.run([*command, '--version'], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and 'version' in result.stdout
+
+
+def test_module_command_prefix_does_not_leak_into_write_guard_arguments(tmp_path, monkeypatch):
+    store, calendar, cli, backend = setup(tmp_path)
+    try:
+        monkeypatch.setattr(backend, '_command', lambda: [sys.executable, '-m', 'vdirsyncer'])
+        store.apply('Create', [sample()])
+        result = sync(store, calendar, backend)
+        assert result.sent == 1 and not store.pending_changes()
+        baseline, write = [arguments for _pair, arguments in cli.calls]
+        assert baseline[:3] == (sys.executable, '-m', 'vdirsyncer')
+        assert write[0] == sys.executable and Path(write[1]).name == 'vdirsyncer_runner.py'
+        assert write[2] == '--config' and '-m' not in write
+    finally:
+        store.close()
+
+
+def test_explicit_broken_launcher_explains_missing_interpreter_and_keeps_changes(tmp_path):
+    store, calendar, _cli, backend = setup(tmp_path)
+    broken = tmp_path / 'external-vdirsyncer'
+    broken.write_text('#!/nonexistent/moved-environment/bin/python\n')
+    broken.chmod(0o755)
+    backend = VdirsyncerBackend(store.path, executable=broken)
+    try:
+        store.apply('Create', [sample()])
+        with pytest.raises(ValueError, match='launcher or its Python interpreter'):
+            sync(store, calendar, backend)
+        assert store.get_event('event') is not None
+        assert len(store.pending_changes()) == 1
+    finally:
+        store.close()
 
 
 def test_existing_remote_events_are_imported_before_any_local_write(tmp_path):

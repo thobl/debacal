@@ -82,7 +82,9 @@ parser supports ordinary events and named IANA zones. `python-dateutil` expands
 preserved recurrence for views. CalDAV reports an actionable error when its
 client dependency is missing. CalDAV sync now uses vdirsyncer; updating the project
 dependencies is required after upgrading from the previous version. A missing
-executable is shown in Sync status rather than silently disabling sync.
+dependency is shown in Sync status rather than silently disabling sync.
+Debacal runs vdirsyncer through its own Python environment, including after
+moving the project directory.
 Exporting a newly created named-timezone RRULE series or custom sequence also
 needs `icalendar` to generate its VTIMEZONE definition; local editing still works
 without it. Existing imported definitions are retained. UTC events export offline.
