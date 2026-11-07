@@ -17,6 +17,7 @@ from .patterns import expand_sequence, reconstruct_sequence, PatternError
 from .timeutil import local_zone
 from .preferences import Preferences
 from .theme import scheme_for
+from .calendar_appearance import CalendarDateGrid, weekend_text, weekend_fill
 from .series_preview import SeriesPreview
 from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 
@@ -30,9 +31,11 @@ def hint(text):
 
 def _style_date_popup(field, preferences):
     scheme = scheme_for(preferences)
+    field.setCalendarWidget(CalendarDateGrid(preferences, field))
     for day in range(1, 8):
         format = QTextCharFormat()
-        format.setForeground(QColor(scheme.weekend if day >= 6 else scheme.ink))
+        format.setForeground(QColor(weekend_text(day - 1, preferences, scheme)))
+        format.setBackground(QColor(weekend_fill(day - 1, preferences, scheme) or scheme.background))
         field.calendarWidget().setWeekdayTextFormat(Qt.DayOfWeek(day), format)
 
 

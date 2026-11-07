@@ -19,6 +19,7 @@ from .timeutil import local_zone, now
 from .event_scope import normalize_scope_modifiers, scope_from_modifiers
 from .theme import scheme_for
 from .event_style import event_colors, source_outline
+from .calendar_appearance import weekend_text, weekend_fill
 
 # Default aliases remain available to standalone painter callers. Live surfaces
 # resolve their own preferences through paint_colors rather than mutating these.
@@ -31,8 +32,9 @@ CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores
 WEEKDAY_SIZE = 9
 AXIS_SIZE = 8
 ALL_DAY_SIZE = 7
-WEEK_CAPTION_SIZE = 7
-WEEK_NUMBER_SIZE = 14
+WEEK_CAPTION_SIZE = WEEKDAY_SIZE
+DAY_NUMBER_SIZE = 17
+WEEK_NUMBER_SIZE = DAY_NUMBER_SIZE
 
 
 @lru_cache(maxsize=64)
@@ -54,23 +56,26 @@ def weekday_label_rect(left, width, scale):
     return QRectF(left + 11, 8 * scale, width - 20, 20 * scale)
 
 
+def day_number_rect(left, width, scale):
+    return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
+
+
 def paint_week_caption(painter, gutter, scale, color):
     """Keep the shared week-axis caption fixed while switching views."""
-    text(painter, QRectF(0, 4 * scale, gutter, 12 * scale), 'WEEK', color, WEEK_CAPTION_SIZE,
+    text(painter, QRectF(0, 8 * scale, gutter, 20 * scale), 'WEEK', color, WEEK_CAPTION_SIZE, True,
          align=Qt.AlignmentFlag.AlignCenter)
 
 
-@lru_cache(maxsize=3)
-def _scheme_colors(name):
-    scheme = scheme_for(name)
+@lru_cache(maxsize=128)
+def _scheme_colors(scheme):
     return SimpleNamespace(**{key: QColor(getattr(scheme, key)) for key in (
         'background', 'panel', 'ink', 'muted', 'accent', 'weekend', 'line',
-        'control_surface', 'selection', 'selection_edge', 'now', 'outside_month')})
+        'control_surface', 'selection', 'selection_edge', 'now', 'outside_month', 'weekend_background', 'on_accent')})
 
 
 def paint_colors(widget):
     """Reuse paint tokens while each surface keeps its own scheme."""
-    return _scheme_colors(scheme_for(getattr(widget, 'preview', widget)).name)
+    return _scheme_colors(scheme_for(getattr(widget, 'preview', widget)))
 
 
 def draw_column_grid(painter, gutter, width, days, height, color):
@@ -158,7 +163,7 @@ def badge(painter, rect, value, selected=False):
     painter.setPen(QPen(colors.accent if selected else colors.selection_edge, 1))
     painter.setBrush(colors.accent if selected else colors.panel)
     painter.drawRoundedRect(rect, 4, 4)
-    text(painter, rect, value, QColor('#ffffff') if selected else colors.accent, 8, True,
+    text(painter, rect, value, colors.on_accent if selected else colors.accent, 8, True,
          Qt.AlignmentFlag.AlignCenter)
 
 
@@ -255,7 +260,7 @@ class DayHeader(QWidget):
     def week_rect(self):
         if not self.days or not self.preferences.show_week_numbers:
             return None
-        return QRectF(4, 4 * display_scale(self), self.gutter - 8, 49 * display_scale(self))
+        return QRectF(4, 8 * display_scale(self), self.gutter - 8, 48 * display_scale(self))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -313,21 +318,25 @@ class DayHeader(QWidget):
         week = self.week_rect()
         if week is not None:
             paint_week_caption(p, self.gutter, scale, colors.muted)
-            text(p, QRectF(week.left(), 18 * scale, week.width(), 24 * scale),
+            text(p, QRectF(week.left(), 28 * scale, week.width(), math.ceil(28 * scale)),
                  str(self.preferences.week_number(self.days[0])), colors.accent, WEEK_NUMBER_SIZE, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
             today = day == now().date()
             selected_day = self.navigation_active and i == self.navigation_day
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                p.fillRect(QRectF(x, 0, w, self.height()), shade)
             if today or selected_day:
                 p.setPen(QPen(colors.accent, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
                 p.setBrush(colors.selection)
                 p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), 4, 4)
-            day_color = colors.accent if today or selected_day else colors.weekend if day.weekday() >= 5 else colors.muted
+            day_color = weekend_text(day, self.preferences, colors,
+                                     colors.accent if today or selected_day else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
-            text(p, QRectF(x + 11, 28 * scale, w - 20, math.ceil(28 * scale)), str(day.day),
-                 colors.accent if today else colors.weekend if day.weekday() >= 5 else colors.ink, 17, True)
+            text(p, day_number_rect(x, w, scale), str(day.day),
+                 weekend_text(day, self.preferences, colors, colors.accent if today else colors.ink), DAY_NUMBER_SIZE, True)
             if self.navigation_active:
                 badge(p, QRectF(x + w - 34, 11, 21, 21), str(i + 1), selected_day)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
@@ -778,6 +787,9 @@ class CalendarCanvas(QWidget):
         w = (self.width() - self.gutter) / len(self.days)
         scale = display_scale(self)
         for i, day in enumerate(self.days):
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), shade)
             if self.show_numbers and i == self.navigation_day:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), colors.selection)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
@@ -1374,8 +1386,11 @@ class MonthCanvas(QWidget):
         for index in range(7):
             day = self.start + timedelta(days=index)
             name = self.preferences.weekday_name(day).upper()
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                p.fillRect(QRectF(gutter + index * width, 0, width, self.header_height), shade)
             text(p, weekday_label_rect(gutter + index * width, width, scale), name,
-                 colors.weekend if day.weekday() >= 5 else colors.muted, WEEKDAY_SIZE, True)
+                 weekend_text(day, self.preferences, colors, colors.muted), WEEKDAY_SIZE, True)
         # Finish every day background before drawing any bar across its neighbors.
         for index in range(42):
             day = self.start + timedelta(days=index)
@@ -1383,13 +1398,23 @@ class MonthCanvas(QWidget):
             rect = QRectF(x, y, width, height)
             if day.month != self.month:
                 p.fillRect(rect, colors.outside_month)
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                p.fillRect(rect, shade)
             if day == today:
-                p.fillRect(rect, colors.selection)
+                if shade is not None:
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(colors.selection)
+                    p.drawRoundedRect(QRectF(x + 5 * scale, y + 2 * scale,
+                                            max(0, min(28 * scale, width - 10 * scale)), 26 * scale),
+                                      4 * scale, 4 * scale)
+                else:
+                    p.fillRect(rect, colors.selection)
             p.setPen(QPen(colors.line, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
             text(p, QRectF(x + 10, y + 3 * scale, width - 18, day_label_height), str(day.day),
-                 colors.accent if day == today else colors.weekend if day.weekday() >= 5 else colors.ink, 10, True)
+                 weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink), 10, True)
         p.setPen(QPen(colors.line, 1))
         for index in range(8):
             x = gutter + index * width
@@ -1652,6 +1677,11 @@ class AllDayCanvas(MonthCanvas):
         if not self.days:
             p.end()
             return
+        column = (self.width() - self.gutter) / len(self.days)
+        for index, day in enumerate(self.days):
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                p.fillRect(QRectF(self.gutter + index * column, 0, column, self.height()), shade)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         p.setPen(QPen(colors.line, 1))
         p.drawLine(QPointF(self.gutter, self.height() - .5), QPointF(self.width(), self.height() - .5))

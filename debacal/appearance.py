@@ -2,8 +2,10 @@
 from dataclasses import asdict
 import re
 from string import Template
+from PySide6.QtGui import QColor, QPalette
 
 from .theme import scheme_for
+from .control_glyphs import control_glyphs
 
 
 _BASE_STYLE = Template("""
@@ -37,11 +39,28 @@ QPushButton[iconOnly="true"]:pressed, QPushButton[iconOnly="true"]:checked { bac
 QPushButton[iconOnly="true"][keyboardFocus="true"]:focus { border-color: $focus; }
 QPushButton[compactIcon="true"] { padding: 1px; border-color: transparent; }
 QPushButton[compactIcon="true"][keyboardFocus="true"]:focus { border-color: $focus; }
-QLineEdit, QTextEdit, QPlainTextEdit, QDateTimeEdit, QSpinBox, QComboBox, QKeySequenceEdit {
+QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox, QKeySequenceEdit {
     background: $panel; color: $ink; border: 1px solid $control_edge; border-radius: 4px; padding: 6px;
     selection-background-color: $selection; selection-color: $ink;
 }
-QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QDateTimeEdit:focus, QSpinBox:focus, QComboBox:focus, QKeySequenceEdit:focus { border-color: $focus; }
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus, QComboBox:focus, QKeySequenceEdit:focus { border-color: $focus; }
+QComboBox, QAbstractSpinBox { padding-right: 30px; }
+QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 24px;
+    background: $control_surface; border: 1px solid $control_edge; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+QComboBox::down-arrow { image: url("$arrow_down"); width: 12px; height: 10px; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { subcontrol-origin: border; width: 24px;
+    background: $control_surface; border-left: 1px solid $control_edge; }
+QAbstractSpinBox::up-button { subcontrol-position: top right; border-top: 1px solid $control_edge;
+    border-right: 1px solid $control_edge; border-bottom: 1px solid $control_edge; border-top-right-radius: 4px; }
+QAbstractSpinBox::down-button { subcontrol-position: bottom right; border-right: 1px solid $control_edge;
+    border-bottom: 1px solid $control_edge; border-bottom-right-radius: 4px; }
+QAbstractSpinBox::up-arrow { image: url("$arrow_up"); width: 12px; height: 10px; }
+QAbstractSpinBox::down-arrow { image: url("$arrow_down"); width: 12px; height: 10px; }
+QComboBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:disabled { image: url("$arrow_disabled_down"); }
+QAbstractSpinBox::up-arrow:disabled { image: url("$arrow_disabled_up"); }
+QComboBox::drop-down:hover, QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover { background: $hover; }
+QComboBox::drop-down:pressed, QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed { background: $selection; }
+QComboBox QAbstractItemView { background: $panel; color: $ink; selection-background-color: $selection; selection-color: $ink; }
 QListWidget, QTreeWidget { background: $panel; border: 1px solid $line; border-radius: 4px; }
 QListWidget:focus, QTreeWidget:focus { border-color: $focus; }
 QListWidget::item, QTreeWidget::item { padding: 8px; }
@@ -80,16 +99,48 @@ QPushButton#syncStatus[keyboardFocus="true"]:focus { border-color: $focus; }
 QMenu { background: $panel; color: $ink; border: 1px solid $control_edge; padding: 4px; }
 QMenu::item { padding: 7px 18px; }
 QMenu::item:selected { background: $selection; color: $ink; }
-QTabWidget::pane { border: 1px solid $line; }
-QTabBar::tab { padding: 8px 12px; }
+QTabWidget::pane { background: $background; border: 1px solid $line; }
+QWidget#preferencesPage, QWidget#appearancePage { background: $background; }
+QTabBar::tab { background: $control_surface; color: $ink; padding: 8px 12px; border: 1px solid $line; }
 QTabBar::tab:selected { background: $selection; color: $accent; }
+QTabBar::tab:hover { background: $hover; }
+QTableWidget { background: $panel; color: $ink; gridline-color: $line; border: 1px solid $line; }
+QHeaderView::section { background: $control_surface; color: $ink; padding: 6px; border: 1px solid $line; }
 QToolTip { background: $panel; color: $ink; border: 1px solid $control_edge; padding: 6px; }
 """)
 
 
 def stylesheet(font_scale=100, color_scheme='neutral'):
     """Render interface roles while retaining the existing text-scale API."""
-    style = _BASE_STYLE.substitute(asdict(scheme_for(color_scheme)))
+    scheme = scheme_for(color_scheme)
+    up, down = control_glyphs(scheme.ink)
+    disabled_up, disabled_down = control_glyphs(scheme.disabled)
+    style = _BASE_STYLE.substitute(asdict(scheme) | {
+        'arrow_up': up, 'arrow_down': down, 'arrow_disabled_up': disabled_up, 'arrow_disabled_down': disabled_down})
     return re.sub(r"font-size: (\d+)px",
                   lambda match: f"font-size: {round(int(match[1]) * font_scale / 100)}px",
                   style)
+
+
+def widget_palette(preferences):
+    """Give native subcontrols and popups the same roles as painted surfaces."""
+    scheme = scheme_for(preferences)
+    palette = QPalette()
+    for role, value in {
+        QPalette.ColorRole.Window: scheme.background,
+        QPalette.ColorRole.WindowText: scheme.ink,
+        QPalette.ColorRole.Base: scheme.panel,
+        QPalette.ColorRole.AlternateBase: scheme.sidebar,
+        QPalette.ColorRole.Text: scheme.ink,
+        QPalette.ColorRole.Button: scheme.control_surface,
+        QPalette.ColorRole.ButtonText: scheme.ink,
+        QPalette.ColorRole.Highlight: scheme.selection,
+        QPalette.ColorRole.HighlightedText: scheme.ink,
+        QPalette.ColorRole.ToolTipBase: scheme.panel,
+        QPalette.ColorRole.ToolTipText: scheme.ink,
+        QPalette.ColorRole.PlaceholderText: scheme.muted,
+    }.items():
+        palette.setColor(role, QColor(value))
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(scheme.disabled))
+    return palette

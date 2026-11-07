@@ -11,6 +11,7 @@ from .calendar_widgets import at, text, display_scale, paint_colors, WEEKDAY_SIZ
 from .event_style import event_colors
 from .theme import scheme_for
 from .preferences import Preferences
+from .calendar_appearance import weekend_text, weekend_fill
 from .recurrence import expand_events, key_datetime, recurrence_key, recurrence_set, overlaps
 from .timeutil import local_zone, now
 
@@ -184,8 +185,11 @@ class _PreviewGrid(QWidget):
         scale = display_scale(self)
         for index in range(7):
             day = preview.grid_start + timedelta(days=index)
+            shade = weekend_fill(day, preview.preferences, colors)
+            if shade is not None:
+                painter.fillRect(QRectF(index * width, 0, width, self.header_height), shade)
             text(painter, QRectF(index * width, 0, width, self.header_height),
-                 preview.preferences.weekday_name(day).upper(), colors.weekend if day.weekday() >= 5 else colors.muted,
+                 preview.preferences.weekday_name(day).upper(), weekend_text(day, preview.preferences, colors, colors.muted),
                  WEEKDAY_SIZE, True, Qt.AlignmentFlag.AlignCenter)
         for offset in range(42):
             day = preview.grid_start + timedelta(days=offset)
@@ -194,17 +198,22 @@ class _PreviewGrid(QWidget):
             outside = day.month != preview.current_month.month
             if outside:
                 painter.fillRect(rect, colors.outside_month)
-            elif day in preview.excluded_dates:
-                painter.fillRect(rect, colors.control_surface)
-            elif events:
-                painter.fillRect(rect, colors.selection)
+            shade = weekend_fill(day, preview.preferences, colors)
+            if shade is not None:
+                painter.fillRect(rect, shade)
+            if not outside:
+                inset = rect.adjusted(2 * scale, scale, -2 * scale, -scale) if shade is not None else rect
+                if day in preview.excluded_dates:
+                    painter.fillRect(inset, colors.control_surface)
+                elif events:
+                    painter.fillRect(inset, colors.selection)
             painter.setPen(QPen(colors.line, 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
             anchor = day in preview.anchor_dates
             text(painter, QRectF(rect.x() + 5, rect.y() + 1, rect.width() - 10, 19 * scale),
-                 str(day.day), colors.muted if outside else colors.accent if events else
-                 colors.weekend if day.weekday() >= 5 else colors.ink, 9, anchor)
+                 str(day.day), weekend_text(day, preview.preferences, colors,
+                                            colors.muted if outside else colors.accent if events else colors.ink), 9, anchor)
             marker = '●' if anchor else '×' if day in preview.excluded_dates else '+' if day in preview.added_dates else ''
             if marker:
                 text(painter, QRectF(rect.right() - 20 * scale, rect.y() + 1, 16 * scale, 19 * scale), marker,

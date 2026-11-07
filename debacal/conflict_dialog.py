@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from .preferences import Preferences
 from .series_preview import SeriesPreview
 from .timeutil import local_zone, now
+from .theme import scheme_for
 
 
 class ConflictDialog(QDialog):
@@ -95,7 +96,9 @@ class ConflictDialog(QDialog):
                 item = QTableWidgetItem(value or '—')
                 item.setToolTip(value)
                 if changed:
-                    item.setBackground(QColor('#fff1c9'))
+                    colors = scheme_for(preferences)
+                    item.setBackground(QColor(colors.notice_background))
+                    item.setForeground(QColor(colors.notice_ink))
                 self.comparison.setItem(row, col, item)
         self.comparison.setMinimumHeight(190)
         self.comparison.setMaximumHeight(300)

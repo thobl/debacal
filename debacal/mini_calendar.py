@@ -5,11 +5,13 @@ from PySide6.QtCore import QDate, Qt, Signal, QPoint
 from PySide6.QtGui import QIntValidator, QActionGroup, QColor, QPalette, QTextCharFormat
 from PySide6.QtWidgets import (
     QCalendarWidget, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMenu, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QMenu, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .preferences import Preferences
 from .theme import scheme_for
+from .calendar_appearance import CalendarDateGrid, weekend_text, weekend_fill
+from .button_focus import install_button_focus
 
 
 class _YearPopup(QFrame):
@@ -118,6 +120,7 @@ class MiniCalendar(QWidget):
 
     def __init__(self, preferences=None, parent=None):
         super().__init__(parent)
+        install_button_focus(QApplication.instance())
         self.preferences = preferences or Preferences()
         self._shown_page = None
         outer = QVBoxLayout(self)
@@ -161,7 +164,7 @@ class MiniCalendar(QWidget):
         self.month_button.clicked.connect(self.show_month_menu)
         self.year_button.clicked.connect(self.show_year_popup)
         self.year_popup.year_chosen.connect(lambda year: self.setCurrentPage(year, self.monthShown()))
-        self.calendar = QCalendarWidget(self)
+        self.calendar = CalendarDateGrid(self.preferences, self)
         self.calendar.setNavigationBarVisible(False)
         self.calendar.setDateRange(QDate(1, 1, 1), QDate(9999, 12, 31))
         self.calendar.setGridVisible(False)
@@ -179,6 +182,7 @@ class MiniCalendar(QWidget):
 
     def set_preferences(self, preferences):
         self.preferences = preferences
+        self.calendar.preferences = preferences
         locale = preferences.qt_locale()
         self.setLocale(locale)
         self.calendar.setLocale(locale)
@@ -207,8 +211,10 @@ class MiniCalendar(QWidget):
         for day in (Qt.DayOfWeek.Monday, Qt.DayOfWeek.Tuesday, Qt.DayOfWeek.Wednesday,
                     Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday, Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
             formatting = QTextCharFormat()
-            formatting.setForeground(QColor(colors.weekend if day.value >= 6 else colors.ink))
+            formatting.setForeground(QColor(weekend_text(day.value - 1, preferences, colors)))
+            formatting.setBackground(QColor(weekend_fill(day.value - 1, preferences, colors) or colors.background))
             self.calendar.setWeekdayTextFormat(day, formatting)
+        self.calendar.updateCells()
         for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
             button.setStyleSheet(f'QToolButton {{ border: 1px solid transparent; background: transparent; color: {colors.ink}; '
                                 f'padding: 2px; border-radius: 4px; }} '

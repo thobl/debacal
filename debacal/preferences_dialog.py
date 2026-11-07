@@ -7,11 +7,12 @@ from PySide6.QtWidgets import (
     QCheckBox, QFrame, QScrollArea, QSpinBox, QTabWidget, QWidget,
 )
 
-from .appearance import stylesheet
+from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .preferences import Preferences, _system_language_locale
+from .appearance_preferences import AppearanceEditor
 from .shortcuts import KeyboardShortcutsEditor
-from .theme import SCHEMES, scheme_for
+from .theme import scheme_for
 
 
 class PreferencesDialog(QDialog):
@@ -20,8 +21,12 @@ class PreferencesDialog(QDialog):
     def __init__(self, preferences: Preferences, parent=None, bindings=None, default_bindings=None):
         super().__init__(parent)
         install_button_focus(QApplication.instance())
+        self.setPalette(widget_palette(preferences))
+        self.setStyleSheet(stylesheet(preferences.font_scale, preferences))
+        self.setLocale(preferences.qt_locale())
         self.setWindowTitle('Preferences')
-        self.resize(640, 570)
+        bounds = self.screen().availableGeometry()
+        self.resize(min(760, max(440, bounds.width() - 64)), min(720, max(440, bounds.height() - 64)))
         self.result_preferences = preferences
         outer = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -72,54 +77,13 @@ class PreferencesDialog(QDialog):
         general_layout.addWidget(self.preview)
         general_layout.addStretch()
 
-        _, appearance_layout, form = self.category('Appearance')
-        self.color_scheme = QComboBox()
-        self.color_scheme.setAccessibleName('Color scheme')
-        for value, scheme in SCHEMES.items():
-            self.color_scheme.addItem(scheme.label, value)
-        self.color_scheme.setCurrentIndex(self.color_scheme.findData(preferences.color_scheme))
-        form.addRow('Color scheme', self.color_scheme)
-        self.control_style = QComboBox()
-        self.control_style.setAccessibleName('Button group style')
-        self.control_style.addItem('Underlined', 'underlined')
-        self.control_style.addItem('Filled', 'filled')
-        self.control_style.setCurrentIndex(self.control_style.findData(preferences.control_style))
-        self.control_style.setToolTip('Changes the view and selection buttons. Their placement and the toolbar separator stay the same.')
-        form.addRow('Button groups', self.control_style)
-        self.agenda_style = QComboBox()
-        self.agenda_style.setAccessibleName('Upcoming events layout')
-        for name, value in [('Event cards', 'cards'), ('Cards grouped by day', 'grouped'),
-                            ('Timeline within each day', 'timeline')]:
-            self.agenda_style.addItem(name, value)
-        self.agenda_style.setCurrentIndex(self.agenda_style.findData(preferences.agenda_style))
-        self.agenda_style.setToolTip('Changes the upcoming events list. Search results always use event cards.')
-        form.addRow('Upcoming events', self.agenda_style)
-        self.font_scale = QSpinBox()
-        self.font_scale.setRange(80, 140)
-        self.font_scale.setSingleStep(10)
-        self.font_scale.setSuffix(' %')
-        self.font_scale.setValue(preferences.font_scale)
-        self.week_numbers = QCheckBox('Show week numbers in calendars')
-        self.week_numbers.setChecked(preferences.show_week_numbers)
-        self.visible_start = QSpinBox()
-        self.visible_start.setRange(0, 23)
-        self.visible_start.setPrefix('From ')
-        self.visible_start.setSuffix(':00')
-        self.visible_start.setValue(preferences.visible_start_hour)
-        self.visible_end = QSpinBox()
-        self.visible_end.setRange(1, 24)
-        self.visible_end.setPrefix('Until ')
-        self.visible_end.setSuffix(':00')
-        self.visible_end.setValue(preferences.visible_end_hour)
-        form.addRow('Text size', self.font_scale)
-        form.addRow('Week numbers', self.week_numbers)
-        form.addRow('Default visible hours', self.visible_start)
-        form.addRow('', self.visible_end)
-        note = QLabel('Day and week views also include events outside these hours. Full day still shows 00:00–24:00.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        appearance_layout.addWidget(note)
-        appearance_layout.addStretch()
+        _, appearance_layout, _ = self.category('Appearance')
+        self.appearance_editor = AppearanceEditor(preferences)
+        appearance_layout.addWidget(self.appearance_editor)
+        for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
+                     'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'week_numbers',
+                     'visible_start', 'visible_end', 'show_sidebar_title', 'sidebar_title'):
+            setattr(self, name, getattr(self.appearance_editor, name))
 
         _, sync_layout, form = self.category('Sync')
         self.auto_sync = QCheckBox('Sync automatically while the app is open')
@@ -167,6 +131,7 @@ class PreferencesDialog(QDialog):
 
     def category(self, name):
         page = QWidget()
+        page.setObjectName('preferencesPage')
         layout = QVBoxLayout(page)
         form = QFormLayout()
         layout.addLayout(form)
@@ -191,10 +156,7 @@ class PreferencesDialog(QDialog):
         return Preferences(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
                            time_format=self.time_format.currentData(), conflict_notifications=self.conflict_notifications.currentData(),
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
-                           locale_name=self.locale.currentData(), font_scale=self.font_scale.value(),
-                           show_week_numbers=self.week_numbers.isChecked(), visible_start_hour=self.visible_start.value(),
-                           visible_end_hour=self.visible_end.value(), color_scheme=self.color_scheme.currentData(),
-                           agenda_style=self.agenda_style.currentData(), control_style=self.control_style.currentData())
+                           locale_name=self.locale.currentData(), **self.appearance_editor.values())
 
     def locale_changed(self, *_):
         preferences = Preferences(locale_name=self.locale.currentData())
@@ -209,6 +171,7 @@ class PreferencesDialog(QDialog):
         self.preview.setText(preferences.weekday_name(day, short=False) + ', ' + preferences.format_date(day) + ' · '
                              + preferences.format_time(datetime(2026, 11, 4, 14, 5)) + '\nWeek begins '
                              + preferences.weekday_name(preferences.first_weekday, short=False) + '.')
+        self.appearance_editor.set_context(preferences)
 
     def restore_defaults(self):
         for field in (self.locale, self.week_start, self.date_format, self.time_format):
@@ -216,13 +179,7 @@ class PreferencesDialog(QDialog):
         self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData('in_app'))
         self.auto_sync.setChecked(True)
         self.sync_interval.setValue(1)
-        self.font_scale.setValue(100)
-        self.color_scheme.setCurrentIndex(self.color_scheme.findData('neutral'))
-        self.control_style.setCurrentIndex(self.control_style.findData(Preferences().control_style))
-        self.agenda_style.setCurrentIndex(self.agenda_style.findData(Preferences().agenda_style))
-        self.week_numbers.setChecked(Preferences().show_week_numbers)
-        self.visible_start.setValue(8)
-        self.visible_end.setValue(18)
+        self.appearance_editor.set_preferences(Preferences())
         self.shortcut_editor.restore_defaults()
         self.error.clear()
 
@@ -231,6 +188,9 @@ class PreferencesDialog(QDialog):
             preferences = self.value()
         except ValueError as error:
             self.tabs.setCurrentIndex(1)
+            target = self.appearance_editor.focus_invalid_field()
+            if target is not None:
+                self.tabs.widget(1).ensureWidgetVisible(target)
             self.error.setText(str(error))
             return False
         try:
@@ -247,7 +207,8 @@ class PreferencesDialog(QDialog):
             self._applied_state = preferences, dict(bindings)
             self.applied.emit(preferences, dict(bindings))
             self.setLocale(preferences.qt_locale())
-            self.setStyleSheet(stylesheet(preferences.font_scale, preferences.color_scheme))
+            self.setStyleSheet(stylesheet(preferences.font_scale, preferences))
+            self.setPalette(widget_palette(preferences))
             self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
         return True
 

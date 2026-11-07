@@ -233,7 +233,7 @@ def test_all_day_caption_is_smaller_and_right_aligned_with_readable_timestamps(w
 
 
 @pytest.mark.parametrize('scale', [80, 100, 140])
-def test_week_number_restores_large_type_with_a_clear_offset_from_day_numbers(workspace, scale):
+def test_week_caption_and_number_align_with_day_labels_and_numbers(workspace, scale):
     window, _, app = workspace
     apply_preferences(window, app, font_scale=scale)
     header = window.header
@@ -244,11 +244,14 @@ def test_week_number_restores_large_type_with_a_clear_offset_from_day_numbers(wo
     week_call = next(call for call in calls if call.args[2] == week and call.args[1].right() < header.gutter)
     day_call = next(call for call in calls if call.args[2] == str(header.days[0].day)
                     and call.args[1].left() > header.gutter)
-    assert week_call.args[4] == 14
-    assert week_call.args[4] < day_call.args[4]
-    assert day_call.args[1].center().y() - week_call.args[1].center().y() >= 8 * scale / 100
+    assert week_call.args[4] == day_call.args[4] == 17
+    assert day_call.args[1].top() == week_call.args[1].top()
+    assert day_call.args[1].height() == week_call.args[1].height()
     caption = next(call for call in calls if call.args[2] == 'WEEK')
-    assert caption.args[1].bottom() < week_call.args[1].top()
+    weekday = next(call for call in calls if call.args[2] == window.preferences.weekday_name(header.days[0]).upper())
+    assert caption.args[4:6] == weekday.args[4:6]
+    assert caption.args[1].top() == weekday.args[1].top()
+    assert caption.args[1].height() == weekday.args[1].height()
 
 
 @pytest.mark.parametrize('scale', [80, 100, 140])

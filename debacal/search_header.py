@@ -44,7 +44,7 @@ class SearchHeader(QStackedWidget):
         self.sync_state()
 
     def update_preferences(self, preferences, shortcut=''):
-        signature = preferences.font_scale, preferences.color_scheme, shortcut
+        signature = preferences.font_scale, scheme_for(preferences), shortcut
         if signature == self._signature:
             return
         self._signature = signature

@@ -65,11 +65,16 @@ def source_outline(source, background, minimum=3.0):
 @lru_cache(maxsize=1024)
 def _source_outline(source, background, minimum):
     color = QColor(source)
+    lighten = contrast_ratio('#ffffff', background) > contrast_ratio('#000000', background)
     for _ in range(40):
         if contrast_ratio(color, background) >= minimum:
             return color.name()
-        color = color.darker(112)
-    return '#000000'
+        if lighten:
+            color = QColor(*(round(channel * .88 + 255 * .12)
+                             for channel in (color.red(), color.green(), color.blue())))
+        else:
+            color = color.darker(112)
+    return '#ffffff' if lighten else '#000000'
 
 
 def event_colors(source_color, scheme=None, *, alpha=52):
@@ -83,12 +88,12 @@ def event_colors(source_color, scheme=None, *, alpha=52):
     source = QColor(source_color)
     if not source.isValid():
         source = QColor(palette.accent)
-    return _event_colors(source.name(), palette.name, max(0, min(255, int(alpha))))
+    return _event_colors(source.name(), palette, max(0, min(255, int(alpha))))
 
 
 @lru_cache(maxsize=1024)
-def _event_colors(source, scheme_name, alpha):
-    palette = scheme_for(scheme_name)
+def _event_colors(source, palette, alpha):
+    palette = scheme_for(palette)
     color, background = QColor(source), QColor(palette.background)
     weight = alpha / 255
     fill = QColor(*(round(a * weight + b * (1 - weight)) for a, b in
@@ -97,7 +102,9 @@ def _event_colors(source, scheme_name, alpha):
     outline = source_outline(source, fill)
     if contrast_ratio(outline, palette.background) < 3:
         outline = source_outline(outline, palette.background)
-    selected = source_outline(color.darker(145).name(), fill)
+    dark = contrast_ratio('#ffffff', palette.background) > contrast_ratio('#000000', palette.background)
+    selected_source = color.lighter(145) if dark else color.darker(145)
+    selected = source_outline(selected_source.name(), fill)
     if contrast_ratio(selected, palette.background) < 3:
         selected = source_outline(selected, palette.background)
     return EventColors(fill, outline, selected,

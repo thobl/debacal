@@ -14,6 +14,7 @@ from .preferences import Preferences
 from .timeutil import local_zone, now
 from .calendar_widgets import event_tooltip, paint_colors
 from .event_style import source_outline
+from .calendar_appearance import weekend_text, weekend_fill
 
 
 class YearView(QWidget):
@@ -343,7 +344,10 @@ class YearView(QWidget):
             for column, label in enumerate(self._weekday_names):
                 rect = QRectF(grid.x() + column * grid.width() / 7, outer.y() + 31 * scale, grid.width() / 7, 18 * scale)
                 weekday = (self.preferences.first_weekday + column) % 7
-                self._text(painter, rect, label, colors.weekend if weekday >= 5 else colors.muted, 8)
+                shade = weekend_fill(weekday, self.preferences, colors)
+                if shade is not None:
+                    painter.fillRect(rect, shade)
+                self._text(painter, rect, label, weekend_text(weekday, self.preferences, colors, colors.muted), 8)
             if self.preferences.show_week_numbers:
                 self._text(painter, QRectF(outer.x() + 4 * scale, outer.y() + 31 * scale,
                                           21 * scale, 18 * scale), 'Wk', colors.muted, 7)
@@ -364,6 +368,9 @@ class YearView(QWidget):
             selected = bool(self._selected_summaries[offset]) if self._selected_summaries else False
             preview = bool(self._preview_summaries[offset]) if self._preview_summaries else False
             box = rect.adjusted(1 * scale, 0, -1 * scale, 0)
+            shade = weekend_fill(day, self.preferences, colors)
+            if shade is not None:
+                painter.fillRect(rect, shade)
             if day == self.selected_day or selected or preview or day == today:
                 color = colors.control_surface if day == self.selected_day or selected else colors.selection
                 painter.setBrush(color)
@@ -376,10 +383,11 @@ class YearView(QWidget):
                     color = QColor(source.color) if source is not None else colors.accent
                     pen = QPen(color if color.isValid() else colors.accent, 1, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
-                painter.drawRoundedRect(box, 4 * scale, 4 * scale)
+                indicator = box.adjusted(2 * scale, scale, -2 * scale, -scale) if shade is not None else box
+                painter.drawRoundedRect(indicator, 4 * scale, 4 * scale)
             number_rect = rect.adjusted(0, -2 * scale, 0, -3 * scale)
             self._text(painter, number_rect, str(day.day),
-                       colors.accent if day == today else colors.weekend if day.weekday() >= 5 else colors.ink,
+                       weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink),
                        8, selected or day == today)
         for hit, _identity, day, calendar_id in self._marker_hits:
             if not hit.intersects(event.rect()):

@@ -128,7 +128,7 @@ class WorkspaceChrome:
         events_section, _events_heading, events_row = self.toolbar_section('Events')
         events_row.setContentsMargins(0, 3, 0, 3)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
-        self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
+        self.undo_button = self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
         self.redo_button = self.icon_button('redo', 'Redo', self.redo, events_row, 'redo')
         self.icon_button('history', 'Operation history', self.show_history, events_row, 'history')
         for section in (events_section, selection_section, view_section):
@@ -256,6 +256,23 @@ class WorkspaceChrome:
         # The sidebar layout propagates nested section minimum sizes so large
         # text uses the outer scroll area rather than overlapping adjacent rows.
         self.sidebar.layout().activate()
+
+    def refresh_sidebar_title(self):
+        self.brand_label.setText(self.preferences.sidebar_title)
+        self.brand_label.setToolTip(self.preferences.sidebar_title)
+        show = self.preferences.show_sidebar_title
+        destination = self.brand_bar if show else self.sidebar_footer
+        if self.preferences_button.parentWidget() is not destination:
+            previous = self.preferences_button.parentWidget()
+            if previous is not None and previous.layout() is not None:
+                previous.layout().removeWidget(self.preferences_button)
+            layout = destination.layout()
+            if show:
+                layout.addWidget(self.preferences_button)
+            else:
+                layout.insertWidget(layout.count() - 1, self.preferences_button)
+            self.preferences_button.show()
+        self.brand_bar.setVisible(show)
 
     def update_navigation_width(self):
         """Refresh shared header metrics for the current view and preferences."""

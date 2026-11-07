@@ -27,7 +27,7 @@ from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_
 from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
-from .appearance import stylesheet
+from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
@@ -167,7 +167,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
         self.setLocale(self.preferences.qt_locale())
-        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
+        self.setPalette(widget_palette(self.preferences))
+        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
         central = QWidget()
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
@@ -264,6 +265,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.selected_id = self.selection.primary.id if self.selection.primary else None
         self.heading.setText(str(self.anchor.year) if self.view == 'year' else self.preferences.format_month(self.anchor))
         self.heading.setToolTip(self.heading.text())
+        self.refresh_sidebar_title()
         self.range_label.setText(self.preferences.format_date(days[0], weekday=self.view == 'day')
                                 + (' — ' + self.preferences.format_date(days[-1]) if self.view != 'day' else ''))
         self.mini.set_preferences(self.preferences)
@@ -294,6 +296,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.fit_calendar()
         self.fit_year()
         self.update_hints()
+        can_undo, can_redo = self.store.history_availability()
+        self.undo_button.setEnabled(can_undo)
+        self.redo_button.setEnabled(can_redo)
         if not self._revealing_search_result:
             self.run_search()
         self.update_sync_status()
@@ -360,7 +365,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.store.set_setting('keybindings', self.bindings)
         self.install_mode_shortcuts()
         self.setLocale(self.preferences.qt_locale())
-        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
+        self.setPalette(widget_palette(self.preferences))
+        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
         self.select_mode = False
         self.configure_auto_sync()
         self.refresh(calendars=True)

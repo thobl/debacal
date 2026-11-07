@@ -20,6 +20,8 @@ from debacal.preferences_dialog import PreferencesDialog
 from debacal.store import Store
 from debacal.sync import SyncConflict
 from debacal.ui import MainWindow
+from debacal.theme import scheme_for
+from debacal.event_style import contrast_ratio
 
 
 @pytest.fixture
@@ -39,9 +41,10 @@ def make_conflict():
     return SyncConflict('conflict', 'local', local.id, local, remote, 'Changed on both sides')
 
 
-def test_calendar_comparison_aligns_months_and_expands_each_version(app):
+@pytest.mark.parametrize('mode', ['light', 'dark'])
+def test_calendar_comparison_aligns_months_and_expands_each_version(app, mode):
     conflict = make_conflict()
-    dialog = ConflictDialog(conflict, Preferences(0, 'iso', '24h'))
+    dialog = ConflictDialog(conflict, Preferences(0, 'iso', '24h', appearance_mode=mode))
     try:
         dialog.show()
         app.processEvents()
@@ -51,7 +54,9 @@ def test_calendar_comparison_aligns_months_and_expands_each_version(app):
         row = dialog.fields.index('Title')
         assert dialog.comparison.item(row, 1).text() == 'Local title'
         assert dialog.comparison.item(row, 2).text() == 'Server title'
-        assert dialog.comparison.item(row, 1).background().color().name() == '#fff1c9'
+        changed = dialog.comparison.item(row, 1)
+        assert changed.background().color().name() == scheme_for(dialog.preferences).notice_background
+        assert contrast_ratio(changed.foreground().color().name(), changed.background().color().name()) >= 4.5
         QTest.mouseClick(dialog.remote_date_button, Qt.MouseButton.LeftButton)
         assert dialog.local_preview.current_month == dialog.remote_preview.current_month == date(2026, 12, 1)
         QTest.mouseClick(dialog.next_button, Qt.MouseButton.LeftButton)

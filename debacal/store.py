@@ -52,6 +52,8 @@ class Store:
                 before_data TEXT NOT NULL, after_data TEXT NOT NULL,
                 toggled INTEGER NOT NULL DEFAULT 0
             );
+            CREATE INDEX IF NOT EXISTS operations_applied_id ON operations(applied,id DESC);
+            CREATE INDEX IF NOT EXISTS operations_redo_order ON operations(applied,toggled DESC,id DESC);
             CREATE TABLE IF NOT EXISTS outbox (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL UNIQUE, calendar_id TEXT NOT NULL,
@@ -1041,6 +1043,41 @@ class Store:
             sequence = self.connection.execute("SELECT COALESCE(MAX(toggled),0)+1 FROM operations").fetchone()[0]
             self.connection.execute("UPDATE operations SET applied=?,toggled=? WHERE id=?", (applied, sequence, row["id"]))
             return int(row["id"])
+
+    def history_availability(self) -> tuple[bool, bool]:
+        """Check the two toolbar actions without decoding the whole history."""
+        with self._lock:
+            undo = self.connection.execute(
+                "SELECT id,toggled FROM operations WHERE applied=1 ORDER BY id DESC LIMIT 1").fetchone()
+            redo = self.connection.execute(
+                "SELECT id,toggled FROM operations WHERE applied=0 ORDER BY toggled DESC,id DESC LIMIT 1").fetchone()
+            permissions = tuple(sorted((calendar.id, calendar.kind, calendar.read_only)
+                                       for calendar in self.list_calendars()))
+            signature = (self.events_revision(), tuple(undo) if undo else None,
+                         tuple(redo) if redo else None, permissions)
+            cached = getattr(self, '_history_availability_cache', None)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            available = []
+            for candidate, applied in ((undo, True), (redo, False)):
+                allowed = False
+                if candidate is not None:
+                    row = self.connection.execute("SELECT before_data,after_data FROM operations WHERE id=?",
+                                                  (candidate['id'],)).fetchone()
+                    before, after = (self._normalized_snapshot(json.loads(row[field]))
+                                     for field in ('before_data', 'after_data'))
+                    if self._matches(after if applied else before):
+                        try:
+                            self._assert_writable(before.values())
+                            self._assert_writable(after.values())
+                        except ValueError:
+                            pass
+                        else:
+                            allowed = True
+                available.append(allowed)
+            result = tuple(available)
+            self._history_availability_cache = signature, result
+            return result
 
     def undo(self, operation_id: int | None = None) -> int | None:
         return self._toggle(operation_id, applied=False)

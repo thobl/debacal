@@ -1,16 +1,38 @@
 """Show button focus for keyboard navigation, without a mouse-click outline."""
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QAbstractButton
+from PySide6.QtCore import QEvent, QObject, QTimer, Qt
+from PySide6.QtWidgets import QAbstractButton, QWidget
 
 
 class _ButtonFocus(QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mouse_active = False
+        self._release = QTimer(self)
+        self._release.setSingleShot(True)
+        self._release.timeout.connect(self._finish_mouse)
+
+    def _finish_mouse(self):
+        self._mouse_active = False
+
     def eventFilter(self, button, event):
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress:
+            self._mouse_active = True
+            self._release.stop()
+            if isinstance(button, QWidget):
+                button.window().setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, False)
+        elif kind == QEvent.Type.MouseButtonRelease:
+            # A click can disable its own button and move focus during the
+            # release handler. That automatic move remains a mouse action.
+            self._release.start(0)
+        elif kind == QEvent.Type.KeyPress:
+            self._finish_mouse()
+            self._release.stop()
         if not isinstance(button, QAbstractButton):
             return False
-        kind = event.type()
         if kind == QEvent.Type.FocusIn:
-            visible = event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
-                                         Qt.FocusReason.ShortcutFocusReason)
+            visible = not self._mouse_active and event.reason() in (
+                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason, Qt.FocusReason.ShortcutFocusReason)
         elif kind in (QEvent.Type.FocusOut, QEvent.Type.MouseButtonPress):
             visible = False
             if kind == QEvent.Type.MouseButtonPress:

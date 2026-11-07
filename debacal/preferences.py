@@ -7,7 +7,7 @@ from typing import Any
 
 from PySide6.QtCore import QDate, QLocale, QTime
 
-from .theme import SCHEMES
+from .theme import SCHEMES, CUSTOM_COLORS, valid_rgb
 
 
 SETTINGS_KEY = 'display_preferences'
@@ -47,6 +47,13 @@ class Preferences:
     color_scheme: str = 'neutral'
     agenda_style: str = 'timeline'
     control_style: str = 'underlined'
+    appearance_mode: str = 'light'
+    custom_accent: str = CUSTOM_COLORS['custom_accent']
+    custom_surface: str = CUSTOM_COLORS['custom_surface']
+    custom_weekend: str = CUSTOM_COLORS['custom_weekend']
+    weekend_style: str = 'text'
+    show_sidebar_title: bool = True
+    sidebar_title: str = 'debacal'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -74,12 +81,24 @@ class Preferences:
         if (type(self.visible_start_hour) is not int or type(self.visible_end_hour) is not int
                 or not 0 <= self.visible_start_hour < self.visible_end_hour <= 24):
             raise ValueError('Visible hours must start before they end, between 00:00 and 24:00.')
-        if not isinstance(self.color_scheme, str) or self.color_scheme not in SCHEMES:
-            raise ValueError('Choose a neutral, warm, or cool color scheme.')
+        if not isinstance(self.color_scheme, str) or self.color_scheme not in (*SCHEMES, 'custom'):
+            raise ValueError('Choose a predefined or custom color palette.')
         if not isinstance(self.agenda_style, str) or self.agenda_style not in ('cards', 'grouped', 'timeline'):
             raise ValueError('Choose event cards, cards grouped by day, or a day timeline.')
         if not isinstance(self.control_style, str) or self.control_style not in ('underlined', 'filled'):
             raise ValueError('Choose underlined or filled button groups.')
+        if self.appearance_mode not in ('light', 'dark'):
+            raise ValueError('Choose a light or dark appearance.')
+        for field in CUSTOM_COLORS:
+            if not valid_rgb(getattr(self, field)):
+                raise ValueError('Use a six-digit RGB color such as #475f52.')
+        if self.weekend_style not in ('text', 'background', 'none'):
+            raise ValueError('Choose text, background, or no weekend highlighting.')
+        if type(self.show_sidebar_title) is not bool:
+            raise ValueError('The sidebar title must be shown or hidden.')
+        if (not isinstance(self.sidebar_title, str) or not self.sidebar_title.strip()
+                or len(self.sidebar_title) > 120 or '\n' in self.sidebar_title or '\r' in self.sidebar_title):
+            raise ValueError('Choose a sidebar title of 1 to 120 characters on one line.')
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""

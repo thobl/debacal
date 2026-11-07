@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from .compact_controls import ElidedButton
+from .compact_controls import ElidedButton, ElidedLabel
 from .calendar_list import CalendarList
 from .mini_calendar import MiniCalendar
 from .search_panel import SearchPanel
@@ -51,12 +51,15 @@ def build_sidebar(window, root):
     outer.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
     window.sidebar_overview, overview = _section('sidebarOverview', (18, 16, 18, 16), outer)
-    brand_row = QHBoxLayout()
-    brand = QLabel('debacal')
+    window.brand_bar = QWidget()
+    brand_row = QHBoxLayout(window.brand_bar)
+    brand_row.setContentsMargins(0, 0, 0, 0)
+    brand = window.brand_label = ElidedLabel(window.preferences.sidebar_title)
     brand.setObjectName('brand')
+    brand.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     brand_row.addWidget(brand, 1)
-    window.icon_button('settings', 'Preferences', window.show_preferences, brand_row, 'preferences')
-    overview.addLayout(brand_row)
+    window.preferences_button = window.icon_button('settings', 'Preferences', window.show_preferences, brand_row, 'preferences')
+    overview.addWidget(window.brand_bar)
     if window.profile_label:
         profile = QLabel(window.profile_label + ' profile')
         profile.setObjectName('profileBadge')
@@ -123,6 +126,7 @@ def build_sidebar(window, root):
     footer_widget = QWidget()
     footer_widget.setObjectName('sidebarFooter')
     footer = QHBoxLayout(footer_widget)
+    window.sidebar_footer = footer_widget
     footer.setContentsMargins(18, 0, 14, 12)
     footer.setSpacing(4)
     window.sync_btn = window.icon_button('sync', 'Sync calendars', window.sync_now, footer, 'sync')

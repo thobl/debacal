@@ -114,23 +114,31 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 ## Workflow
 
-Choose **Preferences → Appearance → Color scheme** for Neutral, Warm, or Cool
-interface colors. The choice is saved per profile and applies to the workspace
+**Preferences → Appearance** groups visual options into Colors, Calendar, and
+Layout. Click a preview card to choose a style; the sample changes immediately,
+while Apply saves the choices to the workspace. Colors offers light/dark modes,
+Neutral/Warm/Cool presets, and a custom palette with three choices: accent,
+surface tint, and weekend color. Text and borders adjust automatically for
+contrast. The choice is saved per profile and applies to the workspace
 and calendar previews. Calendar colors still come from their sources. The
 sidebar separates the month overview, calendar controls, and agenda/search;
 source-colored event cards keep their selection and keyboard focus cues. Choose
 a calendar by name to create in it; its eye button controls visibility separately.
 Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
-Preferences → Appearance → Upcoming events offers event cards, cards grouped by
+Appearance → Calendar → Upcoming events offers event cards, cards grouped by
 day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their
 clock column. Muted day captions sit below the stronger Next events heading.
 Calendars and Next events share the same section-heading style.
 Selected events use the calendar's source-colored border and vertical bar in
 both the sidebar and calendar.
-Choose **Appearance → Button groups** for Underlined (default) or Filled
+Choose **Appearance → Layout → Button groups** for Underlined (default) or Filled
 choices. Both styles retain the same placement and toolbar separator.
+Layout also sets text size and a custom sidebar title, or hides the title to
+save space. When hidden, its Preferences button moves to the sidebar footer.
+Calendar offers weekend text color (the default), background shading, or no
+highlight. Today keeps its marker as well as the chosen weekend treatment.
 
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.
@@ -207,6 +215,7 @@ choices. Both styles retain the same placement and toolbar separator.
   `/` remains a calendar shortcut for search with the default bindings.
 * **History:** `Ctrl+Z` undoes; `Ctrl+Y` redoes. Operation history can undo an earlier
   independent action. Subsequent changes to the same event must be undone first.
+  Undo/redo buttons are disabled when their next operation is unavailable.
   History survives restart. Shortcuts leave text fields' normal editing intact.
 * **Controls:** date navigation sits beside the current month and range. The
   labeled toolbar groups View (including full-day expansion), Selection (modes
