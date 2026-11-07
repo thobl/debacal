@@ -126,6 +126,7 @@ Preferences → Appearance → Upcoming events offers event cards, cards grouped
 day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their
 clock column. Muted day captions sit below the stronger Next events heading.
+Calendars and Next events share the same section-heading style.
 Selected events use the calendar's source-colored border and vertical bar in
 both the sidebar and calendar.
 Choose **Appearance → Button groups** for Underlined (default) or Filled
@@ -186,8 +187,10 @@ choices. Both styles retain the same placement and toolbar separator.
   a populated query stays visible. Up/Down cycles through
   matches, wrapping at either end; clicking a result also reveals and highlights
   its event in the calendar. Result rows show a prominent title, smaller date/time
-  and calendar color; the calendar name is in the tooltip. Repeating series expand
-  into dated occurrences with bounded **More…** pages: infinite series show ten
+  and calendar color; the calendar name is in the tooltip. Top-level results
+  align with the search field. Repeating series expand using the disclosure at
+  the right of their card; dated occurrences are indented below it, with bounded
+  **More…** pages: infinite series show ten
   dates per page, finite schedules show 100. A series root selects the whole
   series; a dated child selects only that occurrence, even when the calendar is
   in all-events mode. Their row highlights are independent. Ctrl+click combines
@@ -229,6 +232,8 @@ choices. Both styles retain the same placement and toolbar separator.
   Sync groups automatic sync intervals and conflict notifications. Keyboard
   shortcuts (`F1`) lets you remap actions and selection-mode keys, with duplicate
   and ambiguous sequences rejected. Settings survive restart.
+  Apply saves changes and updates the workspace without closing Preferences.
+  Save applies and closes; Cancel discards edits made since the last Apply.
 * **Event editor:** Tab/Shift+Tab move through the form; labels have Alt-key
   mnemonics. Enter saves from form fields; Notes keeps Enter for a new line, and
   Ctrl+Enter saves from anywhere. In calendar-source setup, Enter discovers a new

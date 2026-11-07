@@ -233,7 +233,7 @@ def test_all_day_caption_is_smaller_and_right_aligned_with_readable_timestamps(w
 
 
 @pytest.mark.parametrize('scale', [80, 100, 140])
-def test_week_number_is_a_distinct_smaller_badge_above_the_day_numbers(workspace, scale):
+def test_week_number_restores_large_type_with_a_clear_offset_from_day_numbers(workspace, scale):
     window, _, app = workspace
     apply_preferences(window, app, font_scale=scale)
     header = window.header
@@ -244,5 +244,25 @@ def test_week_number_is_a_distinct_smaller_badge_above_the_day_numbers(workspace
     week_call = next(call for call in calls if call.args[2] == week and call.args[1].right() < header.gutter)
     day_call = next(call for call in calls if call.args[2] == str(header.days[0].day)
                     and call.args[1].left() > header.gutter)
+    assert week_call.args[4] == 14
     assert week_call.args[4] < day_call.args[4]
     assert day_call.args[1].center().y() - week_call.args[1].center().y() >= 8 * scale / 100
+    caption = next(call for call in calls if call.args[2] == 'WEEK')
+    assert caption.args[1].bottom() < week_call.args[1].top()
+
+
+@pytest.mark.parametrize('scale', [80, 100, 140])
+def test_week_axis_caption_has_identical_geometry_and_style_in_month_and_week(workspace, scale):
+    window, _, app = workspace
+    apply_preferences(window, app, font_scale=scale)
+    captions = []
+    for view in ('week', 'month', 'week'):
+        window.set_view(view)
+        settle(app)
+        target = window.header if view == 'week' else window.month
+        with patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as draw:
+            target.grab()
+        call = next(call for call in draw.call_args_list if call.args[2] == 'WEEK')
+        captions.append((QRectF(call.args[1]).translated(origin(target, window)), call.args[3].name(),
+                         call.args[4], call.kwargs.get('align')))
+    assert captions[0] == captions[1] == captions[2]

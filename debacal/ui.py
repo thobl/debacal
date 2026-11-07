@@ -28,6 +28,7 @@ from .conflict_dialog import ConflictDialog
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
 from .appearance import stylesheet
+from .button_focus import install_button_focus
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
 from .search_panel import MORE_ROLE, event_matches_query
@@ -51,6 +52,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace=''):
         super().__init__()
+        install_button_focus(QApplication.instance())
         self.store = store
         self._closed = False
         self.demo_mode = demo_mode
@@ -342,19 +344,27 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def show_preferences(self, category=None):
         dialog = PreferencesDialog(self.preferences, self,
                                    bindings=self.bindings, default_bindings=DEFAULT_BINDINGS)
+        dialog.applied.connect(self.apply_preferences)
         if category:
             dialog.set_category(category)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.preferences = dialog.result_preferences
-            self.preferences.save(self.store)
-            self.bindings = dialog.result_bindings
-            self.store.set_setting('keybindings', self.bindings)
-            self.install_mode_shortcuts()
-            self.setLocale(self.preferences.qt_locale())
-            self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
-            self.select_mode = False
-            self.configure_auto_sync()
-            self.refresh(calendars=True)
+            self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
+
+    def apply_preferences(self, preferences, bindings):
+        """Apply dialog choices once, shared by live Apply and Save."""
+        if preferences == self.preferences and bindings == self.bindings:
+            return False
+        self.preferences = preferences
+        self.preferences.save(self.store)
+        self.bindings = dict(bindings)
+        self.store.set_setting('keybindings', self.bindings)
+        self.install_mode_shortcuts()
+        self.setLocale(self.preferences.qt_locale())
+        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
+        self.select_mode = False
+        self.configure_auto_sync()
+        self.refresh(calendars=True)
+        return True
 
     def set_creation_calendar(self, calendar_id):
         self.store.set_default_calendar(calendar_id)

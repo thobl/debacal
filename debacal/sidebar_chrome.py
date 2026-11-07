@@ -22,6 +22,12 @@ def _section(name, margins, parent_layout, stretch=0):
     return widget, layout
 
 
+def _section_heading(title):
+    label = QLabel(title)
+    label.setObjectName('sidebarSectionHeading')
+    return label
+
+
 def build_sidebar(window, root):
     window.command_buttons = []
     shell = QWidget()
@@ -70,8 +76,7 @@ def build_sidebar(window, root):
     window.calendar_section, calendars = _section('calendarSection', (18, 12, 14, 16), sections)
     heading = QHBoxLayout()
     heading.setSpacing(4)
-    label = QLabel('Calendars')
-    label.setObjectName('section')
+    label = _section_heading('Calendars')
     heading.addWidget(label, 1)
     window.icon_button('import', 'Import calendar file', window.import_ics, heading)
     window.icon_button('export', 'Export calendar file', window.export_ics, heading)
@@ -103,8 +108,7 @@ def build_sidebar(window, root):
                                               window.toggle_search_filter, None)
     window.filter_search.setCheckable(True)
     window.filter_search.setChecked(bool(window.store.get_setting('filter_calendar_by_search', False)))
-    window.results_heading = QLabel('Next events')
-    window.results_heading.setObjectName('agendaHeading')
+    window.results_heading = _section_heading('Next events')
     window.search_header = SearchHeader(window.search, window.filter_search, window.results_heading,
                                         window.preferences, window.bindings.get('search', ''))
     window.search_button = window.search_header.button

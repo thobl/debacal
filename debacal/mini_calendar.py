@@ -63,11 +63,11 @@ class _YearPopup(QFrame):
         self.setStyleSheet(f'''
             QFrame#miniYearPopup {{ background: {colors.panel}; color: {colors.ink}; border: 1px solid {colors.line}; border-radius: 6px; }}
             QFrame#miniYearPopup QPushButton {{ padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; }}
-            QFrame#miniYearPopup QPushButton:focus {{ border-color: {colors.focus}; }}
+            QFrame#miniYearPopup QPushButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }}
             QFrame#miniYearPopup QPushButton:hover {{ background: {colors.control_surface}; }}
             QFrame#miniYearPopup QPushButton:checked {{ background: {colors.selection}; color: {colors.ink}; font-weight: bold; }}
             QFrame#miniYearPopup QToolButton {{ border: 1px solid transparent; background: transparent; padding: 3px; border-radius: 4px; }}
-            QFrame#miniYearPopup QToolButton:focus {{ border-color: {colors.focus}; }}
+            QFrame#miniYearPopup QToolButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }}
             QFrame#miniYearPopup QToolButton:hover {{ background: {colors.control_surface}; }}
         ''')
 
@@ -212,7 +212,7 @@ class MiniCalendar(QWidget):
         for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
             button.setStyleSheet(f'QToolButton {{ border: 1px solid transparent; background: transparent; color: {colors.ink}; '
                                 f'padding: 2px; border-radius: 4px; }} '
-                                f'QToolButton:focus {{ border-color: {colors.focus}; }} '
+                                f'QToolButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }} '
                                 f'QToolButton:hover {{ background: {colors.control_surface}; }} '
                                 f'QToolButton:pressed {{ background: {colors.selection}; }}')
         self.year_popup.set_preferences(preferences)

@@ -31,6 +31,8 @@ CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores
 WEEKDAY_SIZE = 9
 AXIS_SIZE = 8
 ALL_DAY_SIZE = 7
+WEEK_CAPTION_SIZE = 7
+WEEK_NUMBER_SIZE = 14
 
 
 @lru_cache(maxsize=64)
@@ -50,6 +52,12 @@ def axis_label_rect(gutter, top, height, scale):
 
 def weekday_label_rect(left, width, scale):
     return QRectF(left + 11, 8 * scale, width - 20, 20 * scale)
+
+
+def paint_week_caption(painter, gutter, scale, color):
+    """Keep the shared week-axis caption fixed while switching views."""
+    text(painter, QRectF(0, 4 * scale, gutter, 12 * scale), 'WEEK', color, WEEK_CAPTION_SIZE,
+         align=Qt.AlignmentFlag.AlignCenter)
 
 
 @lru_cache(maxsize=3)
@@ -247,7 +255,7 @@ class DayHeader(QWidget):
     def week_rect(self):
         if not self.days or not self.preferences.show_week_numbers:
             return None
-        return QRectF(4, 8 * display_scale(self), self.gutter - 8, 45 * display_scale(self))
+        return QRectF(4, 4 * display_scale(self), self.gutter - 8, 49 * display_scale(self))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -304,10 +312,9 @@ class DayHeader(QWidget):
         scale = display_scale(self)
         week = self.week_rect()
         if week is not None:
-            text(p, QRectF(week.left(), week.top(), week.width(), 14 * scale), 'WEEK', colors.muted, 7,
-                 align=Qt.AlignmentFlag.AlignCenter)
-            text(p, QRectF(week.left(), week.top() + 14 * scale, week.width(), 18 * scale),
-                 str(self.preferences.week_number(self.days[0])), colors.accent, 10, True,
+            paint_week_caption(p, self.gutter, scale, colors.muted)
+            text(p, QRectF(week.left(), 18 * scale, week.width(), 24 * scale),
+                 str(self.preferences.week_number(self.days[0])), colors.accent, WEEK_NUMBER_SIZE, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
@@ -1357,7 +1364,7 @@ class MonthCanvas(QWidget):
         width, height = (self.width() - gutter) / 7, (self.height() - self.header_height) / 6
         day_label_height = min(25 * scale, self.month_row_metrics()[0] - 2 * scale)
         if self.preferences.show_week_numbers:
-            text(p, QRectF(0, 8 * scale, gutter, 20 * scale), 'WEEK', colors.muted, 7, align=Qt.AlignmentFlag.AlignCenter)
+            paint_week_caption(p, gutter, scale, colors.muted)
             for row in range(6):
                 rect = self.week_rect(row)
                 text(p, QRectF(rect.left(), rect.top() + 3 * scale, rect.width(), 25 * scale),

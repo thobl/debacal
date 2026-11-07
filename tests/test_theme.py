@@ -6,10 +6,11 @@ from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QPushButton, QWidget
 
 from debacal.appearance import stylesheet
+from debacal.button_focus import install_button_focus
 from debacal.models import Calendar
 from debacal.preferences import Preferences, SETTINGS_KEY
 from debacal.preferences_dialog import PreferencesDialog
@@ -20,6 +21,7 @@ from debacal.theme import SCHEMES, scheme_for
 @pytest.fixture
 def desktop():
     app = QApplication.instance() or QApplication([])
+    install_button_focus(app)
     widgets = []
     yield app, widgets
     for widget in widgets:
@@ -129,11 +131,13 @@ def test_ghost_actions_show_keyboard_focus_without_changing_geometry(desktop, na
     layout.addWidget(other)
     window.show()
     window.activateWindow()
-    action.setFocus()
+    app.processEvents()
+    other.setFocus(Qt.FocusReason.MouseFocusReason)
+    action.setFocus(Qt.FocusReason.TabFocusReason)
     app.processEvents()
     assert action.hasFocus()
     focused, size = action.grab().toImage(), action.size()
-    other.setFocus()
+    other.setFocus(Qt.FocusReason.MouseFocusReason)
     app.processEvents()
     assert not action.hasFocus()
     assert action.size() == size

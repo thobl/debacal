@@ -1,20 +1,25 @@
 """Categorized display, synchronization, and keyboard preferences."""
 from datetime import date, datetime
 
-from PySide6.QtCore import QLocale
+from PySide6.QtCore import QLocale, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout,
-    QCheckBox, QSpinBox, QTabWidget, QWidget,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout,
+    QCheckBox, QFrame, QScrollArea, QSpinBox, QTabWidget, QWidget,
 )
 
+from .appearance import stylesheet
+from .button_focus import install_button_focus
 from .preferences import Preferences, _system_language_locale
 from .shortcuts import KeyboardShortcutsEditor
 from .theme import SCHEMES, scheme_for
 
 
 class PreferencesDialog(QDialog):
+    applied = Signal(object, object)
+
     def __init__(self, preferences: Preferences, parent=None, bindings=None, default_bindings=None):
         super().__init__(parent)
+        install_button_focus(QApplication.instance())
         self.setWindowTitle('Preferences')
         self.resize(640, 570)
         self.result_preferences = preferences
@@ -141,16 +146,19 @@ class PreferencesDialog(QDialog):
         self.shortcut_editor = KeyboardShortcutsEditor(bindings, default_bindings)
         self.shortcut_fields = self.shortcut_editor.fields
         self.result_bindings = self.shortcut_editor.defaults | dict(bindings or {})
+        self._applied_state = preferences, dict(self.result_bindings)
         self.tabs.addTab(self.shortcut_editor, 'Keyboard shortcuts')
         self.error = QLabel()
         self.error.setWordWrap(True)
         self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
         outer.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-                                  | QDialogButtonBox.StandardButton.RestoreDefaults)
+        buttons = self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+                                                  | QDialogButtonBox.StandardButton.Apply
+                                                  | QDialogButtonBox.StandardButton.RestoreDefaults)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.restore_defaults)
+        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply)
         outer.addWidget(buttons)
         for field in (self.week_start, self.date_format, self.time_format):
             field.currentIndexChanged.connect(self.update_preview)
@@ -162,7 +170,13 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(page)
         form = QFormLayout()
         layout.addLayout(form)
-        self.tabs.addTab(page, name)
+        scroll = QScrollArea()
+        scroll.setObjectName('preferences' + name)
+        scroll.setAccessibleName(name + ' preferences')
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(page)
+        self.tabs.addTab(scroll, name)
         return page, layout, form
 
     def set_category(self, category):
@@ -212,20 +226,31 @@ class PreferencesDialog(QDialog):
         self.shortcut_editor.restore_defaults()
         self.error.clear()
 
-    def save(self):
+    def apply(self):
         try:
             preferences = self.value()
         except ValueError as error:
             self.tabs.setCurrentIndex(1)
             self.error.setText(str(error))
-            return
+            return False
         try:
             bindings = self.shortcut_editor.value()
         except ValueError as error:
             self.tabs.setCurrentWidget(self.shortcut_editor)
             self.shortcut_editor.error.setText(str(error))
             self.error.setText(str(error))
-            return
+            return False
         self.result_preferences, self.result_bindings = preferences, bindings
         self.error.clear()
-        self.accept()
+        self.shortcut_editor.error.clear()
+        if (preferences, bindings) != self._applied_state:
+            self._applied_state = preferences, dict(bindings)
+            self.applied.emit(preferences, dict(bindings))
+            self.setLocale(preferences.qt_locale())
+            self.setStyleSheet(stylesheet(preferences.font_scale, preferences.color_scheme))
+            self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
+        return True
+
+    def save(self):
+        if self.apply():
+            self.accept()

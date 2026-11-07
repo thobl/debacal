@@ -21,7 +21,6 @@ class SegmentedControl(QWidget):
         self.preferences = None
         self._buttons = []
         self._button_width = self._button_height = 32
-        self._keyboard_focus = None
         self.buttons_layout = QHBoxLayout(self)
         self.buttons_layout.setContentsMargins(0, 0, 0, 0)
         self.buttons_layout.setSpacing(0)
@@ -33,16 +32,8 @@ class SegmentedControl(QWidget):
             button.installEventFilter(self)
 
     def eventFilter(self, button, event):
-        if event.type() == QEvent.Type.FocusIn:
-            self._keyboard_focus = button if event.reason() in (
-                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
-                Qt.FocusReason.ShortcutFocusReason) else None
-            self.update()
-        elif event.type() == QEvent.Type.FocusOut:
-            if self._keyboard_focus is button:
-                self._keyboard_focus = None
-            self.update()
-        elif event.type() in (QEvent.Type.Enter, QEvent.Type.Leave, QEvent.Type.EnabledChange):
+        if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut,
+                            QEvent.Type.Enter, QEvent.Type.Leave, QEvent.Type.EnabledChange):
             self.update()
         return super().eventFilter(button, event)
 
@@ -84,10 +75,12 @@ class SegmentedControl(QWidget):
                                      QColor(scheme.accent))
         # Leave source selection clean on mouse clicks, but preserve an explicit
         # focus cue when the user reaches the group through keyboard navigation.
-        if self._keyboard_focus is not None and self._keyboard_focus.hasFocus():
+        focused = next((button for button in self._buttons
+                        if button.hasFocus() and button.property('keyboardFocus')), None)
+        if focused is not None:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(scheme.focus), scale, Qt.PenStyle.DotLine))
-            painter.drawRoundedRect(QRectF(self._keyboard_focus.geometry()).adjusted(3 * scale, 3 * scale,
+            painter.drawRoundedRect(QRectF(focused.geometry()).adjusted(3 * scale, 3 * scale,
                                                                                    -3 * scale, -3 * scale),
                                     2 * scale, 2 * scale)
 
