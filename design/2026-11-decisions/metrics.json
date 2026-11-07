@@ -1,0 +1,116 @@
+{
+  "headers": {
+    "compact-filled": {
+      "wide": {
+        "width": 1140,
+        "height": 195,
+        "first_column": 80,
+        "month": 114,
+        "next_button": 84
+      },
+      "narrow": {
+        "width": 730,
+        "height": 275,
+        "first_column": 80,
+        "month": 114,
+        "next_button": 84
+      }
+    },
+    "compact-underlined": {
+      "wide": {
+        "width": 1140,
+        "height": 208,
+        "first_column": 80,
+        "month": 114,
+        "next_button": 84
+      },
+      "narrow": {
+        "width": 730,
+        "height": 288,
+        "first_column": 80,
+        "month": 114,
+        "next_button": 84
+      }
+    },
+    "split-filled": {
+      "wide": {
+        "width": 1140,
+        "height": 195,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 291
+      },
+      "narrow": {
+        "width": 730,
+        "height": 275,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 291
+      }
+    },
+    "split-underlined": {
+      "wide": {
+        "width": 1140,
+        "height": 208,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 291
+      },
+      "narrow": {
+        "width": 730,
+        "height": 288,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 291
+      }
+    },
+    "range-filled": {
+      "wide": {
+        "width": 1140,
+        "height": 195,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 140
+      },
+      "narrow": {
+        "width": 730,
+        "height": 275,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 140
+      }
+    },
+    "range-underlined": {
+      "wide": {
+        "width": 1140,
+        "height": 208,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 140
+      },
+      "narrow": {
+        "width": 730,
+        "height": 288,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 140
+      }
+    },
+    "split-filled-tight": {
+      "wide": {
+        "width": 1140,
+        "height": 189,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 273
+      },
+      "narrow": {
+        "width": 730,
+        "height": 259,
+        "first_column": 80,
+        "month": 80,
+        "next_button": 273
+      }
+    }
+  }
+}
