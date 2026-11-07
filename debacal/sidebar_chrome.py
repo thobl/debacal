@@ -60,11 +60,6 @@ def build_sidebar(window, root):
     brand_row.addWidget(brand, 1)
     window.preferences_button = window.icon_button('settings', 'Preferences', window.show_preferences, brand_row, 'preferences')
     overview.addWidget(window.brand_bar)
-    if window.profile_label:
-        profile = QLabel(window.profile_label + ' profile')
-        profile.setObjectName('profileBadge')
-        profile.setProperty('muted', True)
-        overview.addWidget(profile)
     if window.demo_mode:
         window.button('Open ' + window.profile_label + ' profile' if window.profile_label else 'Open my calendars',
                       window.real_workspace_requested.emit, overview)
@@ -137,10 +132,10 @@ def build_sidebar(window, root):
     window.status.setAccessibleName('Synchronization status and details')
     window.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     footer.addWidget(window.status, 1)
-    window.conflict_btn = window.icon_button('conflict', 'Review conflicts', window.show_conflicts, footer)
-    window.conflict_btn.setEnabled(False)
-    policy = window.conflict_btn.sizePolicy()
+    window.warning_button = window.icon_button('conflict', 'Warnings and errors', window.show_issues, footer)
+    window.warning_button.setProperty('iconColorRole', 'error')
+    policy = window.warning_button.sizePolicy()
     policy.setRetainSizeWhenHidden(True)
-    window.conflict_btn.setSizePolicy(policy)
-    window.conflict_btn.hide()
+    window.warning_button.setSizePolicy(policy)
+    window.warning_button.hide()
     shell_layout.addWidget(footer_widget)

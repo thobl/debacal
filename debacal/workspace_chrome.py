@@ -195,17 +195,6 @@ class WorkspaceChrome:
                 widget.placement_moved.connect(lambda target, source=widget: self.move_paste_preview(target, source))
                 widget.placement_confirmed.connect(lambda target: self.confirm_paste())
         outer.addWidget(self.stack, 1)
-        # A bounded message line keeps errors and transient feedback from moving
-        # the calendar. The complete message remains available in its tooltip.
-        self.message_stack = QStackedWidget()
-        self.notice = ElidedLabel()
-        self.navigation_prompt = ElidedLabel()
-        for label in (self.notice, self.navigation_prompt):
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            self.message_stack.addWidget(label)
-        self.message_stack.setFixedHeight(28)
-        outer.addWidget(self.message_stack)
 
     def refresh_calendar_list(self, calendars):
         from .calendar_list import CalendarRow
@@ -237,8 +226,9 @@ class WorkspaceChrome:
         self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + gap)))
 
     def update_command_tooltips(self):
-        icon_color = scheme_for(self.preferences).accent
+        scheme = scheme_for(self.preferences)
         for button, title, binding in self.command_buttons:
+            icon_color = getattr(scheme, button.property('iconColorRole') or 'accent')
             if button.property('interfaceIconColor') != icon_color:
                 button.setIcon(icon(button.property('iconName'), icon_color))
                 button.setProperty('interfaceIconColor', icon_color)

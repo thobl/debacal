@@ -85,7 +85,7 @@ def test_large_fonts_keep_week_gutters_aligned_and_all_day_rows_usable(widgets):
     start = START.replace(hour=0)
     event = Event('trip', 'local', 'Trip', start, start + timedelta(days=3), all_day=True)
     strip.set_data([start.date() + timedelta(days=day) for day in range(7)], [event], [])
-    rect, _, _ = strip.rects()[0]
+    rect, _ = strip.rects()[0]
     font = QFont('Sans Serif')
     font.setPointSizeF(8 * 1.4)
     assert rect.height() >= QFontMetricsF(font).height()

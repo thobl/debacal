@@ -63,7 +63,7 @@ def surfaces():
 
 
 def hit(widget, identifier='event'):
-    return next(rect for rect, item, *_ in widget.hits if item.id == identifier)
+    return next(rect for rect, item in widget.hits if item.id == identifier)
 
 
 def month_day_point(widget, day, row_offset=42):
@@ -94,15 +94,15 @@ def test_actual_timed_events_expand_hours_and_all_day_stays_on_fixed_surface(sur
               sample('all', all_day=True, hour=0, duration=3 * 1440)]
     widget = make('timed', events)
     assert (widget.start_hour, widget.end_hour) == (6, 22)
-    assert {item.id for _, item, _ in widget.rects()} == {'early', 'late'}
-    assert min(rect.top() for rect, _, _ in widget.rects()) >= 0
+    assert {item.id for _, item in widget.rects()} == {'early', 'late'}
+    assert min(rect.top() for rect, _ in widget.rects()) >= 0
     preview = sample('preview', hour=4, minute=30)
     geometry = widget.start_hour, widget.end_hour, widget.hour_height
     widget.set_preview([preview])
     assert (widget.start_hour, widget.end_hour, widget.hour_height) == geometry
     widget.fit_to_viewport(600)
     assert widget.start_hour == 4
-    assert {item.id for _, item, _ in widget.hits} == {'early', 'late'}
+    assert {item.id for _, item in widget.hits} == {'early', 'late'}
     widget.set_preview([sample('offscreen', day=10, hour=1)])
     widget.fit_to_viewport(600)
     assert widget.start_hour == 6
@@ -120,7 +120,7 @@ def test_fixed_all_day_events_are_single_connected_bars_with_clipped_continuatio
     assert hit(widget, 'right').width() == pytest.approx(4 * width - 6)
     assert hit(widget, 'left').top() == hit(widget, 'right').top()
     assert hit(widget, 'overlap').top() > hit(widget, 'left').top()
-    continuation = {item.id: (before, after) for item, _lane, _start, _end, _number, before, after in widget._lanes(widget.events)}
+    continuation = {item.id: (before, after) for item, _lane, _start, _end, before, after in widget._lanes(widget.events)}
     assert continuation['left'] == (True, False)
     assert continuation['right'] == (False, True)
     widget.set_selection({'left', 'overlap'})
@@ -242,14 +242,12 @@ def test_event_tooltip_shows_details_without_gesture_instructions(surfaces, kind
     assert all(phrase not in tooltip for phrase in ('Double-click', 'Drag', 'Ctrl', 'Select '))
 
 
-def test_header_selection_day_is_state_only_while_navigation_can_highlight(surfaces):
+def test_header_selection_day_is_state_only(surfaces):
     _, make = surfaces
     widget = make('header')
     original = widget.grab().toImage()
     widget.set_selected_day(DAYS[1])
     assert widget.grab().toImage() == original
-    widget.set_navigation(True, 1)
-    assert widget.grab().toImage() != original
 
 
 @pytest.mark.parametrize('kind', ['timed', 'month', 'all-day'])
@@ -370,6 +368,6 @@ def test_preview_instances_are_visible_but_never_added_to_hit_targets(surfaces, 
     before = widget.grab().toImage()
     widget.set_preview([preview])
     assert widget.grab().toImage() != before
-    assert {item.id for _rect, item, *_number in widget.hits} == {'existing'}
+    assert {item.id for _rect, item in widget.hits} == {'existing'}
     widget.set_preview([])
     assert widget.grab().toImage() == before

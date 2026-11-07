@@ -97,7 +97,7 @@ def test_ctrl_click_toggles_multi_selection_and_delete_is_atomic(workspace):
     a, b = sample('a'), sample('b', START.replace(hour=13))
     insert(a, b)
     for event, modifiers in ((a, Qt.KeyboardModifier.NoModifier), (b, CTRL)):
-        rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == event.id)
+        rect = next(rect for rect, value in window.canvas.rects() if value.id == event.id)
         QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, modifiers, rect.center().toPoint())
     assert window.selected_ids == {a.id, b.id}
     before = len(store.history())
@@ -140,7 +140,7 @@ def test_ctrl_drag_copies_the_complete_multi_selection(workspace):
     window.select_event(a.id)
     window.select_event(b.id, additive=True)
     app.processEvents()
-    rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == a.id)
+    rect = next(rect for rect, value in window.canvas.rects() if value.id == a.id)
     begin = rect.center().toPoint()
     width = (window.canvas.width() - window.canvas.gutter) / len(window.canvas.days)
     finish = begin + QPoint(round(width), 0)
@@ -264,8 +264,8 @@ def test_all_day_is_fixed_and_multi_day_has_one_connected_hit(workspace):
     window.scroll.verticalScrollBar().setValue(1000)
     app.processEvents()
     assert window.all_day_canvas.mapToGlobal(QPoint(0, 0)) == before
-    assert len([value for _, value, _ in window.all_day_canvas.rects() if value.id == all_day.id]) == 1
-    assert not any(value.all_day for _, value, _ in window.canvas.rects())
+    assert len([value for _, value in window.all_day_canvas.rects() if value.id == all_day.id]) == 1
+    assert not any(value.all_day for _, value in window.canvas.rects())
 
 
 def test_copy_paste_at_original_time_keeps_every_selected_event(workspace):
@@ -322,7 +322,7 @@ def test_fixed_all_day_drag_copies_one_complete_date_span(workspace):
     window.select_event(source.id)
     app.processEvents()
     canvas = window.all_day_canvas
-    rect = next(rect for rect, value, _ in canvas.rects() if value.id == source.id)
+    rect = next(rect for rect, value in canvas.rects() if value.id == source.id)
     begin = rect.center().toPoint()
     width = (canvas.width() - canvas.gutter) / len(canvas.days)
     finish = begin + QPoint(round(width), 0)

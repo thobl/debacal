@@ -215,8 +215,8 @@ def test_selected_event_uses_visible_marker_independent_of_white_calendar_color(
     assert selected != plain
 
 
-def test_selected_day_is_state_only_and_navigation_has_its_own_highlight(widgets):
-    app, _, _, make_canvas, make_month, make_header = widgets
+def test_selected_day_is_state_only(widgets):
+    _, _, _, make_canvas, make_month, make_header = widgets
     canvas, month, header = make_canvas(), make_month(), make_header()
     selected = DAYS[1]
     initial = {widget: widget.grab().toImage() for widget in (canvas, month, header)}
@@ -224,16 +224,9 @@ def test_selected_day_is_state_only_and_navigation_has_its_own_highlight(widgets
         widget.set_selected_day(selected)
         assert widget.grab().toImage() == initial[widget]
         assert widget.selected_day == selected and selected != NOW.date()
-    canvas.set_navigation(True, 2)
-    header.set_navigation(True, 2)
-    app.processEvents()
-    assert canvas.grab().toImage() != initial[canvas]
-    assert header.grab().toImage() != initial[header]
-    assert month.grab().toImage() == initial[month]
     for widget in (canvas, month, header):
-        navigation = widget.grab().toImage()
         widget.set_selected_day(None)
-        assert widget.grab().toImage() == navigation
+        assert widget.grab().toImage() == initial[widget]
 
 
 @pytest.mark.parametrize('kind', ['header', 'month'])

@@ -189,7 +189,7 @@ def test_mouse_drag_moves_the_requested_scope(workspace, scope, mode_key):
     app, window, store, master, selected, _ = workspace
     canvas = window.canvas
     key(window, mode_key)
-    rect = next(rect for rect, event, _ in canvas.rects() if event.id == selected.id)
+    rect = next(rect for rect, event in canvas.rects() if event.id == selected.id)
     begin = rect.center().toPoint()
     day_width = (canvas.width() - canvas.gutter) / len(canvas.days)
     finish = begin + QPoint(round(2 * day_width), 0)
@@ -212,7 +212,7 @@ def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, mod
     app, window, store, master, selected, _ = workspace
     canvas = window.canvas
     key(window, mode_key)
-    rect = next(rect for rect, event, _ in canvas.rects() if event.id == selected.id)
+    rect = next(rect for rect, event in canvas.rects() if event.id == selected.id)
     begin = QPoint(round(rect.center().x()), round(rect.bottom() - 2))
     finish = begin + QPoint(0, canvas.hour_height)
     QTest.mousePress(canvas, Qt.MouseButton.LeftButton, NONE, begin)
@@ -228,7 +228,7 @@ def test_double_click_edits_existing_event_in_persistent_following_mode(workspac
     _, window, _, master, selected, _ = workspace
     seen = []
     key(window, Qt.Key.Key_F4)
-    rect = next(rect for rect, event, _ in window.canvas.rects() if event.id == selected.id)
+    rect = next(rect for rect, event in window.canvas.rects() if event.id == selected.id)
     def inspect(dialog):
         seen.append((dialog.original.id, dialog.series.id, dialog.scope.currentData()))
         return QDialog.DialogCode.Rejected
@@ -293,7 +293,7 @@ def test_readonly_moves_and_malformed_clipboard_leave_history_untouched(workspac
     store.save_calendar(replace(calendar, read_only=True))
     window.move_event(selected.id, selected.start + timedelta(days=2), selected.end + timedelta(days=2), scope='future')
     assert len(store.history()) == 1
-    assert 'read-only' in window.notice.text()
+    assert 'read-only' in window.local_issues[-1].details
     QApplication.clipboard().setText('ordinary text')
     window.paste_events(scope='group')
     assert len(store.history()) == 1
@@ -340,7 +340,7 @@ def test_unsupported_future_partition_is_reported_before_dialog_or_mutation(work
     execute.assert_not_called()
     assert store.get_event(advanced.id) == advanced
     assert len(store.history()) == 2
-    assert 'whole-series' in window.notice.text()
+    assert 'whole-series' in window.local_issues[-1].details
 
 
 def test_paste_rejects_nonexistent_end_without_creating_an_event(workspace):
@@ -352,4 +352,4 @@ def test_paste_rejects_nonexistent_end_without_creating_an_event(workspace):
         window.paste_events(scope='single', target=source_start + timedelta(days=1))
     assert store.list_events() == [master]
     assert len(store.history()) == 1
-    assert 'clock change' in window.notice.text()
+    assert 'clock change' in window.local_issues[-1].details

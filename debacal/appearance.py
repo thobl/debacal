@@ -81,7 +81,6 @@ QCheckBox { spacing: 8px; padding: 4px 0; }
 QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid $control_edge; border-radius: 3px; background: $panel; }
 QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
 QCheckBox[keyboardFocus="true"]::indicator:focus { border-color: $focus; }
-QLabel#notice { background: $notice_background; padding: 8px; color: $notice_ink; border-radius: 4px; }
 QPushButton#calendarChoice, QPushButton#calendarChoice:checked { text-align: left; background: transparent; color: $ink; border: 1px solid transparent; padding: 5px 7px; }
 QPushButton#calendarChoice:checked { font-weight: 600; }
 QPushButton#calendarChoice:focus { border-color: transparent; }

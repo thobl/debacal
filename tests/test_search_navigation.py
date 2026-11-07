@@ -226,7 +226,7 @@ def test_all_day_search_selection_highlights_pinned_chip_while_grid_is_scrolled(
     assert before > 0
     search(window)
     QTest.keyClick(window.search, Qt.Key.Key_Down)
-    rect = next(rect for rect, value, _ in window.all_day_canvas.rects() if value.id == event.id)
+    rect = next(rect for rect, value in window.all_day_canvas.rects() if value.id == event.id)
     assert window.all_day_canvas.isVisible()
     assert rect.top() >= 0 and rect.bottom() <= window.all_day_canvas.height()
     assert event.id in window.all_day_canvas.selected_ids

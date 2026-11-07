@@ -200,7 +200,7 @@ def test_bad_files_do_not_block_other_files_or_create_empty_history_entries(desk
         return accept_request(dialog)
 
     with patch.object(ImportDialog, 'exec', review), patch.object(PreparedSource, 'remap', remap), \
-            patch.object(window, 'show_notice', wraps=window.show_notice) as notices:
+            patch.object(window, 'report_error', wraps=window.report_error) as reports:
         window.import_files([missing, invalid, first, second])
         wait_for(app, lambda: len(opened) == 1)
         try:
@@ -208,17 +208,18 @@ def test_bad_files_do_not_block_other_files_or_create_empty_history_entries(desk
                 wait_for(app, good_file_started.is_set)
                 window.poll()
                 assert not store.list_events()
-                assert 'Invalid.ics' in window.notice.text()
+                assert any('Invalid.ics' in issue.details for issue in window.local_issues)
         finally:
             continue_reading.set()
         finish_parsing(window)
     assert {event.title for event in store.list_events()} == {'First', 'Second'}
-    errors = [call.args[0] for call in notices.call_args_list if call.args[0].startswith('Import failed')]
+    errors = [call.args[0] for call in reports.call_args_list if call.args[0].startswith('Import failed')]
     assert len(errors) == 2 and 'Missing.ics' in errors[0] and 'Invalid.ics' in errors[1]
-    summary = window.notice.text()
-    assert summary.startswith('Import complete')
-    assert all(path.name in summary for path in (missing, invalid, first, second))
-    assert summary.count('Import failed') == 2 and summary.count('Imported 1 event resource(s).') == 2
+    # Later successful imports retain both failures without producing routine
+    # success notifications; each error remains inspectable in the footer.
+    assert [issue.details for issue in window.local_issues] == errors
+    assert all('Imported 1 event resource(s).' not in issue.details for issue in window.local_issues)
+    assert window.warning_button.isVisible()
     assert all(error in window._sync_messages for error in errors)
     assert len(store.history()) == 2
     window.undo()
@@ -279,7 +280,8 @@ def test_stdin_contents_preview_in_worker_and_require_confirmation_without_temp_
     assert opened == [(source,)]
     assert parser_threads and all(thread != ui_thread for thread in parser_threads)
     assert len(parser_threads) == 1, 'Confirmation must use the preview snapshot without parsing again.'
-    assert [(event.title, event.calendar_id) for event in store.list_events()] == [('Réunion · Prüfung', 'work')], window.notice.text()
+    assert [(event.title, event.calendar_id) for event in store.list_events()] == [('Réunion · Prüfung', 'work')], window.local_issues
+    assert not window.local_issues
     assert window._import_memory_bytes == 0
     window.undo()
     assert not store.list_events()
@@ -294,7 +296,7 @@ def test_cancelled_stdin_preview_releases_memory_without_committing(desktop):
     assert not window._import_requests and window._import_memory_bytes == 0
 
 
-def test_mixed_file_and_stdin_sources_share_one_review_and_keep_failure_summary(desktop, tmp_path):
+def test_mixed_file_and_stdin_sources_share_one_review_and_keep_failure_details(desktop, tmp_path):
     app, window, store = desktop
     path = write_calendar(tmp_path / 'File invitation.ics', 'file', 'From file')
     sources = (ImportSource.from_data(b'Not a calendar.'), ImportSource.from_path(path))
@@ -312,8 +314,9 @@ def test_mixed_file_and_stdin_sources_share_one_review_and_keep_failure_summary(
         finish_parsing(window)
     assert opened == [sources]
     assert [event.title for event in store.list_events()] == ['From file']
-    assert 'Import failed for Standard input' in window.notice.text()
-    assert 'File invitation.ics' in window.notice.text() and 'Imported 1 event resource(s).' in window.notice.text()
+    assert len(window.local_issues) == 1
+    assert 'Import failed for Standard input' in window.local_issues[0].details
+    assert not window.local_issues[0].action
     assert window._import_memory_bytes == 0 and len(store.history()) == 1
 
 
@@ -358,7 +361,7 @@ def test_pending_stdin_memory_is_bounded_and_cancellation_allows_another_request
         assert window.import_data(data)
         assert window.import_data(data)
         assert not window.import_data(data)
-        assert 'Too many calendar imports' in window.notice.text()
+        assert 'Too many calendar imports' in window.local_issues[-1].details
         assert window._import_memory_bytes == len(data) * 2
         wait_for(app, lambda: len(opened) == 2)
         assert window._import_memory_bytes == 0

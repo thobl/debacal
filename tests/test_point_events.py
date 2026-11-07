@@ -111,18 +111,16 @@ class PointViewTests(unittest.TestCase):
         self.app.processEvents()
         return widget
 
-    def test_midnight_and_late_points_render_in_day_and_week_and_are_numbered(self):
+    def test_midnight_and_late_points_render_in_day_and_week(self):
         events = [point(), point('late', hour=23, minute=59)]
-        for days, index in [([DAY], 0), ([date(2026, 11, 2) + timedelta(days=i) for i in range(7)], 2)]:
+        for days in ([DAY], [date(2026, 11, 2) + timedelta(days=i) for i in range(7)]):
             with self.subTest(days=len(days)):
                 widget = self.canvas(days, events)
                 self.assertFalse(widget.grab().isNull())
-                self.assertEqual({event.id for _, event, _ in widget.hits}, {'point', 'late'})
-                for rect, _, _ in widget.hits:
+                self.assertEqual({event.id for _, event in widget.hits}, {'point', 'late'})
+                for rect, _ in widget.hits:
                     self.assertGreaterEqual(rect.height(), 18)
                     self.assertLessEqual(rect.bottom(), widget.height())
-                widget.set_navigation(True, index, '1')
-                self.assertEqual(widget.navigation_target_id(), 'point')
 
     def test_month_and_visual_editor_preview_include_midnight_point(self):
         event = point()
@@ -168,15 +166,17 @@ class PointViewTests(unittest.TestCase):
         self.assertEqual(dialog.result_events[0].start, event.start)
         self.assertEqual(dialog.result_events[0].end, event.end)
 
-    def test_workspace_day_navigation_can_select_midnight_point(self):
+    def test_workspace_day_view_and_arrow_selection_include_midnight_point(self):
         with Store(':memory:') as store:
             event = point()
             store.apply('Create point', [event])
             window = MainWindow(store, enable_sync=False)
             self.widgets.append(window)
             window.go_date(DAY)
-            self.assertEqual(window.events_on_day(DAY), [event])
-            self.assertEqual(window.events_on_day(DAY - timedelta(days=1)), [])
+            window.set_view('day')
+            self.assertEqual([item for _rect, item in window.canvas.rects()], [event])
+            window.select_by_arrow('down')
+            self.assertEqual(window.selected_id, event.id)
             window.close()
             self.widgets.remove(window)
 

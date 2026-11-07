@@ -188,14 +188,12 @@ def test_warm_cache_pixels_match_recomputed_pixels_with_selection_and_preview(su
     widget = surfaces(kind, events)
     widget.set_selection({'0', '2', '4', '7'})
     widget.set_preview([replace(events[-1], id='preview', candidate=True)])
-    if kind == 'week':
-        widget.set_navigation(True, 0, '1')
     before = widget.grab().toImage()
-    hits = [(rect.getRect(), item.id) for rect, item, *_rest in widget.hits]
+    hits = [(rect.getRect(), item.id) for rect, item in widget.hits]
     widget.invalidate_geometry()
     widget._bucket_cache.clear()
     assert widget.grab().toImage() == before
-    assert [(rect.getRect(), item.id) for rect, item, *_rest in widget.hits] == hits
+    assert [(rect.getRect(), item.id) for rect, item in widget.hits] == hits
     widget.set_preferences(Preferences(font_scale=125, time_format='12h'))
     updated = widget.grab().toImage()
     assert updated != before
@@ -229,4 +227,4 @@ def test_dense_columns_skip_only_invisible_text_and_keep_every_event_hit(surface
         widget.grab()
     assert len(widget.hits) == len(events)
     assert not [call for call in drawing.call_args_list if str(call.args[2]).startswith('Synthetic')]
-    assert all(rect.width() <= 12 for rect, _item, _number in widget.hits)
+    assert all(rect.width() <= 12 for rect, _item in widget.hits)

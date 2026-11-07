@@ -80,7 +80,7 @@ def insert_selection(desktop, surface, multiple=False):
     canvas = window.month if surface == 'month' else window.all_day_canvas if all_day else window.canvas
     canvas.setFocus()
     rect = next(rect for rect, event in canvas.month_layout()[1] if event.id == first.id) if surface == 'month' else next(
-        rect for rect, event, _number in canvas.rects() if event.id == first.id)
+        rect for rect, event in canvas.rects() if event.id == first.id)
     begin = rect.center().toPoint()
     width = (canvas.width() - canvas.week_gutter) / 7 if surface == 'month' else (canvas.width() - canvas.gutter) / len(canvas.days)
     finish = begin + QPoint(round(width), 0)

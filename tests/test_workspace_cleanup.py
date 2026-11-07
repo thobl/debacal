@@ -94,7 +94,8 @@ def test_sync_and_long_multiline_feedback_never_change_calendar_geometry(workspa
     window.poll()
     settle(app)
     assert 'Sync failed' in window.status.text()
-    assert window.notice.toolTip() == window.notice.text()
+    assert window.status_issues()[0].details == 'A detailed resource error\n' * 40
+    assert window.warning_button.isVisible()
     assert window.sync_btn.isEnabled() and window.sync_btn.size() == icon_size
     assert grid_geometry(window) == baseline
 

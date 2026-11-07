@@ -237,7 +237,7 @@ def test_sidebar_selection_matches_the_calendar_source_bar_without_changing_fill
         native = QImage(280, 80, QImage.Format.Format_ARGB32_Premultiplied)
         native.fill('#ffffff')
         painter = QPainter(native)
-        canvas.paint_event(painter, QRectF(10, 10, 250, 50), entry, 1)
+        canvas.paint_event(painter, QRectF(10, 10, 250, 50), entry)
         painter.end()
         native_bar = native.pixelColor(14, 35)
         assert native_bar.name() == event_colors(source.color, scheme).selected_outline

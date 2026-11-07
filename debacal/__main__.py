@@ -246,7 +246,7 @@ def main(argv=None):
             if persistent_coordinator in coordinators:
                 persistent_coordinator.close()
                 coordinators.remove(persistent_coordinator)
-            old_window.show_notice('Could not open the workspace: ' + str(exc))
+            old_window.report_error('Could not open the workspace: ' + str(exc), title='Could not open workspace')
 
     try:
         coordinator, primary = claim_workspace(path, args.files, stdin_data=stdin_data)
@@ -272,9 +272,6 @@ def main(argv=None):
         elif args.files:
             QTimer.singleShot(0, lambda: window.import_files(args.files))
         stdin_data = None
-        if args.demo:
-            window.show_notice('Offline conflict demo · click Review conflicts to compare the versions. No server is connected.' if args.demo_conflict
-                               else 'Demo workspace · temporary and offline. Use the sidebar button to open your persistent profile.')
         if args.screenshot:
             def capture():
                 args.screenshot.parent.mkdir(parents=True, exist_ok=True)

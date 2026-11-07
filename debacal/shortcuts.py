@@ -29,8 +29,9 @@ def validate_bindings(bindings):
 class KeyboardShortcutsEditor(QWidget):
     def __init__(self, bindings=None, defaults=None, parent=None):
         super().__init__(parent)
-        self.defaults = dict(defaults if defaults is not None else bindings or {})
-        values = self.defaults | dict(bindings or {})
+        self.defaults = {key: value for key, value in (defaults if defaults is not None else bindings or {}).items()
+                         if key != 'select_event'}
+        values = self.defaults | {key: value for key, value in (bindings or {}).items() if key != 'select_event'}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         note = QLabel('Selection modes have their own shortcuts. Copy and paste keep their usual behavior in text fields. '

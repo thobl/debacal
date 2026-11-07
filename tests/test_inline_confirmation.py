@@ -96,7 +96,7 @@ def test_hover_check_confirms_without_selecting_the_candidate_first(surfaces, ki
     _, _, make = surfaces
     widget = make(kind)
     confirmed, selected = QSignalSpy(widget.confirm_requested), QSignalSpy(widget.selected_scoped)
-    rect = next(rect for rect, item, *_ in widget.hits if item.id == 'candidate')
+    rect = next(rect for rect, item in widget.hits if item.id == 'candidate')
     QTest.mouseMove(widget, QPoint(1, 1))
     QTest.mouseMove(widget, QPoint(round(rect.left() + 12), round(rect.center().y())))
     widget.grab()
@@ -116,7 +116,7 @@ def test_hover_confirmation_does_not_replace_an_unrelated_selection(surfaces, ki
     widget = make(kind)
     widget.set_selection({'unrelated'})
     widget.grab()
-    rect = next(rect for rect, item, *_ in widget.hits if item.id == 'candidate')
+    rect = next(rect for rect, item in widget.hits if item.id == 'candidate')
     QTest.mouseMove(widget, rect.center().toPoint())
     widget.grab()
     control = widget.confirm_hits[0][0]
@@ -240,7 +240,7 @@ def test_body_double_click_edits_and_never_confirms(surfaces, kind):
     _, _, make = surfaces
     widget = make(kind)
     select(widget)
-    rect = next(rect for rect, item, *_rest in widget.hits if item.id == 'candidate')
+    rect = next(rect for rect, item in widget.hits if item.id == 'candidate')
     point = QPoint(int(rect.left() + 12), int(rect.center().y()))
     confirmed, edited = QSignalSpy(widget.confirm_requested), QSignalSpy(widget.edit_scoped_requested)
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=point)
@@ -265,19 +265,19 @@ def test_read_only_candidates_never_offer_a_confirmation_action(surfaces, restri
     assert widget.confirm_hits == []
 
 
-def test_confirmation_label_space_keeps_g_navigation_badge_separate_and_scales(surfaces):
+def test_confirmation_control_scales_and_keeps_the_title_clear(surfaces):
     _, _, make = surfaces
     widget = make()
     widget.set_preferences(Preferences(font_scale=140))
     widget.fit_to_viewport(600)
     widget.set_selection({'candidate'})
-    widget.set_navigation(True, 0, '1')
-    with patch('debacal.calendar_widgets.badge', wraps=calendar_widgets.badge) as numbered:
+    with patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as labels:
         widget.grab()
     control = widget.confirm_hits[0][0]
     assert control.width() > 18
-    assert all(not call.args[1].intersects(control) for call in numbered.call_args_list)
-    event_rect = next(rect for rect, item, _number in widget.hits if item.id == 'candidate')
+    title = next(call.args[1] for call in labels.call_args_list if call.args[2] == 'Alternative slot')
+    assert title.right() < control.left()
+    event_rect = next(rect for rect, item in widget.hits if item.id == 'candidate')
     assert event_rect.contains(control)
 
 

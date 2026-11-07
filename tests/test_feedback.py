@@ -6,7 +6,7 @@ from queue import Queue
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtWidgets import QApplication, QTextEdit
+from PySide6.QtWidgets import QApplication
 
 from debacal.dialogs import CalendarDialog
 from debacal.models import Calendar
@@ -48,7 +48,8 @@ def test_demo_is_explicitly_offline_and_cannot_add_remote_sources():
             assert 'offline' in window.status.text()
             assert 'Demo mode' in window.sync_btn.toolTip()
             window.sync_now()
-            assert 'Open my calendars' in window.notice.text()
+            assert 'Open my calendars' in window.local_issues[-1].details
+            assert window.local_issues[-1].action_label == 'Open my calendars'
             dialog = CalendarDialog(allow_remote=False)
             assert dialog.kind.findData('caldav') == -1
             assert dialog.kind.findData('ics') == -1
@@ -73,7 +74,8 @@ def test_sync_click_and_failure_are_visible_and_survive_refresh(workspace):
     engine.events.put(SyncMessage('finished', 'Sync finished with an error'))
     window.poll()
     assert 'Sync failed' in window.status.text()
-    assert 'not installed' in window.notice.text()
+    assert any('not installed' in issue.details for issue in window.status_issues())
+    assert not window.warning_button.isHidden()
     window.refresh()
     assert 'Sync failed' in window.status.text()
     assert 'not installed' in window.status.toolTip()
@@ -85,6 +87,7 @@ def test_sync_click_and_failure_are_visible_and_survive_refresh(workspace):
     window.poll()
     assert 'Last synced' in window.status.text()
     assert not window._sync_errors
+    assert not window.status_issues() and window.warning_button.isHidden()
 
 
 def test_sync_status_includes_actionable_error_details(workspace):
@@ -92,9 +95,10 @@ def test_sync_status_includes_actionable_error_details(workspace):
     window._sync_messages.append('Nextcloud: authentication is required')
     captured = []
     def inspect(dialog):
-        captured.append(dialog.findChild(QTextEdit).toPlainText())
+        captured.append(dialog.sync_details.toPlainText())
+        assert dialog.tabs.tabText(dialog.tabs.currentIndex()) == 'Synchronization'
         return 0
-    with patch('debacal.ui.QDialog.exec', inspect):
+    with patch('debacal.ui.StatusDialog.exec', inspect):
         window.show_sync_status()
     assert 'authentication is required' in captured[0]
 
@@ -104,7 +108,8 @@ def test_desktop_conflicts_fall_back_to_in_app_when_unavailable(workspace):
     window.preferences = replace(window.preferences, conflict_notifications='desktop')
     with patch('debacal.ui.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
         window.notify_conflict(SyncMessage('conflict', 'An event changed on both sides.'))
-    assert 'changed on both sides' in window.notice.text()
+    assert 'changed on both sides' in window.local_issues[-1].details
+    assert not window.warning_button.isHidden()
 
 
 def test_weekday_selection_uses_a_matching_first_occurrence(workspace):

@@ -14,7 +14,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 
 from debacal.dialogs import EventDialog
-from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, badge, text
+from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, text
 from debacal.preferences import Preferences
 from debacal.series_preview import SeriesPreview
 from debacal.models import Calendar, Event
@@ -305,11 +305,11 @@ class CanvasTests(unittest.TestCase):
             with self.subTest(days=len(days)):
                 canvas = self.canvas(days, events)
                 self.assertFalse(canvas.grab().isNull())
-                rects = {event.id: rect for rect, event, _ in canvas.hits}
+                rects = {event.id: rect for rect, event in canvas.hits}
                 self.assertGreater(rects["a"].width(), 0)
                 self.assertFalse(rects["a"].intersects(rects["b"]))
                 self.assertLess(rects["all-day"].bottom(), canvas.all_day_height)
-                self.assertEqual(sum(event.id == "overnight" for _, event, _ in canvas.hits), len(days[:2]))
+                self.assertEqual(sum(event.id == "overnight" for _, event in canvas.hits), len(days[:2]))
 
     def test_mouse_drag_creates_expected_time_range(self):
         canvas = self.canvas()
@@ -356,7 +356,7 @@ class CanvasTests(unittest.TestCase):
         original = self.event("move")
         canvas = self.canvas(events=[original])
         spy = QSignalSpy(canvas.move_requested)
-        rect = next(rect for rect, event, _ in canvas.hits if event.id == original.id)
+        rect = next(rect for rect, event in canvas.hits if event.id == original.id)
         origin = QPoint(int(rect.center().x()), int(rect.top()) + 15)
         width = (canvas.width() - canvas.gutter) / len(canvas.days)
         destination = QPoint(origin.x() + int(width), origin.y() + canvas.hour_height)
@@ -373,7 +373,7 @@ class CanvasTests(unittest.TestCase):
         original = self.event("resize")
         canvas = self.canvas(events=[original])
         spy = QSignalSpy(canvas.move_requested)
-        rect = next(rect for rect, event, _ in canvas.hits if event.id == original.id)
+        rect = next(rect for rect, event in canvas.hits if event.id == original.id)
         origin = QPoint(int(rect.center().x()), int(rect.bottom()) - 3)
         destination = QPoint(origin.x(), origin.y() + canvas.hour_height // 2)
         QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=origin)
@@ -422,46 +422,6 @@ class CanvasTests(unittest.TestCase):
         self.assertEqual(create_spy.count(), 2)
         self.assertEqual(create_spy.at(1)[0], datetime(2026, 11, 3, 9, tzinfo=local_zone()))
         self.assertEqual(open_spy.count(), 0)
-
-    def test_day_numbers_only_appear_during_navigation_and_mark_chosen_day(self):
-        header = DayHeader()
-        self.widgets.append(header)
-        header.resize(1042, 66)
-        header.days = [date(2026, 11, 2) + timedelta(days=index) for index in range(7)]
-        with patch('debacal.calendar_widgets.badge', wraps=badge) as draw_badge:
-            header.grab()
-            self.assertFalse(draw_badge.called)
-            header.set_navigation(True, 2, '8')
-            header.grab()
-            self.assertEqual([call.args[2] for call in draw_badge.call_args_list], list('1234567'))
-            self.assertEqual([call.args[3] for call in draw_badge.call_args_list],
-                             [False, False, True, False, False, False, False])
-            draw_badge.reset_mock()
-            header.set_navigation(False)
-            header.grab()
-            self.assertFalse(draw_badge.called)
-
-    def test_event_number_badges_and_typed_target_are_scoped_to_chosen_day(self):
-        events = [self.event('first'), self.event('second', hour=11),
-                  self.event('tuesday', day=date(2026, 11, 3))]
-        canvas = self.canvas(events=events)
-        with patch('debacal.calendar_widgets.badge', wraps=badge) as draw_badge:
-            canvas.grab()
-            self.assertFalse(draw_badge.called)
-            canvas.set_navigation(True)
-            canvas.grab()
-            self.assertFalse(draw_badge.called)
-            canvas.set_navigation(True, 0, '2')
-            canvas.grab()
-            self.assertEqual([call.args[2] for call in draw_badge.call_args_list], ['1', '2'])
-            self.assertEqual([call.args[3] for call in draw_badge.call_args_list], [False, True])
-            self.assertEqual(canvas.navigation_target_id(), 'second')
-            canvas.set_navigation(True, 0, '9')
-            self.assertIsNone(canvas.navigation_target_id())
-            draw_badge.reset_mock()
-            canvas.set_navigation(False)
-            canvas.grab()
-            self.assertFalse(draw_badge.called)
 
     def test_month_headers_follow_actual_week_order_and_display_preferences(self):
         month = MonthCanvas()
@@ -535,29 +495,30 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.window.anchor, original + timedelta(days=7))
         QTest.keyClick(self.window.canvas, Qt.Key.Key_L)
         self.assertEqual(self.window.anchor, original + timedelta(days=7))
-        self.window.search.setFocus()
+        self.window.focus_search()
         self.app.processEvents()
         QTest.keyClicks(self.window.search, "jndwmg")
         self.assertEqual(self.window.search.text(), "jndwmg")
         self.assertEqual(self.window.anchor, original + timedelta(days=7))
         self.assertEqual(self.window.view, "week")
-        self.assertFalse(self.window.select_mode)
 
-    def test_numbered_keyboard_selection_selects_third_day_eighth_event(self):
+    def test_retired_number_selection_keys_leave_selection_and_view_unchanged(self):
         start = datetime(2026, 11, 4, 8, tzinfo=ZONE)
         events = [Event(str(i), "local", f"Seminar {i}", start + timedelta(hours=i),
                         start + timedelta(hours=i + 1)) for i in range(9)]
         self.window.apply_events("Create seminars", events)
-        self.window.canvas.setFocus()
-        self.app.processEvents()
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_G)
-        self.assertTrue(self.window.select_mode)
-        self.assertTrue(self.window.canvas.show_numbers)
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_3)
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_8)
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_Return)
-        self.assertEqual(self.window.selected_id, "7")
-        self.assertFalse(self.window.select_mode)
+        for view in ('week', 'month', 'year'):
+            self.window.set_view(view)
+            target = self.window.active_canvas()
+            target.setFocus()
+            self.app.processEvents()
+            anchor = self.window.anchor
+            QTest.keyClicks(target, 'g38')
+            QTest.keyClick(target, Qt.Key.Key_Return)
+            self.assertIsNone(self.window.selected_id)
+            self.assertEqual(self.window.view, view)
+            self.assertEqual(self.window.anchor, anchor)
+        self.assertNotIn('select_event', self.window.bindings)
 
     def test_shortcuts_do_not_run_in_event_editor(self):
         dialog = EventDialog(self.store.list_calendars(), datetime(2026, 11, 4, 10, tzinfo=ZONE), parent=self.window)
@@ -572,38 +533,14 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.window.view, "week")
         dialog.close()
 
-    def test_navigation_badges_track_day_and_typed_event_then_clear(self):
-        start = datetime(2026, 11, 4, 10, tzinfo=ZONE)
-        events = [Event(str(i), 'local', f'Meeting {i}', start + timedelta(hours=i),
-                        start + timedelta(hours=i + 1)) for i in range(2)]
-        self.window.apply_events('Create meetings', events)
-        self.assertFalse(self.window.header.navigation_active)
-        self.assertFalse(self.window.canvas.show_numbers)
+    def test_retired_selection_key_can_be_reassigned_to_an_existing_action(self):
+        self.window.bindings['next'] = 'G'
+        self.window.update_hints()
+        original = self.window.anchor
         self.window.canvas.setFocus()
         self.app.processEvents()
         QTest.keyClick(self.window.canvas, Qt.Key.Key_G)
-        self.assertTrue(self.window.header.navigation_active)
-        self.assertIsNone(self.window.header.navigation_day)
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_3)
-        self.assertEqual(self.window.header.navigation_day, 2)
-        self.assertEqual(self.window.canvas.navigation_day, 2)
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_2)
-        self.assertEqual(self.window.canvas.navigation_target_id(), '1')
-        self.assertIn('Meeting 1', self.window.navigation_prompt.text())
-        QTest.keyClick(self.window.canvas, Qt.Key.Key_Return)
-        self.assertEqual(self.window.selected_id, '1')
-        self.assertFalse(self.window.header.navigation_active)
-        self.assertFalse(self.window.canvas.show_numbers)
-
-    def test_entering_navigation_preserves_scroll_position(self):
-        self.window.new_button.setFocus()
-        self.app.processEvents()
-        scrollbar = self.window.scroll.verticalScrollBar()
-        scrollbar.setValue(9 * self.window.canvas.hour_height)
-        original = scrollbar.value()
-        self.window.start_selection()
-        self.app.processEvents()
-        self.assertEqual(scrollbar.value(), original)
+        self.assertEqual(self.window.anchor, original + timedelta(days=7))
 
     def test_arrow_selection_preserves_scroll_for_visible_events(self):
         start = datetime(2026, 11, 4, 10, tzinfo=ZONE)
@@ -632,7 +569,7 @@ class WorkspaceTests(unittest.TestCase):
         scrollbar.setValue(0)
         self.window.select_by_arrow('down')
         self.app.processEvents()
-        rect = next(rect for rect, item, _ in self.window.canvas.rects() if item.id == 'late')
+        rect = next(rect for rect, item in self.window.canvas.rects() if item.id == 'late')
         minimum = rect.bottom() - self.window.scroll.viewport().height()
         self.assertGreater(scrollbar.value(), 0)
         self.assertGreaterEqual(scrollbar.value(), minimum)

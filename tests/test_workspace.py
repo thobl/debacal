@@ -84,7 +84,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         with patch("debacal.ui.EventDialog") as editor:
             self.window.edit_event(selected.id, group=True)
             editor.assert_not_called()
-        self.assertIn("read-only", self.window.notice.text())
+        self.assertIn("read-only", self.window.local_issues[-1].details)
 
     def test_invalid_move_leaves_event_and_history_unchanged(self):
         event = self.event()
@@ -92,7 +92,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         self.window.move_event(event.id, event.end, event.start)
         self.assertEqual(self.store.get_event(event.id), event)
         self.assertEqual(len(self.store.history()), 1)
-        self.assertIn("end must not be before", self.window.notice.text())
+        self.assertIn("end must not be before", self.window.local_issues[-1].details)
 
     def test_multichord_custom_shortcut_and_selection_arrows(self):
         self.window.bindings["next"] = "Ctrl+K, Ctrl+L"
@@ -104,7 +104,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
         self.window.go_date(anchor)
         a, b = self.event("a"), self.event("b", hour=12)
         self.window.apply_events("Create", [a, b])
-        self.window.start_selection()
+        self.window.canvas.setFocus()
         QTest.keyClick(self.window.canvas, Qt.Key.Key_Down)
         self.assertEqual(self.window.selected_id, a.id)
         QTest.keyClick(self.window.canvas, Qt.Key.Key_Down)

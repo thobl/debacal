@@ -157,22 +157,19 @@ def test_day_selection_signals_clear_event_and_update_all_surfaces(workspace, wi
     assert all(widget.selected_day == chosen for widget in (window.header, window.canvas, window.month))
 
 
-def test_mouse_day_selection_exits_number_selection_and_allows_keyboard_paste(workspace):
+def test_mouse_day_selection_clears_pending_shortcut_and_allows_keyboard_paste(workspace):
     window, store, app = workspace
     window.activateWindow()
     window.canvas.setFocus()
     app.processEvents()
-    QTest.keyClick(window.canvas, Qt.Key.Key_G)
-    assert window.select_mode
+    window._shortcut_pending = ['Ctrl+K']
     chosen = date(2026, 11, 6)
     index = window.canvas.days.index(chosen)
     width = (window.header.width() - window.canvas.gutter) / len(window.canvas.days)
     point = QPoint(int(window.canvas.gutter + (index + 0.5) * width), 20)
     with patch.object(window, "read_event_clipboard", return_value=clipboard(event())):
         QTest.mouseClick(window.header, Qt.MouseButton.LeftButton, pos=point)
-        assert window.selected_day == chosen and not window.select_mode
-        assert window.nav_day is None and not window.nav_digits and not window._shortcut_pending
-        assert not window.header.navigation_active and not window.canvas.show_numbers
+        assert window.selected_day == chosen and not window._shortcut_pending
         window.canvas.setFocus()
         QTest.keyClick(window.canvas, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
         assert store.list_events() == [] and window.pending_paste is not None
@@ -354,7 +351,7 @@ def test_paste_into_nonexistent_clock_time_rejects_without_an_operation(workspac
     with patch.object(window, "read_event_clipboard", return_value=clipboard(source)):
         window.paste_events(scope="single")
     assert store.list_events() == [] and store.history() == []
-    assert "daylight" in window.notice.text().lower()
+    assert "daylight" in window.local_issues[-1].details.lower()
 
 
 def test_paste_retains_repeated_hour_choice_and_duration(workspace):
@@ -384,4 +381,4 @@ def test_group_paste_preflights_other_members_in_daylight_gap_before_any_write(w
     with patch.object(window, "read_event_clipboard", return_value=selection):
         window.paste_events(scope="group")
     assert store.list_events() == [] and store.history() == []
-    assert "daylight" in window.notice.text().lower()
+    assert "daylight" in window.local_issues[-1].details.lower()

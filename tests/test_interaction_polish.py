@@ -88,7 +88,7 @@ def test_double_click_and_edit_shortcut_open_identical_scoped_editor(workspace, 
     with patch.object(EventDialog, 'exec', inspect):
         window.canvas.setFocus()
         QTest.keyClick(window.canvas, Qt.Key.Key_E)
-        rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == occurrence.id)
+        rect = next(rect for rect, value in window.canvas.rects() if value.id == occurrence.id)
         QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())
         QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())
     assert len(seen) == 2 and seen[0] == seen[1]
@@ -107,7 +107,7 @@ def test_real_double_click_retains_the_pre_click_multi_selection(workspace, modi
     def inspect(dialog):
         seen.append((dialog.common_fields_only, {value.id for value in window.selection.refs}))
         return QDialog.DialogCode.Rejected
-    rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == a.id)
+    rect = next(rect for rect, value in window.canvas.rects() if value.id == a.id)
     with patch.object(EventDialog, 'exec', inspect):
         QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, modifiers, rect.center().toPoint())
         QTest.mouseDClick(window.canvas, Qt.MouseButton.LeftButton, modifiers, rect.center().toPoint())
@@ -118,7 +118,7 @@ def test_stationary_ctrl_updates_copy_badge_in_the_real_window(workspace):
     app, window, store = workspace
     a = sample('a')
     insert(window, store, a)
-    rect = next(rect for rect, value, _ in window.canvas.rects() if value.id == a.id)
+    rect = next(rect for rect, value in window.canvas.rects() if value.id == a.id)
     begin, finish = rect.center().toPoint(), rect.center().toPoint() + QPoint(0, 30)
     QTest.mousePress(window.canvas, Qt.MouseButton.LeftButton, pos=begin)
     QTest.mouseMove(window.canvas, finish)

@@ -158,15 +158,6 @@ def text(painter, rect, value, color=None, size=10, bold=False, align=None):
     painter.drawText(rect, align or (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), value)
 
 
-def badge(painter, rect, value, selected=False):
-    colors = paint_colors(painter.device())
-    painter.setPen(QPen(colors.accent if selected else colors.selection_edge, 1))
-    painter.setBrush(colors.accent if selected else colors.panel)
-    painter.drawRoundedRect(rect, 4, 4)
-    text(painter, rect, value, colors.on_accent if selected else colors.accent, 8, True,
-         Qt.AlignmentFlag.AlignCenter)
-
-
 def week_spans(events, first, days=7, *, capacity=None, selected=(), primary=None, reserve_timed=()):
     """Place whole DATE spans in shared lanes, optionally bounded by cell rows."""
     last = first + timedelta(days=days)
@@ -175,7 +166,7 @@ def week_spans(events, first, days=7, *, capacity=None, selected=(), primary=Non
                                   max(first, item.start.date()), -(item.end.date() - item.start.date()).days, item.id))
     lanes, result = [], []
     reserved = sum(1 << index for index in reserve_timed)
-    for number, item in enumerate(visible, 1):
+    for item in visible:
         start = (max(first, item.start.date()) - first).days
         end = (min(last, item.end.date()) - first).days
         mask = ((1 << (end - start)) - 1) << start
@@ -190,7 +181,7 @@ def week_spans(events, first, days=7, *, capacity=None, selected=(), primary=Non
             lane = len(lanes)
             lanes.append(0)
         lanes[lane] |= mask
-        result.append((item, lane, start, end, number, item.start.date() < first, item.end.date() > last))
+        result.append((item, lane, start, end, item.start.date() < first, item.end.date() > last))
     return result
 
 
@@ -208,9 +199,6 @@ class DayHeader(QWidget):
         self.days = []
         self.preferences = Preferences()
         self.gutter = calendar_gutter(self.preferences)
-        self.navigation_active = False
-        self.navigation_day = None
-        self.navigation_digits = ''
         self.selected_day = None
         self.creation_calendar = None
         self.placement_active = False
@@ -227,12 +215,6 @@ class DayHeader(QWidget):
         self.gutter = calendar_gutter(preferences)
         self.all_day_top = math.ceil(64 * scale)
         self.setFixedHeight(self.all_day_top)
-        self.update()
-
-    def set_navigation(self, active, day=None, digits=''):
-        self.navigation_active = bool(active)
-        self.navigation_day = day if active else None
-        self.navigation_digits = str(digits or '') if active else ''
         self.update()
 
     def set_selected_day(self, day):
@@ -324,21 +306,18 @@ class DayHeader(QWidget):
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
             today = day == now().date()
-            selected_day = self.navigation_active and i == self.navigation_day
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(QRectF(x, 0, w, self.height()), shade)
-            if today or selected_day:
-                p.setPen(QPen(colors.accent, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
+            if today:
+                p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(colors.selection)
                 p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), 4, 4)
             day_color = weekend_text(day, self.preferences, colors,
-                                     colors.accent if today or selected_day else colors.muted)
+                                     colors.accent if today else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
             text(p, day_number_rect(x, w, scale), str(day.day),
                  weekend_text(day, self.preferences, colors, colors.accent if today else colors.ink), DAY_NUMBER_SIZE, True)
-            if self.navigation_active:
-                badge(p, QRectF(x + w - 34, 11, 21, 21), str(i + 1), selected_day)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         p.setPen(QPen(colors.line, 1))
         p.drawLine(QPointF(self.gutter, self.height() - .5), QPointF(self.width(), self.height() - .5))
@@ -387,13 +366,10 @@ class CalendarCanvas(QWidget):
         self.ghost = None
         self.hover_time = None
         self._drag_pointer = None
-        self.show_numbers = False
         self.preferences = Preferences()
         self.gutter = calendar_gutter(self.preferences)
         self.scope_modifiers = normalize_scope_modifiers()
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
-        self.navigation_day = None
-        self.navigation_digits = ''
         self.initialize_confirmation()
         # Keep a late-night point's minimum visual marker fully visible below
         # its true time, without extending the event itself into tomorrow.
@@ -718,23 +694,6 @@ class CalendarCanvas(QWidget):
         self.scope_modifiers = normalize_scope_modifiers(settings)
         self.update()
 
-    def set_navigation(self, active, day=None, digits=''):
-        self.show_numbers = bool(active)
-        self.navigation_day = day if active else None
-        self.navigation_digits = str(digits or '') if active else ''
-        self.update()
-
-    def navigation_target_id(self):
-        if not self.show_numbers or self.navigation_day is None or not 0 <= self.navigation_day < len(self.days):
-            return None
-        if not self.navigation_digits.isascii() or not self.navigation_digits.isdigit():
-            return None
-        day = self.days[self.navigation_day]
-        start, end = at(day), at(day + timedelta(days=1))
-        options = [event for event in self.events if overlaps(event, start, end)]
-        index = int(self.navigation_digits) - 1
-        return options[index].id if 0 <= index < len(options) else None
-
     def rects(self, events=None):
         if not self.days:
             return []
@@ -746,7 +705,7 @@ class CalendarCanvas(QWidget):
         cache_tag = ('rects', token[0]) if token is not None else None
         cached = self._shape_cache.get(cache_tag) if cache_tag is not None else None
         if cached is not None and cached[0] == key:
-            return [(QRectF(rect), item, number) for rect, item, number in cached[1]]
+            return [(QRectF(rect), item) for rect, item in cached[1]]
         width = (self.width() - self.gutter) / len(self.days)
         result = []
         bounds, buckets = self.day_buckets(self.days, events)
@@ -755,7 +714,6 @@ class CalendarCanvas(QWidget):
                 daily = [item for item in daily if not item.all_day]
             timed = [item for item in daily if not item.all_day]
             placements = {value.event_id: value for value in layout_events(timed, window_start=start, window_end=end)}
-            day_numbers = {item.id: number for number, item in enumerate(daily, 1)}
             allday = {item.id: slot for slot, item in enumerate(item for item in daily if item.all_day)}
             for item in daily:
                 x = self.gutter + index * width
@@ -771,10 +729,10 @@ class CalendarCanvas(QWidget):
                     rect = QRectF(x + placement.column * width / placement.columns + 3,
                                   self.time_top + top + 1, width / placement.columns - 6,
                                   max((18 if item.start.timestamp() == item.end.timestamp() else 14) * scale, bottom - top - 2))
-                result.append((rect, item, day_numbers[item.id]))
+                result.append((rect, item))
         if cache_tag is not None:
             self._shape_cache[cache_tag] = key, result
-        return [(QRectF(rect), item, number) for rect, item, number in result]
+        return [(QRectF(rect), item) for rect, item in result]
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -790,8 +748,6 @@ class CalendarCanvas(QWidget):
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), shade)
-            if self.show_numbers and i == self.navigation_day:
-                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), colors.selection)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         if not self.fixed_all_day:
             text(p, axis_label_rect(self.gutter, 4 * scale, 28 * scale, scale), 'All day', colors.muted, ALL_DAY_SIZE,
@@ -818,10 +774,10 @@ class CalendarCanvas(QWidget):
             p.drawLine(QPointF(self.gutter + i * w, y), QPointF(self.gutter + (i + 1) * w, y))
             current_point = QPointF(self.gutter + i * w, y)
         self.hits = self.rects()
-        for rect, event, number in self.hits:
-            self.paint_event(p, rect, event, number)
-        for rect, event, number in self.rects(self.preview_events):
-            self.paint_event(p, rect, event, number, preview=True)
+        for rect, event in self.hits:
+            self.paint_event(p, rect, event)
+        for rect, event in self.rects(self.preview_events):
+            self.paint_event(p, rect, event, preview=True)
         if current_point is not None:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(colors.now)
@@ -847,19 +803,15 @@ class CalendarCanvas(QWidget):
         self.paint_copy_badge(p)
         p.end()
 
-    def paint_event(self, p, rect, event, number, preview=False):
+    def paint_event(self, p, rect, event, preview=False):
         color = self.calendars[event.calendar_id].color if event.calendar_id in self.calendars else scheme_for(self).accent
-        day_width = (self.width() - self.gutter) / max(1, len(self.days))
-        day_index = int((rect.center().x() - self.gutter) / day_width)
-        numbered = not preview and self.show_numbers and self.navigation_day == day_index
-        target = numbered and self.navigation_digits.isascii() and self.navigation_digits.isdigit() and int(self.navigation_digits) == number
         selected = not preview and (event.id in self.selected_ids or event.id == self.selected_id)
         confirm = self.confirmation_rect(rect, event, preview)
         scale = display_scale(self)
         style = event_colors(color, self, alpha=34 if preview else 38 if event.candidate else 52)
-        edge = QColor(style.selected_outline if selected or target else style.outline)
+        edge = QColor(style.selected_outline if selected else style.outline)
         p.setBrush(QColor(style.fill))
-        p.setPen(QPen(edge, 3 if target else 2 if selected or preview else 1,
+        p.setPen(QPen(edge, 2 if selected or preview else 1,
                       Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, 5, 5)
         if selected:
@@ -872,7 +824,7 @@ class CalendarCanvas(QWidget):
             point_event = event.start.timestamp() == event.end.timestamp()
             scale = display_scale(self)
             title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
-            reserve = (40 if numbered else 12) + (confirm.width() + 6 * scale if confirm is not None else 0)
+            reserve = 12 + (confirm.width() + 6 * scale if confirm is not None else 0)
             text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, QColor(style.ink), 9, True)
             if rect.height() > 39 * scale:
                 value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
@@ -882,15 +834,11 @@ class CalendarCanvas(QWidget):
             if rect.height() > 64 * scale and event.location:
                 text(p, QRectF(rect.x() + 8, rect.y() + 43 * scale, rect.width() - 12, 18 * scale), event.location, QColor(style.muted), 8)
             p.restore()
-        if numbered:
-            size = min(22, max(12, rect.height() - 4))
-            offset = confirm.width() + 6 * scale if confirm is not None else 0
-            badge(p, QRectF(rect.right() - 26 - offset, rect.top() + 3, 22, size), str(number), target)
         self.paint_confirmation(p, confirm, event)
 
     def hit(self, pos):
         self.hits = self.rects()
-        return next(((r, e) for r, e, _ in reversed(self.hits) if r.contains(pos)), None)
+        return next(((r, e) for r, e in reversed(self.hits) if r.contains(pos)), None)
 
     def edit_hit(self, point, modifiers):
         hit = self.hit(point)
@@ -1304,7 +1252,7 @@ class MonthCanvas(QWidget):
             spans = week_spans(self.events, first, capacity=capacity, selected=self.selected_ids,
                                primary=self.selected_id, reserve_timed=reserve)
             used, shown = [set() for _ in range(7)], [0] * 7
-            for item, lane_index, start, end, _number, before, after in spans:
+            for item, lane_index, start, end, before, after in spans:
                 rect = QRectF(gutter + start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
                 commands.append(('event', rect, item, False, before, after))
                 hits.append((rect, item))
@@ -1350,7 +1298,7 @@ class MonthCanvas(QWidget):
                                      Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
             preview_spans = week_spans(previews, first, capacity=capacity)
             preview_used = [set() for _ in range(7)]
-            for item, lane_index, start, end, _number, before, after in preview_spans:
+            for item, lane_index, start, end, before, after in preview_spans:
                 rect = QRectF(gutter + start * width + 5, y + heading + lane_index * lane, (end - start) * width - 10, event_height)
                 commands.append(('event', rect, item, True, before, after))
                 for index in range(start, end):
@@ -1662,11 +1610,11 @@ class AllDayCanvas(MonthCanvas):
         width = (self.width() - self.gutter) / max(1, len(self.days))
         pad = 4 * display_scale(self)
         return [(QRectF(self.gutter + start * width + 3, pad + lane * self.lane_height,
-                        (end - start) * width - 6, self.lane_height - pad), item, number)
-                for item, lane, start, end, number, _left, _right in self._lanes(self.events if events is None else events)]
+                        (end - start) * width - 6, self.lane_height - pad), item)
+                for item, lane, start, end, _left, _right in self._lanes(self.events if events is None else events)]
 
     def hit(self, point):
-        self.hits = [(rect, item) for rect, item, _number in self.rects()]
+        self.hits = self.rects()
         return next(((rect, item) for rect, item in reversed(self.hits) if rect.contains(point)), None)
 
     def paintEvent(self, _):
@@ -1690,13 +1638,13 @@ class AllDayCanvas(MonthCanvas):
              align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.hits = []
         self.confirm_hits = []
-        for rect, item, number in self.rects():
+        for rect, item in self.rects():
             self._paint_bar(p, rect, item)
             self.hits.append((rect, item))
         previews = [self.ghost] if not self.preview_events and self.ghost is not None else self.preview_events
         pad = 4 * scale
         slots = max(1, (self.height() - 2 * pad) // self.lane_height)
-        for rect, item, _number in self.rects(previews):
+        for rect, item in self.rects(previews):
             # Preview lanes never resize the fixed surface under the pointer.
             rect.moveTop(pad + (int((rect.top() - pad) / self.lane_height) % slots) * self.lane_height)
             self._paint_bar(p, rect, item, preview=True)

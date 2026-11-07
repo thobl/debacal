@@ -197,7 +197,7 @@ def test_too_dense_view_explains_range_limit_without_quarantining_a_valid_series
     window.select_event(window.visible_events[0].id)
     with patch.object(store, 'query_occurrences', side_effect=RecurrenceRangeError('Choose a smaller date range.')):
         window.set_view('year')
-    assert 'smaller date range' in window.notice.text()
+    assert 'smaller date range' in window.local_issues[-1].details
     assert not window.selection.refs and not window.visible_events
     assert store.list_events() == [source]
     assert store.list_quarantined_resources() == []

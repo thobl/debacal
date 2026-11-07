@@ -175,9 +175,7 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   to resize. Hover over empty timed space for a light snapped-time guide;
   the hover guide uses a readable color independent of calendars. Creation drags
   show their starting time and the selected creation calendar's color.
-* **Keyboard selection:** `G`, day number `1`–`7`, event number, `Enter`.
-  Badges appear only during selection, highlighting the chosen day and typed
-  event. Multi-digit event numbers work. Arrow keys move selection and scroll
+* **Keyboard selection:** arrow keys move selection and scroll
   only as far as needed to reveal an event. Selection modes are `F2` for one
   occurrence, `F3` for all events in its series, and `F4` for this and following.
   The highlight shows the affected events; `E`, Delete, moving, resizing and
@@ -223,7 +221,11 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   current shortcut. Import/export and adding sources sit beside Calendars; right-click
   a calendar for its source and file actions. The gear opens Preferences.
   Sync has a fixed position at the bottom of the sidebar; click
-  its status text for details. Conflicts show a review icon beside the status.
+  its status text for details. A warning icon shows errors, skipped resources,
+  or conflicts; click it for full details and available recovery actions such
+  as retrying synchronization, editing a connection, or retrying a file import.
+  Other operation errors appear there too and can be dismissed after review.
+  Successful actions do not show status messages below the calendar.
 * **Creation calendar:** click a writable calendar name in the sidebar to choose
   where new events are created. The selected name is highlighted and remembered.
   Its separate eye button shows or hides that calendar. Editing existing events
