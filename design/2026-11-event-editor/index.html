@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Debacal · event editor studies</title>
+  <style>
+    :root { color-scheme: light; --page:#f5f7f8; --surface:#fff; --ink:#27313a; --muted:#596570; --line:#d9e0e5; --accent:#475f52; --active:#e7eee8; --soft:#eef2f4; --tag:#f2ede7; --tag-ink:#745637; }
+    body.dark { color-scheme:dark; --page:#212526; --surface:#2d3132; --ink:#edf1f5; --muted:#b4bfc7; --line:#495154; --accent:#b4cbbd; --active:#39473e; --soft:#353b3d; --tag:#483f34; --tag-ink:#dfc09b; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--page); color:var(--ink); font:16px/1.55 system-ui,sans-serif; }
+    header,main,footer { max-width:1560px; margin:auto; padding:28px 36px; }
+    header { padding-bottom:18px; }
+    .eyebrow { margin:0 0 12px; color:var(--muted); font-size:12px; font-weight:650; letter-spacing:1.4px; text-transform:uppercase; }
+    h1 { font-size:34px; line-height:1.2; letter-spacing:-.7px; margin:0 0 14px; }
+    h2 { font-size:23px; line-height:1.3; letter-spacing:-.2px; margin:0 0 10px; }
+    h3 { font-size:19px; line-height:1.35; margin:0 0 10px; }
+    p { max-width:100ch; margin:0 0 12px; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    code { font-size:.91em; background:var(--soft); padding:2px 5px; border-radius:3px; }
+    pre { overflow:auto; padding:13px 16px; background:var(--soft); border-radius:5px; font-size:13px; }
+    pre code { padding:0; background:none; }
+    button,select { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:5px; padding:7px 12px; min-height:38px; cursor:pointer; }
+    button:hover,select:hover { background:var(--soft); }
+    button[aria-pressed="true"],button[aria-selected="true"] { background:var(--active); border-color:var(--accent); font-weight:600; }
+    :focus-visible { outline:3px solid #4c88b7; outline-offset:3px; }
+    [hidden] { display:none !important; }
+    nav { display:flex; flex-wrap:wrap; gap:8px 22px; margin:18px 0 0; font-size:14px; }
+    main { padding-top:0; }
+    section { margin:0 0 36px; scroll-margin-top:20px; }
+    .muted { color:var(--muted); }
+    .status-pair { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:4px 0 28px; }
+    .status { padding:18px 20px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .status h2 { font-size:16px; margin-bottom:8px; }
+    .status p:last-child { margin-bottom:0; }
+    .status ul { font-size:14px; padding-left:19px; margin:0; }
+    .status li { margin:5px 0; }
+    .tag { display:inline-block; margin-bottom:9px; padding:2px 8px; color:var(--tag-ink); background:var(--tag); border-radius:4px; font-size:12px; font-weight:650; }
+    .tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px; margin:16px 0 20px; }
+    .tools-left,.appearance { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+    .tools p { font-size:13px; margin:0; color:var(--muted); }
+    .appearance span { font-size:14px; margin-right:4px; }
+    .appearance button { font-size:14px; }
+    .options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+    .option { min-width:0; background:var(--surface); border:1px solid var(--line); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
+    .option-copy { padding:20px 20px 16px; flex:1; }
+    .option-number { display:inline-flex; align-items:center; justify-content:center; width:27px; height:27px; margin-right:8px; background:var(--soft); border-radius:4px; font-size:15px; }
+    .option p { font-size:14px; }
+    .option h3 { display:flex; align-items:center; }
+    .tradeoff { padding-top:10px; border-top:1px solid var(--line); color:var(--muted); }
+    .image-button { display:block; padding:0; border:0; border-radius:0; min-height:0; width:100%; background:var(--surface); }
+    .image-button:hover { background:var(--surface); }
+    .image-button img { display:block; width:100%; height:auto; }
+    .option .image-button { border-top:1px solid var(--line); }
+    .image-caption { margin:0; padding:10px 15px; font-size:12px; color:var(--muted); background:var(--surface); border-top:1px solid var(--line); }
+    .recommendation { margin-top:20px; padding:17px 20px; border-left:3px solid var(--accent); background:var(--active); border-radius:0 5px 5px 0; }
+    .recommendation p:last-child { margin-bottom:0; }
+    .table-scroll { overflow:auto; border:1px solid var(--line); border-radius:7px; }
+    table { border-collapse:collapse; width:100%; background:var(--surface); font-size:14px; }
+    th,td { text-align:left; padding:12px 16px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { font-weight:650; }
+    thead th { background:var(--soft); }
+    tr:last-child td,tr:last-child th { border-bottom:0; }
+    .detail-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:17px 0 16px; }
+    .detail-tabs button { font-size:14px; }
+    figure { margin:0; border:1px solid var(--line); border-radius:7px; overflow:hidden; background:var(--surface); }
+    figcaption { padding:14px 18px; font-size:14px; border-bottom:1px solid var(--line); }
+    figcaption strong { display:block; margin-bottom:3px; }
+    .detail-panel .image-button img { max-width:1320px; margin:auto; }
+    .behavior-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+    .behavior { padding:19px 20px; border-top:2px solid var(--line); background:var(--surface); border-radius:0 0 5px 5px; }
+    .behavior h3 { font-size:16px; }
+    .behavior p { font-size:14px; margin-bottom:0; }
+    .run { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:26px; padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:7px; }
+    .run > div { min-width:0; }
+    .run h3 { font-size:17px; }
+    .run p { font-size:14px; }
+    footer { padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+    dialog { width:min(96vw,1600px); max-width:none; height:min(95vh,1200px); max-height:none; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink); }
+    dialog::backdrop { background:#000a; }
+    .zoom-shell { display:flex; flex-direction:column; height:100%; }
+    .zoom-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:12px 16px; border-bottom:1px solid var(--line); flex-shrink:0; }
+    .zoom-toolbar strong { flex:1; min-width:150px; font-size:15px; }
+    .zoom-toolbar a,.zoom-toolbar button { font-size:13px; }
+    .zoom-viewport { flex:1; min-height:0; overflow:auto; background:var(--page); }
+    .zoom-viewport img { display:block; width:100%; height:auto; margin:auto; }
+    .zoom-viewport.native img { width:auto; max-width:none; margin:0; }
+    .zoom-note { margin:0; padding:7px 16px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); }
+    @media(max-width:1050px) { .options { grid-template-columns:1fr; } .option { display:grid; grid-template-columns:minmax(260px,.85fr) minmax(0,1.5fr); } .option .image-button { border-top:0; border-left:1px solid var(--line); align-self:center; } .option .image-caption { grid-column:1/-1; } .run { grid-template-columns:1fr; gap:12px; } }
+    @media(max-width:700px) { header,main,footer { padding:23px 17px; } main { padding-top:0; } h1 { font-size:28px; } .status-pair,.behavior-grid { grid-template-columns:1fr; gap:13px; } .option { display:flex; } .option .image-button { border-left:0; border-top:1px solid var(--line); } .tools { align-items:flex-start; } .zoom-toolbar { padding:10px; } .zoom-toolbar strong { flex-basis:100%; } table { min-width:640px; } }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Debacal · event creation dialog · interaction studies</p>
+    <h1>Choose the dates. Shape the time.</h1>
+    <p>Keep the custom sequence and its clickable month preview, then make arranging times feel as direct as the main calendar. These three native prototypes explore different ways to do that.</p>
+    <nav aria-label="Review sections">
+      <a href="#options">Three workflows</a><a href="#comparison">Compare</a><a href="#details">Interaction details</a><a href="#try">Try the prototypes</a>
+    </nav>
+  </header>
+  <main>
+    <div class="status-pair">
+      <article class="status">
+        <h2>Already changed in the application</h2>
+        <ul>
+          <li>Relative time steps: <code>+45min</code>, <code>+2h</code>, and multipliers such as <code>3*+30min</code>. <code>m</code> still means months.</li>
+          <li>Calendar choices show their source color; preview events use the chosen calendar’s color.</li>
+          <li>The old added/skipped-date symbols and their legend are removed.</li>
+        </ul>
+      </article>
+      <article class="status">
+        <h2>For review: the larger time-editing workflow</h2>
+        <p>The layouts below are separate experiments. Start + duration, integrated date selection and visual per-occurrence time editing have not replaced the application’s dialog yet.</p>
+        <p class="muted">The screenshots and interactive windows use synthetic events. The prototypes do not save or sync changes.</p>
+      </article>
+    </div>
+
+    <section id="options" aria-labelledby="options-heading">
+      <h2 id="options-heading">Three ways to arrange the same series</h2>
+      <p>A common starting point: dates remain editable through the sequence or month preview, duration belongs to the series, and an individual event can have its own starting time.</p>
+      <div class="tools">
+        <div class="appearance" role="group" aria-label="Screenshot appearance">
+          <span>Appearance</span><button data-theme="light" aria-pressed="true">Light</button><button data-theme="dark" aria-pressed="false">Dark</button>
+        </div>
+        <p>Click any screenshot to enlarge it. Native 100% size is available there.</p>
+      </div>
+      <div class="options">
+        <article class="option">
+          <div class="option-copy">
+            <h3><span class="option-number">A</span> Month + day planner</h3>
+            <p>Keep the month in sight and arrange the selected day in a vertical time column. Select an event, then move it to a different starting time.</p>
+            <p><strong>Fits:</strong> choosing dates across several weeks, then fine-tuning a few times.</p>
+            <p class="tradeoff">The date overview stays visible, but the extra time column uses horizontal space. Events on other days remain compact in the month.</p>
+          </div>
+          <button class="image-button" data-overview="a" data-title="A · Month + day planner" aria-label="Enlarge option A, month and day planner"><img src="images/a-light.png" alt="Option A event dialog with the month preview and an adjacent vertical day planner"></button>
+          <p class="image-caption">Persistent month overview · one detailed day</p>
+        </article>
+        <article class="option">
+          <div class="option-copy">
+            <h3><span class="option-number">B</span> Month ↔ week</h3>
+            <p>Use Month to choose the dates; switch the same preview to Week to arrange times using a familiar calendar grid.</p>
+            <p><strong>Fits:</strong> comparing and moving several events within a week.</p>
+            <p class="tradeoff">The time grid has more room and shows relationships across days. Dates far apart require changing the page or switching back to Month.</p>
+          </div>
+          <button class="image-button" data-overview="b" data-title="B · Month and week" aria-label="Enlarge option B, month and week views"><img src="images/b-light.png" alt="Option B event dialog with a shared preview that switches between month and week"></button>
+          <p class="image-caption">One large calendar · switch Month / Week</p>
+        </article>
+        <article class="option">
+          <div class="option-copy">
+            <h3><span class="option-number">C</span> Month + time ribbons</h3>
+            <p>Keep the month and compare times along horizontal rulers. Event blocks show where each selected day falls within the day.</p>
+            <p><strong>Fits:</strong> spotting and adjusting different times on dates spread across a month.</p>
+            <p class="tradeoff">Several dates can be compared without changing the month. The horizontal time direction differs from the main calendar and needs more care for overnight events.</p>
+          </div>
+          <button class="image-button" data-overview="c" data-title="C · Month + time ribbons" aria-label="Enlarge option C, month and time ribbons"><img src="images/c-light.png" alt="Option C event dialog with a month preview and horizontal time rulers for individual dates"></button>
+          <p class="image-caption">Persistent month overview · compare daily time ranges</p>
+        </article>
+      </div>
+      <aside class="recommendation">
+        <p><strong>I would start with A if preserving the current date-picking workflow is the priority.</strong> It adds the main calendar’s familiar time axis without replacing the month. B is a stronger candidate if arranging a busy week matters more. C is worth trying if comparing hours across scattered dates is the main task.</p>
+      </aside>
+    </section>
+
+    <section id="comparison" aria-labelledby="comparison-heading">
+      <h2 id="comparison-heading">What changes between the options?</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th scope="col">Question</th><th scope="col">A · Day planner</th><th scope="col">B · Month / week</th><th scope="col">C · Time ribbons</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Where do I choose dates?</th><td>The persistent month</td><td>The Month view</td><td>The persistent month</td></tr>
+            <tr><th scope="row">Where do I move a time?</th><td>A vertical column for one day</td><td>The week grid</td><td>A horizontal ruler for that date</td></tr>
+            <tr><th scope="row">Can I compare different days’ times?</th><td>One detailed day at a time</td><td>Side by side within the visible week</td><td>Stacked time rulers across dates</td></tr>
+            <tr><th scope="row">Main cost</th><td>Width shared by month and day</td><td>Changing view or navigating weeks</td><td>A different time-axis direction</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="details" aria-labelledby="details-heading">
+      <h2 id="details-heading">Interaction details</h2>
+      <p>These examples focus on editing one occurrence and on the optional End control. Detail screenshots use the light appearance.</p>
+      <div class="detail-tabs" role="tablist" aria-label="Interaction examples">
+        <button id="tab-a-selected" role="tab" aria-controls="detail-a-selected" aria-selected="true" tabindex="0" data-detail="a-selected">A · Selected occurrence</button>
+        <button id="tab-b-week" role="tab" aria-controls="detail-b-week" aria-selected="false" tabindex="-1" data-detail="b-week">B · Week editing</button>
+        <button id="tab-c-selected" role="tab" aria-controls="detail-c-selected" aria-selected="false" tabindex="-1" data-detail="c-selected">C · Time ribbons</button>
+        <button id="tab-a-end" role="tab" aria-controls="detail-a-end" aria-selected="false" tabindex="-1" data-detail="a-end">A · Specify an end</button>
+      </div>
+      <div class="detail-panel" id="detail-a-selected" role="tabpanel" aria-labelledby="tab-a-selected" tabindex="0">
+        <figure><figcaption><strong>A · One occurrence selected</strong>The month supplies the date; the day planner supplies the time. Selection identifies a specific event, including when several share the same day.</figcaption><button class="image-button" data-title="A · Selected occurrence · light" aria-label="Enlarge option A with an occurrence selected"><img src="images/a-selected.png" loading="lazy" alt="A selected occurrence in option A, with its day shown on the adjacent time axis"></button></figure>
+      </div>
+      <div class="detail-panel" id="detail-b-week" role="tabpanel" aria-labelledby="tab-b-week" tabindex="0" hidden>
+        <figure><figcaption><strong>B · Arrange the visible week</strong>Switching to Week gives the events a full time axis. The same date selection and sequence remain in the dialog.</figcaption><button class="image-button" data-title="B · Week editing · light" aria-label="Enlarge option B in week view"><img src="images/b-week.png" loading="lazy" alt="Option B switched to a week grid, showing the series at different times"></button></figure>
+      </div>
+      <div class="detail-panel" id="detail-c-selected" role="tabpanel" aria-labelledby="tab-c-selected" tabindex="0" hidden>
+        <figure><figcaption><strong>C · Compare several days’ starting times</strong>Aligned time rulers make differences visible without requiring the dates to belong to the same week.</figcaption><button class="image-button" data-title="C · Selected time ribbon · light" aria-label="Enlarge option C with an occurrence selected"><img src="images/c-selected.png" loading="lazy" alt="Option C with a selected event on one of the daily horizontal time rulers"></button></figure>
+      </div>
+      <div class="detail-panel" id="detail-a-end" role="tabpanel" aria-labelledby="tab-a-end" tabindex="0" hidden>
+        <figure><figcaption><strong>Start + duration by default; End when useful</strong>The alternate End control makes a fixed finishing time possible. Moving the start in duration mode keeps the duration and moves the finishing time with it.</figcaption><button class="image-button" data-title="A · End control · light" aria-label="Enlarge option A showing the optional end control"><img src="images/a-end.png" loading="lazy" alt="Option A with the alternate End control visible instead of the default duration control"></button></figure>
+      </div>
+    </section>
+
+    <section aria-labelledby="shared-heading">
+      <h2 id="shared-heading">The shared direction</h2>
+      <div class="behavior-grid">
+        <article class="behavior"><h3>One calendar for picking dates</h3><p>The Start date control uses the preview already in the dialog. There is no second miniature calendar to open and reconcile with it.</p></article>
+        <article class="behavior"><h3>Visual first, precise typing available</h3><p>Move an event against the time axis to choose its start. A simple clock field remains available for a precise value such as <code>09:35</code>.</p></article>
+        <article class="behavior"><h3>Dates and individual occurrences have different targets</h3><p>The month still adds and removes dates. Selecting an event chip targets that occurrence’s time, so other events on the same date remain independent.</p></article>
+        <article class="behavior"><h3>Keep the sequence as the editable representation</h3><p>Visual changes produce a compact equivalent sequence. The time controls complement the language, including <code>min</code> and <code>h</code>, instead of replacing it with a list of dates.</p></article>
+      </div>
+    </section>
+
+    <section id="try" aria-labelledby="try-heading">
+      <h2 id="try-heading">Try the native prototypes</h2>
+      <div class="run">
+        <div>
+          <h3>Launch one option</h3>
+          <p>Run from the project directory. Use <code>a</code>, <code>b</code> or <code>c</code>; add <code>--theme dark</code> for the dark appearance.</p>
+          <pre><code>.venv/bin/python design/2026-11-event-editor/prototype.py --option a</code></pre>
+          <p>All changes remain in the disposable preview window. Close it to discard the experiment.</p>
+        </div>
+        <div>
+          <h3>Useful comparisons</h3>
+          <p>Try choosing dates in different weeks, then changing just one event’s time. Compare how easily each option shows two occurrences on the same day and different hours across several days.</p>
+          <p>Select an event and use <kbd>↑</kbd> / <kbd>↓</kbd> to move it by 15 minutes; hold Shift for an hour. Delete removes a selected extra occurrence. Reset restores the example.</p>
+          <p>Also compare changing the starting date while preserving duration, and using the alternate End control. The remaining design choice is which visual arrangement makes these tasks feel natural.</p>
+          <p><a href="README.md">Prototype notes and commands</a></p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer>Local design review · native Qt screenshots · synthetic events only · no data is saved or synced. These three layouts are proposals; the application changes are listed separately above.</footer>
+
+  <dialog id="zoom" aria-labelledby="zoom-title">
+    <div class="zoom-shell">
+      <div class="zoom-toolbar">
+        <strong id="zoom-title">Screenshot</strong>
+        <button id="zoom-fit" aria-pressed="true">Fit width</button>
+        <button id="zoom-native" aria-pressed="false">100% size</button>
+        <a id="zoom-original" href="images/a-light.png" target="_blank" rel="noopener">Open image</a>
+        <button id="zoom-close" aria-label="Close enlarged screenshot">Close</button>
+      </div>
+      <div class="zoom-viewport" id="zoom-viewport"><img id="zoom-image" src="images/a-light.png" alt=""></div>
+      <p class="zoom-note">At 100%, scroll to inspect the full screenshot. Press Escape to close.</p>
+    </div>
+  </dialog>
+  <script>
+    const $ = id => document.getElementById(id);
+    const themeButtons = [...document.querySelectorAll('[data-theme]')];
+    const detailButtons = [...document.querySelectorAll('[data-detail]')];
+    const zoom = $('zoom');
+
+    function setTheme(theme) {
+      document.body.classList.toggle('dark', theme === 'dark');
+      themeButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.theme === theme)));
+      document.querySelectorAll('[data-overview]').forEach(button => {
+        button.querySelector('img').src = `images/${button.dataset.overview}-${theme}.png`;
+      });
+    }
+
+    function setDetail(name, focus = false) {
+      detailButtons.forEach(button => {
+        const active = button.dataset.detail === name;
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+        $('detail-' + button.dataset.detail).hidden = !active;
+        if (active && focus) button.focus();
+      });
+    }
+
+    function setZoomNative(native) {
+      $('zoom-viewport').classList.toggle('native', native);
+      $('zoom-fit').setAttribute('aria-pressed', String(!native));
+      $('zoom-native').setAttribute('aria-pressed', String(native));
+    }
+
+    themeButtons.forEach(button => button.addEventListener('click', () => setTheme(button.dataset.theme)));
+    detailButtons.forEach((button, index) => {
+      button.addEventListener('click', () => setDetail(button.dataset.detail));
+      button.addEventListener('keydown', event => {
+        let next;
+        if (event.key === 'ArrowRight') next = (index + 1) % detailButtons.length;
+        else if (event.key === 'ArrowLeft') next = (index + detailButtons.length - 1) % detailButtons.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = detailButtons.length - 1;
+        else return;
+        event.preventDefault();
+        setDetail(detailButtons[next].dataset.detail, true);
+      });
+    });
+
+    document.querySelectorAll('.image-button').forEach(button => button.addEventListener('click', () => {
+      const source = button.querySelector('img');
+      $('zoom-title').textContent = button.dataset.title;
+      $('zoom-image').src = source.src;
+      $('zoom-image').alt = source.alt;
+      $('zoom-original').href = source.src;
+      setZoomNative(false);
+      zoom.showModal();
+      $('zoom-viewport').scrollTo(0, 0);
+    }));
+    $('zoom-fit').addEventListener('click', () => setZoomNative(false));
+    $('zoom-native').addEventListener('click', () => setZoomNative(true));
+    $('zoom-close').addEventListener('click', () => zoom.close());
+    zoom.addEventListener('click', event => { if (event.target === zoom) zoom.close(); });
+  </script>
+</body>
+</html>
