@@ -6,12 +6,14 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRectF, Qt
+from PySide6.QtGui import QImage, QPainter
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from debacal.appearance import stylesheet
 from debacal.calendar_list import CalendarRow
+from debacal.calendar_widgets import CalendarCanvas
 from debacal.event_style import event_colors
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
@@ -142,7 +144,7 @@ def test_card_tree_keeps_native_branch_hits_indentation_and_child_selection(desk
         assert not root.isSelected()
 
 
-def test_focused_event_card_has_a_ring_separate_from_its_source_selection(desktop):
+def test_selected_event_card_keeps_its_calendar_style_when_focus_moves_to_it(desktop):
     app, _ = desktop
     with Store(':memory:') as store:
         store.save_calendar(Calendar('source', 'Synthetic source', '#7f79a5'))
@@ -160,6 +162,28 @@ def test_focused_event_card_has_a_ring_separate_from_its_source_selection(deskto
         settle(app)
         assert panel.hasFocus()
         focused = panel.viewport().grab().toImage()
+        assert plain == focused
+
+
+def test_focused_unselected_event_card_keeps_a_keyboard_focus_cue(desktop):
+    app, _ = desktop
+    with Store(':memory:') as store:
+        store.save_calendar(Calendar('source', 'Synthetic source', '#7f79a5'))
+        store.apply('Create', [Event('event', 'source', 'Synthetic needle', START,
+                                    START + timedelta(hours=1))])
+        panel = make_panel(desktop, store, Preferences())
+        panel.populate('needle')
+        item = panel.topLevelItem(0)
+        panel.setCurrentItem(item)
+        panel.clearSelection()
+        panel.clearFocus()
+        settle(app)
+        plain = panel.viewport().grab().toImage()
+        panel.activateWindow()
+        panel.setFocus()
+        settle(app)
+        assert panel.hasFocus() and not item.isSelected()
+        focused = panel.viewport().grab().toImage()
         rect = panel.visualItemRect(item).adjusted(3, 5, -3, -5)
         focus = scheme_for(panel).focus
         ring_pixels = [(x, y) for x in range(rect.left(), rect.right() + 1)
@@ -167,3 +191,57 @@ def test_focused_event_card_has_a_ring_separate_from_its_source_selection(deskto
                        if focused.pixelColor(x, y).name() == focus]
         assert ring_pixels
         assert any(plain.pixelColor(x, y) != focused.pixelColor(x, y) for x, y in ring_pixels)
+
+
+@pytest.mark.parametrize('mode', ['search', 'cards', 'grouped', 'timeline'])
+@pytest.mark.parametrize('scheme', ['neutral', 'warm', 'cool'])
+def test_sidebar_selection_matches_the_calendar_source_bar_without_changing_fill(desktop, mode, scheme):
+    app, widgets = desktop
+    with Store(':memory:') as store:
+        source = Calendar('source', 'Synthetic source', '#b6815c')
+        entry = Event('event', source.id, 'Synthetic needle', START, START + timedelta(hours=1))
+        store.save_calendar(source)
+        store.apply('Create', [entry])
+        preferences = Preferences(color_scheme=scheme, agenda_style='cards' if mode == 'search' else mode)
+        panel = make_panel(desktop, store, preferences)
+        if mode == 'search':
+            panel.populate('needle')
+        else:
+            panel.populate_upcoming(START)
+        panel.clearSelection()
+        panel.clearFocus()
+        settle(app)
+        item = panel.topLevelItem(0)
+        row = panel.visualItemRect(item)
+        if mode in ('grouped', 'timeline'):
+            from PySide6.QtWidgets import QStyleOptionViewItem
+            option = QStyleOptionViewItem()
+            option.initFrom(panel)
+            option.rect = row
+            delegate = panel.itemDelegate()
+            _, card, _ = delegate.geometry(option, delegate.row_layout(panel.indexFromItem(item)))
+        else:
+            card = QRectF(row).adjusted(1, 3, -1, -3)
+        bar_sample = QPoint(round(card.left() + 4), round(card.center().y()))
+        fill_sample = QPoint(round(card.right() - 12), round(card.bottom() - 8))
+        plain = panel.viewport().grab().toImage()
+        panel.setCurrentItem(item)
+        panel.clearFocus()
+        settle(app)
+        selected = panel.viewport().grab().toImage()
+
+        canvas = CalendarCanvas()
+        widgets.append(canvas)
+        canvas.set_preferences(preferences)
+        canvas.set_data([START.date()], [entry], [source])
+        canvas.selected_id = entry.id
+        native = QImage(280, 80, QImage.Format.Format_ARGB32_Premultiplied)
+        native.fill('#ffffff')
+        painter = QPainter(native)
+        canvas.paint_event(painter, QRectF(10, 10, 250, 50), entry, 1)
+        painter.end()
+        native_bar = native.pixelColor(14, 35)
+        assert native_bar.name() == event_colors(source.color, scheme).selected_outline
+        assert selected.pixelColor(bar_sample) == native_bar
+        assert plain.pixelColor(bar_sample) != native_bar
+        assert selected.pixelColor(fill_sample) == plain.pixelColor(fill_sample)

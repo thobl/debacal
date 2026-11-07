@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
 
 from debacal.agenda_style import AgendaPresentation
 from debacal.appearance import stylesheet
+from debacal.event_style import event_colors
 from debacal.models import Event
 from debacal.preferences import Preferences, SETTINGS_KEY
 from debacal.preferences_dialog import PreferencesDialog
@@ -103,7 +104,7 @@ def test_day_groups_keep_ongoing_spans_and_stop_rails_at_each_day():
     ongoing, first, last, tomorrow = (presentation.rows[name]
                                         for name in ('break', 'today-a', 'today-b', 'tomorrow'))
     assert ongoing.group == 'ongoing' and ongoing.heading == 'Ongoing'
-    assert ongoing.first and ongoing.last and ongoing.detail == 'Until Sat, 2026-11-07'
+    assert ongoing.first and ongoing.last and ongoing.detail == 'All day · Until Sat, 2026-11-07'
     assert first.heading.startswith('Today') and first.first and not first.last
     assert last.heading == '' and not last.first and last.last
     assert tomorrow.heading.startswith('Tomorrow') and tomorrow.first and tomorrow.last
@@ -125,7 +126,7 @@ def test_grouping_uses_local_dates_across_dst_and_exclusive_all_day_ends():
     preferences = Preferences(agenda_style='timeline', date_format='iso', time_format='24h', locale_name='en_GB')
     presentation = AgendaPresentation()
     presentation.update(values, preferences, current, ZONE)
-    assert presentation.rows['span'].detail == 'Until Sun, 2026-10-25'
+    assert presentation.rows['span'].detail == 'All day · Until Sun, 2026-10-25'
     assert presentation.rows['first'].clock == presentation.rows['second'].clock == '02:30'
     assert presentation.rows['first'].heading.startswith('Today')
     assert presentation.rows['second'].heading == ''
@@ -199,7 +200,7 @@ def test_painting_reuses_preformatted_agenda_rows(desktop):
 
 @pytest.mark.parametrize('scale', [80, 100, 140])
 @pytest.mark.parametrize('time_format', ['24h', '12h'])
-def test_timeline_column_fits_all_day_and_formatted_times_with_a_shared_rail(desktop, scale, time_format):
+def test_timeline_times_fit_shared_rail_and_all_day_cards_use_full_width(desktop, scale, time_format):
     app, _ = desktop
     with Store(':memory:') as store:
         store.apply('Create', examples())
@@ -218,13 +219,85 @@ def test_timeline_column_fits_all_day_and_formatted_times_with_a_shared_rail(des
             option = QStyleOptionViewItem()
             option.initFrom(panel)
             option.widget, option.font, option.rect = panel, panel.font(), panel.visualItemRect(item)
-            body, _card, rail = delegate.geometry(option, row)
+            body, card, rail = delegate.geometry(option, row)
             factor = scale / 100
+            if item.data(EVENT_ROLE).all_day:
+                assert rail is None and row.body_height == 49
+                assert card.left() == body.left() + factor
+                assert row.detail.startswith('All day')
+                assert card.width() > body.width() - 3 * factor
+                continue
             available = rail - body.left() - 6 * factor
             width = QFontMetricsF(delegate._small_font(option.font, factor)).horizontalAdvance(row.clock)
             assert available >= width + factor
             rails.add(rail - body.left())
         assert len(rails) == 1
+
+
+def test_full_width_all_day_rows_break_otherwise_contiguous_timed_rails():
+    midnight = NOW.replace(day=4, hour=0, minute=0)
+    end = NOW.replace(day=8, hour=0, minute=0)
+    values = [event('timed-before', midnight - timedelta(hours=3), end=end),
+              event('all-day', midnight, end=end, all_day=True),
+              event('timed-after', midnight + timedelta(hours=3), end=end)]
+    presentation = AgendaPresentation()
+    preferences = Preferences(agenda_style='timeline', date_format='iso', locale_name='de_DE')
+    presentation.update(values, preferences, NOW, ZONE)
+    before, all_day, after = (presentation.rows[value.id] for value in values)
+    assert before.group == all_day.group == after.group == 'ongoing'
+    assert before.first and not before.last and before.rail_last
+    assert not after.first and after.last and after.rail_first
+    assert all_day.all_day and all_day.body_height == 49
+    assert all_day.detail == 'All day · Until Sa., 2026-11-07'
+
+
+def test_same_day_all_day_card_keeps_its_label_out_of_the_time_column():
+    midnight = NOW.replace(hour=0, minute=0)
+    values = [event('all-day', midnight, end=midnight + timedelta(days=1), all_day=True),
+              event('timed', NOW.replace(hour=14))]
+    presentation = AgendaPresentation()
+    presentation.update(values, Preferences(agenda_style='timeline'), NOW, ZONE)
+    all_day, timed = (presentation.rows[value.id] for value in values)
+    assert all_day.detail == 'All day' and all_day.body_height == 49
+    assert all_day.heading and not timed.heading
+    assert not timed.first and timed.rail_first
+
+
+@pytest.mark.parametrize('scale', [80, 100, 140])
+def test_full_width_all_day_selection_keeps_its_source_bar_and_focus_stable(desktop, scale):
+    app, _ = desktop
+    with Store(':memory:') as store:
+        store.apply('Create', [examples()[0]])
+        panel = make_panel(desktop, store)
+        panel.setStyleSheet(stylesheet(scale))
+        panel.update_context(store.list_calendars(), replace(panel.preferences, font_scale=scale))
+        panel.populate_upcoming(NOW)
+        item = panel.topLevelItem(0)
+        panel.clearSelection()
+        panel.clearFocus()
+        settle(app)
+        option = QStyleOptionViewItem()
+        option.initFrom(panel)
+        option.widget, option.font, option.rect = panel, panel.font(), panel.visualItemRect(item)
+        delegate = panel.itemDelegate()
+        _, card, rail = delegate.geometry(option, delegate.row_layout(panel.indexFromItem(item)))
+        assert rail is None
+        factor = scale / 100
+        bar = QPoint(round(card.left() + 4 * factor), round(card.center().y()))
+        fill = QPoint(round(card.right() - 12 * factor), round(card.top() + 5 * factor))
+        plain = panel.viewport().grab().toImage()
+        panel.setCurrentItem(item)
+        panel.clearFocus()
+        settle(app)
+        selected = panel.viewport().grab().toImage()
+        source = store.get_calendar(item.data(EVENT_ROLE).calendar_id)
+        assert selected.pixelColor(bar).name() == event_colors(source.color).selected_outline
+        assert plain.pixelColor(bar) != selected.pixelColor(bar)
+        assert plain.pixelColor(fill) == selected.pixelColor(fill)
+        panel.activateWindow()
+        panel.setFocus()
+        settle(app)
+        assert panel.hasFocus() and panel.viewport().grab().toImage() == selected
 
 
 def test_all_agenda_styles_return_to_identical_search_cards_and_native_folding(desktop):

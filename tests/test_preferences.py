@@ -61,6 +61,22 @@ class PreferencesTests(unittest.TestCase):
             with Store(path) as store:
                 self.assertEqual(Preferences.load(store), preferences)
 
+    def test_button_style_defaults_and_survives_restart(self):
+        self.assertEqual(Preferences().control_style, 'underlined')
+        self.assertEqual(Preferences.from_dict({'date_format': 'iso'}).control_style, 'underlined')
+        for invalid in (None, [], {}, True, '', 'other'):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(Preferences.from_dict({'control_style': invalid, 'date_format': 'iso'}),
+                                 Preferences(date_format='iso'))
+                with self.assertRaises(ValueError):
+                    Preferences(control_style=invalid)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                Preferences(control_style='filled').save(store)
+            with Store(path) as store:
+                self.assertEqual(Preferences.load(store).control_style, 'filled')
+
     def test_legacy_week_number_default_is_enabled_once_and_can_be_disabled_again(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'calendar.sqlite3'
@@ -150,6 +166,18 @@ class PreferencesDialogTests(unittest.TestCase):
         dialog.save()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertEqual(dialog.result_preferences, Preferences(6, 'iso', '24h'))
+        dialog.close()
+
+    def test_button_group_choice_saves_without_changing_other_settings(self):
+        original = Preferences(agenda_style='grouped', color_scheme='warm', date_format='iso')
+        dialog = PreferencesDialog(original)
+        self.assertEqual(dialog.control_style.currentData(), 'underlined')
+        dialog.control_style.setCurrentIndex(dialog.control_style.findData('filled'))
+        dialog.save()
+        self.assertEqual(dialog.result_preferences, Preferences(agenda_style='grouped', color_scheme='warm',
+                                                                date_format='iso', control_style='filled'))
+        dialog.restore_defaults()
+        self.assertEqual(dialog.value(), Preferences())
         dialog.close()
 
     def test_restore_defaults_uses_system_for_each_setting(self):

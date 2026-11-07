@@ -46,6 +46,7 @@ class Preferences:
     visible_end_hour: int = 18
     color_scheme: str = 'neutral'
     agenda_style: str = 'timeline'
+    control_style: str = 'underlined'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -77,6 +78,8 @@ class Preferences:
             raise ValueError('Choose a neutral, warm, or cool color scheme.')
         if not isinstance(self.agenda_style, str) or self.agenda_style not in ('cards', 'grouped', 'timeline'):
             raise ValueError('Choose event cards, cards grouped by day, or a day timeline.')
+        if not isinstance(self.control_style, str) or self.control_style not in ('underlined', 'filled'):
+            raise ValueError('Choose underlined or filled button groups.')
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""

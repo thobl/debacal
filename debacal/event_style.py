@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 from functools import lru_cache
 
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QPen
 
 from .theme import scheme_for
 
@@ -15,6 +16,31 @@ class EventColors:
     selected_outline: str
     ink: str
     muted: str
+
+
+def paint_event_card(painter, card, colors, *, selected=False, focused=False,
+                     focus_color=None, scale=1, radius=4):
+    """Paint the calendar's source-colored selection language in an event list.
+
+    Selected events use a stronger source edge and an inset vertical bar; their
+    fill never changes. Keyboard focus needs an additional cue only when its
+    current row is unselected, so moving focus to a selected card adds no ring.
+    """
+    painter.save()
+    edge = QColor(colors.selected_outline if selected else colors.outline)
+    painter.setBrush(QColor(colors.fill))
+    painter.setPen(QPen(edge, (2 if selected else 1) * scale))
+    painter.drawRoundedRect(card, radius * scale, radius * scale)
+    if selected:
+        painter.fillRect(QRectF(card.left() + 3 * scale, card.top() + 4 * scale,
+                                3 * scale, max(0, card.height() - 8 * scale)), edge)
+    elif focused:
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(focus_color or colors.selected_outline),
+                            2 * scale, Qt.PenStyle.DotLine))
+        painter.drawRoundedRect(card.adjusted(3 * scale, 3 * scale, -3 * scale, -3 * scale),
+                                2 * scale, 2 * scale)
+    painter.restore()
 
 
 def contrast_ratio(foreground, background):

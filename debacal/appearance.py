@@ -21,6 +21,7 @@ QLabel[error="true"] { color: $error; }
 QLabel#brand { font-size: 20px; font-weight: 600; letter-spacing: -0.5px; }
 QLabel#heading { font-size: 22px; font-weight: 600; }
 QLabel#section { color: $muted; font-size: 12px; font-weight: 600; }
+QLabel#agendaHeading { color: $ink; font-size: 13px; font-weight: 600; }
 QPushButton { background: transparent; border: 1px solid $control_edge; border-radius: 4px; padding: 7px 11px; }
 QPushButton:hover { background: $hover; }
 QPushButton:pressed, QPushButton:checked { background: $selection; border-color: $selection_edge; color: $accent; }
@@ -68,12 +69,12 @@ QPushButton#calendarChoice:focus { border-color: transparent; }
 QPushButton#calendarVisibility, QPushButton#calendarVisibility:checked { background: transparent; border-color: transparent; }
 QPushButton#calendarVisibility:hover { background: $hover; }
 QPushButton#calendarVisibility:focus { border-color: $focus; }
-QWidget#segmentedControl { background: $control_surface; border: 1px solid $line; border-radius: 6px; }
-QWidget#segmentedControl QPushButton { background: transparent; border: 1px solid transparent; border-radius: 4px; }
-QWidget#segmentedControl QPushButton:hover { background: $hover; }
-QWidget#segmentedControl QPushButton:checked { background: $panel; border-color: transparent; color: $accent; }
-QWidget#segmentedControl QPushButton:pressed { background: $selection; }
-QWidget#segmentedControl QPushButton:focus { border-color: $focus; }
+QWidget#segmentedControl { background: transparent; border: none; border-radius: 0; }
+QWidget#segmentedControl QPushButton,
+QWidget#segmentedControl QPushButton:checked,
+QWidget#segmentedControl QPushButton:hover,
+QWidget#segmentedControl QPushButton:pressed,
+QWidget#segmentedControl QPushButton:focus { background: transparent; border: none; border-radius: 0; }
 QPushButton#syncStatus { text-align: left; border: 1px solid transparent; padding: 4px 0; font-size: 12px; color: $muted; }
 QPushButton#syncStatus:focus { border-color: $focus; }
 QMenu { background: $panel; color: $ink; border: 1px solid $control_edge; padding: 4px; }

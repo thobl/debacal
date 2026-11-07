@@ -1,7 +1,7 @@
 """Workspace layout and controls, separate from event and synchronization logic."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QBoxLayout, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
@@ -11,39 +11,7 @@ from .dialogs import hint
 from .icons import icon
 from .theme import scheme_for
 from .year_view import YearView
-
-
-class WorkspaceHeader(QWidget):
-    """Keep controls on the title line only when their measured widths fit."""
-
-    def __init__(self, title, controls):
-        super().__init__()
-        self.title, self.controls = title, controls
-        self.inline = None
-        self.row = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
-        self.row.setContentsMargins(0, 0, 0, 0)
-        self.row.setSpacing(12)
-        self.row.setSizeConstraint(QBoxLayout.SizeConstraint.SetNoConstraint)
-        self.row.addWidget(title, 1, Qt.AlignmentFlag.AlignTop)
-        self.row.addWidget(controls, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-    def minimumSizeHint(self):
-        # A wide layout must not increase the window's minimum width and then
-        # prevent the resize that would let this header wrap onto two lines.
-        return QSize(0, self.row.minimumSize().height())
-
-    def reflow(self):
-        needed = self.title.minimumSizeHint().width() + self.controls.sizeHint().width() + self.row.spacing()
-        inline = self.width() >= needed
-        if inline != self.inline:
-            self.inline = inline
-            self.row.setDirection(QBoxLayout.Direction.LeftToRight if inline else QBoxLayout.Direction.TopToBottom)
-            self.updateGeometry()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.reflow()
+from .workspace_header import SegmentedControl, WorkspaceHeader
 
 
 class WorkspaceChrome:
@@ -81,7 +49,7 @@ class WorkspaceChrome:
         column = QVBoxLayout(section)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(3)
-        label = QLabel(title)
+        label = ElidedLabel(title)
         label.setObjectName('section')
         heading = QHBoxLayout()
         heading.setSpacing(4)
@@ -94,11 +62,8 @@ class WorkspaceChrome:
         return section, heading, buttons
 
     def segmented_control(self, row):
-        control = QWidget()
-        control.setObjectName('segmentedControl')
-        buttons = QHBoxLayout(control)
-        buttons.setContentsMargins(3, 3, 3, 3)
-        buttons.setSpacing(0)
+        control = SegmentedControl()
+        buttons = control.buttons_layout
         row.addWidget(control)
         return control, buttons
 
@@ -113,30 +78,14 @@ class WorkspaceChrome:
         outer = QVBoxLayout(area)
         outer.setContentsMargins(18, 18, 18, 8)
         outer.setSpacing(10)
-        title_widget = QWidget()
-        header = QHBoxLayout(title_widget)
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(12)
-        navigation = QHBoxLayout()
-        navigation.setSpacing(3)
-        self.previous_button = self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), navigation, 'previous')
-        self.today_button = self.icon_button('today', 'Go to today', self.today, navigation, 'today')
-        self.next_button = self.icon_button('next', 'Next period', lambda: self.navigate(1), navigation, 'next')
-        header.addLayout(navigation)
         self.period = QWidget()
-        period_labels = QVBoxLayout(self.period)
-        period_labels.setContentsMargins(0, 0, 0, 0)
-        period_labels.setSpacing(3)
+        self.previous_button = self.icon_button('previous', 'Previous period', lambda: self.navigate(-1), None, 'previous')
+        self.today_button = self.icon_button('today', 'Go to today', self.today, None, 'today')
+        self.next_button = self.icon_button('next', 'Next period', lambda: self.navigate(1), None, 'next')
         self.heading = ElidedLabel()
         self.heading.setObjectName('heading')
-        self.heading.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        period_labels.addWidget(self.heading)
         self.range_label = hint('')
         self.range_label.setWordWrap(False)
-        self.range_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        period_labels.addWidget(self.range_label)
-        header.addWidget(self.period)
-        header.addStretch()
         self.toolbar = QWidget()
         toolbar = QHBoxLayout(self.toolbar)
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -152,6 +101,7 @@ class WorkspaceChrome:
             self.view_button_group.addButton(button)
             self.view_buttons[mode] = button
         self.style_segments(list(self.view_buttons.values()))
+        self.view_control.set_buttons(list(self.view_buttons.values()))
         view_row.addSpacing(5)
         self.full_day_button = self.icon_button('expand', 'Expand to show all 24 hours', self.toggle_full_day,
                                                 view_row, 'full_day')
@@ -174,6 +124,7 @@ class WorkspaceChrome:
             self.selection_button_group.addButton(button)
             self.selection_buttons[mode] = button
         self.style_segments(list(self.selection_buttons.values()))
+        self.selection_control.set_buttons(list(self.selection_buttons.values()))
         events_section, _events_heading, events_row = self.toolbar_section('Events')
         events_row.setContentsMargins(0, 3, 0, 3)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
@@ -182,7 +133,8 @@ class WorkspaceChrome:
         self.icon_button('history', 'Operation history', self.show_history, events_row, 'history')
         for section in (events_section, selection_section, view_section):
             toolbar.addWidget(section)
-        self.workspace_header = WorkspaceHeader(title_widget, self.toolbar)
+        self.toolbar_sections = (events_section, selection_section, view_section)
+        self.workspace_header = WorkspaceHeader(self, self.period, self.toolbar)
         outer.addWidget(self.workspace_header)
         self.stack = QStackedWidget()
         week = QWidget()
@@ -306,17 +258,5 @@ class WorkspaceChrome:
         self.sidebar.layout().activate()
 
     def update_navigation_width(self):
-        """Reserve every month/range label's width so repeated clicks stay put."""
-        from datetime import date
-        self.heading.ensurePolished()
-        self.range_label.ensurePolished()
-        signature = self.preferences, self.preferences.qt_locale().name(), self.heading.font().key(), self.range_label.font().key()
-        if signature == getattr(self, '_navigation_width_signature', None):
-            return
-        self._navigation_width_signature = signature
-        heading_width = max(self.heading.fontMetrics().horizontalAdvance(self.preferences.format_month(date(2026, month, 1)))
-                            for month in range(1, 13))
-        date_width = max(self.range_label.fontMetrics().horizontalAdvance(self.preferences.format_date(date(2026, month, day)))
-                         for month in range(1, 13) for day in (1, 28))
-        range_width = date_width * 2 + self.range_label.fontMetrics().horizontalAdvance(' — ')
-        self.period.setFixedWidth(max(heading_width, range_width) + 6)
+        """Refresh shared header metrics for the current view and preferences."""
+        self.workspace_header.update_preferences()

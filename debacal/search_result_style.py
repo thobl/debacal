@@ -3,7 +3,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPen, QPolygonF
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QStyledItemDelegate
 
-from .event_style import event_colors
+from .event_style import event_colors, paint_event_card
 from .theme import scheme_for
 
 
@@ -39,15 +39,8 @@ class SearchResultDelegate(QStyledItemDelegate):
 
         painter.save()
         painter.setClipRect(option.rect)
-        painter.setBrush(QColor(colors.fill))
-        painter.setPen(QPen(QColor(colors.selected_outline if selected else colors.outline),
-                            (2 if selected else 1) * scale))
-        painter.drawRoundedRect(card, 4 * scale, 4 * scale)
-        if focused:
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor(scheme.focus), 2 * scale, Qt.PenStyle.DotLine))
-            painter.drawRoundedRect(card.adjusted(3 * scale, 3 * scale, -3 * scale, -3 * scale),
-                                    2 * scale, 2 * scale)
+        paint_event_card(painter, card, colors, selected=selected, focused=focused,
+                         focus_color=scheme.focus, scale=scale)
 
         left, width = card.left() + 8 * scale, max(0, card.width() - 16 * scale)
         normal = QFont(option.font)

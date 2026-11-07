@@ -124,6 +124,12 @@ Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
 Preferences → Appearance → Upcoming events offers event cards, cards grouped by
 day, and a per-day timeline (the default). Search always uses event cards.
+All-day events use full-width cards in the timeline; timed events keep their
+clock column. Muted day captions sit below the stronger Next events heading.
+Selected events use the calendar's source-colored border and vertical bar in
+both the sidebar and calendar.
+Choose **Appearance → Button groups** for Underlined (default) or Filled
+choices. Both styles retain the same placement and toolbar separator.
 
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.

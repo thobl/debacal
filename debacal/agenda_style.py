@@ -6,7 +6,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 
-from .event_style import event_colors
+from .event_style import event_colors, paint_event_card
 from .search_result_style import SearchResultDelegate
 from .theme import scheme_for
 
@@ -20,6 +20,9 @@ class AgendaRow:
     clock: str
     detail: str
     body_height: int
+    all_day: bool = False
+    rail_first: bool = True
+    rail_last: bool = True
 
 
 class AgendaPresentation:
@@ -72,9 +75,16 @@ class AgendaPresentation:
                         clock = 'Now'
                 else:
                     detail = clock
-                body_height = 49 if preferences.agenda_style == 'grouped' or ongoing else 40
+                if event.all_day:
+                    last_day = event.end.date() - timedelta(days=1)
+                    detail = 'All day'
+                    if ongoing or last_day > event.start.date():
+                        detail += ' · Until ' + preferences.format_date(last_day, weekday=True)
+                body_height = 49 if preferences.agenda_style == 'grouped' or ongoing or event.all_day else 40
+                rail_first = first or events[index - 1].all_day
+                rail_last = last or events[index + 1].all_day
                 rows[event.id] = AgendaRow(key[0], headings[key] if first else '', first, last,
-                                           clock, detail, body_height)
+                                           clock, detail, body_height, event.all_day, rail_first, rail_last)
         changed = rows != self.rows or metrics != self._metrics
         self.rows, self._metrics = rows, metrics
         if changed:
@@ -119,14 +129,14 @@ class AgendaResultDelegate(SearchResultDelegate):
         body = QRectF(option.rect).adjusted(0, 20 * scale if row.heading else 0, 0, 0)
         card = body.adjusted(scale, 3 * scale, -scale, -3 * scale)
         rail = None
-        if widget.preferences.agenda_style == 'timeline':
+        if widget.preferences.agenda_style == 'timeline' and not row.all_day:
             signature = option.font.key(), scale, self.presentation.revision
             if signature != self._clock_metrics:
                 small = self._small_font(option.font, scale)
                 metrics = QFontMetricsF(small)
                 self._clock_width = max(44 * scale,
                                         max((metrics.horizontalAdvance(value.clock) + 3 * scale
-                                             for value in self.presentation.rows.values()), default=0))
+                                             for value in self.presentation.rows.values() if not value.all_day), default=0))
                 self._clock_metrics = signature
             rail = body.left() + self._clock_width + 6 * scale
             card.setLeft(rail + 9 * scale)
@@ -160,7 +170,7 @@ class AgendaResultDelegate(SearchResultDelegate):
         small = self._small_font(normal, scale)
         if row.heading:
             heading_font = QFont(small)
-            heading_font.setBold(True)
+            heading_font.setWeight(QFont.Weight.Medium)
             painter.setFont(heading_font)
             painter.setPen(QColor(scheme.muted))
             painter.drawText(QPointF(option.rect.left(), option.rect.top() + 14 * scale),
@@ -168,7 +178,7 @@ class AgendaResultDelegate(SearchResultDelegate):
                                                              max(0, option.rect.width() - 1)))
         if rail is not None:
             node_y = body.center().y()
-            start_y, end_y = (node_y if row.first else body.top()), (node_y if row.last else body.bottom())
+            start_y, end_y = (node_y if row.rail_first else body.top()), (node_y if row.rail_last else body.bottom())
             painter.setPen(QPen(QColor(scheme.control_edge), scale))
             painter.drawLine(QPointF(rail, start_y), QPointF(rail, end_y))
             painter.setPen(QPen(QColor(colors.selected_outline), scale))
@@ -178,15 +188,8 @@ class AgendaResultDelegate(SearchResultDelegate):
             painter.setPen(QColor(scheme.ink if selected else scheme.muted))
             painter.drawText(QRectF(body.left(), body.top(), rail - body.left() - 6 * scale, body.height()),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, row.clock)
-        painter.setBrush(QColor(colors.fill))
-        painter.setPen(QPen(QColor(colors.selected_outline if selected else colors.outline),
-                            (2 if selected else 1) * scale))
-        painter.drawRoundedRect(card, 4 * scale, 4 * scale)
-        if focused:
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor(scheme.focus), 2 * scale, Qt.PenStyle.DotLine))
-            painter.drawRoundedRect(card.adjusted(3 * scale, 3 * scale, -3 * scale, -3 * scale),
-                                    2 * scale, 2 * scale)
+        paint_event_card(painter, card, colors, selected=selected, focused=focused,
+                         focus_color=scheme.focus, scale=scale)
         title_font = QFont(normal)
         title_font.setBold(True)
         painter.setFont(title_font)

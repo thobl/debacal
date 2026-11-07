@@ -104,7 +104,7 @@ def build_sidebar(window, root):
     window.filter_search.setCheckable(True)
     window.filter_search.setChecked(bool(window.store.get_setting('filter_calendar_by_search', False)))
     window.results_heading = QLabel('Next events')
-    window.results_heading.setObjectName('section')
+    window.results_heading.setObjectName('agendaHeading')
     window.search_header = SearchHeader(window.search, window.filter_search, window.results_heading,
                                         window.preferences, window.bindings.get('search', ''))
     window.search_button = window.search_header.button
