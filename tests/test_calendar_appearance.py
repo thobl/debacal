@@ -132,7 +132,7 @@ def test_overview_weekends_follow_scheme_without_default_red_or_a_surface_patch(
     colors = scheme_for(scheme)
     assert overview.calendar.weekdayTextFormat(Qt.DayOfWeek.Sunday).foreground().color() == QColor(colors.weekend)
     assert overview.calendar.weekdayTextFormat(Qt.DayOfWeek.Monday).foreground().color() == QColor(colors.ink)
-    assert overview.calendar.palette().color(overview.calendar.backgroundRole()) == QColor(colors.background)
+    assert overview.calendar.palette().color(overview.calendar.backgroundRole()) == QColor(colors.sidebar)
 
 
 def test_year_and_series_preview_render_their_own_scheme(desktop):

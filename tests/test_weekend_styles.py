@@ -142,7 +142,8 @@ def test_selected_weekend_today_in_native_overview_and_date_popups_retains_its_t
         painter.end()
         expected = QColor(scheme.weekend if style == 'text' else scheme.ink)
         assert any(pixels.pixelColor(x, y) == expected for x in range(10, 50) for y in range(4, 32))
-        assert pixels.pixelColor(0, 0) == QColor(scheme.weekend_background if style == 'background' else scheme.background)
+        surface = scheme.sidebar if calendar is overview.calendar else scheme.background
+        assert pixels.pixelColor(0, 0) == QColor(scheme.weekend_background if style == 'background' else surface)
         format = calendar.weekdayTextFormat(Qt.DayOfWeek.Saturday)
         assert format.foreground().color() == expected
 

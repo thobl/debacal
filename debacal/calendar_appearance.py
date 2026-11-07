@@ -27,9 +27,10 @@ def weekend_fill(day, preferences, colors):
 
 class CalendarDateGrid(QCalendarWidget):
     """Keep weekend treatment visible on selected/current-day overview cells."""
-    def __init__(self, preferences, parent=None):
+    def __init__(self, preferences, parent=None, *, surface_role='background'):
         super().__init__(parent)
         self.preferences = preferences
+        self.surface_role = surface_role
 
     def paintCell(self, painter, rect, day):
         colors = scheme_for(self.preferences)
@@ -37,7 +38,7 @@ class CalendarDateGrid(QCalendarWidget):
         scale = self.preferences.font_scale / 100
         shade = weekend_fill(value, self.preferences, colors)
         painter.save()
-        painter.fillRect(rect, QColor(shade or colors.background))
+        painter.fillRect(rect, QColor(shade or getattr(colors, self.surface_role)))
         selected = day == self.selectedDate()
         today = value == now().date()
         if selected:

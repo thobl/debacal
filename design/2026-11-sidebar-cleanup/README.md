@@ -13,9 +13,11 @@ The gallery compares Light/Dark appearances, a normal footer, a synthetic import
 warning, and the title-hidden state. Footer details make the background transition
 easy to inspect; full sidebar and full app views show it in context.
 
-The right message bar, G-selection workflow and profile note are already removed
-from the application. The background choice remains a proposal: no production
-color preference is changed by these files.
+The right message bar, G-selection workflow and profile note are removed
+from the application. **Decision: B is now applied in the application.** The
+footer controls also have equal spacing above and below for vertical centering.
+The gallery preserves the comparison that informed the decision; its renderer
+can still reproduce both surface alternatives.
 
 I would choose B because the common surface makes the left column read as one
 unit. The warning icon and its color distinguish issues without needing a fourth
@@ -35,8 +37,9 @@ The renderer checks that both background variants retain identical geometry,
 that no profile note or main message bar remains, and that the proposed uniform
 surface reaches the overview, native date cells and footer.
 
-The proposed miniature background uses an isolated palette adapter for that
-preview instance. It does not modify application globals or user preferences.
+The miniature uses an explicit surface role for that preview instance. Date
+popups elsewhere retain the normal canvas surface. No application globals or
+user preferences are modified by the renderer.
 
 Validation: the application suite passed (1,612 tests and 141 subtests).
 Headless Chromium verified all twelve background/state combinations, local

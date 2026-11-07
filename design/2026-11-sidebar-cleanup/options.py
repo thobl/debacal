@@ -1,7 +1,5 @@
 """Isolated background alternatives for disposable review windows."""
-from dataclasses import fields
-
-from debacal.theme import ColorScheme, scheme_for
+from debacal.theme import scheme_for
 
 
 OPTIONS = {
@@ -20,30 +18,15 @@ OPTIONS = {
 }
 
 
-class _MiniSurface(ColorScheme):
-    """Give only this miniature the proposed surface, retaining real formats.
-
-    CalendarDateGrid paints native date cells from the resolved scheme, so a
-    stylesheet alone cannot color its base. No application globals are changed.
-    """
-    def __init__(self, scheme, preferences):
-        for item in fields(ColorScheme):
-            object.__setattr__(self, item.name, getattr(scheme, item.name))
-        object.__setattr__(self, 'background', scheme.sidebar)
-        object.__setattr__(self, '_display_preferences', preferences)
-
-    def __getattr__(self, name):
-        return getattr(self._display_preferences, name)
-
-
 def apply(window, key):
     if key not in OPTIONS:
         raise ValueError('Unknown sidebar alternative')
-    if key == 'segmented':
-        return
     colors = scheme_for(window.preferences)
+    surface_role = 'sidebar' if key == 'uniform' else 'background'
+    surface = getattr(colors, surface_role)
     window.setStyleSheet(window.styleSheet() + f'''
         QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter,
-        QWidget#sidebarOverview, QWidget#sourceSections {{ background: {colors.sidebar}; }}
+        QWidget#sidebarOverview {{ background: {surface}; }}
     ''')
-    window.mini.set_preferences(_MiniSurface(colors, window.preferences))
+    window.mini.calendar.surface_role = surface_role
+    window.mini.set_preferences(window.preferences)

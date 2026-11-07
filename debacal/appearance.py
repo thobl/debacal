@@ -11,7 +11,7 @@ from .control_glyphs import control_glyphs
 _BASE_STYLE = Template("""
 QWidget { font-family: "Sans Serif"; font-size: 13px; color: $ink; }
 QMainWindow, QDialog { background: $background; }
-QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter, QWidget#sidebarOverview { background: $background; }
+QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter, QWidget#sidebarOverview { background: $sidebar; }
 QWidget#sidebarShell { border-right: 1px solid $line; }
 QWidget#sidebarFooter { border-top: 1px solid $line; }
 QWidget#sourceSections { background: $sidebar; border-top: 1px solid $line; }

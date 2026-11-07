@@ -164,7 +164,7 @@ class MiniCalendar(QWidget):
         self.month_button.clicked.connect(self.show_month_menu)
         self.year_button.clicked.connect(self.show_year_popup)
         self.year_popup.year_chosen.connect(lambda year: self.setCurrentPage(year, self.monthShown()))
-        self.calendar = CalendarDateGrid(self.preferences, self)
+        self.calendar = CalendarDateGrid(self.preferences, self, surface_role='sidebar')
         self.calendar.setNavigationBarVisible(False)
         self.calendar.setDateRange(QDate(1, 1, 1), QDate(9999, 12, 31))
         self.calendar.setGridVisible(False)
@@ -187,18 +187,19 @@ class MiniCalendar(QWidget):
         self.setLocale(locale)
         self.calendar.setLocale(locale)
         colors = scheme_for(preferences)
+        surface = getattr(colors, self.calendar.surface_role)
         scale = preferences.font_scale / 100
         self.calendar.setStyleSheet(f'''
-            QCalendarWidget QWidget {{ background: {colors.background}; color: {colors.ink}; font-size: {12 * scale:g}px; }}
+            QCalendarWidget, QCalendarWidget QWidget {{ background: {surface}; color: {colors.ink}; font-size: {12 * scale:g}px; }}
             QCalendarWidget QAbstractItemView {{
-                background: {colors.background}; alternate-background-color: {colors.background}; color: {colors.ink};
+                background: {surface}; alternate-background-color: {surface}; color: {colors.ink};
                 selection-background-color: {colors.selection}; selection-color: {colors.ink};
                 border: none; outline: none;
             }}
         ''')
         palette = self.calendar.palette()
         for role in (QPalette.ColorRole.Base, QPalette.ColorRole.AlternateBase, QPalette.ColorRole.Window):
-            palette.setColor(role, QColor(colors.background))
+            palette.setColor(role, QColor(surface))
         palette.setColor(QPalette.ColorRole.Text, QColor(colors.ink))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(colors.selection))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors.ink))
@@ -212,7 +213,7 @@ class MiniCalendar(QWidget):
                     Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday, Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
             formatting = QTextCharFormat()
             formatting.setForeground(QColor(weekend_text(day.value - 1, preferences, colors)))
-            formatting.setBackground(QColor(weekend_fill(day.value - 1, preferences, colors) or colors.background))
+            formatting.setBackground(QColor(weekend_fill(day.value - 1, preferences, colors) or surface))
             self.calendar.setWeekdayTextFormat(day, formatting)
         self.calendar.updateCells()
         for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
