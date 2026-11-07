@@ -1,62 +1,94 @@
-"""Workspace styling, kept separate from calendar behavior."""
+"""Workspace styling, kept separate from calendar behavior and source colors."""
+from dataclasses import asdict
 import re
+from string import Template
+
+from .theme import scheme_for
 
 
-_BASE_STYLE = """
-QWidget { font-family: "Sans Serif"; font-size: 13px; color: #29382f; }
-QMainWindow, QDialog { background: #fafbf8; }
-QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter { background: #edf0e8; }
-QWidget#sidebarShell { border-right: 1px solid #dce2d5; }
-QLabel[muted="true"] { color: #788373; font-size: 12px; }
-QLabel#brand { font-size: 25px; font-weight: 700; letter-spacing: -1px; }
-QLabel#heading { font-size: 24px; font-weight: 600; }
-QLabel#section { color: #65735f; font-size: 12px; font-weight: 600; }
-QPushButton { background: transparent; border: 1px solid #dce2d6; border-radius: 6px; padding: 7px 12px; }
-QPushButton:hover { background: #e5ebde; }
-QPushButton:pressed, QPushButton:checked { background: #e0e9d8; border-color: #b7c8ac; color: #35513d; }
-QPushButton#primary { background: #446d50; color: #fff; border: 1px solid #446d50; font-weight: 600; }
-QPushButton#primary:hover { background: #355b40; }
-QPushButton:disabled { color: #a5aea0; }
-QLineEdit, QTextEdit, QDateTimeEdit, QComboBox, QKeySequenceEdit { background: #fff; border: 1px solid #dce2d6; border-radius: 5px; padding: 6px; selection-background-color: #c9dcc1; }
-QLineEdit:focus, QTextEdit:focus { border-color: #719268; }
-QListWidget, QTreeWidget { background: #fafbf8; border: 1px solid #e1e6da; border-radius: 5px; outline: none; }
+_BASE_STYLE = Template("""
+QWidget { font-family: "Sans Serif"; font-size: 13px; color: $ink; }
+QMainWindow, QDialog { background: $background; }
+QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter, QWidget#sidebarOverview { background: $background; }
+QWidget#sidebarShell { border-right: 1px solid $line; }
+QWidget#sidebarFooter { border-top: 1px solid $line; }
+QWidget#sourceSections { background: $sidebar; border-top: 1px solid $line; }
+QWidget#calendarSection, QWidget#agendaSection, QWidget#sidebarSectionHeader { background: transparent; }
+QWidget#calendarListBody, QWidget#calendarListViewport, QScrollArea#calendarSources { background: $sidebar; }
+QFrame#sourceDivider { background: $line; border: none; }
+QLabel[muted="true"] { color: $muted; font-size: 12px; }
+QLabel[error="true"] { color: $error; }
+QLabel#brand { font-size: 20px; font-weight: 600; letter-spacing: -0.5px; }
+QLabel#heading { font-size: 22px; font-weight: 600; }
+QLabel#section { color: $muted; font-size: 12px; font-weight: 600; }
+QPushButton { background: transparent; border: 1px solid $control_edge; border-radius: 4px; padding: 7px 11px; }
+QPushButton:hover { background: $hover; }
+QPushButton:pressed, QPushButton:checked { background: $selection; border-color: $selection_edge; color: $accent; }
+QPushButton:focus, QToolButton:focus { border: 1px solid $focus; }
+QPushButton:disabled { color: $disabled; border-color: $line; }
+QPushButton#primary { background: $accent; color: $on_accent; border-color: $accent; font-weight: 600; }
+QPushButton#primary:hover { background: $accent_hover; border-color: $accent_hover; }
+QPushButton#primary:focus { border: 2px solid $ink; padding: 6px 10px; }
+QPushButton#primary:disabled { background: $control_surface; color: $disabled; border-color: $control_edge; }
+QPushButton[iconOnly="true"] { background: transparent; border-color: transparent; padding: 5px; }
+QPushButton[iconOnly="true"]:hover { background: $hover; border-color: transparent; }
+QPushButton[iconOnly="true"]:pressed, QPushButton[iconOnly="true"]:checked { background: $selection; border-color: transparent; }
+QPushButton[iconOnly="true"]:focus { border-color: $focus; }
+QPushButton[compactIcon="true"] { padding: 1px; border-color: transparent; }
+QPushButton[compactIcon="true"]:focus { border-color: $focus; }
+QLineEdit, QTextEdit, QPlainTextEdit, QDateTimeEdit, QSpinBox, QComboBox, QKeySequenceEdit {
+    background: $panel; color: $ink; border: 1px solid $control_edge; border-radius: 4px; padding: 6px;
+    selection-background-color: $selection; selection-color: $ink;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QDateTimeEdit:focus, QSpinBox:focus, QComboBox:focus, QKeySequenceEdit:focus { border-color: $focus; }
+QListWidget, QTreeWidget { background: $panel; border: 1px solid $line; border-radius: 4px; }
+QListWidget:focus, QTreeWidget:focus { border-color: $focus; }
 QListWidget::item, QTreeWidget::item { padding: 8px; }
-QListWidget::item:selected, QTreeWidget::item:selected { color: #2c4835; background: #e2ebda; }
-QScrollArea { border: none; background: #fafbf8; }
-QScrollBar:vertical { background: #f0f3ec; width: 9px; }
-QScrollBar::handle:vertical { background: #cbd4c4; border-radius: 4px; min-height: 30px; }
+QListWidget::item:selected, QTreeWidget::item:selected { color: $ink; background: $selection; }
+QTreeWidget#searchResults::item:selected { background: transparent; }
+QTreeWidget#searchResults::branch, QTreeWidget#searchResults::branch:selected { background: $sidebar; }
+QTreeWidget#searchResults::branch:has-children { image: none; }
+QTreeWidget#searchResults { background: transparent; border: none; }
+QScrollArea { border: none; background: $background; }
+QScrollBar:vertical { background: $control_surface; width: 8px; }
+QScrollBar::handle:vertical { background: $control_edge; border-radius: 4px; min-height: 30px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QCalendarWidget QWidget { background: transparent; font-size: 11px; }
-QCalendarWidget QToolButton { color: #3b563e; border: none; padding: 2px; }
-QCalendarWidget QAbstractItemView { background: #edf0e8; alternate-background-color: #edf0e8; color: #29382f; selection-background-color: #496e50; selection-color: white; }
-QCheckBox { spacing: 9px; padding: 5px 0; }
-QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #aabb9e; border-radius: 3px; background: #fafbf8; }
-QCheckBox::indicator:checked { background: #65865b; border-color: #65865b; }
-QLabel#notice { background: #edf0dc; padding: 9px; color: #626a39; border-radius: 5px; }
-QPushButton#calendarChoice { text-align: left; border: 1px solid transparent; padding: 5px 7px; }
-QPushButton#calendarChoice:checked { border-color: #b7c8ac; background: #e0e9d8; font-weight: 600; }
-
-QPushButton[iconOnly="true"] { padding: 5px; }
-QPushButton[compactIcon="true"] { padding: 1px; border-color: transparent; border-radius: 4px; }
-QWidget#segmentedControl { background: #edf0e8; border: 1px solid #d4ddcd; border-radius: 8px; }
-QWidget#segmentedControl QPushButton { background: transparent; border: 1px solid transparent; border-radius: 0; }
-QWidget#segmentedControl QPushButton[segment="first"] { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
-QWidget#segmentedControl QPushButton[segment="last"] { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
-QWidget#segmentedControl QPushButton:hover { background: #e0e7d9; }
-QWidget#segmentedControl QPushButton:checked { background: #fff; border-color: #b4c6aa; color: #35513d; }
-QWidget#segmentedControl QPushButton:pressed { background: #dce7d3; }
-QPushButton#syncStatus { text-align: left; border: none; padding: 5px 0; font-size: 11px; color: #65735f; }
-QMenu { background: #fafbf8; border: 1px solid #dce2d6; padding: 4px; }
+QCalendarWidget QWidget { background: transparent; font-size: 12px; }
+QCalendarWidget QToolButton { color: $accent; border: none; padding: 2px; }
+QCalendarWidget QToolButton:focus { border: 1px solid $focus; }
+QCalendarWidget QAbstractItemView { background: $background; alternate-background-color: $background; color: $ink; selection-background-color: $selection; selection-color: $ink; }
+QCheckBox { spacing: 8px; padding: 4px 0; }
+QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid $control_edge; border-radius: 3px; background: $panel; }
+QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
+QCheckBox::indicator:focus { border-color: $focus; }
+QLabel#notice { background: $notice_background; padding: 8px; color: $notice_ink; border-radius: 4px; }
+QPushButton#calendarChoice, QPushButton#calendarChoice:checked { text-align: left; background: transparent; color: $ink; border: 1px solid transparent; padding: 5px 7px; }
+QPushButton#calendarChoice:checked { font-weight: 600; }
+QPushButton#calendarChoice:focus { border-color: $focus; }
+QPushButton#calendarVisibility, QPushButton#calendarVisibility:checked { background: transparent; border-color: transparent; }
+QPushButton#calendarVisibility:hover { background: $hover; }
+QPushButton#calendarVisibility:focus { border-color: $focus; }
+QWidget#segmentedControl { background: $control_surface; border: 1px solid $line; border-radius: 6px; }
+QWidget#segmentedControl QPushButton { background: transparent; border: 1px solid transparent; border-radius: 4px; }
+QWidget#segmentedControl QPushButton:hover { background: $hover; }
+QWidget#segmentedControl QPushButton:checked { background: $panel; border-color: transparent; color: $accent; }
+QWidget#segmentedControl QPushButton:pressed { background: $selection; }
+QWidget#segmentedControl QPushButton:focus { border-color: $focus; }
+QPushButton#syncStatus { text-align: left; border: 1px solid transparent; padding: 4px 0; font-size: 12px; color: $muted; }
+QPushButton#syncStatus:focus { border-color: $focus; }
+QMenu { background: $panel; color: $ink; border: 1px solid $control_edge; padding: 4px; }
 QMenu::item { padding: 7px 18px; }
-QMenu::item:selected { background: #e0e9d8; }
-QTabWidget::pane { border: 1px solid #dce2d6; }
-QTabBar::tab { padding: 9px 12px; }
-QTabBar::tab:selected { background: #e0e9d8; }
-QToolTip { background: #fafbf8; color: #29382f; border: 1px solid #b7c8ac; padding: 5px; }
-"""
+QMenu::item:selected { background: $selection; color: $ink; }
+QTabWidget::pane { border: 1px solid $line; }
+QTabBar::tab { padding: 8px 12px; }
+QTabBar::tab:selected { background: $selection; color: $accent; }
+QToolTip { background: $panel; color: $ink; border: 1px solid $control_edge; padding: 6px; }
+""")
 
 
-def stylesheet(font_scale=100):
+def stylesheet(font_scale=100, color_scheme='neutral'):
+    """Render interface roles while retaining the existing text-scale API."""
+    style = _BASE_STYLE.substitute(asdict(scheme_for(color_scheme)))
     return re.sub(r"font-size: (\d+)px",
                   lambda match: f"font-size: {round(int(match[1]) * font_scale / 100)}px",
-                  _BASE_STYLE)
+                  style)

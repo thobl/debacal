@@ -7,6 +7,8 @@ from typing import Any
 
 from PySide6.QtCore import QDate, QLocale, QTime
 
+from .theme import SCHEMES
+
 
 SETTINGS_KEY = 'display_preferences'
 WEEK_NUMBERS_DEFAULT_KEY = 'week_numbers_default_version'
@@ -42,6 +44,7 @@ class Preferences:
     show_week_numbers: bool = True
     visible_start_hour: int = 8
     visible_end_hour: int = 18
+    color_scheme: str = 'neutral'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -69,6 +72,8 @@ class Preferences:
         if (type(self.visible_start_hour) is not int or type(self.visible_end_hour) is not int
                 or not 0 <= self.visible_start_hour < self.visible_end_hour <= 24):
             raise ValueError('Visible hours must start before they end, between 00:00 and 24:00.')
+        if not isinstance(self.color_scheme, str) or self.color_scheme not in SCHEMES:
+            raise ValueError('Choose a neutral, warm, or cool color scheme.')
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""

@@ -251,6 +251,7 @@ def test_preview_outline_uses_its_event_calendar_even_if_creation_target_changes
 
 def test_year_selection_keeps_calendar_marker_color_without_blue_ink(view):
     from PySide6.QtGui import QColor, QPen
+    from debacal.event_style import contrast_ratio
     source = Calendar('orange', 'Orange', '#ed7135')
     item = event('chosen', calendar_id=source.id)
     view.set_data(2026, [item], [source])
@@ -258,7 +259,11 @@ def test_year_selection_keeps_calendar_marker_color_without_blue_ink(view):
     with patch('debacal.year_view.QPen', wraps=QPen) as pens, \
             patch.object(view, '_text', wraps=view._text) as labels:
         view.grab()
-    assert any(call.args[0] == QColor(source.color).darker(145) for call in pens.call_args_list if call.args)
+    source_edges = [call.args[0] for call in pens.call_args_list
+                    if len(call.args) > 1 and call.args[1] == 1.5 and isinstance(call.args[0], QColor)]
+    assert source_edges
+    assert source_edges[0].hslHueF() == pytest.approx(QColor(source.color).hslHueF(), abs=.01)
+    assert contrast_ratio(source_edges[0], '#ffffff') >= 3
     assert not any(call.args[0] == QColor('#2c527c') for call in pens.call_args_list if call.args)
     assert not any(len(call.args) > 3 and call.args[3] == QColor('#2c527c') for call in labels.call_args_list)
 

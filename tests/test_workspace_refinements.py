@@ -222,8 +222,10 @@ def test_sidebar_controls_do_not_overlap_with_large_or_small_text(desktop, scale
     window.resize(1030, 690)
     window.refresh()
     settle(app)
-    assert window.mini.geometry().bottom() < window.calendar_scroll.geometry().top()
-    assert window.calendar_scroll.geometry().bottom() < window.search.mapTo(window.sidebar, window.search.rect().topLeft()).y()
+    assert window.mini.mapTo(window.sidebar, window.mini.rect().bottomLeft()).y() < window.calendar_scroll.mapTo(
+        window.sidebar, window.calendar_scroll.rect().topLeft()).y()
+    assert window.calendar_scroll.mapTo(window.sidebar, window.calendar_scroll.rect().bottomLeft()).y() < window.search.mapTo(
+        window.sidebar, window.search.rect().topLeft()).y()
     assert not window.calendar_scroll.verticalScrollBar().isVisible()
     assert window.status.mapTo(window, window.status.rect().bottomRight()).y() < window.height()
 

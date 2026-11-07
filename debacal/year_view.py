@@ -12,14 +12,8 @@ from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
 from .timeutil import local_zone, now
-from .calendar_widgets import event_tooltip
-
-
-BG = QColor('#fafbf8')
-LINE = QColor('#e4e8e0')
-INK = QColor('#26362e')
-MUTED = QColor('#89938a')
-GREEN = QColor('#416c51')
+from .calendar_widgets import event_tooltip, paint_colors
+from .event_style import source_outline
 
 
 class YearView(QWidget):
@@ -324,42 +318,44 @@ class YearView(QWidget):
                     break
         return result
 
-    def _text(self, painter, rect, value, color=INK, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter):
+    def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter):
         font = QFont('Sans Serif')
         font.setPointSizeF(size * self.scale)
         font.setBold(bold)
         painter.setFont(font)
-        painter.setPen(color)
+        painter.setPen(color if color is not None else paint_colors(self).ink)
         painter.drawText(rect, alignment, painter.fontMetrics().elidedText(value, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))))
 
     def paintEvent(self, event):
         self._ensure_geometry()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), BG)
+        colors = paint_colors(self)
+        painter.fillRect(self.rect(), colors.background)
         scale, today = self.scale, now().date()
         for month, (outer, heading, grid) in self._month_rects.items():
             if not outer.intersects(event.rect()):
                 continue
-            painter.setPen(QPen(LINE, 1))
-            painter.setBrush(QColor('#ffffff'))
+            painter.setPen(QPen(colors.line, 1))
+            painter.setBrush(colors.panel)
             painter.drawRoundedRect(outer, 7 * scale, 7 * scale)
-            self._text(painter, heading, self._month_names[month - 1], GREEN, 11, True, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._text(painter, heading, self._month_names[month - 1], colors.accent, 11, True, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             for column, label in enumerate(self._weekday_names):
                 rect = QRectF(grid.x() + column * grid.width() / 7, outer.y() + 31 * scale, grid.width() / 7, 18 * scale)
-                self._text(painter, rect, label, MUTED, 7)
+                weekday = (self.preferences.first_weekday + column) % 7
+                self._text(painter, rect, label, colors.weekend if weekday >= 5 else colors.muted, 8)
             if self.preferences.show_week_numbers:
                 self._text(painter, QRectF(outer.x() + 4 * scale, outer.y() + 31 * scale,
-                                          21 * scale, 18 * scale), 'Wk', MUTED, 6)
+                                          21 * scale, 18 * scale), 'Wk', colors.muted, 7)
                 for (week_month, row), (rect, start) in self._week_rects.items():
                     if week_month != month:
                         continue
                     hovered = self._hover_week == (month, row)
                     if hovered:
                         painter.setPen(Qt.PenStyle.NoPen)
-                        painter.setBrush(QColor('#edf2e7'))
+                        painter.setBrush(colors.selection)
                         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 3 * scale, 3 * scale)
-                    self._text(painter, rect, str(self.preferences.week_number(start)), GREEN if hovered else MUTED,
+                    self._text(painter, rect, str(self.preferences.week_number(start)), colors.accent if hovered else colors.muted,
                                7, hovered)
         for day, rect in self._day_rects.items():
             if not rect.intersects(event.rect()):
@@ -369,32 +365,34 @@ class YearView(QWidget):
             preview = bool(self._preview_summaries[offset]) if self._preview_summaries else False
             box = rect.adjusted(1 * scale, 0, -1 * scale, 0)
             if day == self.selected_day or selected or preview or day == today:
-                color = QColor('#f3f5f0') if day == self.selected_day or selected else QColor('#edf2e7')
+                color = colors.control_surface if day == self.selected_day or selected else colors.selection
                 painter.setBrush(color)
-                pen = QPen(LINE, 1) if day == self.selected_day or selected else QPen(Qt.PenStyle.NoPen)
+                pen = QPen(colors.line, 1) if day == self.selected_day or selected else QPen(Qt.PenStyle.NoPen)
                 if preview:
                     identity = min(self._preview_summaries[offset])
                     source = self.calendars.get(identity)
                     if source is None and self.creation_calendar is not None and self.creation_calendar.id == identity:
                         source = self.creation_calendar
-                    color = QColor(source.color) if source is not None else QColor(GREEN)
-                    pen = QPen(color if color.isValid() else GREEN, 1, Qt.PenStyle.DashLine)
+                    color = QColor(source.color) if source is not None else colors.accent
+                    pen = QPen(color if color.isValid() else colors.accent, 1, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
                 painter.drawRoundedRect(box, 4 * scale, 4 * scale)
             number_rect = rect.adjusted(0, -2 * scale, 0, -3 * scale)
-            self._text(painter, number_rect, str(day.day), GREEN if day == today else INK,
+            self._text(painter, number_rect, str(day.day),
+                       colors.accent if day == today else colors.weekend if day.weekday() >= 5 else colors.ink,
                        8, selected or day == today)
         for hit, _identity, day, calendar_id in self._marker_hits:
             if not hit.intersects(event.rect()):
                 continue
             calendar_value = self.calendars.get(calendar_id)
-            color = QColor(calendar_value.color if calendar_value else '#788373')
+            color = QColor(calendar_value.color) if calendar_value else colors.muted
             if not color.isValid():
-                color = GREEN
+                color = colors.accent
             marker = hit.adjusted(2 * scale, 2 * scale, -2 * scale, -2 * scale)
             painter.setBrush(color)
             selected = self._selected_summaries[(day - self._first).days]
-            painter.setPen(QPen(color.darker(145), 1.5) if calendar_id in selected else QPen(Qt.PenStyle.NoPen))
+            painter.setPen(QPen(QColor(source_outline(color.darker(145), colors.background)), 1.5)
+                           if calendar_id in selected else QPen(Qt.PenStyle.NoPen))
             painter.drawRoundedRect(marker, 1 * scale, 1 * scale)
         painter.end()
 

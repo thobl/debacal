@@ -5,7 +5,7 @@ from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal, QEvent
-from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut
+from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut, QTextCharFormat
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox, QButtonGroup,
@@ -16,6 +16,7 @@ from .models import Event, Calendar
 from .patterns import expand_sequence, reconstruct_sequence, PatternError
 from .timeutil import local_zone
 from .preferences import Preferences
+from .theme import scheme_for
 from .series_preview import SeriesPreview
 from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 
@@ -25,6 +26,14 @@ def hint(text):
     label.setWordWrap(True)
     label.setProperty('muted', True)
     return label
+
+
+def _style_date_popup(field, preferences):
+    scheme = scheme_for(preferences)
+    for day in range(1, 8):
+        format = QTextCharFormat()
+        format.setForeground(QColor(scheme.weekend if day >= 6 else scheme.ink))
+        field.calendarWidget().setWeekdayTextFormat(Qt.DayOfWeek(day), format)
 
 
 class FormDialog(QDialog):
@@ -169,6 +178,7 @@ class EventDialog(FormDialog):
                              (self.end, reference.end if reference else end or start + timedelta(hours=1))):
             field.setLocale(self.preferences.qt_locale())
             field.setCalendarPopup(True)
+            _style_date_popup(field, self.preferences)
             field.calendarWidget().setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
             field.setDisplayFormat(self.preferences.qt_datetime_pattern())
             field.setTimeZone(QTimeZone.utc())
@@ -212,6 +222,7 @@ class EventDialog(FormDialog):
         self.repeat_until = QDateEdit(QDate(start.year + 1, start.month, min(start.day, 28)))
         self.repeat_until.setLocale(self.preferences.qt_locale())
         self.repeat_until.setCalendarPopup(True)
+        _style_date_popup(self.repeat_until, self.preferences)
         self.repeat_until.calendarWidget().setFirstDayOfWeek(Qt.DayOfWeek(self.preferences.first_weekday + 1))
         self.repeat_until.setDisplayFormat(self.preferences.qt_date_pattern())
         self.custom_rule = QLineEdit()
@@ -244,7 +255,7 @@ class EventDialog(FormDialog):
         outer.addLayout(columns, 1)
         self.error = QLabel()
         self.error.setWordWrap(True)
-        self.error.setStyleSheet('color: #b54735;')
+        self.error.setProperty('error', True)
         outer.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.save)

@@ -9,15 +9,14 @@ from heapq import merge
 from html import escape
 from itertools import chain, islice
 
-from PySide6.QtCore import Qt, Signal, QSize, QItemSelectionModel
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette
+from PySide6.QtCore import Qt, Signal, QItemSelectionModel
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QStyle, QStyleOptionViewItem,
-    QStyledItemDelegate, QTreeWidget, QTreeWidgetItem,
+    QApplication, QAbstractItemView, QTreeWidget, QTreeWidgetItem,
 )
 
 from .models import Event
 from .recurrence import occurrence, recurrence_key, recurrence_set, overlaps
+from .search_result_style import SearchResultDelegate as _ResultDelegate
 from .timeutil import local_zone, now
 
 
@@ -88,44 +87,6 @@ class _ResultItem(QTreeWidgetItem):
         return super().text(column)
 
 
-class _ResultDelegate(QStyledItemDelegate):
-    def sizeHint(self, option, index):
-        return QSize(super().sizeHint(option, index).width(), 45)
-
-    def paint(self, painter, option, index):
-        styled = QStyleOptionViewItem(option)
-        self.initStyleOption(styled, index)
-        title = styled.text
-        styled.text, styled.icon = '', QIcon()
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, styled, painter, option.widget)
-        selected = bool(styled.state & QStyle.StateFlag.State_Selected)
-        painter.save()
-        painter.setClipRect(option.rect)
-        left = option.rect.left() + 5
-        color = QColor(index.data(COLOR_ROLE) or '#788373')
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawRoundedRect(left, option.rect.top() + 9, 4, 26, 2, 2)
-        left += 12
-        width = max(0, option.rect.right() - left - 6)
-        normal = QFont(option.font)
-        bold = QFont(normal)
-        bold.setBold(True)
-        if normal.pixelSize() > 0:
-            normal.setPixelSize(max(9, normal.pixelSize() - 1))
-        elif normal.pointSizeF() > 0:
-            normal.setPointSizeF(max(7, normal.pointSizeF() - 1))
-        painter.setFont(bold)
-        painter.setPen(QColor('#2c4835') if selected else styled.palette.color(QPalette.ColorRole.Text))
-        painter.drawText(left, option.rect.top() + 18, painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, width))
-        painter.setFont(normal)
-        painter.setPen(QColor('#52664b') if selected else QColor('#788373'))
-        subtitle = index.data(SUBTITLE_ROLE) or ''
-        painter.drawText(left, option.rect.top() + 35, painter.fontMetrics().elidedText(subtitle, Qt.TextElideMode.ElideRight, width))
-        painter.restore()
-
-
 class SearchPanel(QTreeWidget):
     """One parent per matching resource; dated instances load on expansion.
 
@@ -140,6 +101,7 @@ class SearchPanel(QTreeWidget):
 
     def __init__(self, store, preferences, parent=None):
         super().__init__(parent)
+        self.setObjectName('searchResults')
         self.store, self.preferences = store, preferences
         self.agenda_mode = False
         self.setHeaderHidden(True)
@@ -147,8 +109,8 @@ class SearchPanel(QTreeWidget):
         self.setRootIsDecorated(True)
         self.setUniformRowHeights(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setItemDelegate(_ResultDelegate(self))
-        self.setIndentation(15)
+        self.setItemDelegate(_ResultDelegate(self, subtitle_role=SUBTITLE_ROLE, color_role=COLOR_ROLE))
+        self.setIndentation(round(15 * preferences.font_scale / 100))
         self._index = None
         self._query = None
         self._range = None
@@ -218,6 +180,7 @@ class SearchPanel(QTreeWidget):
         self._context_signature = signature
         self._presentation_revision += 1
         self.preferences = preferences
+        self.setIndentation(round(15 * preferences.font_scale / 100))
         self._calendars = {calendar.id: calendar for calendar in calendars}
         for item in self._all_rows():
             effective = item.data(EVENT_ROLE)

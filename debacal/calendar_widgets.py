@@ -4,6 +4,8 @@ from datetime import datetime, time, timedelta, timezone
 from bisect import bisect_left, bisect_right
 from time import monotonic
 from html import escape
+from functools import lru_cache
+from types import SimpleNamespace
 import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
@@ -15,17 +17,39 @@ from .recurrence import overlaps
 from .preferences import Preferences
 from .timeutil import local_zone, now
 from .event_scope import normalize_scope_modifiers, scope_from_modifiers
+from .theme import scheme_for
+from .event_style import event_colors, source_outline
 
-BG = QColor('#fafbf8')
-LINE = QColor('#e4e8e0')
-INK = QColor('#26362e')
-MUTED = QColor('#89938a')
-GREEN = QColor('#416c51')
-SELECTED_DAY = QColor('#edf1f8')
-SELECTED_DAY_BORDER = QColor('#91a2b8')
-COPY_BADGE_COLOR = QColor('#526b80')
+# Default aliases remain available to standalone painter callers. Live surfaces
+# resolve their own preferences through paint_colors rather than mutating these.
+BG = QColor('#ffffff')
+LINE = QColor('#e0e5e8')
+INK = QColor('#27313a')
+MUTED = QColor('#596570')
+GREEN = QColor('#475f52')
 CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores them.'
-HOVER_TIME_COLOR = QColor('#526b80')
+WEEKDAY_SIZE = 9
+
+
+@lru_cache(maxsize=3)
+def _scheme_colors(name):
+    scheme = scheme_for(name)
+    return SimpleNamespace(**{key: QColor(getattr(scheme, key)) for key in (
+        'background', 'panel', 'ink', 'muted', 'accent', 'weekend', 'line',
+        'control_surface', 'selection', 'selection_edge', 'now', 'outside_month')})
+
+
+def paint_colors(widget):
+    """Reuse paint tokens while each surface keeps its own scheme."""
+    return _scheme_colors(scheme_for(getattr(widget, 'preview', widget)).name)
+
+
+def draw_column_grid(painter, gutter, width, days, height, color):
+    column = (width - gutter) / max(1, len(days))
+    painter.setPen(QPen(color, 1))
+    for index in range(len(days) + 1):
+        x = gutter + index * column
+        painter.drawLine(QPointF(x, 0), QPointF(x, height))
 
 
 def at(day, hour=0, minute=0):
@@ -89,10 +113,10 @@ def display_scale(widget):
     return getattr(preferences, 'font_scale', 100) / 100
 
 
-def text(painter, rect, value, color=INK, size=10, bold=False, align=None):
+def text(painter, rect, value, color=None, size=10, bold=False, align=None):
     if rect.width() <= 0 or rect.height() <= 0:
         return
-    painter.setPen(color)
+    painter.setPen(color if color is not None else paint_colors(painter.device()).ink)
     font = QFont('Sans Serif')
     font.setPointSizeF(size * display_scale(painter.device()))
     font.setBold(bold)
@@ -101,10 +125,11 @@ def text(painter, rect, value, color=INK, size=10, bold=False, align=None):
 
 
 def badge(painter, rect, value, selected=False):
-    painter.setPen(QPen(GREEN if selected else QColor('#bccbb4'), 1))
-    painter.setBrush(GREEN if selected else QColor('#f8fbf3'))
+    colors = paint_colors(painter.device())
+    painter.setPen(QPen(colors.accent if selected else colors.selection_edge, 1))
+    painter.setBrush(colors.accent if selected else colors.panel)
     painter.drawRoundedRect(rect, 4, 4)
-    text(painter, rect, value, QColor('#ffffff') if selected else GREEN, 8, True,
+    text(painter, rect, value, QColor('#ffffff') if selected else colors.accent, 8, True,
          Qt.AlignmentFlag.AlignCenter)
 
 
@@ -142,7 +167,7 @@ class DayHeader(QWidget):
     placement_moved = Signal(object)
     placement_confirmed = Signal(object)
     gutter = 62
-    all_day_top = 60
+    all_day_top = 64
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -155,7 +180,7 @@ class DayHeader(QWidget):
         self.creation_calendar = None
         self.placement_active = False
         self._placement_consumed = False
-        self.setFixedHeight(84)
+        self.setFixedHeight(64)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -165,8 +190,8 @@ class DayHeader(QWidget):
         self.preferences = preferences
         scale = display_scale(self)
         self.gutter = math.ceil(62 * scale)
-        self.all_day_top = math.ceil(60 * scale)
-        self.setFixedHeight(math.ceil(84 * scale))
+        self.all_day_top = math.ceil(64 * scale)
+        self.setFixedHeight(self.all_day_top)
         self.update()
 
     def set_navigation(self, active, day=None, digits=''):
@@ -186,8 +211,8 @@ class DayHeader(QWidget):
 
     def creation_color(self):
         calendar = self.creation_calendar
-        color = QColor(calendar.color) if calendar is not None else QColor(GREEN)
-        return color if color.isValid() else QColor(GREEN)
+        color = QColor(calendar.color) if calendar is not None else QColor(paint_colors(self).accent)
+        return color if color.isValid() else QColor(paint_colors(self).accent)
 
     def day_at(self, point):
         if not self.days or point.x() < self.gutter or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
@@ -248,34 +273,37 @@ class DayHeader(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), BG)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        colors = paint_colors(self)
+        p.fillRect(self.rect(), colors.background)
         if not self.days:
             return
         w = (self.width() - self.gutter) / len(self.days)
         scale = display_scale(self)
         week = self.week_rect()
         if week is not None:
-            text(p, QRectF(week.left(), week.top(), week.width(), 16 * scale), 'WEEK', MUTED, 7,
+            text(p, QRectF(week.left(), week.top(), week.width(), 16 * scale), 'WEEK', colors.muted, 8,
                  align=Qt.AlignmentFlag.AlignCenter)
             text(p, QRectF(week.left(), week.top() + 16 * scale, week.width(), 27 * scale),
-                 str(self.preferences.week_number(self.days[0])), GREEN, 14, True,
+                 str(self.preferences.week_number(self.days[0])), colors.accent, 14, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
             today = day == now().date()
             selected_day = self.navigation_active and i == self.navigation_day
             if today or selected_day:
-                p.setPen(QPen(GREEN, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
-                p.setBrush(QColor('#dceace') if selected_day else QColor('#e6eedf'))
-                p.drawRoundedRect(QRectF(x + 8, 5 * scale, w - 16, 54 * scale), 7, 7)
-            text(p, QRectF(x + 14, 8 * scale, w - 22, 20 * scale), self.preferences.weekday_name(day).upper(), GREEN if today or selected_day else MUTED, 9, True)
-            text(p, QRectF(x + 14, 27 * scale, w - 22, math.ceil(28 * scale)), str(day.day), GREEN if today else INK, 18, True)
+                p.setPen(QPen(colors.accent, 2) if selected_day else QPen(Qt.PenStyle.NoPen))
+                p.setBrush(colors.selection)
+                p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), 4, 4)
+            day_color = colors.accent if today or selected_day else colors.weekend if day.weekday() >= 5 else colors.muted
+            text(p, QRectF(x + 11, 8 * scale, w - 20, 20 * scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
+            text(p, QRectF(x + 11, 28 * scale, w - 20, math.ceil(28 * scale)), str(day.day),
+                 colors.accent if today else colors.weekend if day.weekday() >= 5 else colors.ink, 17, True)
             if self.navigation_active:
                 badge(p, QRectF(x + w - 34, 11, 21, 21), str(i + 1), selected_day)
-            p.setPen(QPen(LINE, 1))
-            p.drawLine(QPointF(x + 8, self.all_day_top), QPointF(x + w - 8, self.all_day_top))
-            text(p, QRectF(x + 8, self.all_day_top + 1, w - 16, 20 * scale), '+ All day', GREEN, 8,
-                 align=Qt.AlignmentFlag.AlignCenter)
+        draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
+        p.setPen(QPen(colors.line, 1))
+        p.drawLine(QPointF(self.gutter, self.height() - .5), QPointF(self.width(), self.height() - .5))
         p.end()
 
 
@@ -453,10 +481,11 @@ class CalendarCanvas(QWidget):
         if rect is None:
             return
         self.confirm_hits.append((rect, item.id))
-        painter.setPen(QPen(GREEN, 1.2))
-        painter.setBrush(QColor('#f8fbf3'))
+        colors = paint_colors(self)
+        painter.setPen(QPen(colors.accent, 1.2))
+        painter.setBrush(colors.panel)
         painter.drawRoundedRect(rect, 3, 3)
-        painter.setPen(QPen(GREEN, max(1.4, 1.5 * display_scale(self))))
+        painter.setPen(QPen(colors.accent, max(1.4, 1.5 * display_scale(self))))
         painter.drawLine(QPointF(rect.left() + rect.width() * .22, rect.top() + rect.height() * .52),
                          QPointF(rect.left() + rect.width() * .43, rect.top() + rect.height() * .72))
         painter.drawLine(QPointF(rect.left() + rect.width() * .43, rect.top() + rect.height() * .72),
@@ -553,10 +582,11 @@ class CalendarCanvas(QWidget):
     def paint_copy_badge(self, painter):
         rect = self.copy_badge_rect()
         if rect is not None:
-            painter.setPen(QPen(COPY_BADGE_COLOR, 1.5))
-            painter.setBrush(QColor('#f8fbf3'))
+            colors = paint_colors(self)
+            painter.setPen(QPen(colors.accent, 1.5))
+            painter.setBrush(colors.panel)
             painter.drawRoundedRect(rect, 4, 4)
-            text(painter, rect, '+', COPY_BADGE_COLOR, 13, True, Qt.AlignmentFlag.AlignCenter)
+            text(painter, rect, '+', colors.accent, 13, True, Qt.AlignmentFlag.AlignCenter)
 
     def time_feedback(self):
         if self.placement_active:
@@ -578,8 +608,10 @@ class CalendarCanvas(QWidget):
         width = (self.width() - self.gutter) / len(self.days)
         x = self.gutter + day * width
         y = self.time_top + (minute / 60 - self.start_hour) * self.hour_height
-        accent = self.creation_color() if creating else HOVER_TIME_COLOR
-        color = QColor(accent)
+        colors = paint_colors(self)
+        accent = self.creation_color() if creating else colors.muted
+        style = event_colors(accent.name(), self, alpha=34)
+        color = QColor(style.outline if creating else accent)
         color.setAlpha(210 if creating else 125)
         painter.setPen(QPen(color, 1.5 if creating else 1))
         painter.drawLine(QPointF(x + 3, y), QPointF(x + width - 3, y))
@@ -587,13 +619,11 @@ class CalendarCanvas(QWidget):
         scale = display_scale(self)
         label_width = min(width - 12, max(46, len(label) * 7 + 10) * scale)
         rect = QRectF(x + 6, min(max(self.time_top + 2, y - 22 * scale), self.height() - 23 * scale), label_width, 20 * scale)
-        painter.setPen(QPen(accent if creating else LINE, 1))
-        fill = QColor('#e7efdf')
-        if accent != GREEN:
-            fill.setHslF(accent.hslHueF(), min(fill.hslSaturationF(), accent.hslSaturationF()), fill.lightnessF())
-        painter.setBrush(fill if creating else BG)
+        painter.setPen(QPen(QColor(style.outline) if creating else colors.line, 1))
+        painter.setBrush(QColor(style.fill) if creating else colors.background)
         painter.drawRoundedRect(rect, 3, 3)
-        text(painter, rect, label, accent, 8, creating, Qt.AlignmentFlag.AlignCenter)
+        label_color = QColor(source_outline(accent, style.fill, 4.5)) if creating else accent
+        text(painter, rect, label, label_color, 8, creating, Qt.AlignmentFlag.AlignCenter)
 
     def _refit(self):
         if self._viewport_height is not None and not self.drag:
@@ -710,49 +740,49 @@ class CalendarCanvas(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), BG)
+        colors = paint_colors(self)
+        p.fillRect(self.rect(), colors.background)
         self.confirm_hits = []
         if not self.days:
             return
         w = (self.width() - self.gutter) / len(self.days)
         scale = display_scale(self)
         for i, day in enumerate(self.days):
-            if day.weekday() >= 5:
-                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#f4f6f0'))
             if self.show_numbers and i == self.navigation_day:
-                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), QColor('#eef4e7'))
-        p.setPen(QPen(LINE, 1))
-        for i in range(len(self.days) + 1):
-            x = self.gutter + i * w
-            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+                p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), colors.selection)
+        draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         if not self.fixed_all_day:
-            text(p, QRectF(4, 4, 56 * scale, 28 * scale), 'ALL DAY', MUTED, 7)
-            p.setPen(QPen(LINE, 1))
+            text(p, QRectF(4, 4, 56 * scale, 28 * scale), 'ALL DAY', colors.muted, 8)
+            p.setPen(QPen(colors.line, 1))
             p.drawLine(0, self.time_top, self.width(), self.time_top)
         for hour in range(self.start_hour, self.end_hour + 1):
             y = self.time_top + (hour - self.start_hour) * self.hour_height
-            p.setPen(QPen(LINE, 1))
+            p.setPen(QPen(colors.line, 1))
             p.drawLine(QPointF(self.gutter, y), QPointF(self.width(), y))
             if hour and hour < 24:
                 label = self.preferences.format_time(time(hour))
-                text(p, QRectF(2, max(0, y - 11 * scale), 54 * scale, 22 * scale), label, MUTED, 7 if len(label) > 5 else 8,
+                text(p, QRectF(2, max(0, y - 11 * scale), 54 * scale, 22 * scale), label, colors.muted, 8,
                      align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if hour < self.end_hour:
-                p.setPen(QPen(QColor('#edf0e9'), 1, Qt.PenStyle.DotLine))
+                p.setPen(QPen(colors.line, 1, Qt.PenStyle.DotLine))
                 p.drawLine(QPointF(self.gutter, y + self.hour_height / 2), QPointF(self.width(), y + self.hour_height / 2))
+        current_point = None
+        current = now()
+        if current.date() in self.days and self.start_hour <= current.hour < self.end_hour:
+            i = self.days.index(current.date())
+            y = self.time_top + (current.hour + current.minute / 60 - self.start_hour) * self.hour_height
+            p.setPen(QPen(colors.now, 1.5))
+            p.drawLine(QPointF(self.gutter + i * w, y), QPointF(self.gutter + (i + 1) * w, y))
+            current_point = QPointF(self.gutter + i * w, y)
         self.hits = self.rects()
         for rect, event, number in self.hits:
             self.paint_event(p, rect, event, number)
         for rect, event, number in self.rects(self.preview_events):
             self.paint_event(p, rect, event, number, preview=True)
-        current = now()
-        if current.date() in self.days and self.start_hour <= current.hour < self.end_hour:
-            i = self.days.index(current.date())
-            y = self.time_top + (current.hour + current.minute / 60 - self.start_hour) * self.hour_height
-            p.setPen(QPen(QColor('#c16f55'), 1.5))
-            p.drawLine(QPointF(self.gutter + i * w, y), QPointF(self.gutter + (i + 1) * w, y))
-            p.setBrush(QColor('#c16f55'))
-            p.drawEllipse(QPointF(self.gutter + i * w, y), 3, 3)
+        if current_point is not None:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(colors.now)
+            p.drawEllipse(current_point, 3, 3)
         if self.ghost and not self.preview_events:
             day, start_min, end_min = self.ghost
             if 0 <= day < len(self.days):
@@ -761,36 +791,36 @@ class CalendarCanvas(QWidget):
                 creating = self.drag and self.drag[0] == 'create'
                 item = self.drag[1] if self.drag and not creating else None
                 calendar = self.calendars.get(item.calendar_id) if item is not None else None
-                color = self.creation_color() if creating else QColor(calendar.color) if calendar else QColor(GREEN)
-                fill = QColor(80, 130, 90, 45) if creating and self.creation_calendar is None else QColor(color)
-                fill.setAlpha(45)
-                p.setPen(QPen(color, 2, Qt.PenStyle.DashLine))
-                p.setBrush(fill)
+                color = self.creation_color() if creating else QColor(calendar.color) if calendar else colors.accent
+                style = event_colors(color.name(), self, alpha=45)
+                p.setPen(QPen(QColor(style.outline), 2, Qt.PenStyle.DashLine))
+                p.setBrush(QColor(style.fill))
                 p.drawRoundedRect(rect, 5, 5)
                 if self.drag and self.drag[0] != 'create':
                     scope = self.scope
                     label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
-                    text(p, rect.adjusted(5, 0, -5, 0), label, color, 8, True)
+                    text(p, rect.adjusted(5, 0, -5, 0), label, QColor(style.ink), 8, True)
         self.paint_time_feedback(p)
         self.paint_copy_badge(p)
         p.end()
 
     def paint_event(self, p, rect, event, number, preview=False):
-        color = QColor(self.calendars[event.calendar_id].color) if event.calendar_id in self.calendars else GREEN
+        color = self.calendars[event.calendar_id].color if event.calendar_id in self.calendars else scheme_for(self).accent
         day_width = (self.width() - self.gutter) / max(1, len(self.days))
         day_index = int((rect.center().x() - self.gutter) / day_width)
         numbered = not preview and self.show_numbers and self.navigation_day == day_index
         target = numbered and self.navigation_digits.isascii() and self.navigation_digits.isdigit() and int(self.navigation_digits) == number
         selected = not preview and (event.id in self.selected_ids or event.id == self.selected_id)
         confirm = self.confirmation_rect(rect, event, preview)
-        fill = QColor(color)
-        fill.setAlpha(34 if preview else 95 if target else 38 if event.candidate else 52)
-        p.setBrush(fill)
-        p.setPen(QPen(GREEN if target else color.darker(145) if selected else color, 3 if target else 2 if selected or preview else 1,
+        scale = display_scale(self)
+        style = event_colors(color, self, alpha=34 if preview else 38 if event.candidate else 52)
+        edge = QColor(style.selected_outline if selected or target else style.outline)
+        p.setBrush(QColor(style.fill))
+        p.setPen(QPen(edge, 3 if target else 2 if selected or preview else 1,
                       Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, 5, 5)
         if selected:
-            p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), color.darker(145))
+            p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), edge)
         # QPainter draws no text in nonpositive label rectangles. Dense
         # overlap columns still keep their frames, but need no font/layout work.
         if rect.width() > 12 and rect.height() > 2:
@@ -800,14 +830,14 @@ class CalendarCanvas(QWidget):
             scale = display_scale(self)
             title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
             reserve = (40 if numbered else 12) + (confirm.width() + 6 * scale if confirm is not None else 0)
-            text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, color.darker(145), 9, True)
+            text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, QColor(style.ink), 9, True)
             if rect.height() > 39 * scale:
                 value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
                 if event.candidate:
                     value += ' · option'
-                text(p, QRectF(rect.x() + 8, rect.y() + 23 * scale, rect.width() - 12, 18 * scale), value, color.darker(120), 8)
+                text(p, QRectF(rect.x() + 8, rect.y() + 23 * scale, rect.width() - 12, 18 * scale), value, QColor(style.muted), 8)
             if rect.height() > 64 * scale and event.location:
-                text(p, QRectF(rect.x() + 8, rect.y() + 43 * scale, rect.width() - 12, 18 * scale), event.location, color.darker(120), 8)
+                text(p, QRectF(rect.x() + 8, rect.y() + 43 * scale, rect.width() - 12, 18 * scale), event.location, QColor(style.muted), 8)
             p.restore()
         if numbered:
             size = min(22, max(12, rect.height() - 4))
@@ -1093,7 +1123,7 @@ class MonthCanvas(QWidget):
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self._drag_pointer = None
         self.preferences = Preferences()
-        self.show_creation_hints = True
+        self.show_creation_hints = False
         self.initialize_confirmation()
         self.setMinimumHeight(440)
         self.setMouseTracking(True)
@@ -1171,19 +1201,19 @@ class MonthCanvas(QWidget):
         self.update()
 
     def _paint_month_event(self, painter, rect, item, *, preview=False, before=False, after=False):
-        color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
+        color = self.calendars[item.calendar_id].color if item.calendar_id in self.calendars else scheme_for(self).accent
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
         confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
-        fill = QColor(color)
-        fill.setAlpha(45 if preview else 40)
-        painter.setPen(QPen(color.darker(145) if selected else color, 2 if selected or preview else 1,
+        style = event_colors(color, self, alpha=45 if preview else 40)
+        edge = QColor(style.selected_outline if selected else style.outline)
+        painter.setPen(QPen(edge, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine)
                        if selected or preview or item.all_day else Qt.PenStyle.NoPen)
-        painter.setBrush(fill)
+        painter.setBrush(QColor(style.fill))
         painter.drawRoundedRect(rect, 3, 3)
         if selected:
-            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), color.darker(145))
-        ink = color.darker(140)
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
+        ink = QColor(style.ink)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:
@@ -1295,37 +1325,44 @@ class MonthCanvas(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), BG)
+        colors = paint_colors(self)
+        p.fillRect(self.rect(), colors.background)
         self.confirm_hits = []
         scale = display_scale(self)
         gutter = self.week_gutter
         width, height = (self.width() - gutter) / 7, (self.height() - self.header_height) / 6
         day_label_height = min(25 * scale, self.month_row_metrics()[0] - 2 * scale)
         if gutter:
-            text(p, QRectF(0, 0, gutter, self.header_height), 'Wk', MUTED, 7, True, Qt.AlignmentFlag.AlignCenter)
+            text(p, QRectF(0, 0, gutter, self.header_height), 'Wk', colors.muted, 8, True, Qt.AlignmentFlag.AlignCenter)
             for row in range(6):
                 rect = self.week_rect(row)
                 text(p, QRectF(rect.left(), rect.top() + 3 * scale, rect.width(), 25 * scale),
-                     str(self.preferences.week_number(self.start + timedelta(days=7 * row))), GREEN, 8, True,
+                     str(self.preferences.week_number(self.start + timedelta(days=7 * row))), colors.accent, 8, True,
                      Qt.AlignmentFlag.AlignCenter)
         today = now().date()
         for index in range(7):
-            name = self.preferences.weekday_name(self.start + timedelta(days=index)).upper()
-            text(p, QRectF(gutter + index * width + 12, 0, width - 15, 25 * scale), name, MUTED, 8, True)
+            day = self.start + timedelta(days=index)
+            name = self.preferences.weekday_name(day).upper()
+            text(p, QRectF(gutter + index * width + 11, 0, width - 18, 25 * scale), name,
+                 colors.weekend if day.weekday() >= 5 else colors.muted, WEEKDAY_SIZE, True)
         # Finish every day background before drawing any bar across its neighbors.
         for index in range(42):
             day = self.start + timedelta(days=index)
             x, y = gutter + (index % 7) * width, self.header_height + (index // 7) * height
             rect = QRectF(x, y, width, height)
             if day.month != self.month:
-                p.fillRect(rect, QColor('#f0f3ec'))
+                p.fillRect(rect, colors.outside_month)
             if day == today:
-                p.fillRect(rect, QColor('#edf2e7'))
-            p.setPen(QPen(LINE, 1))
+                p.fillRect(rect, colors.selection)
+            p.setPen(QPen(colors.line, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
             text(p, QRectF(x + 10, y + 3 * scale, width - 18, day_label_height), str(day.day),
-                 GREEN if day == today else INK, 10, True)
+                 colors.accent if day == today else colors.weekend if day.weekday() >= 5 else colors.ink, 10, True)
+        p.setPen(QPen(colors.line, 1))
+        for index in range(8):
+            x = gutter + index * width
+            p.drawLine(QPointF(x, 0), QPointF(x, self.header_height))
         commands, hits = self.month_layout()
         self.hits = [(QRectF(rect), item) for rect, item in hits]
         for command in commands:
@@ -1334,7 +1371,7 @@ class MonthCanvas(QWidget):
                 self._paint_month_event(p, rect, item, preview=preview, before=before, after=after)
             else:
                 _kind, rect, label, size, align = command
-                text(p, rect, label, MUTED, size, align=align)
+                text(p, rect, label, colors.muted, size, align=align)
         self.paint_copy_badge(p)
         p.end()
 
@@ -1575,17 +1612,16 @@ class AllDayCanvas(MonthCanvas):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), BG)
+        colors = paint_colors(self)
+        p.fillRect(self.rect(), colors.background)
         if not self.days:
             p.end()
             return
-        width = (self.width() - self.gutter) / len(self.days)
-        p.setPen(QPen(LINE, 1))
-        for index in range(len(self.days) + 1):
-            x = self.gutter + index * width
-            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
+        p.setPen(QPen(colors.line, 1))
+        p.drawLine(QPointF(self.gutter, self.height() - .5), QPointF(self.width(), self.height() - .5))
         scale = display_scale(self)
-        text(p, QRectF(3, 3, 55 * scale, 24 * scale), 'ALL DAY', MUTED, 7)
+        text(p, QRectF(3, 3, 55 * scale, 24 * scale), 'ALL DAY', colors.muted, 8)
         self.hits = []
         self.confirm_hits = []
         for rect, item, number in self.rects():
@@ -1602,20 +1638,20 @@ class AllDayCanvas(MonthCanvas):
         p.end()
 
     def _paint_bar(self, painter, rect, item, preview=False):
-        color = QColor(self.calendars[item.calendar_id].color) if item.calendar_id in self.calendars else GREEN
+        color = self.calendars[item.calendar_id].color if item.calendar_id in self.calendars else scheme_for(self).accent
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
-        fill = QColor(color)
-        fill.setAlpha(36 if preview else 45)
-        painter.setPen(QPen(color.darker(145) if selected else color, 2 if selected or preview else 1,
+        style = event_colors(color, self, alpha=36 if preview else 45)
+        edge = QColor(style.selected_outline if selected else style.outline)
+        painter.setPen(QPen(edge, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine))
-        painter.setBrush(fill)
+        painter.setBrush(QColor(style.fill))
         painter.drawRoundedRect(rect, 4, 4)
         if selected:
-            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), color.darker(145))
+            painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
         first, last = self.days[0], self.days[-1] + timedelta(days=1)
         before, after = item.start.date() < first, item.end.date() > last
         confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
-        ink = color.darker(145)
+        ink = QColor(style.ink)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:

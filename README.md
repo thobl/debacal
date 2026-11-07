@@ -114,6 +114,13 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 ## Workflow
 
+Choose **Preferences → Appearance → Color scheme** for Neutral, Warm, or Cool
+interface colors. The choice is saved per profile and applies to the workspace
+and calendar previews. Calendar colors still come from their sources. The
+sidebar separates the month overview, calendar controls, and agenda/search;
+source-colored event cards keep their selection and keyboard focus cues. Choose
+a calendar by name to create in it; its eye button controls visibility separately.
+
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.
   The navigation buttons keep their position as month labels change.

@@ -165,7 +165,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
         self.setLocale(self.preferences.qt_locale())
-        self.setStyleSheet(stylesheet(self.preferences.font_scale))
+        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
         central = QWidget()
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
@@ -173,6 +173,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         root.setSpacing(0)
         self.build_sidebar(root)
         self.build_workspace(root)
+        self.scroll.verticalScrollBar().rangeChanged.connect(lambda *_: self.sync_week_columns())
+        self.all_day_scroll.verticalScrollBar().rangeChanged.connect(lambda *_: self.sync_week_columns())
         for surface in (self.header, self.month, self.year):
             surface.week_requested.connect(self.open_week)
         self.install_mode_shortcuts()
@@ -346,7 +348,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.store.set_setting('keybindings', self.bindings)
             self.install_mode_shortcuts()
             self.setLocale(self.preferences.qt_locale())
-            self.setStyleSheet(stylesheet(self.preferences.font_scale))
+            self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences.color_scheme))
             self.select_mode = False
             self.configure_auto_sync()
             self.refresh(calendars=True)
@@ -395,6 +397,23 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             # size. Clamping afterward can repeatedly show/hide a scrollbar.
             height = max(1, self.scroll.viewport().height() - 1)
             self.canvas.fit_to_viewport(height, full_day=self.full_day)
+            self.sync_week_columns()
+
+    def sync_week_columns(self):
+        """Share grid geometry even when either event lane needs a scrollbar.
+
+        Keep the scroll areas full width and reserve any trailing scrollbar
+        space in their contents. This covers both a full-day timed view and a
+        crowded pinned all-day lane without shifting dates into other columns.
+        """
+        if self._closed or self.view not in ('day', 'week'):
+            return
+        width = min(self.scroll.viewport().width(), self.all_day_scroll.viewport().width())
+        if width <= self.canvas.gutter:
+            return
+        for widget in (self.header, self.canvas, self.all_day_canvas):
+            if widget.maximumWidth() != width:
+                widget.setMaximumWidth(width)
 
     def toggle_full_day(self):
         if self.view not in ('day', 'week'):
@@ -1556,6 +1575,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     self.preview_drag(event_id, start, end, modifiers)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
+        if event.type() == QEvent.Type.Resize and hasattr(self, 'all_day_scroll') and obj is self.all_day_scroll.viewport():
+            QTimer.singleShot(0, self.sync_week_columns)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'year_scroll') and obj is self.year_scroll.viewport():
             QTimer.singleShot(0, self.fit_year)
         if (event.type() != QEvent.Type.KeyPress or not self.isActiveWindow()

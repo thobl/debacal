@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 
 from .calendar_widgets import MonthCanvas, display_scale, event_tooltip
 from .icons import icon
+from .event_style import event_colors
+from .theme import scheme_for
 from .models import Calendar
 from .preferences import Preferences
 from .timeutil import local_zone, now
@@ -82,7 +84,8 @@ class _ImportMonth(MonthCanvas):
         painter.restore()
         if not included:
             calendar = self.calendars.get(item.calendar_id)
-            ink = QColor(calendar.color).darker(135) if calendar else QColor('#65735f')
+            scheme = scheme_for(self)
+            ink = QColor(event_colors(calendar.color, scheme).selected_outline if calendar else scheme.muted)
             ink.setAlpha(115)
             painter.setPen(QPen(ink, 1))
             painter.drawLine(QPointF(rect.left() + 5, rect.center().y()), QPointF(rect.right() - 5, rect.center().y()))
@@ -92,6 +95,7 @@ class _ImportMonth(MonthCanvas):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         scale = display_scale(self)
+        scheme = scheme_for(self)
         size = 10 * scale
         for offset in range(42):
             day = self.start + timedelta(days=offset)
@@ -100,10 +104,10 @@ class _ImportMonth(MonthCanvas):
                 continue
             cell = self.day_rect(day)
             box = QRectF(cell.right() - size - 5 * scale, cell.top() + 4 * scale, size, size)
-            painter.setPen(QPen(QColor('#97a88f'), 1))
-            painter.setBrush(QColor('#fafbf8'))
+            painter.setPen(QPen(QColor(scheme.muted), 1))
+            painter.setBrush(QColor(scheme.panel))
             painter.drawRoundedRect(box, 2, 2)
-            painter.setPen(QPen(QColor('#416c51'), max(1.2, 1.2 * scale)))
+            painter.setPen(QPen(QColor(scheme.accent), max(1.2, 1.2 * scale)))
             if state == Qt.CheckState.Checked:
                 painter.drawLine(QPointF(box.left() + size * .18, box.top() + size * .51),
                                  QPointF(box.left() + size * .42, box.top() + size * .75))
@@ -114,7 +118,7 @@ class _ImportMonth(MonthCanvas):
                                  QPointF(box.right() - size * .2, box.center().y()))
         if self.hasFocus() and self._keyboard_focus and self._focus_day is not None:
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor('#7c9273'), 1, Qt.PenStyle.DotLine))
+            painter.setPen(QPen(QColor(scheme.focus), 1, Qt.PenStyle.DotLine))
             painter.drawRect(self.day_rect(self._focus_day).adjusted(2, 2, -2, -2))
         painter.end()
 
@@ -253,7 +257,8 @@ class ImportPreview(QWidget):
 
     def _button(self, symbol, title, action, layout):
         button = QPushButton()
-        button.setIcon(icon(symbol))
+        button.setIcon(icon(symbol, scheme_for(self).accent))
+        button.setProperty('iconName', symbol)
         button.setIconSize(QSize(18, 18))
         button.setProperty('iconOnly', True)
         button.setToolTip(title)
@@ -268,6 +273,7 @@ class ImportPreview(QWidget):
         size = max(26, round(30 * preferences.font_scale / 100))
         for button in (self.previous_button, self.today_button, self.next_button):
             button.setFixedSize(size, size)
+            button.setIcon(icon(button.property('iconName'), scheme_for(self).accent))
         self._update_heading()
 
     def _update_heading(self):

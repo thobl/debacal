@@ -1,16 +1,15 @@
 """Workspace layout and controls, separate from event and synchronization logic."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QBoxLayout, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLineEdit,
+    QWidget, QBoxLayout, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
 from .calendar_widgets import CalendarCanvas, MonthCanvas, DayHeader, AllDayCanvas
-from .compact_controls import ElidedLabel, ElidedButton
+from .compact_controls import ElidedLabel
 from .dialogs import hint
 from .icons import icon
-from .mini_calendar import MiniCalendar
-from .search_panel import SearchPanel
+from .theme import scheme_for
 from .year_view import YearView
 
 
@@ -62,7 +61,9 @@ class WorkspaceChrome:
 
     def icon_button(self, name, title, action, layout, binding=None):
         button = self.button('', action, layout)
-        button.setIcon(icon(name))
+        button.setIcon(icon(name, scheme_for(self.preferences).accent))
+        button.setProperty('iconName', name)
+        button.setProperty('interfaceIconColor', scheme_for(self.preferences).accent)
         button.setIconSize(QSize(20, 20))
         button.setProperty('iconOnly', True)
         button.setAccessibleName(title)
@@ -71,103 +72,8 @@ class WorkspaceChrome:
         return button
 
     def build_sidebar(self, root):
-        self.command_buttons = []
-        sidebar_shell = QWidget()
-        sidebar_shell.setObjectName('sidebarShell')
-        sidebar_shell.setFixedWidth(280)
-        shell_layout = QVBoxLayout(sidebar_shell)
-        shell_layout.setContentsMargins(0, 0, 0, 0)
-        shell_layout.setSpacing(0)
-        root.addWidget(sidebar_shell)
-        self.sidebar = QWidget()
-        self.sidebar.setObjectName('sidebar')
-        self.sidebar_scroll = QScrollArea()
-        self.sidebar_scroll.setWidgetResizable(True)
-        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sidebar_scroll.setWidget(self.sidebar)
-        shell_layout.addWidget(self.sidebar_scroll, 1)
-        layout = QVBoxLayout(self.sidebar)
-        layout.setContentsMargins(16, 18, 16, 12)
-        layout.setSpacing(8)
-        brand = QLabel('debacal')
-        brand.setObjectName('brand')
-        brand_row = QHBoxLayout()
-        brand_row.addWidget(brand, 1)
-        self.icon_button('settings', 'Preferences', self.show_preferences, brand_row, 'preferences')
-        layout.addLayout(brand_row)
-        if self.profile_label:
-            profile = QLabel(self.profile_label + ' profile')
-            profile.setObjectName('profileBadge')
-            profile.setProperty('muted', True)
-            layout.addWidget(profile)
-        if self.demo_mode:
-            self.button('Open ' + self.profile_label + ' profile' if self.profile_label else 'Open my calendars',
-                        self.real_workspace_requested.emit, layout)
-        self.mini = MiniCalendar(self.preferences)
-        self.mini.setMinimumWidth(0)
-        self.mini.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.mini.clicked.connect(lambda value: self.go_date(value.toPython()))
-        layout.addWidget(self.mini)
-        calendars_heading = QHBoxLayout()
-        calendars_label = QLabel('Calendars')
-        calendars_label.setObjectName('section')
-        calendars_heading.addWidget(calendars_label, 1)
-        self.icon_button('import', 'Import calendar file', self.import_ics, calendars_heading)
-        self.icon_button('export', 'Export calendar file', self.export_ics, calendars_heading)
-        self.icon_button('new', 'Add calendar', self.add_calendar, calendars_heading)
-        layout.addLayout(calendars_heading)
-        calendars_body = QWidget()
-        self.calendar_box = QVBoxLayout(calendars_body)
-        self.calendar_box.setContentsMargins(0, 0, 0, 0)
-        self.calendar_box.setSpacing(2)
-        self.calendar_rows = {}
-        self.creation_button_group = QButtonGroup(self)
-        self.calendar_scroll = QScrollArea()
-        self.calendar_scroll.setWidgetResizable(True)
-        self.calendar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.calendar_scroll.setWidget(calendars_body)
-        layout.addWidget(self.calendar_scroll)
-        search_row = QHBoxLayout()
-        search_row.setSpacing(4)
-        self.search = QLineEdit()
-        self.search.setClearButtonEnabled(True)
-        self.search.setAccessibleName('Search events')
-        self.search.textChanged.connect(self.search_changed)
-        search_row.addWidget(self.search, 1)
-        self.filter_search = self.icon_button('filter', 'Filter calendar to match search',
-                                              self.toggle_search_filter, search_row)
-        self.filter_search.setCheckable(True)
-        self.filter_search.setChecked(bool(self.store.get_setting('filter_calendar_by_search', False)))
-        layout.addLayout(search_row)
-        self.results_heading = QLabel('Next events')
-        self.results_heading.setObjectName('section')
-        layout.addWidget(self.results_heading)
-        self.results = SearchPanel(self.store, self.preferences)
-        self.results.setMinimumHeight(60)
-        self.results.result_selected.connect(self.select_search_result)
-        self.results.activated.connect(self.activate_search_result)
-        layout.addWidget(self.results, 1)
-        footer_widget = QWidget()
-        footer_widget.setObjectName('sidebarFooter')
-        footer = QHBoxLayout(footer_widget)
-        footer.setContentsMargins(16, 0, 16, 12)
-        footer.setSpacing(4)
-        self.sync_btn = self.icon_button('sync', 'Sync calendars', self.sync_now, footer, 'sync')
-        self.status = ElidedButton()
-        self.status.clicked.connect(self.show_sync_status)
-        self.status.setCursor(Qt.CursorShape.PointingHandCursor)
-        footer.addWidget(self.status)
-        self.status.setObjectName('syncStatus')
-        self.status.setAccessibleName('Synchronization status and details')
-        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        footer.setStretch(1, 1)
-        self.conflict_btn = self.icon_button('conflict', 'Review conflicts', self.show_conflicts, footer)
-        self.conflict_btn.setEnabled(False)
-        policy = self.conflict_btn.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)
-        self.conflict_btn.setSizePolicy(policy)
-        self.conflict_btn.hide()
-        shell_layout.addWidget(footer_widget)
+        from .sidebar_chrome import build_sidebar
+        build_sidebar(self, root)
 
     def toolbar_section(self, title):
         section = QWidget()
@@ -367,15 +273,22 @@ class WorkspaceChrome:
                 self.creation_button_group.addButton(row.choice)
                 self.calendar_rows[calendar.id] = row
             self.calendar_box.insertWidget(index, row)
+            if row.preferences != self.preferences:
+                row.set_preferences(self.preferences)
             row.set_calendar(calendar, current=bool(default and default.id == calendar.id),
                               scale=self.preferences.font_scale)
         row_height = max((row.sizeHint().height() for row in self.calendar_rows.values()), default=28)
-        full_height = max(1, len(calendars)) * (row_height + 2)
-        self.calendar_scroll.setMinimumHeight(full_height if len(calendars) <= 6 else 3 * (row_height + 2))
-        self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + 2)))
+        gap = self.calendar_box.spacing()
+        full_height = max(1, len(calendars)) * row_height + max(0, len(calendars) - 1) * gap
+        self.calendar_scroll.setMinimumHeight(full_height if len(calendars) <= 6 else 3 * (row_height + gap))
+        self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + gap)))
 
     def update_command_tooltips(self):
+        icon_color = scheme_for(self.preferences).accent
         for button, title, binding in self.command_buttons:
+            if button.property('interfaceIconColor') != icon_color:
+                button.setIcon(icon(button.property('iconName'), icon_color))
+                button.setProperty('interfaceIconColor', icon_color)
             shortcut = self.bindings.get(binding, '') if binding else ''
             button.setToolTip(title + (f' ({shortcut})' if shortcut else ''))
             if button.property('iconOnly'):
@@ -387,10 +300,9 @@ class WorkspaceChrome:
                                              max(12, round(14 * self.preferences.font_scale / 100))))
         self.update_navigation_width()
         self.workspace_header.reflow()
-        # Large text can exceed a short window. Keep controls apart and let the
-        # whole sidebar scroll in that case; ordinary calendar lists remain full.
+        # The sidebar layout propagates nested section minimum sizes so large
+        # text uses the outer scroll area rather than overlapping adjacent rows.
         self.sidebar.layout().activate()
-        self.sidebar.setMinimumHeight(self.sidebar.layout().minimumSize().height())
 
     def update_navigation_width(self):
         """Reserve every month/range label's width so repeated clicks stay put."""

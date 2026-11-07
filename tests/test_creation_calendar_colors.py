@@ -16,12 +16,14 @@ from PySide6.QtWidgets import QApplication
 from debacal import calendar_widgets
 from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas
 from debacal.models import Calendar, Event
+from debacal.event_style import contrast_ratio, event_colors
 
 ZONE = ZoneInfo('Europe/Berlin')
 FIRST = date(2026, 11, 2)
 DAYS = [FIRST + timedelta(days=index) for index in range(7)]
 RED = Calendar('red', 'Synthetic red', '#b12f45')
 BLUE = Calendar('blue', 'Synthetic blue', '#315ab7')
+YELLOW = Calendar('yellow', 'Synthetic yellow', '#ffff00')
 
 
 @pytest.fixture
@@ -84,18 +86,21 @@ def test_target_switch_before_and_during_creation_drag_updates_ghost_and_time_la
     QTest.mouseMove(widget, finish)
     assert widget.drag[0] == 'create' and widget.ghost is not None
     sample = QPoint(widget.width() - 25, round(widget.time_top + (9.75 - widget.start_hour) * widget.hour_height))
-    for target in (BLUE, RED):
+    for target in (BLUE, RED, YELLOW):
         widget.set_creation_calendar(target)
         with patch.object(calendar_widgets, 'text', wraps=calendar_widgets.text) as labels:
             image = widget.grab().toImage()
         pixel = image.pixelColor(sample)
         if target == RED:
             assert pixel.red() > pixel.blue()
-        else:
+        elif target == BLUE:
             assert pixel.blue() > pixel.red()
+        else:
+            assert pixel.red() > pixel.blue() and pixel.green() > pixel.blue()
         clock = widget.preferences.format_time(datetime(2026, 11, 2, 9, 15).time())
         calls = [call for call in labels.call_args_list if call.args[2] == clock]
-        assert len(calls) == 1 and calls[0].args[3] == QColor(target.color)
+        assert len(calls) == 1
+        assert contrast_ratio(calls[0].args[3], event_colors(target.color, widget, alpha=34).fill) >= 4.5
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=finish)
 
 
@@ -109,7 +114,7 @@ def test_hover_time_is_readable_and_independent_of_the_calendar_color(surfaces):
         with patch.object(calendar_widgets, 'text', wraps=calendar_widgets.text) as labels:
             widget.grab()
         clock = widget.preferences.format_time(datetime(2026, 11, 2, 9, 15).time())
-        assert next(call.args[3] for call in labels.call_args_list if call.args[2] == clock) == calendar_widgets.HOVER_TIME_COLOR
+        assert next(call.args[3] for call in labels.call_args_list if call.args[2] == clock) == calendar_widgets.paint_colors(widget).muted
         assert widget.grab().toImage() == initial
     header = surfaces('header')
     original = header.grab().toImage()

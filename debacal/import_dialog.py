@@ -126,7 +126,7 @@ class ImportDialog(FormDialog):
         self.error = QLabel()
         self.error.setWordWrap(True)
         self.error.setTextFormat(Qt.TextFormat.PlainText)
-        self.error.setStyleSheet('color: #b54735;')
+        self.error.setProperty('error', True)
         outer.addWidget(self.error)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self.import_button = self.buttons.addButton('&Import', QDialogButtonBox.ButtonRole.AcceptRole)

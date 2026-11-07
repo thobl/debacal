@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from .preferences import Preferences, _system_language_locale
 from .shortcuts import KeyboardShortcutsEditor
+from .theme import SCHEMES, scheme_for
 
 
 class PreferencesDialog(QDialog):
@@ -67,6 +68,12 @@ class PreferencesDialog(QDialog):
         general_layout.addStretch()
 
         _, appearance_layout, form = self.category('Appearance')
+        self.color_scheme = QComboBox()
+        self.color_scheme.setAccessibleName('Color scheme')
+        for value, scheme in SCHEMES.items():
+            self.color_scheme.addItem(scheme.label, value)
+        self.color_scheme.setCurrentIndex(self.color_scheme.findData(preferences.color_scheme))
+        form.addRow('Color scheme', self.color_scheme)
         self.font_scale = QSpinBox()
         self.font_scale.setRange(80, 140)
         self.font_scale.setSingleStep(10)
@@ -122,7 +129,7 @@ class PreferencesDialog(QDialog):
         self.tabs.addTab(self.shortcut_editor, 'Keyboard shortcuts')
         self.error = QLabel()
         self.error.setWordWrap(True)
-        self.error.setStyleSheet('color: #b54735;')
+        self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
         outer.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
                                   | QDialogButtonBox.StandardButton.RestoreDefaults)
@@ -157,7 +164,7 @@ class PreferencesDialog(QDialog):
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
                            locale_name=self.locale.currentData(), font_scale=self.font_scale.value(),
                            show_week_numbers=self.week_numbers.isChecked(), visible_start_hour=self.visible_start.value(),
-                           visible_end_hour=self.visible_end.value())
+                           visible_end_hour=self.visible_end.value(), color_scheme=self.color_scheme.currentData())
 
     def locale_changed(self, *_):
         preferences = Preferences(locale_name=self.locale.currentData())
@@ -180,6 +187,7 @@ class PreferencesDialog(QDialog):
         self.auto_sync.setChecked(True)
         self.sync_interval.setValue(1)
         self.font_scale.setValue(100)
+        self.color_scheme.setCurrentIndex(self.color_scheme.findData('neutral'))
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(8)
         self.visible_end.setValue(18)

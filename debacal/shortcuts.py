@@ -53,7 +53,7 @@ class KeyboardShortcutsEditor(QWidget):
         outer.addWidget(scroll, 1)
         self.error = QLabel()
         self.error.setWordWrap(True)
-        self.error.setStyleSheet('color: #b54735;')
+        self.error.setProperty('error', True)
         outer.addWidget(self.error)
 
     def value(self):

@@ -140,7 +140,7 @@ def test_fixed_header_and_empty_canvas_strip_create_all_day_while_existing_event
     canvas, header = make_canvas([existing]), make_header()
     for widget, points in (
         (canvas, [QPoint(130, 20), QPoint(270, 20)]),
-        (header, [QPoint(130, 30), QPoint(270, header.all_day_top + 10)]),
+        (header, [QPoint(130, 30), QPoint(270, header.height() - 8)]),
     ):
         created = QSignalSpy(widget.create_all_day_requested)
         edited = QSignalSpy(widget.edit_requested) if widget is canvas else None
@@ -155,7 +155,7 @@ def test_fixed_header_and_empty_canvas_strip_create_all_day_while_existing_event
                 assert_all_day(created, index, DAYS[index])
         assert edited is None or edited.count() == 1
         assert 'all-day' in widget.toolTip() or widget is canvas
-    assert header.height() > header.all_day_top + 16
+    assert header.height() == header.all_day_top == 64
 
 
 def test_month_double_click_heading_and_empty_body_create_while_existing_event_edits(widgets):
@@ -209,7 +209,9 @@ def test_selected_event_uses_visible_marker_independent_of_white_calendar_color(
     widget.selected_id = existing.id
     widget.update()
     selected = widget.grab().toImage().pixelColor(point)
-    assert selected.rgba() == QColor('#ffffff').darker(145).rgba()
+    from debacal.event_style import contrast_ratio
+    assert contrast_ratio(selected, '#ffffff') >= 3
+    assert selected.red() == selected.green() == selected.blue()
     assert selected != plain
 
 
@@ -276,6 +278,7 @@ def test_crowded_month_keeps_search_selected_event_visible_without_spilling_to_n
     day_height = (month.height() - 28) / 6
     assert rect.bottom() < 28 + 2 * day_height
     marker = QPoint(int(rect.left() + 4), int(rect.center().y()))
-    assert image.pixelColor(marker).rgba() == QColor('#ffffff').darker(145).rgba()
+    from debacal.event_style import contrast_ratio
+    assert contrast_ratio(image.pixelColor(marker), '#ffffff') >= 3
     # All visible pills remain in their own day, including a one-row cell.
     assert all(month.day_at(rect.topLeft()) == month.day_at(rect.bottomRight()) for rect, _ in month.hits)

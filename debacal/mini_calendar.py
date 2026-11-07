@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QDate, Qt, Signal, QPoint
-from PySide6.QtGui import QIntValidator, QActionGroup
+from PySide6.QtGui import QIntValidator, QActionGroup, QColor, QPalette, QTextCharFormat
 from PySide6.QtWidgets import (
     QCalendarWidget, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMenu, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .preferences import Preferences
+from .theme import scheme_for
 
 
 class _YearPopup(QFrame):
@@ -18,14 +19,7 @@ class _YearPopup(QFrame):
         super().__init__(parent, Qt.WindowType.Popup)
         self.setObjectName('miniYearPopup')
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet('''
-            QFrame#miniYearPopup { background: #fafbf8; border: 1px solid #cbd5c6; border-radius: 6px; }
-            QFrame#miniYearPopup QPushButton { padding: 5px 8px; border: none; border-radius: 4px; }
-            QFrame#miniYearPopup QPushButton:hover { background: #edf1e8; }
-            QFrame#miniYearPopup QPushButton:checked { background: #dfe9d8; color: #35513d; font-weight: bold; }
-            QFrame#miniYearPopup QToolButton { border: none; background: transparent; padding: 3px; border-radius: 4px; }
-            QFrame#miniYearPopup QToolButton:hover { background: #e0e9d8; }
-        ''')
+        self.set_preferences(parent.preferences)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(7)
@@ -64,8 +58,22 @@ class _YearPopup(QFrame):
         self.next_button.clicked.connect(lambda: self._show_years(self._first_year + 12))
         self._year, self._first_year = 2026, 2021
 
+    def set_preferences(self, preferences):
+        colors = scheme_for(preferences)
+        self.setStyleSheet(f'''
+            QFrame#miniYearPopup {{ background: {colors.panel}; color: {colors.ink}; border: 1px solid {colors.line}; border-radius: 6px; }}
+            QFrame#miniYearPopup QPushButton {{ padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; }}
+            QFrame#miniYearPopup QPushButton:focus {{ border-color: {colors.focus}; }}
+            QFrame#miniYearPopup QPushButton:hover {{ background: {colors.control_surface}; }}
+            QFrame#miniYearPopup QPushButton:checked {{ background: {colors.selection}; color: {colors.ink}; font-weight: bold; }}
+            QFrame#miniYearPopup QToolButton {{ border: 1px solid transparent; background: transparent; padding: 3px; border-radius: 4px; }}
+            QFrame#miniYearPopup QToolButton:focus {{ border-color: {colors.focus}; }}
+            QFrame#miniYearPopup QToolButton:hover {{ background: {colors.control_surface}; }}
+        ''')
+
     def prepare(self, year, preferences):
         self._year = year
+        self.set_preferences(preferences)
         self.setLocale(preferences.qt_locale())
         self.year_input.validator().setLocale(preferences.qt_locale())
         self.year_input.setText(str(year))
@@ -139,10 +147,6 @@ class MiniCalendar(QWidget):
         row.addWidget(self.next_button)
         for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
             button.setAutoRaise(True)
-            button.setStyleSheet('QToolButton { border: none; background: transparent; color: #3b563e; '
-                                'padding: 2px; border-radius: 4px; } '
-                                'QToolButton:hover { background: #e0e9d8; } '
-                                'QToolButton:pressed { background: #d6e2cc; }')
         for button in (self.month_button, self.year_button):
             font = button.font()
             font.setBold(True)
@@ -178,6 +182,40 @@ class MiniCalendar(QWidget):
         locale = preferences.qt_locale()
         self.setLocale(locale)
         self.calendar.setLocale(locale)
+        colors = scheme_for(preferences)
+        scale = preferences.font_scale / 100
+        self.calendar.setStyleSheet(f'''
+            QCalendarWidget QWidget {{ background: {colors.background}; color: {colors.ink}; font-size: {12 * scale:g}px; }}
+            QCalendarWidget QAbstractItemView {{
+                background: {colors.background}; alternate-background-color: {colors.background}; color: {colors.ink};
+                selection-background-color: {colors.selection}; selection-color: {colors.ink};
+                border: none; outline: none;
+            }}
+        ''')
+        palette = self.calendar.palette()
+        for role in (QPalette.ColorRole.Base, QPalette.ColorRole.AlternateBase, QPalette.ColorRole.Window):
+            palette.setColor(role, QColor(colors.background))
+        palette.setColor(QPalette.ColorRole.Text, QColor(colors.ink))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(colors.selection))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors.ink))
+        self.calendar.setPalette(palette)
+        for view in self.calendar.findChildren(QFrame):
+            if hasattr(view, 'viewport'):
+                view.setPalette(palette)
+                view.viewport().setPalette(palette)
+                view.viewport().setAutoFillBackground(True)
+        for day in (Qt.DayOfWeek.Monday, Qt.DayOfWeek.Tuesday, Qt.DayOfWeek.Wednesday,
+                    Qt.DayOfWeek.Thursday, Qt.DayOfWeek.Friday, Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+            formatting = QTextCharFormat()
+            formatting.setForeground(QColor(colors.weekend if day.value >= 6 else colors.ink))
+            self.calendar.setWeekdayTextFormat(day, formatting)
+        for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
+            button.setStyleSheet(f'QToolButton {{ border: 1px solid transparent; background: transparent; color: {colors.ink}; '
+                                f'padding: 2px; border-radius: 4px; }} '
+                                f'QToolButton:focus {{ border-color: {colors.focus}; }} '
+                                f'QToolButton:hover {{ background: {colors.control_surface}; }} '
+                                f'QToolButton:pressed {{ background: {colors.selection}; }}')
+        self.year_popup.set_preferences(preferences)
         if self._month_locale != locale.name():
             self.month_menu.clear()
             self.month_actions = []
@@ -192,7 +230,6 @@ class MiniCalendar(QWidget):
         self.setFirstDayOfWeek(Qt.DayOfWeek(preferences.first_weekday + 1))
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.ISOWeekNumbers
                                     if preferences.show_week_numbers else QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        scale = preferences.font_scale / 100
         # Keep date cells usable at large fonts while remaining compact by default.
         self.setMinimumHeight(round(190 * scale))
         for button in (self.previous_button, self.next_button):
