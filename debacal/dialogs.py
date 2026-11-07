@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal, QEvent
-from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut, QTextCharFormat
+from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimeZone, QTimer, Signal, QEvent, QSize, QRectF
+from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut, QTextCharFormat, QPainter, QPen
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QComboBox, QDateTimeEdit, QDateEdit, QSpinBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox, QButtonGroup,
@@ -17,6 +17,7 @@ from .patterns import expand_sequence, reconstruct_sequence, PatternError
 from .timeutil import local_zone
 from .preferences import Preferences
 from .theme import scheme_for
+from .event_style import source_outline
 from .calendar_appearance import CalendarDateGrid, weekend_text, weekend_fill
 from .series_preview import SeriesPreview
 from .event_scope import normalize_scope_modifiers, expanded_scope_bindings, DEFAULT_MODE_BINDINGS, MODE_ACTIONS
@@ -27,6 +28,28 @@ def hint(text):
     label.setWordWrap(True)
     label.setProperty('muted', True)
     return label
+
+
+def _calendar_color_icon(value, preferences):
+    """Use the source list's square swatch without dimming an editing target."""
+    colors = scheme_for(preferences)
+    source = QColor(value)
+    if not source.isValid():
+        source = QColor(colors.accent)
+    scale = preferences.font_scale / 100
+    size = round(16 * scale)
+    swatch = QPixmap(size * 2, size * 2)
+    swatch.setDevicePixelRatio(2)
+    swatch.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(swatch)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(source)
+    painter.setPen(QPen(QColor(source_outline(source.darker(145).name(), colors.panel)), max(1, scale)))
+    painter.drawRoundedRect(QRectF(2 * scale, 2 * scale, 12 * scale, 12 * scale), 2 * scale, 2 * scale)
+    painter.end()
+    icon = QIcon(swatch)
+    icon.addPixmap(swatch, QIcon.Mode.Disabled)
+    return icon
 
 
 def _style_date_popup(field, preferences):
@@ -165,10 +188,13 @@ class EventDialog(FormDialog):
         else:
             mode_widget.hide()
         self.title = QLineEdit(reference.title if reference else '')
+        self.calendars = list(calendars)
         self.calendar = QComboBox()
-        for cal in calendars:
+        scale = self.preferences.font_scale / 100
+        self.calendar.setIconSize(QSize(round(16 * scale), round(16 * scale)))
+        for cal in self.calendars:
             if cal.kind != 'ics' and not cal.read_only:
-                self.calendar.addItem(cal.name, cal.id)
+                self.calendar.addItem(_calendar_color_icon(cal.color, self.preferences), cal.name, cal.id)
         if not event and default_calendar_id:
             index = self.calendar.findData(default_calendar_id)
             if index >= 0:
@@ -272,7 +298,7 @@ class EventDialog(FormDialog):
         self.save_button.setToolTip('Enter saves; Ctrl+Enter also saves from Notes.')
         self.pattern.textChanged.connect(self.pattern_changed)
         self.scope.currentIndexChanged.connect(self.scope_changed)
-        for signal in (self.start.dateTimeChanged, self.end.dateTimeChanged,
+        for signal in (self.start.dateTimeChanged, self.end.dateTimeChanged, self.calendar.currentIndexChanged,
                        self.repeat.currentIndexChanged, self.interval.valueChanged, self.repeat_end.currentIndexChanged,
                        self.repeat_count.valueChanged, self.repeat_until.dateChanged, self.custom_rule.textChanged,
                        self.candidate.toggled, self.all_day.toggled):
@@ -785,7 +811,8 @@ class EventDialog(FormDialog):
                               f'Starts, Ends, and the calendar show {local_zone()}.\n')
         self.pattern_help.setText(authoring_note + self._conversion_notice
             + 'The initial event is always included. Each step is evaluated from the previous event. '
-            '+2d = 2 days; +3 = 3 weeks; +1m / +1y = 1 month / year.\n'
+            '+30min = 30 minutes; +2h = 2 hours; +2d = 2 days; +3 = 3 weeks; '
+            '+1m / +1y = 1 month / year.\n'
             'Dates: 13. or 3.2.; times: 10:00 or 10:00-3.2.2027. Omitted date parts roll forward. '
             'A full date is exact. Duration stays the same.\n'
             'Repeat: 4*(+2) +3 3*+2. Separate steps with spaces or commas. '
@@ -800,11 +827,11 @@ class EventDialog(FormDialog):
                 from .series_operations import updated_future
                 _, tail = updated_future(self.series, self.original, events[0], self.schedule_replacement)
                 events = [tail] if tail else []
-            self.preview.set_events(events, self.preferences)
+            self.preview.set_events(events, self.preferences, self.calendars)
             self.error.setText(self.preview.error)
             self.preview.enable_date_editing(enabled and not self.preview.error)
         except (ValueError, PatternError, OverflowError) as exc:
-            self.preview.set_events([], self.preferences)
+            self.preview.set_events([], self.preferences, self.calendars)
             self.error.setText(str(exc))
 
     def save(self):

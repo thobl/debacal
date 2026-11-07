@@ -30,6 +30,27 @@ class SimplificationTests(unittest.TestCase):
         self.assertEqual(expression, '4*+2')
         self.assert_equivalent(values, expression)
 
+    def test_repeated_hour_and_minute_offsets_keep_graphical_edits_compact(self):
+        for delta, expected in ((timedelta(hours=2), '4*+2h'),
+                                (timedelta(minutes=15), '4*+15min')):
+            with self.subTest(expected=expected):
+                values = [ANCHOR + index * delta for index in range(5)]
+                expression = simplify_sequence(values)
+                self.assertEqual(expression, expected)
+                self.assert_equivalent(values, expression)
+
+    def test_clock_offset_candidates_are_certified_across_midnight_and_dst(self):
+        cases = [(ANCHOR.replace(hour=23, minute=30), '4*+45min'),
+                 (datetime(2027, 3, 28, 1, 30, tzinfo=ZONE), '+2h +30min'),
+                 (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1), '2*+1h'),
+                 (ANCHOR.replace(second=17, microsecond=123), '4*+2h')]
+        for anchor, original in cases:
+            with self.subTest(original=original):
+                values = expand_sequence(original, anchor)
+                expression = simplify_sequence(values)
+                self.assertLessEqual(len(expression), len(original))
+                self.assert_equivalent(values, expression)
+
     def test_first_of_month_prefers_a_repeated_short_date(self):
         values = [datetime(2027, 1, 31, 9, tzinfo=ZONE),
                   *(datetime(2027, month, 1, 9, tzinfo=ZONE) for month in range(2, 6))]

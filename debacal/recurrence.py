@@ -19,6 +19,9 @@ from dateutil.rrule import rruleset, rrulestr
 from .models import Event
 
 
+MAX_MINUTELY_COUNT = 10000
+
+
 class RecurrenceError(ValueError):
     pass
 
@@ -72,26 +75,37 @@ def schedule_fields(starts: Iterable[datetime], *, all_day: bool = False) -> dic
     if len(ordered) < 2 or any(later.timestamp() <= earlier.timestamp() for earlier, later in zip(ordered, ordered[1:])):
         return fallback
     wall = [value.replace(tzinfo=None) for value in ordered]
-    if len({value.time() for value in wall}) != 1:
-        return fallback
     candidates = []
-    day_gaps = [(later - earlier).days for earlier, later in zip(wall, wall[1:])]
-    if len(set(day_gaps)) == 1 and day_gaps[0] > 0:
-        days = day_gaps[0]
-        candidates.append(("WEEKLY", days // 7) if days % 7 == 0 else ("DAILY", days))
-    month_gaps = [(later.year - earlier.year) * 12 + later.month - earlier.month for earlier, later in zip(wall, wall[1:])]
-    if len(set(month_gaps)) == 1 and month_gaps[0] > 0:
-        if month_gaps[0] % 12 == 0 and len({(value.month, value.day) for value in wall}) == 1:
-            candidates.insert(0, ("YEARLY", month_gaps[0] // 12))
-        elif len({value.day for value in wall}) == 1:
-            candidates.insert(0, ("MONTHLY", month_gaps[0]))
+    if len({value.time() for value in wall}) == 1:
+        day_gaps = [(later - earlier).days for earlier, later in zip(wall, wall[1:])]
+        if len(set(day_gaps)) == 1 and day_gaps[0] > 0:
+            days = day_gaps[0]
+            candidates.append(("WEEKLY", days // 7) if days % 7 == 0 else ("DAILY", days))
+        month_gaps = [(later.year - earlier.year) * 12 + later.month - earlier.month for earlier, later in zip(wall, wall[1:])]
+        if len(set(month_gaps)) == 1 and month_gaps[0] > 0:
+            if month_gaps[0] % 12 == 0 and len({(value.month, value.day) for value in wall}) == 1:
+                candidates.insert(0, ("YEARLY", month_gaps[0] // 12))
+            elif len({value.day for value in wall}) == 1:
+                candidates.insert(0, ("MONTHLY", month_gaps[0]))
+    if not all_day:
+        clock_gaps = {later - earlier for earlier, later in zip(wall, wall[1:])}
+        if len(clock_gaps) == 1:
+            gap = clock_gaps.pop()
+            if gap > timedelta(0) and gap % timedelta(minutes=1) == timedelta(0):
+                minutes = gap // timedelta(minutes=1)
+                if minutes % 60 == 0:
+                    candidates.append(("HOURLY", minutes // 60))
+                elif len(ordered) <= MAX_MINUTELY_COUNT:
+                    candidates.append(("MINUTELY", minutes))
     for frequency, interval in candidates:
         rule = f"FREQ={frequency};INTERVAL={interval};COUNT={len(ordered)}"
         try:
             generated = list(rrulestr(rule, dtstart=ordered[0]))
         except (ValueError, TypeError, OverflowError):
             continue
-        if [value.timestamp() for value in generated] == [value.timestamp() for value in ordered]:
+        if (all(_valid_wall_time(value) for value in generated)
+                and [value.astimezone(timezone.utc) for value in generated]
+                == [value.astimezone(timezone.utc) for value in ordered]):
             return {"recurrence_rule": rule, "recurrence_dates": ()}
     return fallback
 
@@ -234,11 +248,16 @@ def _recurrence_set(master: Event, *, after: datetime | None = None, include_dat
                     positive = False
                 if not positive:
                     raise RecurrenceError(f"Recurrence {name.lower()} must be a positive integer.")
-        # Sub-minute schedules can generate millions of invisible historical
-        # values before dateutil reaches a requested date. Such schedules are
-        # not useful calendar events and are rejected explicitly.
-        if any(part.upper() in {"FREQ=SECONDLY", "FREQ=MINUTELY"} for part in rule.split(";")):
-            raise RecurrenceError("Secondly and minutely recurrence rules are not supported.")
+        # Dense unbounded rules can generate millions of invisible historical
+        # values before dateutil reaches a requested date. Finite custom minute
+        # sequences remain safe to expand within the same bounded authoring cap.
+        fields = dict(part.split("=", 1) for part in rule.upper().split(";"))
+        if fields.get("FREQ") == "SECONDLY":
+            raise RecurrenceError("Secondly recurrence rules are not supported.")
+        if fields.get("FREQ") == "MINUTELY":
+            if (not 0 < int(fields.get("COUNT", "0")) <= MAX_MINUTELY_COUNT
+                    or fields.keys() - {"FREQ", "INTERVAL", "COUNT", "WKST"}):
+                raise RecurrenceError(f"Minutely recurrence rules need a simple finite count of at most {MAX_MINUTELY_COUNT:,} events.")
         try:
             # Parse the original first so seeking cannot hide an invalid rule
             # (for example an exhausted COUNT with an invalid BYDAY).

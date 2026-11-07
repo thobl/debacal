@@ -304,10 +304,12 @@ not repeat its date. Its duration applies to the additional occurrences.
 Instructions are separated by spaces or commas. Each runs from the result of the
 previous instruction:
 
-* `+2` adds two weeks. Units can be explicit: `+3d`, `+2w`, `+1m`, `+1y` for
-  days, weeks, calendar months, and calendar years. Relative steps keep the
-  previous event's local clock. Month/year shifts clip invalid days: 31 January
-  plus one month becomes 28 February in a non-leap year.
+* `+2` adds two weeks. Units can be explicit: `+30min`, `+2h`, `+3d`, `+2w`,
+  `+1m`, `+1y` for minutes, hours, days, weeks, calendar months, and calendar years.
+  Minute/hour offsets advance the previous event's local wall time, including
+  into the following day. The longer units keep its clock. `m` means months;
+  use `min` for minutes. Month/year shifts clip invalid days: 31 January plus
+  one month becomes 28 February in a non-leap year.
 * `13.` chooses the next day 13; `3.2.` (also `3.2`) chooses the next 3 February. Omitted
   month/year values roll forward until the matching instant is strictly later
   than the cursor. A day 31 skips months without that day; 29 February skips
@@ -323,6 +325,7 @@ previous instruction:
 13. +1 18. 2. 3.2. +2
 4*(+2) +3 3*+2
 14:00-13. +1 18.
+3*(+2h +30min)
 ```
 
 Starting at **7 November 2026, 09:00**, the first example adds 13 November,
@@ -330,7 +333,9 @@ Starting at **7 November 2026, 09:00**, the first example adds 13 November,
 including the initial one. Duplicate instants appear once, while each instruction
 still updates the cursor. Expansion is bounded to 500 events including the fixed
 event; repeat budgets are checked before execution. Nonexistent local times during
-a daylight-saving clock change are rejected. During a repeated hour, absolute
+a daylight-saving clock change are rejected, including minute/hour offsets
+that land in the missing hour. Offsets use wall time rather than elapsed UTC
+time: `+24h` has the same result as `+1d` across a clock change. During a repeated hour, absolute
 dates retain the initial event's choice, while relative and time-only steps retain
 the previous event's choice.
 
@@ -348,7 +353,8 @@ clicks remain available after simplification. Hand-entered text keeps its
 formatting until a calendar click changes the selection.
 
 Saving creates one undoable operation. Regular schedules use standard RRULE;
-irregular schedules use standard RDATE, retaining their structure in other calendar
+uniform hour/minute sequences use finite `HOURLY`/`MINUTELY` rules with a count.
+Irregular schedules use standard RDATE, retaining their structure in other calendar
 clients. The unified **Schedule** control also supports daily, weekly (including
 weekday selection), monthly and yearly schedules with interval/count/end-date
 controls. **Advanced rule** exposes standard RRULE text for schedules beyond those

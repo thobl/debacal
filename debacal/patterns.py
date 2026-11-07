@@ -2,8 +2,9 @@
 
 The anchor is always the first result. Each instruction moves a cursor and adds
 an occurrence; duplicate instants are retained only once. Relative instructions
-preserve the preceding local clock. Date instructions without a clock use the
-original anchor's clock. Omitted date parts choose the next matching instant;
+advance local wall time; day/week/month/year steps preserve the preceding clock.
+Date instructions without a clock use the original anchor's clock. Omitted
+date parts choose the next matching instant;
 fully specified dates are exact, including dates before the cursor or anchor.
 
 Ambiguous relative times retain the preceding fold; absolute dates retain the
@@ -179,8 +180,8 @@ class _Parser:
             while self.position < len(self.expression) and self.expression[self.position].isalpha():
                 self.position += 1
             unit = self.expression[unit_start:self.position].lower()
-            if unit not in ('', 'd', 'w', 'm', 'y'):
-                self.error('Use d, w, m or y for days, weeks, months or years')
+            if unit not in ('', 'min', 'h', 'd', 'w', 'm', 'y'):
+                self.error('Use min, h, d, w, m or y for minutes, hours, days, weeks, months or years')
             return _Relative(amount, unit or 'w')
         clock = _CLOCK.match(self.expression, self.position)
         hour = minute = None
@@ -232,7 +233,9 @@ class _Parser:
 
 def _relative(step, previous):
     try:
-        if step.unit in ('d', 'w'):
+        if step.unit in ('min', 'h'):
+            value = previous + timedelta(minutes=step.amount * (60 if step.unit == 'h' else 1))
+        elif step.unit in ('d', 'w'):
             value = previous + timedelta(days=step.amount * (7 if step.unit == 'w' else 1))
         else:
             months = step.amount * (12 if step.unit == 'y' else 1)
@@ -414,6 +417,13 @@ def _transition_atoms(previous, value, anchor):
     days = (value.date() - previous.date()).days
     months = (value.year - previous.year) * 12 + value.month - previous.month
     years = value.year - previous.year
+    wall_delta = value.replace(tzinfo=None) - previous.replace(tzinfo=None)
+    if wall_delta > timedelta(0) and wall_delta % timedelta(minutes=1) == timedelta(0):
+        minutes = wall_delta // timedelta(minutes=1)
+        if minutes % 60 == 0:
+            proposals.append((f'+{minutes // 60}h', _Relative(minutes // 60, 'h'), 0))
+        if minutes <= 999999999:  # The parser bounds relative numbers to nine digits.
+            proposals.append((f'+{minutes}min', _Relative(minutes, 'min'), 0))
     if same_clock and days > 0:
         if days % 7 == 0:
             proposals.append((f'+{days // 7}', _Relative(days // 7, 'w'), 0))

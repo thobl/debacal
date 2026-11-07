@@ -68,6 +68,27 @@ class SequenceTests(unittest.TestCase):
         leap = datetime(2028, 2, 29, 9, tzinfo=ZONE)
         self.assertEqual(expand_sequence('+1y', leap)[1].date(), date(2029, 2, 28))
 
+    def test_minute_and_hour_offsets_follow_previous_event_across_midnight(self):
+        start = ANCHOR.replace(hour=23, minute=30)
+        values = expand_sequence('+45min +2h +1 +1m', start)
+        self.assertEqual(values, [start, datetime(2026, 11, 8, 0, 15, tzinfo=ZONE),
+                                 datetime(2026, 11, 8, 2, 15, tzinfo=ZONE),
+                                 datetime(2026, 11, 15, 2, 15, tzinfo=ZONE),
+                                 datetime(2026, 12, 15, 2, 15, tzinfo=ZONE)])
+        self.assertEqual(expand_sequence('+1h', ANCHOR), expand_sequence('+60min', ANCHOR))
+        self.assertEqual(expand_sequence('+1H +30MIN', ANCHOR)[-1], ANCHOR.replace(hour=10, minute=30))
+
+    def test_hour_and_minute_offsets_can_be_repeated_and_nested(self):
+        values = expand_sequence('2*(+1h 2*+15min)', ANCHOR)
+        self.assertEqual([(value.hour, value.minute) for value in values],
+                         [(9, 0), (10, 0), (10, 15), (10, 30), (11, 30), (11, 45), (12, 0)])
+
+    def test_relative_clock_offsets_preserve_seconds_and_date_only_restores_anchor_clock(self):
+        start = ANCHOR.replace(second=17, microsecond=123)
+        values = expand_sequence('+90min +2h 8.', start)
+        self.assertEqual([(value.hour, value.minute) for value in values], [(9, 0), (10, 30), (12, 30), (9, 0)])
+        self.assertTrue(all((value.second, value.microsecond) == (17, 123) for value in values))
+
     def test_impossible_partial_dates_skip_only_matching_cycles(self):
         january = datetime(2027, 1, 31, 9, tzinfo=ZONE)
         self.assertEqual(expand_sequence('31.', january)[1].date(), date(2027, 3, 31))
@@ -99,6 +120,22 @@ class SequenceTests(unittest.TestCase):
         self.assertNotEqual(start.utcoffset(), following.utcoffset())
         self.assertEqual(following.timestamp() - start.timestamp(), 167 * 3600)
 
+    def test_hour_and_minute_steps_use_wall_time_across_dst_changes(self):
+        start = datetime(2027, 3, 28, 1, 30, tzinfo=ZONE)
+        for expression in ('+2h', '+120min'):
+            following = expand_sequence(expression, start)[1]
+            self.assertEqual((following.hour, following.minute), (3, 30))
+            self.assertEqual(following.timestamp() - start.timestamp(), 3600)
+        for expression in ('+1h', '+60min'):
+            with self.subTest(expression=expression), self.assertRaisesRegex(PatternError, 'clocks change'):
+                expand_sequence(expression, start)
+        for fold in (0, 1):
+            start = datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=fold)
+            for expression in ('+1h', '+60min'):
+                following = expand_sequence(expression, start)[1]
+                self.assertEqual(following.fold, fold)
+                self.assertEqual(following.utcoffset(), timedelta(hours=2 - fold))
+
     def test_nonexistent_dst_times_are_actionable_errors(self):
         for expression, anchor in [('+1d', datetime(2027, 3, 27, 2, 30, tzinfo=ZONE)),
                                    ('+1m', datetime(2027, 2, 28, 2, 30, tzinfo=ZONE)),
@@ -123,7 +160,8 @@ class SequenceTests(unittest.TestCase):
         self.assertTrue(all((value.second, value.microsecond) == (17, 123) for value in values))
 
     def test_invalid_syntax_is_rejected_with_useful_errors(self):
-        invalid = ['Mo X', '*+1', '2**+1', '+1+2', '0*+1', '+0', '+0d', '-1', '+1h', '+1.5',
+        invalid = ['Mo X', '*+1', '2**+1', '+1+2', '0*+1', '+0', '+0d', '-1', '+1hr', '+1.5',
+                   '+0h', '+0min', '+1mins', '+1minh', '+1.5h', '+1000000000min',
                    '24:00', '23:60', '3.13.', '31.4.', '0.', '32.', '1.1.0000', '1.1.10000',
                    '09:00-', '2026-11-10', '()', '(+1', '+1)', '+1,,+2', ',+1', '+1,', '2*()']
         for expression in invalid:
@@ -154,6 +192,9 @@ class SequenceTests(unittest.TestCase):
             expand_sequence('+1', date(2026, 11, 7))
         with self.assertRaisesRegex(PatternError, 'supported years'):
             expand_sequence('', datetime(9999, 12, 31, 23, 59, tzinfo=ZoneInfo('America/New_York')))
+        for expression in ('+1h', '+1min'):
+            with self.subTest(expression=expression), self.assertRaisesRegex(PatternError, 'supported years'):
+                expand_sequence(expression, late.replace(hour=23, minute=59))
 
     def test_date_wrapper_and_human_summary(self):
         self.assertEqual(expand_pattern('2*+1', ANCHOR.date()),

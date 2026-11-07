@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from debacal.dialogs import EventDialog
 from debacal.ics import export_ics, parse_ics
 from debacal.models import Event
+from debacal.patterns import expand_sequence
 from debacal.preferences import Preferences
 from debacal.store import Store
 from debacal.ui import MainWindow
@@ -112,8 +113,29 @@ def test_time_only_sequence_keeps_multiple_daily_slots_and_edits_from_fixed_star
     assert store.get_event(master.id) == master
 
 
+def test_relative_hour_minute_sequence_saves_syncs_and_reopens_without_rewriting(editor):
+    store, create, _ = editor
+    dialog = create()
+    literal = '+2h +30min +1d +45min'
+    dialog.pattern.setText(literal)
+    expected = expand_sequence(literal, START)
+    master = save(dialog)
+    assert not master.recurrence_rule and len(master.recurrence_dates) == 4
+    store.apply('Create varying times', [master])
+    values = occurrences(store, master)
+    assert [value.start.timestamp() for value in values] == [value.timestamp() for value in expected]
+    assert all(value.end - value.start == timedelta(minutes=90) for value in values)
+    returned = parse_ics(export_ics([master]), master.calendar_id)[0]
+    assert returned.schedule_expression == literal and returned.schedule_syntax == 2
+    reopen = create(event=returned, series=returned, edit_scope='group')
+    assert reopen.pattern.text() == literal
+    assert [value.timestamp() for value in reopen.sequence_starts()] == [value.timestamp() for value in expected]
+
+
 @pytest.mark.parametrize('start, text, expected_rule', [
     (START, '4*+2', 'FREQ=WEEKLY;INTERVAL=2;COUNT=5'),
+    (START, '4*+2h', 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
+    (START, '4*+15min', 'FREQ=MINUTELY;INTERVAL=15;COUNT=5'),
     (datetime(2027, 1, 1, 9, tzinfo=ZONE), '4*1.', 'FREQ=MONTHLY;INTERVAL=1;COUNT=5'),
 ])
 def test_regular_authored_sequences_use_standard_rules_and_reopen_as_text(editor, start, text, expected_rule):

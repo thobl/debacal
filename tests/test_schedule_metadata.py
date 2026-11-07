@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from debacal.models import Calendar, Event
 from debacal.patterns import expand_sequence, serialize_sequence
-from debacal.recurrence import base_schedule_starts, expand_event, schedule_fields
+from debacal.recurrence import RecurrenceError, base_schedule_starts, expand_event, recurrence_set, schedule_fields
 from debacal.store import Store
 
 
@@ -228,13 +228,62 @@ class ExpressionTests(unittest.TestCase):
 
 class ScheduleSynthesisTests(unittest.TestCase):
     def test_regular_sequences_synthesize_exact_standard_count_rules(self):
-        for expression, frequency in [('4*+1d', 'DAILY'), ('4*+2', 'WEEKLY'), ('4*+1m', 'MONTHLY'), ('3*+1y', 'YEARLY')]:
+        for expression, frequency in [('4*+1d', 'DAILY'), ('4*+2', 'WEEKLY'), ('4*+1m', 'MONTHLY'),
+                                      ('3*+1y', 'YEARLY'), ('4*+2h', 'HOURLY'), ('4*+15min', 'MINUTELY')]:
             with self.subTest(expression=expression):
                 starts = expand_sequence(expression, ANCHOR)
                 fields = schedule_fields(starts)
                 self.assertIn('FREQ=' + frequency, fields['recurrence_rule'])
                 event = Event('rule', 'local', 'Rule', starts[0], starts[0] + timedelta(hours=1), **fields)
                 self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+
+    def test_relative_clock_rules_have_exact_finite_counts_and_expand_through_midnight(self):
+        anchor = ANCHOR.replace(hour=23, minute=30)
+        for expression, expected in [('4*+2h', 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
+                                     ('4*+45min', 'FREQ=MINUTELY;INTERVAL=45;COUNT=5')]:
+            with self.subTest(expression=expression):
+                starts = expand_sequence(expression, anchor)
+                fields = schedule_fields(starts)
+                self.assertEqual(fields, {'recurrence_rule': expected, 'recurrence_dates': ()})
+                event = Event('rule', 'local', 'Rule', anchor, anchor + timedelta(minutes=15), **fields)
+                expanded = expand_event(event, anchor - timedelta(hours=1), anchor + timedelta(days=2))
+                self.assertEqual([value.start.timestamp() for value in expanded], [value.timestamp() for value in starts])
+
+    def test_clock_rule_synthesis_certifies_dst_and_preserves_ambiguous_folds(self):
+        spring = datetime(2027, 3, 28, 1, 30, tzinfo=ZONE)
+        for anchor, expression, frequency in [(spring, '3*+2h', 'HOURLY'),
+                                               (spring, '3*+90min', 'MINUTELY'),
+                                               (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE), '3*+1h', 'HOURLY')]:
+            with self.subTest(expression=expression, anchor=anchor):
+                starts = expand_sequence(expression, anchor)
+                fields = schedule_fields(starts)
+                self.assertIn('FREQ=' + frequency, fields['recurrence_rule'])
+                event = Event('dst', 'local', 'DST', anchor, anchor + timedelta(minutes=10), **fields)
+                self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+                expanded = expand_event(event, anchor - timedelta(hours=1), starts[-1] + timedelta(hours=1))
+                self.assertEqual(instants(value.start for value in expanded), instants(starts))
+        first = datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1)
+        starts = expand_sequence('3*+1h', first)
+        fields = schedule_fields(starts)
+        self.assertFalse(fields['recurrence_rule'])
+        event = Event('fold', 'local', 'Fold', first, first + timedelta(minutes=10), **fields)
+        self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+
+    def test_clock_rules_do_not_replace_calendar_units_or_round_imported_precision(self):
+        for expression, frequency in [('3*+24h', 'DAILY'), ('3*+168h', 'WEEKLY')]:
+            self.assertIn('FREQ=' + frequency, schedule_fields(expand_sequence(expression, ANCHOR))['recurrence_rule'])
+        precise = ANCHOR.replace(microsecond=123)
+        starts = expand_sequence('4*+15min', precise)
+        fields = schedule_fields(starts)
+        self.assertFalse(fields['recurrence_rule'])
+        event = Event('precise', 'local', 'Precise', precise, precise + timedelta(minutes=10), **fields)
+        self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
+
+    def test_unbounded_or_filtered_minutely_rules_remain_explicitly_rejected(self):
+        for rule in ['FREQ=MINUTELY', 'FREQ=MINUTELY;UNTIL=20990101T000000Z',
+                     'FREQ=MINUTELY;COUNT=10001', 'FREQ=MINUTELY;COUNT=5;BYMONTH=12']:
+            with self.subTest(rule=rule), self.assertRaisesRegex(RecurrenceError, 'finite count'):
+                recurrence_set(Event('dense', 'local', 'Dense', ANCHOR, ANCHOR + timedelta(minutes=10), recurrence_rule=rule))
 
     def test_irregular_different_times_and_earlier_dates_use_exact_rdates(self):
         for expression in ['14:30 +2d 09:00', '08:30-1.10.2026 +1d', '+1 +2 +3']:
@@ -260,6 +309,7 @@ class ScheduleSynthesisTests(unittest.TestCase):
             self.skipTest('Independent optional recurrence library is unavailable')
         from debacal.ics import export_ics, parse_ics
         cases = [(LITERAL, ANCHOR), ('4*+2', ANCHOR), ('4*+1m', ANCHOR),
+                 ('4*+2h', ANCHOR), ('4*+15min', ANCHOR), ('+2h +30min +1d +45min', ANCHOR),
                  ('14:30 08:15-8.11.2026 12:05-15.11.2026', ANCHOR),
                  ('08:30-1.10.2026 +1d 12:00', ANCHOR),
                  ('3*+1m', datetime(2027, 1, 31, 10, tzinfo=ZONE))]

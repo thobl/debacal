@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 
 from .calendar_widgets import at, text, display_scale, paint_colors, WEEKDAY_SIZE
 from .event_style import event_colors
-from .theme import scheme_for
 from .preferences import Preferences
 from .calendar_appearance import weekend_text, weekend_fill
 from .recurrence import expand_events, key_datetime, recurrence_key, recurrence_set, overlaps
@@ -30,6 +29,7 @@ class SeriesPreview(QWidget):
         super().__init__(parent)
         self.preferences = Preferences()
         self.masters = []
+        self.calendar_colors = {}
         self.visible_events = []
         self.current_month = now().date().replace(day=1)
         self.grid_start = self.preferences.week_start(self.current_month)
@@ -75,10 +75,13 @@ class SeriesPreview(QWidget):
         outer.addWidget(self.instructions)
         self._rebuild()
 
-    def set_events(self, masters_or_events, preferences=None):
+    def set_events(self, masters_or_events, preferences=None, calendars=None):
+        """Replace events, retaining source colors unless new calendars are supplied."""
         self.masters = list(masters_or_events)
         if preferences is not None:
             self.preferences = preferences
+        if calendars is not None:
+            self.calendar_colors = {calendar.id: calendar.color for calendar in calendars}
         if self.masters and not self._initialized:
             self.current_month = min(event.start.astimezone(local_zone()).date() for event in self.masters).replace(day=1)
             self._initialized = True
@@ -109,8 +112,8 @@ class SeriesPreview(QWidget):
         return self._by_day.get(day, [])
 
     def _update_instructions(self):
-        legend = '● First occurrence · + Added date · × Skipped date'
-        self.instructions.setText(('Click a date to add or remove an occurrence.\n' if self.date_editing else '') + legend)
+        self.instructions.setText('Click a date to add or remove an occurrence.' if self.date_editing else '')
+        self.instructions.setVisible(self.date_editing)
 
     def _rebuild(self):
         self.grid_start = self.preferences.week_start(self.current_month)
@@ -201,12 +204,6 @@ class _PreviewGrid(QWidget):
             shade = weekend_fill(day, preview.preferences, colors)
             if shade is not None:
                 painter.fillRect(rect, shade)
-            if not outside:
-                inset = rect.adjusted(2 * scale, scale, -2 * scale, -scale) if shade is not None else rect
-                if day in preview.excluded_dates:
-                    painter.fillRect(inset, colors.control_surface)
-                elif events:
-                    painter.fillRect(inset, colors.selection)
             painter.setPen(QPen(colors.line, 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
@@ -214,14 +211,11 @@ class _PreviewGrid(QWidget):
             text(painter, QRectF(rect.x() + 5, rect.y() + 1, rect.width() - 10, 19 * scale),
                  str(day.day), weekend_text(day, preview.preferences, colors,
                                             colors.muted if outside else colors.accent if events else colors.ink), 9, anchor)
-            marker = '●' if anchor else '×' if day in preview.excluded_dates else '+' if day in preview.added_dates else ''
-            if marker:
-                text(painter, QRectF(rect.right() - 20 * scale, rect.y() + 1, 16 * scale, 19 * scale), marker,
-                     colors.muted if day in preview.excluded_dates else colors.accent, 9, True, Qt.AlignmentFlag.AlignCenter)
             capacity = max(1, int((rect.height() - 22 * scale) / (16 * scale)))
             for index, event in enumerate(events[:capacity]):
                 event_rect = QRectF(rect.x() + 3, rect.y() + 21 * scale + index * 16 * scale, rect.width() - 6, 14 * scale)
-                style = event_colors(scheme_for(preview).accent, preview, alpha=38 if event.candidate else 52)
+                source = preview.calendar_colors.get(event.calendar_id, colors.accent)
+                style = event_colors(source, preview, alpha=38 if event.candidate else 52)
                 painter.setPen(QPen(QColor(style.outline), 1,
                                      Qt.PenStyle.DashLine if event.candidate else Qt.PenStyle.SolidLine))
                 painter.setBrush(QColor(style.fill))
@@ -232,9 +226,8 @@ class _PreviewGrid(QWidget):
                 text(painter, event_rect, label, QColor(style.ink), 7, False, Qt.AlignmentFlag.AlignCenter)
                 painter.restore()
             if len(events) > capacity:
-                text(painter, QRectF(rect.right() - 27 * scale, rect.y() + 1, 24 * scale, 19 * scale), '+' + str(len(events) - capacity), colors.muted, 7)
-            if day in preview.excluded_dates and not events:
-                text(painter, QRectF(rect.x() + 3, rect.y() + 21 * scale, rect.width() - 6, 15 * scale), 'skipped', colors.muted, 7)
+                text(painter, QRectF(rect.right() - 47 * scale, rect.y() + 1, 44 * scale, 19 * scale),
+                     str(len(events) - capacity) + ' more', colors.muted, 7, align=Qt.AlignmentFlag.AlignRight)
         painter.end()
 
     def mousePressEvent(self, event):
