@@ -7,6 +7,13 @@ from .event_style import event_colors, paint_event_card
 from .theme import scheme_for
 
 
+def disclosure_rect(rect, scale=1):
+    """Use the card's trailing lane for both disclosure painting and clicks."""
+    card = QRectF(rect).adjusted(scale, 3 * scale, -scale, -3 * scale)
+    width = min(24 * scale, max(0, card.width()))
+    return QRectF(card.right() - width, card.top(), width, max(0, card.height()))
+
+
 class SearchResultDelegate(QStyledItemDelegate):
     """Paint event objects without altering row identity, indentation or hit areas."""
 
@@ -33,6 +40,8 @@ class SearchResultDelegate(QStyledItemDelegate):
         selected = bool(styled.state & QStyle.StateFlag.State_Selected)
         focused = bool(styled.state & QStyle.StateFlag.State_HasFocus
                        and widget and widget.hasFocus())
+        fold = (disclosure_rect(option.rect, scale)
+                if not getattr(widget, 'agenda_mode', False) and index.model().hasChildren(index) else None)
         card = QRectF(option.rect).adjusted(scale, 3 * scale, -scale, -3 * scale)
         if card.width() <= 0 or card.height() <= 0:
             return
@@ -43,6 +52,8 @@ class SearchResultDelegate(QStyledItemDelegate):
                          focus_color=scheme.focus, scale=scale)
 
         left, width = card.left() + 8 * scale, max(0, card.width() - 16 * scale)
+        if fold is not None:
+            width = max(0, width - fold.width())
         normal = QFont(option.font)
         bold = QFont(normal)
         bold.setBold(True)
@@ -61,12 +72,12 @@ class SearchResultDelegate(QStyledItemDelegate):
                                                          Qt.TextElideMode.ElideRight, int(width)))
         painter.restore()
 
-        # The branch stays in the tree's original gutter, with its native click
-        # target. Its color follows this widget's scheme rather than OS highlight.
-        if index.model().hasChildren(index):
+        # Top-level rows use the same outer edge as the search input. Series
+        # keep an explicit disclosure inside the card; dated children retain
+        # the tree's native indentation and keyboard behavior.
+        if fold is not None:
             painter.save()
-            indent = widget.indentation() if widget and hasattr(widget, 'indentation') else 15 * scale
-            x, y = option.rect.left() - indent / 2, option.rect.center().y()
+            x, y = fold.center().x(), fold.center().y()
             expanded = bool(widget and hasattr(widget, 'isExpanded') and widget.isExpanded(index))
             points = ([(x - 3 * scale, y - 1.5 * scale), (x, y + 1.5 * scale),
                        (x + 3 * scale, y - 1.5 * scale)] if expanded else

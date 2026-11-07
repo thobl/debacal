@@ -311,15 +311,14 @@ def test_all_agenda_styles_return_to_identical_search_cards_and_native_folding(d
             panel.populate('needle')
             series = next(panel.topLevelItem(i) for i in range(panel.topLevelItemCount())
                           if panel.event_id(panel.topLevelItem(i)) == 'series')
-            rect = panel.visualItemRect(series)
             QTest.mouseClick(panel.viewport(), Qt.MouseButton.LeftButton,
-                             pos=QPoint(rect.left() - panel.indentation() // 2, rect.center().y()))
+                             pos=panel.disclosure_rect(series).center().toPoint())
             settle(app)
             assert series.isExpanded() and series.childCount() == 3
             panel.setCurrentItem(series.child(0))
             panel.clearFocus()
             settle(app)
-            assert panel.uniformRowHeights() and panel.rootIsDecorated()
+            assert panel.uniformRowHeights() and not panel.rootIsDecorated()
             assert panel.visualItemRect(series).height() == 49
             images.append(panel.viewport().grab().toImage())
         assert images[0] == images[1] == images[2]

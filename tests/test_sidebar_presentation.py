@@ -120,7 +120,7 @@ def test_selected_search_card_keeps_the_shared_source_tint(desktop, scheme, sour
         assert expected.selected_outline in edge
 
 
-def test_card_tree_keeps_native_branch_hits_indentation_and_child_selection(desktop):
+def test_card_tree_keeps_disclosure_hits_indentation_and_child_selection(desktop):
     app, _ = desktop
     with Store(':memory:') as store:
         store.apply('Create', [Event('series', 'local', 'Synthetic needle', START,
@@ -129,14 +129,13 @@ def test_card_tree_keeps_native_branch_hits_indentation_and_child_selection(desk
         panel.populate('needle')
         settle(app)
         root = panel.topLevelItem(0)
-        rect = panel.visualItemRect(root)
         QTest.mouseClick(panel.viewport(), Qt.MouseButton.LeftButton,
-                         pos=QPoint(rect.left() - panel.indentation() // 2, rect.center().y()))
+                         pos=panel.disclosure_rect(root).center().toPoint())
         settle(app)
         assert root.isExpanded() and root.childCount() == 3
         child = root.child(0)
         child_rect = panel.visualItemRect(child)
-        assert child_rect.left() - rect.left() == panel.indentation()
+        assert child_rect.left() - panel.visualItemRect(root).left() == panel.indentation()
         # The padding around the painted card remains part of the native row hit.
         QTest.mouseClick(panel.viewport(), Qt.MouseButton.LeftButton,
                          pos=QPoint(child_rect.left() + 1, child_rect.bottom()))

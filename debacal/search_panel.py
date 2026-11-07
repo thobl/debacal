@@ -18,6 +18,7 @@ from .models import Event
 from .agenda_style import AgendaResultDelegate
 from .recurrence import occurrence, recurrence_key, recurrence_set, overlaps
 from .search_result_style import SearchResultDelegate as _ResultDelegate
+from .search_result_style import disclosure_rect as _disclosure_rect
 from .timeutil import local_zone, now
 
 
@@ -107,7 +108,7 @@ class SearchPanel(QTreeWidget):
         self.agenda_mode = False
         self.setHeaderHidden(True)
         self.setColumnCount(1)
-        self.setRootIsDecorated(True)
+        self.setRootIsDecorated(False)
         self.setUniformRowHeights(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setItemDelegate(AgendaResultDelegate(self, subtitle_role=SUBTITLE_ROLE, color_role=COLOR_ROLE,
@@ -202,9 +203,9 @@ class SearchPanel(QTreeWidget):
     def refresh_agenda_presentation(self, current=None, *, relayout=True):
         """Refresh day labels/layout without reindexing events or changing selection."""
         uniform = not self.agenda_mode or self.preferences.agenda_style == 'cards'
-        changed = self.uniformRowHeights() != uniform or self.rootIsDecorated() == self.agenda_mode
+        changed = self.uniformRowHeights() != uniform or self.rootIsDecorated()
         self.setUniformRowHeights(uniform)
-        self.setRootIsDecorated(not self.agenda_mode)
+        self.setRootIsDecorated(False)
         prepare = getattr(self.itemDelegate(), 'prepare_agenda', None)
         if self.agenda_mode and callable(prepare):
             changed = prepare(self._agenda_presentation_events, self.preferences,
@@ -759,8 +760,21 @@ class SearchPanel(QTreeWidget):
         elif identifier := self.event_id(item):
             self.activated.emit(identifier)
 
+    def disclosure_rect(self, item):
+        """Return a visible series row's fold control in viewport coordinates."""
+        if self.agenda_mode or item is None or not self.is_series_root(item):
+            return None
+        rect = self.visualItemRect(item)
+        return _disclosure_rect(rect, self.preferences.font_scale / 100) if rect.isValid() else None
+
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
+        fold = self.disclosure_rect(item)
+        if event.button() == Qt.MouseButton.LeftButton and fold is not None and fold.contains(event.position()):
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            item.setExpanded(not item.isExpanded())
+            event.accept()
+            return
         if item is not None and item.data(MORE_ROLE) is True:
             self._load_page(item.parent())
             event.accept()
@@ -772,3 +786,10 @@ class SearchPanel(QTreeWidget):
             self._mouse_selecting = False
         if identifier := self.event_id(item):
             self.result_selected.emit(identifier, event.modifiers())
+
+    def mouseDoubleClickEvent(self, event):
+        fold = self.disclosure_rect(self.itemAt(event.position().toPoint()))
+        if event.button() == Qt.MouseButton.LeftButton and fold is not None and fold.contains(event.position()):
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
