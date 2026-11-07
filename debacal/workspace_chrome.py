@@ -272,6 +272,7 @@ class WorkspaceChrome:
                 row.context_requested.connect(self.calendar_menu)
                 self.creation_button_group.addButton(row.choice)
                 self.calendar_rows[calendar.id] = row
+                self.calendar_list.attach_row(row)
             self.calendar_box.insertWidget(index, row)
             if row.preferences != self.preferences:
                 row.set_preferences(self.preferences)

@@ -6,8 +6,10 @@ from PySide6.QtWidgets import (
 )
 
 from .compact_controls import ElidedButton
+from .calendar_list import CalendarList
 from .mini_calendar import MiniCalendar
 from .search_panel import SearchPanel
+from .search_header import SearchHeader
 
 
 def _section(name, margins, parent_layout, stretch=0):
@@ -75,11 +77,9 @@ def build_sidebar(window, root):
     window.icon_button('export', 'Export calendar file', window.export_ics, heading)
     window.icon_button('new', 'Add calendar', window.add_calendar, heading)
     calendars.addLayout(heading)
-    body = QWidget()
-    body.setObjectName('calendarListBody')
-    window.calendar_box = QVBoxLayout(body)
-    window.calendar_box.setContentsMargins(0, 0, 0, 0)
-    window.calendar_box.setSpacing(4)
+    body = window.calendar_list = CalendarList()
+    window.calendar_box = body.box
+    body.order_changed.connect(window.reorder_calendars)
     window.calendar_rows = {}
     window.creation_button_group = QButtonGroup(window)
     window.calendar_scroll = QScrollArea()
@@ -95,23 +95,21 @@ def build_sidebar(window, root):
     divider.setFixedHeight(1)
     sections.addWidget(divider)
     window.agenda_section, agenda = _section('agendaSection', (18, 14, 14, 8), sections, 1)
-    # Preserve the established field-above-results-heading ordering while the
-    # search/header alternatives are reviewed. Its height is fixed in both modes.
-    search_row = QHBoxLayout()
-    search_row.setSpacing(4)
     window.search = QLineEdit()
     window.search.setClearButtonEnabled(True)
     window.search.setAccessibleName('Search events')
     window.search.textChanged.connect(window.search_changed)
-    search_row.addWidget(window.search, 1)
     window.filter_search = window.icon_button('filter', 'Filter calendar to match search',
-                                              window.toggle_search_filter, search_row)
+                                              window.toggle_search_filter, None)
     window.filter_search.setCheckable(True)
     window.filter_search.setChecked(bool(window.store.get_setting('filter_calendar_by_search', False)))
-    agenda.addLayout(search_row)
     window.results_heading = QLabel('Next events')
     window.results_heading.setObjectName('section')
-    agenda.addWidget(window.results_heading)
+    window.search_header = SearchHeader(window.search, window.filter_search, window.results_heading,
+                                        window.preferences, window.bindings.get('search', ''))
+    window.search_button = window.search_header.button
+    window.search_header.search_requested.connect(window.focus_search)
+    agenda.addWidget(window.search_header)
     window.results = SearchPanel(window.store, window.preferences)
     window.results.setMinimumHeight(60)
     window.results.result_selected.connect(window.select_search_result)

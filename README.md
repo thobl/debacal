@@ -120,6 +120,10 @@ and calendar previews. Calendar colors still come from their sources. The
 sidebar separates the month overview, calendar controls, and agenda/search;
 source-colored event cards keep their selection and keyboard focus cues. Choose
 a calendar by name to create in it; its eye button controls visibility separately.
+Read-only sources show a lock. Drag a calendar's name or color square to reorder
+the list; its order is saved per profile without changing the creation calendar.
+Preferences → Appearance → Upcoming events offers event cards, cards grouped by
+day, and a per-day timeline (the default). Search always uses event cards.
 
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.
@@ -140,7 +144,7 @@ a calendar by name to create in it; its eye button controls visibility separatel
   an existing event to open the same editor as `E`, including the
   one/all/following controls. Double-click empty space to create a new event.
   In month view, an empty body starts a timed event at 09:00.
-  Double-click a day heading, its **+ All day** area, or the day/week all-day strip
+  Double-click a day heading or the day/week all-day strip
   to start an all-day event. All-day events stay above the timed grid; multi-day
   bars connect adjacent dates and continue across month week rows. The timed grid
   fits 08:00–18:00 and expands to include visible events. The vertical expansion
@@ -167,7 +171,10 @@ a calendar by name to create in it; its eye button controls visibility separatel
   to the displayed page: copying in one week and pasting two weeks later shifts
   the selection by two weeks. The preview includes every visible occurrence of
   copied series. Text fields retain their native clipboard behavior.
-* **Search:** `Ctrl+F`, then title, notes, or location. Up/Down cycles through
+* **Search:** click the search icon beside **Next events**, or press `Ctrl+F`;
+  the input immediately receives focus. Type a title, notes, or location.
+  Empty search controls collapse back to the agenda heading when focus leaves;
+  a populated query stays visible. Up/Down cycles through
   matches, wrapping at either end; clicking a result also reveals and highlights
   its event in the calendar. Result rows show a prominent title, smaller date/time
   and calendar color; the calendar name is in the tooltip. Repeating series expand

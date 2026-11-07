@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import Event
+from .agenda_style import AgendaResultDelegate
 from .recurrence import occurrence, recurrence_key, recurrence_set, overlaps
 from .search_result_style import SearchResultDelegate as _ResultDelegate
 from .timeutil import local_zone, now
@@ -109,7 +110,8 @@ class SearchPanel(QTreeWidget):
         self.setRootIsDecorated(True)
         self.setUniformRowHeights(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setItemDelegate(_ResultDelegate(self, subtitle_role=SUBTITLE_ROLE, color_role=COLOR_ROLE))
+        self.setItemDelegate(AgendaResultDelegate(self, subtitle_role=SUBTITLE_ROLE, color_role=COLOR_ROLE,
+                                                 event_role=EVENT_ROLE))
         self.setIndentation(round(15 * preferences.font_scale / 100))
         self._index = None
         self._query = None
@@ -139,6 +141,7 @@ class SearchPanel(QTreeWidget):
         self._render_signature = None
         self._agenda_caches = OrderedDict()
         self._agenda_render_key = None
+        self._agenda_presentation_events = ()
         self._items_by_id = {}
         self._updating = False
         self._mouse_selecting = False
@@ -193,7 +196,23 @@ class SearchPanel(QTreeWidget):
                 item.setData(SUBTITLE_ROLE, self._when(effective))
                 item.setToolTip(0, self._event_tooltip(source, effective))
         self.viewport().update()
+        self.refresh_agenda_presentation()
         return True
+
+    def refresh_agenda_presentation(self, current=None, *, relayout=True):
+        """Refresh day labels/layout without reindexing events or changing selection."""
+        uniform = not self.agenda_mode or self.preferences.agenda_style == 'cards'
+        changed = self.uniformRowHeights() != uniform or self.rootIsDecorated() == self.agenda_mode
+        self.setUniformRowHeights(uniform)
+        self.setRootIsDecorated(not self.agenda_mode)
+        prepare = getattr(self.itemDelegate(), 'prepare_agenda', None)
+        if self.agenda_mode and callable(prepare):
+            changed = prepare(self._agenda_presentation_events, self.preferences,
+                              current if current is not None else now(), local_zone()) or changed
+        if changed and relayout:
+            self.doItemsLayout()
+            self.viewport().update()
+        return changed
 
     def set_range(self, start, end):
         if end <= start:
@@ -458,6 +477,7 @@ class SearchPanel(QTreeWidget):
         self._updating = True
         try:
             self.agenda_mode = False
+            self.refresh_agenda_presentation(relayout=False)
             super().clear()
             self._items_by_id.clear()
             self._states.clear()
@@ -544,12 +564,15 @@ class SearchPanel(QTreeWidget):
         events = events[:limit]
         render_key = (self._cache_generation, tuple(event.id for event in events), days)
         if self.agenda_mode and render_key == self._agenda_render_key:
+            self.refresh_agenda_presentation(start)
             return len(events)
         selected, current_id = self.selected_ids(), self.event_id(self.currentItem())
         blocked = self.blockSignals(True)
         self._updating = True
         try:
             self.agenda_mode = True
+            self._agenda_presentation_events = tuple(events)
+            self.refresh_agenda_presentation(start, relayout=False)
             self._query = None
             self._agenda_render_key = render_key
             super().clear()
@@ -570,6 +593,7 @@ class SearchPanel(QTreeWidget):
         finally:
             self._updating = False
             self.blockSignals(blocked)
+        self.doItemsLayout()
         return len(events)
 
     def _event_item(self, event):

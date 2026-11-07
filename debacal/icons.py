@@ -21,6 +21,8 @@ _SHAPES = {
     'expand': '<path d="M4 2h12M4 18h12M10 4v12M7 7l3-3 3 3M7 13l3 3 3-3"/>',
     'eye': '<path d="M1 10s3-6 9-6 9 6 9 6-3 6-9 6-9-6-9-6Z"/><circle cx="10" cy="10" r="2.5"/>',
     'eye_off': '<path d="M3 3l14 14M7 4.5A9 9 0 0 1 10 4c6 0 9 6 9 6a16 16 0 0 1-3 3.5M13 15.5A9 9 0 0 1 10 16c-6 0-9-6-9-6a16 16 0 0 1 3-3.5"/>',
+    'lock': '<rect x="4" y="8" width="12" height="10" rx="2"/><path d="M6 8V5a4 4 0 0 1 8 0v3M10 12v2"/>',
+    'search': '<circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/>',
     'import': '<path d="M10 2v10m-4-4 4 4 4-4M3 12v5h14v-5"/>',
     'export': '<path d="M10 12V2M6 6l4-4 4 4M3 12v5h14v-5"/>',
     'history': '<path d="M3 8a7 7 0 1 1 0 5M3 3v5h5M10 6v5l3 2"/>',

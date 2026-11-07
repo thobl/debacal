@@ -191,9 +191,39 @@ class Store:
 
     def list_calendars(self) -> list[Calendar]:
         with self._lock:
-            return [Calendar.from_dict(json.loads(row[0])) for row in self.connection.execute(
-                "SELECT data FROM calendars ORDER BY rowid"
-            )]
+            calendars = self._calendars_by_creation_order()
+            saved = self.get_setting('calendar_order')
+            if not isinstance(saved, list):
+                return calendars
+            by_id = {calendar.id: calendar for calendar in calendars}
+            ordered = []
+            for identity in saved:
+                if isinstance(identity, str) and identity in by_id:
+                    ordered.append(by_id.pop(identity))
+            # Newly discovered calendars append in their established order;
+            # deleted IDs and duplicates never leave holes or duplicate rows.
+            return ordered + [calendar for calendar in calendars if calendar.id in by_id]
+
+    def _calendars_by_creation_order(self) -> list[Calendar]:
+        return [Calendar.from_dict(json.loads(row[0])) for row in self.connection.execute(
+            "SELECT data FROM calendars ORDER BY rowid"
+        )]
+
+    def set_calendar_order(self, identifiers: Iterable[str]) -> None:
+        """Save this profile's display order without touching calendar sources."""
+        if isinstance(identifiers, (str, bytes)):
+            raise ValueError('Calendar order must be a sequence of calendar IDs.')
+        requested = list(identifiers)
+        if any(not isinstance(identity, str) for identity in requested) or len(set(requested)) != len(requested):
+            raise ValueError('Calendar order must contain unique calendar IDs.')
+        with self._transaction():
+            calendars = self.list_calendars()
+            available = {calendar.id for calendar in calendars}
+            if any(identity not in available for identity in requested):
+                raise ValueError('Calendar not found.')
+            requested_ids = set(requested)
+            remaining = [calendar.id for calendar in calendars if calendar.id not in requested_ids]
+            self.set_setting('calendar_order', requested + remaining)
 
     def get_calendar(self, calendar_id: str) -> Calendar | None:
         with self._lock:
@@ -220,7 +250,8 @@ class Store:
     def get_default_calendar(self) -> Calendar | None:
         """Return the chosen writable calendar, with a stable local fallback."""
         with self._lock:
-            writable = [calendar for calendar in self.list_calendars()
+            # A display reorder must not change an implicit creation target.
+            writable = [calendar for calendar in self._calendars_by_creation_order()
                         if calendar.kind != 'ics' and not calendar.read_only]
             selected = self.get_setting('default_calendar_id')
             configured = next((calendar for calendar in writable if calendar.id == selected), None)

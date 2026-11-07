@@ -45,6 +45,7 @@ class Preferences:
     visible_start_hour: int = 8
     visible_end_hour: int = 18
     color_scheme: str = 'neutral'
+    agenda_style: str = 'timeline'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -74,6 +75,8 @@ class Preferences:
             raise ValueError('Visible hours must start before they end, between 00:00 and 24:00.')
         if not isinstance(self.color_scheme, str) or self.color_scheme not in SCHEMES:
             raise ValueError('Choose a neutral, warm, or cool color scheme.')
+        if not isinstance(self.agenda_style, str) or self.agenda_style not in ('cards', 'grouped', 'timeline'):
+            raise ValueError('Choose event cards, cards grouped by day, or a day timeline.')
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""

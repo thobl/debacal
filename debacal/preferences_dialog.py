@@ -74,6 +74,14 @@ class PreferencesDialog(QDialog):
             self.color_scheme.addItem(scheme.label, value)
         self.color_scheme.setCurrentIndex(self.color_scheme.findData(preferences.color_scheme))
         form.addRow('Color scheme', self.color_scheme)
+        self.agenda_style = QComboBox()
+        self.agenda_style.setAccessibleName('Upcoming events layout')
+        for name, value in [('Event cards', 'cards'), ('Cards grouped by day', 'grouped'),
+                            ('Timeline within each day', 'timeline')]:
+            self.agenda_style.addItem(name, value)
+        self.agenda_style.setCurrentIndex(self.agenda_style.findData(preferences.agenda_style))
+        self.agenda_style.setToolTip('Changes the upcoming events list. Search results always use event cards.')
+        form.addRow('Upcoming events', self.agenda_style)
         self.font_scale = QSpinBox()
         self.font_scale.setRange(80, 140)
         self.font_scale.setSingleStep(10)
@@ -164,7 +172,8 @@ class PreferencesDialog(QDialog):
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
                            locale_name=self.locale.currentData(), font_scale=self.font_scale.value(),
                            show_week_numbers=self.week_numbers.isChecked(), visible_start_hour=self.visible_start.value(),
-                           visible_end_hour=self.visible_end.value(), color_scheme=self.color_scheme.currentData())
+                           visible_end_hour=self.visible_end.value(), color_scheme=self.color_scheme.currentData(),
+                           agenda_style=self.agenda_style.currentData())
 
     def locale_changed(self, *_):
         preferences = Preferences(locale_name=self.locale.currentData())
@@ -188,6 +197,7 @@ class PreferencesDialog(QDialog):
         self.sync_interval.setValue(1)
         self.font_scale.setValue(100)
         self.color_scheme.setCurrentIndex(self.color_scheme.findData('neutral'))
+        self.agenda_style.setCurrentIndex(self.agenda_style.findData(Preferences().agenda_style))
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(8)
         self.visible_end.setValue(18)

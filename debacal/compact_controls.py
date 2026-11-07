@@ -17,6 +17,8 @@ class ElidedButton(QPushButton):
     def paintEvent(self, event):
         option = QStyleOptionButton()
         self.initStyleOption(option)
+        if self.property('focusFrame') is False:
+            option.state &= ~QStyle.StateFlag.State_HasFocus
         option.text = self.fontMetrics().elidedText(option.text, Qt.TextElideMode.ElideRight,
                                                     max(0, self.width() - 8))
         painter = QStylePainter(self)

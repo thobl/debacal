@@ -188,6 +188,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.canvas.update)
         self.clock_timer.timeout.connect(self.year.update)
+        self.clock_timer.timeout.connect(self.refresh_agenda_clock)
         self.clock_timer.start(60_000)
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
@@ -317,6 +318,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.update_command_tooltips()
         self.search.setPlaceholderText('Search events   ' + key('search'))
         self.search.setToolTip('Search titles, places, and notes (' + key('search') + ')')
+        self.search_header.update_preferences(self.preferences, self.bindings.get('search', ''))
         self.message_stack.setCurrentWidget(self.navigation_prompt if self.select_mode else self.notice)
         if self.select_mode:
             if self.nav_day is None:
@@ -357,6 +359,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.store.set_default_calendar(calendar_id)
         self.refresh_calendar_list(self.store.list_calendars())
         self.update_creation_target()
+
+    def reorder_calendars(self, calendar_ids):
+        self.store.set_calendar_order(calendar_ids)
+        self.refresh_calendar_list(self.store.list_calendars())
 
     def calendar_menu(self, calendar_id, point):
         calendar = self.store.get_calendar(calendar_id)
@@ -1040,6 +1046,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.results.setEnabled(True)
         query = self.search.text().strip()
         self.results_heading.setText('Search results' if query else 'Next events')
+        self.results.setAccessibleName('Search results' if query else 'Next events')
         if query:
             self.results.populate(query)
         else:
@@ -1047,6 +1054,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_index = getattr(self.results, '_search_index', None)
         self.apply_search_filter()
         self.sync_search_selection()
+
+    def refresh_agenda_clock(self):
+        if not self._closed and self.results.agenda_mode:
+            current = now()
+            self.results.populate_upcoming(current)
+            self.results.refresh_agenda_presentation(current)
+            self.sync_search_selection()
 
     def search_changed(self, *_):
         # Programmatic queries and clearing stay immediate. Actual typing is
@@ -1105,7 +1119,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._shortcut_pending.clear()
         self.shortcut_timer.stop()
         self.select_mode = False
-        self.search.setFocus()
+        self.search_header.reveal()
+        self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self.search.selectAll()
         self.update_hints()
 
@@ -1214,6 +1229,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search.clear()
         self.flush_search()
         self.active_canvas().setFocus()
+        self.search_header.sync_state()
 
     def add_calendar(self, calendar=None):
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
