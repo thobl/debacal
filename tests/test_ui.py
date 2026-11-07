@@ -473,7 +473,7 @@ class CanvasTests(unittest.TestCase):
             month.grab()
             labels = [call.args[2] for call in draw_text.call_args_list]
             weekdays = [call.args[2] for call in draw_text.call_args_list
-                        if call.args[1].y() == 0 and call.args[1].x() >= month.week_gutter]
+                        if call.args[1].y() == 8 and call.args[1].x() >= month.week_gutter]
             self.assertEqual(weekdays, [month.preferences.weekday_name(day).upper() for day in [6, 0, 1, 2, 3, 4, 5]])
             self.assertTrue(any(label.startswith(month.preferences.format_time(datetime(2026, 11, 2, 14)) + ' ')
                                 for label in labels))

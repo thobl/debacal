@@ -79,8 +79,9 @@ def test_large_fonts_keep_week_gutters_aligned_and_all_day_rows_usable(widgets):
     header = create(DayHeader, preferences)
     canvas = create(CalendarCanvas, preferences)
     strip = create(AllDayCanvas, preferences)
+    ordinary = create(DayHeader, Preferences(locale_name='en_GB', time_format='12h'))
     assert header.gutter == canvas.gutter == strip.gutter
-    assert header.gutter > 62 and header.height() > 84 and strip.lane_height > 27
+    assert header.gutter > ordinary.gutter and header.height() > ordinary.height() and strip.lane_height > 27
     start = START.replace(hour=0)
     event = Event('trip', 'local', 'Trip', start, start + timedelta(days=3), all_day=True)
     strip.set_data([start.date() + timedelta(days=day) for day in range(7)], [event], [])
@@ -133,6 +134,6 @@ def test_month_creation_tooltip_uses_preferred_time_format(widgets):
     app.processEvents()
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QTest
-    QTest.mouseMove(month, QPoint(50, month.header_height + 60))
+    QTest.mouseMove(month, QPoint(month.week_gutter + 10, month.header_height + 60))
     assert preferences.format_time(time(9)) in month.toolTip()
     assert '09:00' not in month.toolTip()

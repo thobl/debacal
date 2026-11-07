@@ -64,7 +64,7 @@ def test_month_week_numbers_and_clicks_cross_the_year_in_the_configured_rows(des
         assert not month.grab().isNull()
     painted_numbers = [call.args[2] for call in painted.call_args_list
                        if call.args[1].left() == 0 and call.args[1].width() == month.week_gutter]
-    assert painted_numbers[:3] == ['Wk', '53', '1']
+    assert painted_numbers[:3] == ['WEEK', '53', '1']
     for row in range(6):
         point = month.week_rect(row).center()
         expected = start + timedelta(days=7 * row)
@@ -152,10 +152,11 @@ def test_saved_opt_out_removes_number_targets_without_losing_day_cells(desktop):
     assert header.week_rect() is None
     month = create(MonthCanvas, preferences)
     month.set_data(date(2026, 12, 28), 1, [], [])
-    assert month.week_gutter == 0 and month.week_rect(0) is None
+    assert month.week_gutter == header.gutter and month.week_rect(0) is None
     point = QPointF(10, month.header_height + 10)
     assert month.week_at(point) is None
-    assert month.day_at(point) == date(2026, 12, 28)
+    assert month.day_at(point) is None
+    assert month.day_at(QPointF(month.week_gutter + 10, point.y())) == date(2026, 12, 28)
 
 
 @pytest.mark.parametrize('view', ['day', 'month', 'year'])

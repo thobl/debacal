@@ -134,6 +134,9 @@ choices. Both styles retain the same placement and toolbar separator.
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.
   The navigation buttons keep their position as month labels change.
+  Headline and Today positions stay fixed across views. Month and week share
+  day-column boundaries and weekday labels, including reserved scrollbar space;
+  hiding week numbers keeps the empty gutter to preserve that alignment.
   Click the mini calendar to jump.
 * **Year overview:** twelve month cards show calendar-colored event markers.
   Click a month heading to open Month view, or a marker to select its event;

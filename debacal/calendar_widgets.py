@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QFont
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetricsF
 from PySide6.QtWidgets import QWidget, QMenu, QApplication
 
 from .layout import layout_events
@@ -29,6 +29,27 @@ MUTED = QColor('#596570')
 GREEN = QColor('#475f52')
 CONFIRM_TOOLTIP = 'Confirm this slot and remove the other choices. Undo restores them.'
 WEEKDAY_SIZE = 9
+AXIS_SIZE = 8
+ALL_DAY_SIZE = 7
+
+
+@lru_cache(maxsize=64)
+def calendar_gutter(preferences):
+    """One compact axis for every day column, including longer 12-hour times."""
+    scale = preferences.font_scale / 100
+    font = QFont('Sans Serif')
+    font.setPointSizeF(AXIS_SIZE * scale)
+    metrics = QFontMetricsF(font)
+    width = max(metrics.horizontalAdvance(preferences.format_time(time(hour))) for hour in range(24))
+    return math.ceil(max(44 * scale, width + 12 * scale))
+
+
+def axis_label_rect(gutter, top, height, scale):
+    return QRectF(4 * scale, top, gutter - 10 * scale, height)
+
+
+def weekday_label_rect(left, width, scale):
+    return QRectF(left + 11, 8 * scale, width - 20, 20 * scale)
 
 
 @lru_cache(maxsize=3)
@@ -173,6 +194,7 @@ class DayHeader(QWidget):
         super().__init__(parent)
         self.days = []
         self.preferences = Preferences()
+        self.gutter = calendar_gutter(self.preferences)
         self.navigation_active = False
         self.navigation_day = None
         self.navigation_digits = ''
@@ -189,7 +211,7 @@ class DayHeader(QWidget):
     def set_preferences(self, preferences):
         self.preferences = preferences
         scale = display_scale(self)
-        self.gutter = math.ceil(62 * scale)
+        self.gutter = calendar_gutter(preferences)
         self.all_day_top = math.ceil(64 * scale)
         self.setFixedHeight(self.all_day_top)
         self.update()
@@ -282,10 +304,10 @@ class DayHeader(QWidget):
         scale = display_scale(self)
         week = self.week_rect()
         if week is not None:
-            text(p, QRectF(week.left(), week.top(), week.width(), 16 * scale), 'WEEK', colors.muted, 8,
+            text(p, QRectF(week.left(), week.top(), week.width(), 14 * scale), 'WEEK', colors.muted, 7,
                  align=Qt.AlignmentFlag.AlignCenter)
-            text(p, QRectF(week.left(), week.top() + 16 * scale, week.width(), 27 * scale),
-                 str(self.preferences.week_number(self.days[0])), colors.accent, 14, True,
+            text(p, QRectF(week.left(), week.top() + 14 * scale, week.width(), 18 * scale),
+                 str(self.preferences.week_number(self.days[0])), colors.accent, 10, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
@@ -296,7 +318,7 @@ class DayHeader(QWidget):
                 p.setBrush(colors.selection)
                 p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), 4, 4)
             day_color = colors.accent if today or selected_day else colors.weekend if day.weekday() >= 5 else colors.muted
-            text(p, QRectF(x + 11, 8 * scale, w - 20, 20 * scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
+            text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
             text(p, QRectF(x + 11, 28 * scale, w - 20, math.ceil(28 * scale)), str(day.day),
                  colors.accent if today else colors.weekend if day.weekday() >= 5 else colors.ink, 17, True)
             if self.navigation_active:
@@ -351,6 +373,7 @@ class CalendarCanvas(QWidget):
         self._drag_pointer = None
         self.show_numbers = False
         self.preferences = Preferences()
+        self.gutter = calendar_gutter(self.preferences)
         self.scope_modifiers = normalize_scope_modifiers()
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self.navigation_day = None
@@ -666,7 +689,7 @@ class CalendarCanvas(QWidget):
         self.preferences = preferences
         self.invalidate_geometry()
         scale = display_scale(self)
-        self.gutter = math.ceil(62 * scale)
+        self.gutter = calendar_gutter(preferences)
         self.all_day_height = math.ceil(44 * scale)
         self._refit()
         self.update()
@@ -752,7 +775,8 @@ class CalendarCanvas(QWidget):
                 p.fillRect(QRectF(self.gutter + i * w, 0, w, self.height()), colors.selection)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         if not self.fixed_all_day:
-            text(p, QRectF(4, 4, 56 * scale, 28 * scale), 'ALL DAY', colors.muted, 8)
+            text(p, axis_label_rect(self.gutter, 4 * scale, 28 * scale, scale), 'All day', colors.muted, ALL_DAY_SIZE,
+                 align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             p.setPen(QPen(colors.line, 1))
             p.drawLine(0, self.time_top, self.width(), self.time_top)
         for hour in range(self.start_hour, self.end_hour + 1):
@@ -761,7 +785,7 @@ class CalendarCanvas(QWidget):
             p.drawLine(QPointF(self.gutter, y), QPointF(self.width(), y))
             if hour and hour < 24:
                 label = self.preferences.format_time(time(hour))
-                text(p, QRectF(2, max(0, y - 11 * scale), 54 * scale, 22 * scale), label, colors.muted, 8,
+                text(p, axis_label_rect(self.gutter, max(0, y - 11 * scale), 22 * scale, scale), label, colors.muted, AXIS_SIZE,
                      align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if hour < self.end_hour:
                 p.setPen(QPen(colors.line, 1, Qt.PenStyle.DotLine))
@@ -1141,16 +1165,16 @@ class MonthCanvas(QWidget):
 
     @property
     def week_gutter(self):
-        return math.ceil(32 * display_scale(self)) if self.preferences.show_week_numbers else 0
+        return calendar_gutter(self.preferences)
 
     def week_rect(self, row):
-        if not self.week_gutter or not 0 <= row < 6:
+        if not self.preferences.show_week_numbers or not 0 <= row < 6:
             return None
         height = (self.height() - self.header_height) / 6
         return QRectF(0, self.header_height + row * height, self.week_gutter, height)
 
     def week_at(self, point):
-        if not self.week_gutter or not 0 <= point.x() < self.week_gutter or not self.header_height <= point.y() < self.height():
+        if not self.preferences.show_week_numbers or not 0 <= point.x() < self.week_gutter or not self.header_height <= point.y() < self.height():
             return None
         row = int((point.y() - self.header_height) / ((self.height() - self.header_height) / 6))
         return self.start + timedelta(days=7 * row)
@@ -1332,8 +1356,8 @@ class MonthCanvas(QWidget):
         gutter = self.week_gutter
         width, height = (self.width() - gutter) / 7, (self.height() - self.header_height) / 6
         day_label_height = min(25 * scale, self.month_row_metrics()[0] - 2 * scale)
-        if gutter:
-            text(p, QRectF(0, 0, gutter, self.header_height), 'Wk', colors.muted, 8, True, Qt.AlignmentFlag.AlignCenter)
+        if self.preferences.show_week_numbers:
+            text(p, QRectF(0, 8 * scale, gutter, 20 * scale), 'WEEK', colors.muted, 7, align=Qt.AlignmentFlag.AlignCenter)
             for row in range(6):
                 rect = self.week_rect(row)
                 text(p, QRectF(rect.left(), rect.top() + 3 * scale, rect.width(), 25 * scale),
@@ -1343,7 +1367,7 @@ class MonthCanvas(QWidget):
         for index in range(7):
             day = self.start + timedelta(days=index)
             name = self.preferences.weekday_name(day).upper()
-            text(p, QRectF(gutter + index * width + 11, 0, width - 18, 25 * scale), name,
+            text(p, weekday_label_rect(gutter + index * width, width, scale), name,
                  colors.weekend if day.weekday() >= 5 else colors.muted, WEEKDAY_SIZE, True)
         # Finish every day background before drawing any bar across its neighbors.
         for index in range(42):
@@ -1546,6 +1570,7 @@ class AllDayCanvas(MonthCanvas):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.days = []
+        self.gutter = calendar_gutter(self.preferences)
         self.setMinimumHeight(0)
         self.setFixedHeight(35)
 
@@ -1567,7 +1592,7 @@ class AllDayCanvas(MonthCanvas):
         self.preferences = preferences
         self.invalidate_geometry()
         scale = display_scale(self)
-        self.gutter = math.ceil(62 * scale)
+        self.gutter = calendar_gutter(preferences)
         self.lane_height = math.ceil(27 * scale)
         self._resize_lanes()
         self.update()
@@ -1576,6 +1601,9 @@ class AllDayCanvas(MonthCanvas):
         lanes = self._lanes(self.events)
         count = max((entry[1] + 1 for entry in lanes), default=1)
         self.setFixedHeight(count * self.lane_height + math.ceil(8 * display_scale(self)))
+
+    def week_at(self, point):
+        return None
 
     def set_data(self, days, events, calendars):
         self.cancel_confirmation()
@@ -1621,7 +1649,8 @@ class AllDayCanvas(MonthCanvas):
         p.setPen(QPen(colors.line, 1))
         p.drawLine(QPointF(self.gutter, self.height() - .5), QPointF(self.width(), self.height() - .5))
         scale = display_scale(self)
-        text(p, QRectF(3, 3, 55 * scale, 24 * scale), 'ALL DAY', colors.muted, 8)
+        text(p, axis_label_rect(self.gutter, 3 * scale, 24 * scale, scale), 'All day', colors.muted, ALL_DAY_SIZE,
+             align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.hits = []
         self.confirm_hits = []
         for rect, item, number in self.rects():

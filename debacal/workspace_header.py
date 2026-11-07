@@ -165,12 +165,7 @@ class WorkspaceHeader(QWidget):
         window.range_label.setFixedHeight(button_height)
         window.range_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.title_grid.setVerticalSpacing(gap)
-        if window.view == 'month':
-            gutter = max(math.ceil(32 * scale), window.month.week_gutter)
-        elif window.view == 'year':
-            gutter = math.ceil(32 * scale)
-        else:
-            gutter = window.canvas.gutter
+        gutter = window.canvas.gutter
         self.title_grid.setColumnMinimumWidth(0, gutter)
         heading_metrics, range_metrics = window.heading.fontMetrics(), window.range_label.fontMetrics()
         if window.view == 'year':

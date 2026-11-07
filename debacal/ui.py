@@ -281,6 +281,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.results.update_context(cals, self.preferences)
         self.results.set_range(at(days[0]), at(days[-1] + timedelta(days=1)))
         self.stack.setCurrentIndex({'day': 0, 'week': 0, 'month': 1, 'year': 2}[self.view])
+        self.sync_week_columns()
         for name, btn in self.view_buttons.items():
             btn.setChecked(name == self.view)
         self.full_day_button.setEnabled(self.view in ('day', 'week'))
@@ -406,18 +407,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.sync_week_columns()
 
     def sync_week_columns(self):
-        """Share grid geometry even when either event lane needs a scrollbar.
-
-        Keep the scroll areas full width and reserve any trailing scrollbar
-        space in their contents. This covers both a full-day timed view and a
-        crowded pinned all-day lane without shifting dates into other columns.
-        """
-        if self._closed or self.view not in ('day', 'week'):
+        """Reserve the same trailing scrollbar space in month and week views."""
+        if self._closed:
             return
-        width = min(self.scroll.viewport().width(), self.all_day_scroll.viewport().width())
+        trailing = max(self.scroll.verticalScrollBar().sizeHint().width(),
+                       self.all_day_scroll.verticalScrollBar().sizeHint().width())
+        width = self.stack.contentsRect().width() - trailing
         if width <= self.canvas.gutter:
             return
-        for widget in (self.header, self.canvas, self.all_day_canvas):
+        for widget in (self.header, self.canvas, self.all_day_canvas, self.month):
             if widget.maximumWidth() != width:
                 widget.setMaximumWidth(width)
 
@@ -1592,6 +1590,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if event.type() == QEvent.Type.Resize and hasattr(self, 'scroll') and obj is self.scroll.viewport():
             QTimer.singleShot(0, self.fit_calendar)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'all_day_scroll') and obj is self.all_day_scroll.viewport():
+            QTimer.singleShot(0, self.sync_week_columns)
+        if event.type() == QEvent.Type.Resize and hasattr(self, 'stack') and obj is self.stack:
             QTimer.singleShot(0, self.sync_week_columns)
         if event.type() == QEvent.Type.Resize and hasattr(self, 'year_scroll') and obj is self.year_scroll.viewport():
             QTimer.singleShot(0, self.fit_year)
