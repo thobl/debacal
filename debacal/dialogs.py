@@ -811,7 +811,7 @@ class EventDialog(FormDialog):
                               f'Starts, Ends, and the calendar show {local_zone()}.\n')
         self.pattern_help.setText(authoring_note + self._conversion_notice
             + 'The initial event is always included. Each step is evaluated from the previous event. '
-            '+30min = 30 minutes; +2h = 2 hours; +2d = 2 days; +3 = 3 weeks; '
+            '+2d = 2 days; +3 = 3 weeks; '
             '+1m / +1y = 1 month / year.\n'
             'Dates: 13. or 3.2.; times: 10:00 or 10:00-3.2.2027. Omitted date parts roll forward. '
             'A full date is exact. Duration stays the same.\n'

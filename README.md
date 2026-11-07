@@ -304,11 +304,9 @@ not repeat its date. Its duration applies to the additional occurrences.
 Instructions are separated by spaces or commas. Each runs from the result of the
 previous instruction:
 
-* `+2` adds two weeks. Units can be explicit: `+30min`, `+2h`, `+3d`, `+2w`,
-  `+1m`, `+1y` for minutes, hours, days, weeks, calendar months, and calendar years.
-  Minute/hour offsets advance the previous event's local wall time, including
-  into the following day. The longer units keep its clock. `m` means months;
-  use `min` for minutes. Month/year shifts clip invalid days: 31 January plus
+* `+2` adds two weeks. Units can be explicit: `+3d`, `+2w`, `+1m`, `+1y` for
+  days, weeks, calendar months, and calendar years. Relative date steps keep the
+  preceding event's clock. Month/year shifts clip invalid days: 31 January plus
   one month becomes 28 February in a non-leap year.
 * `13.` chooses the next day 13; `3.2.` (also `3.2`) chooses the next 3 February. Omitted
   month/year values roll forward until the matching instant is strictly later
@@ -325,7 +323,7 @@ previous instruction:
 13. +1 18. 2. 3.2. +2
 4*(+2) +3 3*+2
 14:00-13. +1 18.
-3*(+2h +30min)
+10:00 11:30 14:00-13.
 ```
 
 Starting at **7 November 2026, 09:00**, the first example adds 13 November,
@@ -333,11 +331,14 @@ Starting at **7 November 2026, 09:00**, the first example adds 13 November,
 including the initial one. Duplicate instants appear once, while each instruction
 still updates the cursor. Expansion is bounded to 500 events including the fixed
 event; repeat budgets are checked before execution. Nonexistent local times during
-a daylight-saving clock change are rejected, including minute/hour offsets
-that land in the missing hour. Offsets use wall time rather than elapsed UTC
-time: `+24h` has the same result as `+1d` across a clock change. During a repeated hour, absolute
-dates retain the initial event's choice, while relative and time-only steps retain
-the previous event's choice.
+a daylight-saving clock change are rejected. During a repeated hour, absolute
+dates retain the initial event's choice, while relative and time-only steps
+retain the previous event's choice.
+
+Automatically reconstructed sequences use explicit clocks for time changes,
+rather than minute/hour offsets. Already-saved expressions containing `h` or
+`min` offsets remain readable and keep their original meaning. Opening a series
+or changing its title does not rewrite its text.
 
 The text remains editable when reopening a saved custom series. Title edits
 preserve it; moving a series keeps relative text when equivalent and rewrites

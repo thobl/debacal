@@ -411,19 +411,16 @@ class _ShortForm:
 
 
 def _transition_atoms(previous, value, anchor):
-    """Certify each local choice against the original fixed event's clock."""
+    """Certify dates and explicit clocks against the original fixed event.
+
+    Minute/hour offsets remain readable but are not generated: changing one
+    occurrence's clock should not turn later clocks into relative offsets.
+    """
     proposals = []
     same_clock = value.timetz().replace(tzinfo=None) == previous.timetz().replace(tzinfo=None)
     days = (value.date() - previous.date()).days
     months = (value.year - previous.year) * 12 + value.month - previous.month
     years = value.year - previous.year
-    wall_delta = value.replace(tzinfo=None) - previous.replace(tzinfo=None)
-    if wall_delta > timedelta(0) and wall_delta % timedelta(minutes=1) == timedelta(0):
-        minutes = wall_delta // timedelta(minutes=1)
-        if minutes % 60 == 0:
-            proposals.append((f'+{minutes // 60}h', _Relative(minutes // 60, 'h'), 0))
-        if minutes <= 999999999:  # The parser bounds relative numbers to nine digits.
-            proposals.append((f'+{minutes}min', _Relative(minutes, 'min'), 0))
     if same_clock and days > 0:
         if days % 7 == 0:
             proposals.append((f'+{days // 7}', _Relative(days // 7, 'w'), 0))

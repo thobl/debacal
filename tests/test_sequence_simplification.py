@@ -30,26 +30,41 @@ class SimplificationTests(unittest.TestCase):
         self.assertEqual(expression, '4*+2')
         self.assert_equivalent(values, expression)
 
-    def test_repeated_hour_and_minute_offsets_keep_graphical_edits_compact(self):
-        for delta, expected in ((timedelta(hours=2), '4*+2h'),
-                                (timedelta(minutes=15), '4*+15min')):
+    def test_hour_and_minute_spacing_uses_explicit_clocks(self):
+        for delta, expected in ((timedelta(hours=2), '11:00 13:00 15:00 17:00'),
+                                (timedelta(minutes=15), '9:15 9:30 9:45 10:00')):
             with self.subTest(expected=expected):
                 values = [ANCHOR + index * delta for index in range(5)]
                 expression = simplify_sequence(values)
                 self.assertEqual(expression, expected)
                 self.assert_equivalent(values, expression)
 
-    def test_clock_offset_candidates_are_certified_across_midnight_and_dst(self):
+    def test_reconstructed_clocks_are_certified_across_midnight_and_dst(self):
         cases = [(ANCHOR.replace(hour=23, minute=30), '4*+45min'),
                  (datetime(2027, 3, 28, 1, 30, tzinfo=ZONE), '+2h +30min'),
-                 (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1), '2*+1h'),
-                 (ANCHOR.replace(second=17, microsecond=123), '4*+2h')]
+                 (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1), '2*+1h')]
         for anchor, original in cases:
             with self.subTest(original=original):
                 values = expand_sequence(original, anchor)
                 expression = simplify_sequence(values)
-                self.assertLessEqual(len(expression), len(original))
+                self.assertNotRegex(expression, r'\+[0-9]+(?:h|min)')
                 self.assert_equivalent(values, expression)
+
+    def test_changing_one_same_day_clock_keeps_later_clocks_fixed(self):
+        values = [ANCHOR, ANCHOR.replace(hour=10), ANCHOR.replace(hour=11), ANCHOR.replace(hour=14)]
+        expression = reconstruct_sequence(values)
+        self.assertEqual(expression, '10:00 11:00 14:00')
+        changed = expand_sequence(expression.replace('10:00', '10:30'), ANCHOR)
+        self.assertEqual([(value.hour, value.minute) for value in changed],
+                         [(9, 0), (10, 30), (11, 0), (14, 0)])
+
+    def test_unrepresentable_seconds_are_rejected_without_reintroducing_offsets(self):
+        precise = ANCHOR.replace(second=17, microsecond=123)
+        values = expand_sequence('4*+2h', precise)
+        with self.assertRaisesRegex(PatternError, 'sub-minute'):
+            reconstruct_sequence(values)
+        # Existing authored text remains readable with its full precision.
+        self.assertTrue(all((value.second, value.microsecond) == (17, 123) for value in values))
 
     def test_first_of_month_prefers_a_repeated_short_date(self):
         values = [datetime(2027, 1, 31, 9, tzinfo=ZONE),
