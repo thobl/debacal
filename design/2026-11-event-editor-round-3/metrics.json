@@ -1,0 +1,30 @@
+{
+  "editor-light": {
+    "width": 940,
+    "height": 535
+  },
+  "editor-dark": {
+    "width": 940,
+    "height": 535
+  },
+  "picker-same-day-light": {
+    "width": 520,
+    "height": 405
+  },
+  "picker-start-light": {
+    "width": 520,
+    "height": 405
+  },
+  "picker-end-light": {
+    "width": 520,
+    "height": 405
+  },
+  "occurrence-light": {
+    "width": 520,
+    "height": 405
+  },
+  "changed-primary-light": {
+    "width": 940,
+    "height": 535
+  }
+}

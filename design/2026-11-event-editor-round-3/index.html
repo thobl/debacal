@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Debacal · event editor, round 3</title>
+  <style>
+    :root { color-scheme:light; --page:#f3f6f7; --surface:#fff; --ink:#27313a; --muted:#596570; --line:#d9e0e5; --accent:#475f52; --selected:#e7eee8; --soft:#edf2f4; }
+    body.dark { color-scheme:dark; --page:#212526; --surface:#2d3132; --ink:#edf1f5; --muted:#b4bfc7; --line:#495154; --accent:#b4cbbd; --selected:#39473e; --soft:#353b3d; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--page); color:var(--ink); font:16px/1.55 system-ui,sans-serif; }
+    header,main,footer { max-width:1380px; margin:auto; padding:26px 30px; }
+    header { padding-bottom:18px; }
+    main { padding-top:0; }
+    h1 { margin:0 0 12px; font-size:30px; line-height:1.2; letter-spacing:-.5px; }
+    h2 { margin:0 0 12px; font-size:21px; line-height:1.3; }
+    h3 { margin:0 0 7px; font-size:16px; }
+    p { margin:0 0 12px; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    .eyebrow { margin:0 0 8px; color:var(--muted); font-size:12px; font-weight:650; letter-spacing:.7px; }
+    .muted { color:var(--muted); }
+    .status { margin-top:15px; padding:12px 16px; border-left:3px solid var(--accent); border-radius:0 5px 5px 0; background:var(--surface); font-size:14px; }
+    .status p:last-child { margin-bottom:0; }
+    code { font-size:.91em; padding:2px 5px; border-radius:3px; background:var(--soft); }
+    pre { overflow:auto; padding:13px; border-radius:5px; background:var(--soft); font-size:13px; }
+    pre code { padding:0; background:none; }
+    button { min-height:38px; padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:var(--surface); color:var(--ink); font:inherit; cursor:pointer; }
+    button:hover { background:var(--soft); }
+    button[aria-selected="true"],button[aria-pressed="true"] { border-color:var(--accent); background:var(--selected); font-weight:600; }
+    button:disabled { opacity:.45; cursor:default; }
+    :focus-visible { outline:3px solid #4c88b7; outline-offset:3px; }
+    [hidden] { display:none !important; }
+    section { margin-bottom:32px; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px; margin:2px 0 16px; }
+    .scenes,.themes { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+    .scenes button,.themes button { font-size:14px; }
+    .themes span { margin-right:3px; color:var(--muted); font-size:13px; }
+    .scene-layout { display:grid; grid-template-columns:minmax(0,1fr) 270px; gap:20px; align-items:start; }
+    figure { min-width:0; margin:0; overflow:hidden; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .image-button { display:block; width:100%; min-height:0; padding:0; border:0; border-radius:0; background:var(--surface); }
+    .image-button:hover { background:var(--surface); }
+    .image-button img { display:block; max-width:100%; height:auto; margin:auto; }
+    figcaption { padding:11px 15px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .explanation { padding:18px 19px 7px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .explanation h2 { font-size:19px; }
+    .explanation p,.explanation li { font-size:14px; }
+    .explanation ul { margin:0 0 15px; padding-left:18px; }
+    .explanation li { margin:6px 0; }
+    .context { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); }
+    .flow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+    .flow article { padding:17px 18px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
+    .flow p { margin-bottom:0; font-size:14px; }
+    .run { display:grid; grid-template-columns:1fr 1fr; gap:22px; padding:20px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .run > div { min-width:0; }
+    .run p { font-size:14px; }
+    footer { padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+    dialog { width:min(96vw,1400px); height:min(95vh,1200px); max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--ink); }
+    dialog::backdrop { background:#000a; }
+    .zoom-shell { display:flex; flex-direction:column; height:100%; }
+    .zoom-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:11px 15px; border-bottom:1px solid var(--line); }
+    .zoom-toolbar strong { flex:1; min-width:140px; font-size:15px; }
+    .zoom-toolbar button,.zoom-toolbar a { font-size:13px; }
+    .zoom-viewport { display:flex; flex:1; min-height:0; overflow:auto; background:var(--page); }
+    .zoom-viewport img { display:block; width:auto; max-width:100%; height:auto; max-height:100%; object-fit:contain; margin:auto; }
+    .zoom-viewport.native { display:block; }
+    .zoom-viewport.native img { width:auto; max-width:none; max-height:none; margin:0; }
+    @media(max-width:1080px) { .scene-layout { grid-template-columns:1fr; } .explanation { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; } .explanation h2 { grid-column:1/-1; } .context { margin:0; padding:0; border:0; } }
+    @media(max-width:700px) { header,main,footer { padding:21px 16px; } main { padding-top:0; } h1 { font-size:25px; } .explanation,.run,.flow { grid-template-columns:1fr; } .scenes { width:100%; } .zoom-toolbar strong { flex-basis:100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Debacal · event creation dialog · round 3</p>
+    <h1>Primary event and reusable date/time picker</h1>
+    <p>Edit the primary event through its Start, End and Duration fields. Use the compact month preview to arrange its additional occurrences.</p>
+    <div class="status"><p><strong>For review:</strong> this is a native interaction prototype. It explores the proposed editor and popups with temporary example events; it has not replaced the application’s event dialog.</p></div>
+  </header>
+  <main>
+    <section aria-labelledby="review-heading">
+      <h2 id="review-heading">Editor and picker states</h2>
+      <div class="toolbar">
+        <div class="scenes" role="tablist" aria-label="Prototype state">
+          <button id="tab-editor" role="tab" data-scene="editor" aria-controls="scene-panel" aria-selected="true" tabindex="0">Editor</button>
+          <button id="tab-same-day" role="tab" data-scene="same-day" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Same-day range</button>
+          <button id="tab-start" role="tab" data-scene="start" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Overnight start</button>
+          <button id="tab-end" role="tab" data-scene="end" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Overnight end</button>
+          <button id="tab-occurrence" role="tab" data-scene="occurrence" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Add occurrence</button>
+          <button id="tab-changed-primary" role="tab" data-scene="changed-primary" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Edit primary date</button>
+        </div>
+        <div class="themes" role="group" aria-label="Screenshot appearance">
+          <span>Appearance</span><button data-theme="light" aria-pressed="true">Light</button><button data-theme="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+      <div id="scene-panel" role="tabpanel" aria-labelledby="tab-editor" class="scene-layout">
+        <figure>
+          <button id="open-image" class="image-button" aria-label="Enlarge the event editor"><img id="scene-image" src="images/editor-light.png" alt="Event editor with primary Start, End and Duration fields on the left and a compact month preview on the right"></button>
+          <figcaption id="image-caption">Native prototype · click to enlarge or inspect at 100% size.</figcaption>
+        </figure>
+        <aside class="explanation" aria-live="polite">
+          <h2 id="scene-title">The primary event stays editable</h2>
+          <div><p id="scene-description">Start and End refer to the primary event, including after the series has been created. The preview has its own role: arranging and navigating the additional occurrences.</p><ul id="scene-points"><li>Start, End and Duration are grouped together.</li><li>The primary occurrence has a distinct indicator.</li><li>Month paging and occurrence navigation are separate.</li></ul></div>
+          <div class="context"><h3 id="scene-context-title">One shared picker</h3><p id="scene-context">The Start and End controls open the same date/range picker. Add occurrence reuses it, with the primary event’s clock and duration as the initial values.</p><p><a href="#try">Try the native interaction</a></p></div>
+        </aside>
+      </div>
+    </section>
+    <section aria-labelledby="flow-heading">
+      <h2 id="flow-heading">Three related jobs, with their controls together</h2>
+      <div class="flow">
+        <article><h3>Define the primary event</h3><p>Use the written Start and End fields or their picker buttons. Duration and its quick choices sit alongside them; changing duration adjusts End.</p></article>
+        <article><h3>Arrange the occurrences</h3><p>Click preview dates to add or remove extra days. Use Add occurrence when another date/time needs its own choice.</p></article>
+        <article><h3>Inspect the series</h3><p>Navigate to the primary, previous or next occurrence. These controls follow events; the month arrows change the preview’s page.</p></article>
+      </div>
+    </section>
+    <section id="try" aria-labelledby="try-heading">
+      <h2 id="try-heading">Try the native prototype</h2>
+      <div class="run">
+        <div><h3>Open the editor</h3><pre><code>.venv/bin/python design/2026-11-event-editor-round-3/prototype.py</code></pre><p>The example events stay in this preview window. <a href="README.md">Read the interaction and validation notes.</a></p></div>
+        <div><h3>Inspect a particular state</h3><pre><code># Add an initial state or appearance:
+--scene same-day
+--scene start
+--scene end
+--scene occurrence
+--scene changed-primary
+--theme dark
+--buttons filled</code></pre><p>The control styles use the application’s underlined or filled button-group appearance. Detail screenshots above use the light appearance.</p></div>
+      </div>
+    </section>
+  </main>
+  <footer>Native Qt study using synthetic events. The editor and its picker are separate from saved calendars and profiles.</footer>
+  <dialog id="zoom" aria-labelledby="zoom-title"><div class="zoom-shell"><div class="zoom-toolbar"><strong id="zoom-title">Editor</strong><button id="zoom-fit" aria-pressed="true">Fit</button><button id="zoom-native" aria-pressed="false">100% size</button><a id="zoom-original" href="images/editor-light.png" target="_blank" rel="noopener">Open image</a><button id="zoom-close">Close</button></div><div id="zoom-viewport" class="zoom-viewport"><img id="zoom-image" src="images/editor-light.png" alt=""></div></div></dialog>
+  <script>
+    const scenes = {
+      editor:{title:'The primary event stays editable',file:'editor',dual:true,description:'Start and End refer to the primary event, including after the series has been created. The preview has its own role: arranging and navigating the additional occurrences.',points:['Start, End and Duration are grouped together.','The primary occurrence has a distinct indicator.','Month paging and occurrence navigation are separate.'],contextTitle:'One shared picker',context:'The Start and End controls open the same date/range picker. Add occurrence reuses it, with the primary event’s clock and duration as the initial values.',alt:'Event editor with primary Start, End and Duration fields on the left and a compact month preview on the right'},
+      'same-day':{title:'Pick the date and the time range together',file:'picker-same-day',dual:false,description:'A minimal month selects the date. The vertical strip selects the span and shows the time at the pointer, like the main calendar.',points:['Both start and end handles are available on the same day.','Moving the span keeps its duration.','The picker works on a draft until Apply.'],contextTitle:'Two fields, one picker',context:'Opening Start or End chooses the initial endpoint. For a same-day event, the range itself still lets either boundary be adjusted.',alt:'Combined date and time-range picker showing a same-day interval with start and end handles'},
+      start:{title:'An event that continues into another day',file:'picker-start',dual:false,description:'The Start picker shows the starting day. The range continues beyond the bottom of that day, so only its starting boundary can be edited here.',points:['The continuation remains visible.','There is no false end handle at midnight.','The End field opens the other endpoint’s day.'],contextTitle:'A range across dates',context:'The visible slice represents the event’s real span. An off-screen endpoint is shown as a continuation rather than an editable local boundary.',alt:'Start-day range picker for an overnight event, showing a lower continuation and only a start handle'},
+      end:{title:'Edit the finishing day',file:'picker-end',dual:false,description:'The End picker opens the day on which the event finishes. Its starting boundary is before the visible day, and only the end handle is available.',points:['The range continues from above.','Changing the finish updates the duration.','The primary event’s start remains available in its own field.'],contextTitle:'The same component, another day',context:'The picker adapts the visible handles to the actual endpoint dates. Its date and range controls retain the same layout.',alt:'End-day range picker for an overnight event, showing an upper continuation and only an end handle'},
+      occurrence:{title:'Add an occurrence with its own date and time',file:'occurrence',dual:false,description:'Add occurrence opens the same picker used for the primary event. Its starting values use the primary event’s clock and duration.',points:['Choose the date and adjust the time in one place.','Apply adds the occurrence to the series.','The primary Start and End fields remain attached to the primary event.'],contextTitle:'No second time-editing system',context:'The preview remains a quick way to add ordinary dates. The picker handles an additional occurrence when its clock needs to differ.',alt:'The shared date and range picker opened to add a separate occurrence to the event series'},
+      'changed-primary':{title:'Change the primary date after creating a series',file:'changed-primary',dual:false,description:'The primary event is still controlled by its Start and End fields after extra occurrences exist. Its marker makes its identity clear in the preview.',points:['Selecting or navigating another occurrence does not retarget the primary fields.','The primary date can be changed through its own picker.','First occurrence navigation returns to the primary event.'],contextTitle:'Primary and preview selection are different',context:'The main timing fields define the event being repeated. Preview navigation helps inspect the concrete occurrences without taking that role away from the fields.',alt:'Event editor after changing the primary event date while keeping its additional occurrences available in the preview'}
+    };
+    const $ = id => document.getElementById(id);
+    const tabs = [...document.querySelectorAll('[data-scene]')];
+    const themeButtons = [...document.querySelectorAll('[data-theme]')];
+    let scene='editor',theme='light';
+    function update(){
+      const item=scenes[scene],appearance=item.dual?theme:'light';
+      document.body.classList.toggle('dark',appearance==='dark');
+      tabs.forEach(tab=>{const active=tab.dataset.scene===scene;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
+      themeButtons.forEach(button=>{button.disabled=button.dataset.theme==='dark'&&!item.dual;button.setAttribute('aria-pressed',String(button.dataset.theme===appearance));});
+      $('scene-panel').setAttribute('aria-labelledby','tab-'+scene);
+      $('scene-title').textContent=item.title;
+      $('scene-description').textContent=item.description;
+      $('scene-points').replaceChildren(...item.points.map(value=>{const li=document.createElement('li');li.textContent=value;return li;}));
+      $('scene-context-title').textContent=item.contextTitle;
+      $('scene-context').textContent=item.context;
+      $('scene-image').src=`images/${item.file}-${appearance}.png`;
+      $('scene-image').alt=item.alt;
+      $('open-image').setAttribute('aria-label','Enlarge '+item.title.toLowerCase());
+      $('image-caption').textContent=`Native prototype · ${appearance} appearance · click to enlarge or inspect at 100% size.`;
+    }
+    function showScene(value,focus=false){scene=value;update();if(focus)$('tab-'+scene).focus();}
+    tabs.forEach((tab,index)=>{
+      tab.addEventListener('click',()=>showScene(tab.dataset.scene));
+      tab.addEventListener('keydown',event=>{let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;else if(event.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;else return;event.preventDefault();showScene(tabs[next].dataset.scene,true);});
+    });
+    themeButtons.forEach(button=>button.addEventListener('click',()=>{theme=button.dataset.theme;update();}));
+    function zoomNative(value){$('zoom-viewport').classList.toggle('native',value);$('zoom-fit').setAttribute('aria-pressed',String(!value));$('zoom-native').setAttribute('aria-pressed',String(value));}
+    $('open-image').addEventListener('click',()=>{const source=$('scene-image');$('zoom-title').textContent=scenes[scene].title;$('zoom-image').src=source.src;$('zoom-image').alt=source.alt;$('zoom-original').href=source.src;zoomNative(false);$('zoom').showModal();$('zoom-viewport').scrollTo(0,0);});
+    $('zoom-fit').addEventListener('click',()=>zoomNative(false));
+    $('zoom-native').addEventListener('click',()=>zoomNative(true));
+    $('zoom-close').addEventListener('click',()=>$('zoom').close());
+    $('zoom').addEventListener('click',event=>{if(event.target===$('zoom'))$('zoom').close();});
+  </script>
+</body>
+</html>
