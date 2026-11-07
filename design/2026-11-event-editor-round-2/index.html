@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Debacal · event editor, single first</title>
+  <style>
+    :root { color-scheme:light; --page:#f3f6f7; --surface:#fff; --ink:#27313a; --muted:#596570; --line:#d9e0e5; --accent:#475f52; --selected:#e7eee8; --soft:#edf2f4; }
+    body.dark { color-scheme:dark; --page:#212526; --surface:#2d3132; --ink:#edf1f5; --muted:#b4bfc7; --line:#495154; --accent:#b4cbbd; --selected:#39473e; --soft:#353b3d; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--page); color:var(--ink); font:16px/1.55 system-ui,sans-serif; }
+    header,main,footer { max-width:1240px; margin:auto; padding:26px 30px; }
+    header { padding-bottom:18px; }
+    main { padding-top:0; }
+    h1 { font-size:30px; line-height:1.2; letter-spacing:-.5px; margin:0 0 12px; }
+    h2 { font-size:21px; line-height:1.3; margin:0 0 12px; }
+    h3 { font-size:16px; margin:0 0 7px; }
+    p { margin:0 0 12px; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    .eyebrow { margin:0 0 8px; color:var(--muted); font-size:12px; font-weight:650; letter-spacing:.7px; }
+    .muted { color:var(--muted); }
+    .status { margin-top:15px; padding:13px 16px; background:var(--surface); border-left:3px solid var(--accent); border-radius:0 5px 5px 0; font-size:14px; }
+    .status p:last-child { margin-bottom:0; }
+    code { font-size:.91em; padding:2px 5px; border-radius:3px; background:var(--soft); }
+    pre { overflow:auto; padding:13px; border-radius:5px; background:var(--soft); font-size:13px; }
+    pre code { padding:0; background:none; }
+    button { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:5px; padding:7px 11px; cursor:pointer; min-height:38px; }
+    button:hover { background:var(--soft); }
+    button[aria-selected="true"],button[aria-pressed="true"] { background:var(--selected); border-color:var(--accent); font-weight:600; }
+    button:disabled { opacity:.45; cursor:default; }
+    :focus-visible { outline:3px solid #4c88b7; outline-offset:3px; }
+    [hidden] { display:none !important; }
+    section { margin-bottom:32px; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin:2px 0 16px; }
+    .scenes,.themes { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .scenes button,.themes button { font-size:14px; }
+    .themes span { font-size:13px; color:var(--muted); margin-right:3px; }
+    .scene-layout { display:grid; grid-template-columns:minmax(0,1fr) 265px; gap:20px; align-items:start; }
+    figure { margin:0; min-width:0; border:1px solid var(--line); border-radius:7px; overflow:hidden; background:var(--surface); }
+    .image-button { display:block; padding:0; border:0; border-radius:0; width:100%; min-height:0; background:var(--surface); }
+    .image-button:hover { background:var(--surface); }
+    .image-button img { display:block; max-width:100%; height:auto; margin:auto; }
+    figcaption { padding:11px 15px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); }
+    .explanation { padding:19px 19px 8px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .explanation h2 { font-size:19px; }
+    .explanation p,.explanation li { font-size:14px; }
+    .explanation ul { margin:0 0 15px; padding-left:18px; }
+    .explanation li { margin:6px 0; }
+    .tradeoff { margin-top:18px; padding-top:15px; border-top:1px solid var(--line); color:var(--muted); }
+    .table-scroll { overflow:auto; border:1px solid var(--line); border-radius:7px; }
+    table { border-collapse:collapse; width:100%; background:var(--surface); font-size:14px; }
+    th,td { text-align:left; vertical-align:top; padding:12px 15px; border-bottom:1px solid var(--line); }
+    thead th { background:var(--soft); }
+    tr:last-child th,tr:last-child td { border-bottom:0; }
+    .run { display:grid; grid-template-columns:1fr 1fr; gap:22px; padding:20px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+    .run > div { min-width:0; }
+    .run p { font-size:14px; }
+    footer { border-top:1px solid var(--line); color:var(--muted); font-size:13px; padding-top:18px; }
+    dialog { width:min(96vw,1400px); height:min(95vh,1200px); max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:var(--surface); }
+    dialog::backdrop { background:#000a; }
+    .zoom-shell { display:flex; flex-direction:column; height:100%; }
+    .zoom-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:11px 15px; border-bottom:1px solid var(--line); }
+    .zoom-toolbar strong { flex:1; min-width:140px; font-size:15px; }
+    .zoom-toolbar button,.zoom-toolbar a { font-size:13px; }
+    .zoom-viewport { flex:1; min-height:0; overflow:auto; background:var(--page); }
+    .zoom-viewport img { display:block; width:100%; height:auto; margin:auto; }
+    .zoom-viewport.native img { width:auto; max-width:none; margin:0; }
+    @media(max-width:980px) { .scene-layout { grid-template-columns:1fr; } .explanation { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; } .explanation h2 { grid-column:1/-1; } .tradeoff { border:0; padding:0; margin:0; } }
+    @media(max-width:640px) { header,main,footer { padding:21px 16px; } main { padding-top:0; } h1 { font-size:25px; } .explanation,.run { grid-template-columns:1fr; } .scenes { width:100%; } table { min-width:600px; } .zoom-toolbar strong { flex-basis:100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Debacal · event creation dialog · round 2</p>
+    <h1>Event editor · single first</h1>
+    <p>One compact starting point for a single event. Extra dates and individual times appear when Repeat is enabled.</p>
+    <div class="status">
+      <p><strong>In the application:</strong> reconstructed sequences now use explicit clocks for time changes, instead of introducing minute/hour offsets. Existing saved offset expressions remain readable.</p>
+      <p><strong>For review:</strong> the dialog below is a native prototype. The new layout, time strip and configurable duration buttons have not replaced the application’s editor yet.</p>
+    </div>
+  </header>
+  <main>
+    <section aria-labelledby="review-heading">
+      <h2 id="review-heading">The same editor, from one event to a series</h2>
+      <div class="toolbar">
+        <div class="scenes" role="tablist" aria-label="Editor state">
+          <button id="tab-single" role="tab" data-scene="single" aria-controls="scene-panel" aria-selected="true" tabindex="0">Single event</button>
+          <button id="tab-series" role="tab" data-scene="series" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Series</button>
+          <button id="tab-times" role="tab" data-scene="times" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Different times</button>
+          <button id="tab-end" role="tab" data-scene="end" aria-controls="scene-panel" aria-selected="false" tabindex="-1">End time</button>
+          <button id="tab-preferences" role="tab" data-scene="preferences" aria-controls="scene-panel" aria-selected="false" tabindex="-1">Duration buttons</button>
+        </div>
+        <div class="themes" role="group" aria-label="Screenshot appearance">
+          <span>Appearance</span><button data-theme="light" aria-pressed="true">Light</button><button data-theme="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+      <div id="scene-panel" role="tabpanel" aria-labelledby="tab-single" class="scene-layout">
+        <figure>
+          <button id="open-image" class="image-button" aria-label="Enlarge the single-event editor"><img id="scene-image" src="images/single-light.png" alt="Single-event editor with a date-only month, a narrow vertical time strip and written date, start and duration inputs"></button>
+          <figcaption id="image-caption">Native prototype · click to enlarge or inspect at 100% size.</figcaption>
+        </figure>
+        <aside class="explanation" aria-live="polite">
+          <h2 id="scene-title">Single event</h2>
+          <div><p id="scene-description">Choose one date in a plain month. Set the start and duration on a small vertical time strip, or use the adjacent written fields.</p><ul id="scene-points"><li>The month selects a day; it does not need an event box.</li><li>Time and duration stay together.</li><li>Series details stay out of the way while Repeat is Once.</li></ul></div>
+          <div class="tradeoff"><h3>What to assess</h3><p id="scene-tradeoff">Is the strip sufficiently clear without the headings and event cards of a full day view? Exact keyboard entry remains available.</p><p><a href="#try">Try this flow in the native prototype</a></p></div>
+        </aside>
+      </div>
+    </section>
+    <section aria-labelledby="gestures-heading">
+      <h2 id="gestures-heading">Adding and removing stays direct</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Gesture</th><th>Single event</th><th>Series</th></tr></thead>
+        <tbody>
+          <tr><th>Click a date</th><td>Choose the event’s date.</td><td>Add or remove that date’s extra occurrences. The first event remains protected.</td></tr>
+          <tr><th>Use the time strip</th><td>Click to place the start; drag to set a time span.</td><td>Click empty space to add another time on that date.</td></tr>
+          <tr><th>Click a time chip</th><td>No series chips are needed.</td><td>The body selects that occurrence for time editing.</td></tr>
+          <tr><th>Click the chip’s ×</th><td>No removal control is needed.</td><td>Remove exactly that occurrence in one click, without selecting it first.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted" style="margin-top:12px;font-size:14px">The × has a specific action here: it is a direct remove target on an existing time chip, rather than the old calendar marker for a skipped date. Date toggling works on all extra times on that date; the × targets only one.</p>
+    </section>
+    <section id="try" aria-labelledby="try-heading">
+      <h2 id="try-heading">Try the native prototype</h2>
+      <div class="run">
+        <div><h3>Start with one event</h3><pre><code>.venv/bin/python design/2026-11-event-editor-round-2/prototype.py</code></pre><p>The preview uses synthetic data. Closing it discards temporary changes; it does not save events or alter your profile.</p></div>
+        <div><h3>Open another state</h3><pre><code># Add one of these arguments:
+--scene series
+--scene times
+--scene end
+--scene preferences
+--theme dark</code></pre><p>The duration-button preferences window changes this prototype only. <a href="README.md">Read the interaction and validation notes.</a></p></div>
+      </div>
+    </section>
+  </main>
+  <footer>One refined flow for review. Native screenshots use synthetic events. All-day, overnight and timezone edge cases remain integration work for the eventual editor.</footer>
+  <dialog id="zoom" aria-labelledby="zoom-title"><div class="zoom-shell"><div class="zoom-toolbar"><strong id="zoom-title">Single event</strong><button id="zoom-fit" aria-pressed="true">Fit width</button><button id="zoom-native" aria-pressed="false">100% size</button><a id="zoom-original" href="images/single-light.png" target="_blank" rel="noopener">Open image</a><button id="zoom-close">Close</button></div><div id="zoom-viewport" class="zoom-viewport"><img id="zoom-image" src="images/single-light.png" alt=""></div></div></dialog>
+  <script>
+    const scenes = {
+      single:{title:'Single event',dual:true,description:'Choose one date in a plain month. Set the start and duration on a small vertical time strip, or use the adjacent written fields.',points:['The month selects a day; it does not need an event box.','Time and duration stay together.','Series details stay out of the way while Repeat is Once.'],tradeoff:'Is the strip sufficiently clear without the headings and event cards of a full day view? Exact keyboard entry remains available.',alt:'Single-event editor with a date-only month, a narrow vertical time strip and written date, start and duration inputs'},
+      series:{title:'Reveal the series',dual:true,description:'Changing Repeat expands the same editor. The month now also adds or removes dates, with the sequence available for precise editing.',points:['One click adds an empty date.','One click removes that date’s extra occurrences.','The first event remains the fixed anchor.'],tradeoff:'The date gesture changes when Repeat is enabled. The expanded series controls make that change visible; returning to a single event should not leave those controls behind.',alt:'Expanded series editor with selected dates, recurrence controls and a custom sequence'},
+      times:{title:'Different times on one date',dual:false,description:'Individual times appear as small chips only in the series view. Their time and remove action are separate targets.',points:['Click empty space in the strip to add a time.','Click a chip’s body to adjust that occurrence.','Click its visible × to remove it immediately.'],tradeoff:'The direct × avoids a select-then-remove workflow while allowing the chip body to select a time for editing. Its target needs to be comfortable to use, especially when several times are close together.',alt:'Series editor with multiple time chips on one date, each with a direct remove target'},
+      end:{title:'Specify an end when useful',dual:false,description:'Start plus duration remains the default. End mode supplies an explicit finishing date and time when that is more natural.',points:['The date is still chosen through the same month.','Start and duration remain connected in the default mode.','Exact written fields accompany visual selection.'],tradeoff:'The alternate mode must be clearly indicated, so changing the start never leaves the user guessing whether duration or the finishing time will stay fixed.',alt:'Single-event editor showing the optional end date and time controls'},
+      preferences:{title:'Choose the duration buttons',dual:false,description:'Keep a few useful duration buttons in the event editor. Their values can be changed through a small preferences view.',points:['Quick choices remain one click away.','The duration field still accepts other values.','This preferences mockup changes only the temporary prototype.'],tradeoff:'The presets should be a short personal set rather than another large configuration surface. The final setting would belong to the app’s preferences.',alt:'Prototype preferences for changing the duration buttons used by the event editor'}
+    };
+    const $ = id => document.getElementById(id);
+    const tabs = [...document.querySelectorAll('[data-scene]')];
+    const themeButtons = [...document.querySelectorAll('[data-theme]')];
+    let scene = 'single', theme = 'light';
+    function update() {
+      const item = scenes[scene], appearance = item.dual ? theme : 'light';
+      document.body.classList.toggle('dark',appearance === 'dark');
+      tabs.forEach(tab=>{const active=tab.dataset.scene===scene;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
+      themeButtons.forEach(button=>{button.disabled=button.dataset.theme==='dark'&&!item.dual;button.setAttribute('aria-pressed',String(button.dataset.theme===appearance));});
+      $('scene-panel').setAttribute('aria-labelledby','tab-'+scene);
+      $('scene-title').textContent=item.title;
+      $('scene-description').textContent=item.description;
+      $('scene-tradeoff').textContent=item.tradeoff;
+      $('scene-points').replaceChildren(...item.points.map(value=>{const li=document.createElement('li');li.textContent=value;return li;}));
+      $('scene-image').src=`images/${scene}-${appearance}.png`;
+      $('scene-image').alt=item.alt;
+      $('open-image').setAttribute('aria-label','Enlarge '+item.title.toLowerCase());
+      $('image-caption').textContent=`Native prototype · ${appearance} appearance · click to enlarge or inspect at 100% size.`;
+    }
+    function showScene(value,focus=false) {scene=value;update();if(focus)$('tab-'+scene).focus();}
+    tabs.forEach((tab,index)=>{
+      tab.addEventListener('click',()=>showScene(tab.dataset.scene));
+      tab.addEventListener('keydown',event=>{let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;else if(event.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;else return;event.preventDefault();showScene(tabs[next].dataset.scene,true);});
+    });
+    themeButtons.forEach(button=>button.addEventListener('click',()=>{theme=button.dataset.theme;update();}));
+    function zoomNative(value) {$('zoom-viewport').classList.toggle('native',value);$('zoom-fit').setAttribute('aria-pressed',String(!value));$('zoom-native').setAttribute('aria-pressed',String(value));}
+    $('open-image').addEventListener('click',()=>{const image=$('scene-image');$('zoom-title').textContent=scenes[scene].title;$('zoom-image').src=image.src;$('zoom-image').alt=image.alt;$('zoom-original').href=image.src;zoomNative(false);$('zoom').showModal();$('zoom-viewport').scrollTo(0,0);});
+    $('zoom-fit').addEventListener('click',()=>zoomNative(false));
+    $('zoom-native').addEventListener('click',()=>zoomNative(true));
+    $('zoom-close').addEventListener('click',()=>$('zoom').close());
+    $('zoom').addEventListener('click',event=>{if(event.target===$('zoom'))$('zoom').close();});
+  </script>
+</body>
+</html>

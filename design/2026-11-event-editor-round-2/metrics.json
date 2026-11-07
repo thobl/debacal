@@ -1,0 +1,44 @@
+{
+  "single-light": {
+    "width": 690,
+    "height": 660,
+    "occurrences": 1,
+    "sequence": ""
+  },
+  "single-dark": {
+    "width": 690,
+    "height": 660,
+    "occurrences": 1,
+    "sequence": ""
+  },
+  "series-light": {
+    "width": 690,
+    "height": 849,
+    "occurrences": 5,
+    "sequence": "6. 10:30-9. 11. 13."
+  },
+  "series-dark": {
+    "width": 690,
+    "height": 849,
+    "occurrences": 5,
+    "sequence": "6. 10:30-9. 11. 13."
+  },
+  "times-light": {
+    "width": 690,
+    "height": 849,
+    "occurrences": 5,
+    "sequence": "10:30 +1d 16:00 +1"
+  },
+  "end-light": {
+    "width": 690,
+    "height": 677,
+    "occurrences": 1,
+    "sequence": ""
+  },
+  "preferences-light": {
+    "width": 455,
+    "height": 306,
+    "occurrences": 1,
+    "sequence": ""
+  }
+}
