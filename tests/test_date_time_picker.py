@@ -212,16 +212,14 @@ def test_multiday_endpoint_views_have_only_real_handles(desktop):
     assert first.draft_end == end and last.draft_start == start
 
 
-def test_range_pointer_gestures_and_end_hover_show_duration(desktop):
+def test_timeline_end_choices_and_hover_show_duration(desktop):
     app, _ = desktop
     picker = make_picker(desktop, endpoint='end')
     strip = picker.strip
-    point = lambda minute: QPoint(round(strip.gutter + 22), round(strip.y_for(minute)))
-    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=point(13 * 60))
-    QTest.mouseMove(strip, point(14 * 60 + 30))
-    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=point(14 * 60 + 30))
+    point = lambda minute: QPoint(round(strip.gutter - 10), round(strip.y_for(minute)))
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point(14 * 60 + 30))
     settle(app)
-    assert picker.draft_start.hour == 13 and picker.duration == timedelta(minutes=90)
+    assert picker.draft_start == START and picker.duration == timedelta(hours=5, minutes=30)
     position = point(15 * 60)
     event = QMouseEvent(QEvent.Type.MouseMove, QPointF(position), QPointF(strip.mapToGlobal(position)),
                         Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
@@ -229,7 +227,7 @@ def test_range_pointer_gestures_and_end_hover_show_duration(desktop):
     with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
         strip.grab()
     captions = [call.args[2] for call in draw.call_args_list]
-    assert '15:00' in captions and '2h' in captions
+    assert '15:00' in captions and '6h' in captions
 
 
 @pytest.mark.parametrize('endpoint,minute,clock,duration', [
@@ -337,3 +335,188 @@ def test_dst_gap_and_invalid_ranges_keep_the_valid_draft(desktop):
     # supplies a UTC instant; it must not silently skip the missing hour.
     assert not picker.set_end(datetime(2027, 3, 28, 1, 30, tzinfo=timezone.utc))
     assert picker.draft_start == after
+
+
+def pointer_move(strip, point):
+    point = QPointF(point)
+    event = QMouseEvent(QEvent.Type.MouseMove, point, QPointF(strip.mapToGlobal(point.toPoint())),
+                        Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(strip, event)
+
+
+@pytest.mark.parametrize('endpoint,minute,expected', [
+    ('start', 9 * 60 + 25, (START + timedelta(minutes=25), START + timedelta(minutes=85))),
+    ('end', 9 * 60 + 25, (START, START + timedelta(minutes=25))),
+    ('end', 8 * 60 + 40, (START - timedelta(minutes=80), START - timedelta(minutes=20))),
+])
+def test_timeline_hover_is_the_exact_uncommitted_click_result_even_inside_the_event(desktop, endpoint, minute, expected):
+    app, _ = desktop
+    picker = make_picker(desktop, endpoint=endpoint)
+    strip = picker.strip
+    point = QPoint(round(strip.gutter - 12), round(strip.y_for(minute)))
+    pointer_move(strip, point)
+    assert strip.active_range == expected
+    assert picker.draft_start == START and picker.draft_end == START + timedelta(hours=1)
+    assert strip._hover == minute
+    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
+        strip.grab()
+    captions = {call.args[2] for call in draw.call_args_list}
+    assert PREFERENCES.format_time(expected[0]) in captions
+    assert PREFERENCES.format_time(expected[1]) in captions
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point)
+    settle(app)
+    assert (picker.draft_start, picker.draft_end) == expected
+
+
+def test_timeline_clock_labels_choose_the_picker_endpoint_instead_of_resizing_the_box(desktop):
+    picker = make_picker(desktop)
+    strip = picker.strip
+    end_label = next(rect for value, rect in strip.clock_labels() if value == picker.draft_end)
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=end_label.center().toPoint())
+    assert picker.draft_start == START + timedelta(hours=1)
+    assert picker.draft_end == START + timedelta(hours=2)
+
+
+def test_empty_event_lane_does_not_create_or_change_a_range(desktop):
+    picker = make_picker(desktop)
+    strip = picker.strip
+    point = QPoint(round(strip.gutter + 24), round(strip.y_for(13 * 60)))
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point)
+    assert (picker.draft_start, picker.draft_end) == (START, START + timedelta(hours=1))
+
+
+def test_short_event_clocks_stay_left_and_do_not_overlap(desktop):
+    picker = make_picker(desktop, end=START + timedelta(minutes=5))
+    picker.set_full_day(True)
+    strip = picker.strip
+    labels = strip.clock_labels()
+    assert [value for value, _ in labels] == [START, START + timedelta(minutes=5)]
+    assert all(rect.right() < strip.gutter for _value, rect in labels)
+    assert not labels[0][1].intersects(labels[1][1])
+    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
+        strip.grab()
+    end_calls = [call for call in draw.call_args_list if call.args[2] == '09:05']
+    assert len(end_calls) == 1 and end_calls[0].args[1].right() < strip.gutter
+
+
+def test_pointer_and_keyboard_use_five_minute_steps(desktop):
+    app, _ = desktop
+    picker = make_picker(desktop)
+    strip = picker.strip
+    point = QPoint(round(strip.gutter - 10), round(strip.y_for(9 * 60 + 5)))
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point)
+    assert picker.draft_start == START + timedelta(minutes=5)
+    strip.setFocus()
+    QTest.keyClick(strip, Qt.Key.Key_Down)
+    assert picker.draft_start == START + timedelta(minutes=10)
+    QTest.keyClick(strip, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+    assert picker.draft_start == START + timedelta(minutes=11)
+    QTest.keyClick(strip, Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier)
+    assert picker.draft_start == START - timedelta(minutes=49)
+    picker = make_picker(desktop)
+    strip = picker.strip
+    origin = strip.band_rect().center().toPoint()
+    target = QPoint(origin.x(), round(origin.y() + strip.y_for(545) - strip.y_for(540)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(strip, target)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    settle(app)
+    assert picker.draft_start == START + timedelta(minutes=5)
+    assert picker.duration == timedelta(hours=1)
+
+
+@pytest.mark.parametrize('direction', [-1, 1])
+def test_dragging_past_the_visible_hours_pans_without_committing_until_release(desktop, direction):
+    app, _ = desktop
+    picker = make_picker(desktop)
+    strip = picker.strip
+    origin = strip.band_rect().center().toPoint()
+    first, last = strip.first_minute, strip.last_minute
+    target = QPoint(origin.x(), round(strip.axis_bottom + 3 if direction > 0 else strip.axis_top - 3))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(strip, target)
+    first_preview = strip.active_range
+    QTest.qWait(190)
+    settle(app)
+    assert strip.last_minute > last if direction > 0 else strip.first_minute < first
+    assert strip.active_range[0] > first_preview[0] if direction > 0 else strip.active_range[0] < first_preview[0]
+    assert strip.active_range[1] - strip.active_range[0] == timedelta(hours=1)
+    assert picker.draft_start == START
+    preview = strip.active_range
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    settle(app)
+    assert (picker.draft_start, picker.draft_end) == preview
+
+
+def test_cancelling_an_edge_drag_stops_axis_updates_and_preserves_the_range(desktop):
+    app, _ = desktop
+    picker = make_picker(desktop)
+    strip = picker.strip
+    origin = strip.band_rect().center().toPoint()
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(strip, QPoint(origin.x(), round(strip.axis_bottom + 3)))
+    QTest.qWait(90)
+    picker.reject()
+    last = strip.last_minute
+    QTest.qWait(100)
+    settle(app)
+    assert strip.last_minute == last
+    assert (picker.result_start, picker.result_end) == (START, START + timedelta(hours=1))
+
+
+def test_multiday_timeline_hover_edits_only_the_visible_endpoint(desktop):
+    start = START.replace(hour=21)
+    end = start + timedelta(hours=12)
+    picker = make_picker(desktop, start, end)
+    strip = picker.strip
+    point = QPoint(round(strip.gutter - 10), round(strip.y_for(22 * 60)))
+    pointer_move(strip, point)
+    assert strip.active_range == (start + timedelta(hours=1), end)
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point)
+    assert picker.draft_end == end and picker.duration == timedelta(hours=11)
+
+
+def test_invalid_dst_hover_and_click_keep_the_last_valid_range(desktop):
+    start = datetime(2027, 3, 28, 1, 30, tzinfo=ZONE)
+    end = datetime(2027, 3, 28, 3, 30, tzinfo=ZONE)
+    picker = make_picker(desktop, start, end)
+    strip = picker.strip
+    point = QPoint(round(strip.gutter - 10), round(strip.y_for(2 * 60 + 30)))
+    pointer_move(strip, point)
+    assert strip.active_range == (start, end)
+    QTest.mouseClick(strip, Qt.MouseButton.LeftButton, pos=point)
+    assert (picker.draft_start, picker.draft_end) == (start, end)
+    assert 'clocks change' in picker.error.text()
+
+
+def test_five_minute_event_can_be_moved_using_its_body_and_resized_using_its_edge(desktop):
+    picker = make_picker(desktop, end=START + timedelta(minutes=5))
+    strip = picker.strip
+    origin = strip.band_rect().center().toPoint()
+    assert not strip.start_handle().contains(origin) and not strip.end_handle().contains(origin)
+    target = QPoint(origin.x(), round(origin.y() + strip.y_for(550) - strip.y_for(540)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(strip, target)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    assert picker.draft_start == START + timedelta(minutes=10)
+    assert picker.duration == timedelta(minutes=5)
+    edge = strip.end_handle().center().toPoint()
+    target = QPoint(edge.x(), round(strip.y_for(9 * 60 + 25)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=edge)
+    QTest.mouseMove(strip, target)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    assert picker.duration == timedelta(minutes=15)
+
+
+def test_moving_a_range_retains_its_repeated_hour_choices(desktop):
+    start = datetime(2026, 10, 25, 2, 20, tzinfo=ZONE, fold=0)
+    end = datetime(2026, 10, 25, 2, 40, tzinfo=ZONE, fold=1)
+    picker = make_picker(desktop, start, end)
+    strip = picker.strip
+    origin = strip.band_rect().center().toPoint()
+    target = QPoint(origin.x(), round(origin.y() + strip.y_for(145) - strip.y_for(140)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(strip, target)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    assert picker.draft_start == start.replace(minute=25) and picker.draft_start.fold == 0
+    assert picker.draft_end == end.replace(minute=45) and picker.draft_end.fold == 1
