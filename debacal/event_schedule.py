@@ -30,7 +30,7 @@ from .schedule_authoring import (canonical_starts, displayed_schedule, expressio
 from .sequence_document import is_sequence_document
 
 
-_SCHEDULE_FIELDS = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides',
+_SCHEDULE_FIELDS = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy',
                     'schedule_expression', 'expression_anchor', 'schedule_syntax', 'timezone_id')
 
 
@@ -50,6 +50,21 @@ def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> Reg
     if not fields['recurrence_rule']:
         return None
     return RegularSchedule.from_rule(fields['recurrence_rule'], values[0], all_day=all_day)
+
+
+def _range_regular(tail, anchor):
+    """Controls count fitted leading dates as well as native rule dates."""
+    if tail is None or not tail.overflow or tail.prefix:
+        return None
+    ending = 'count' if tail.count is not None else 'until' if tail.until is not None else 'never'
+    options = dict(overflow=tail.overflow, range_span=tail.range_span, preferred_day=tail.preferred_day)
+    count, until = tail.count, tail.until
+    if count is not None:
+        until = count_to_until(anchor, tail.frequency, tail.interval, count, **options)
+    elif until is not None:
+        count = until_to_count(anchor, tail.frequency, tail.interval, until, **options)
+    return RegularSchedule(tail.frequency, tail.interval, count, until, ending=ending,
+                           preferred_day=tail.preferred_day, overflow=tail.overflow, range_span=tail.range_span)
 
 
 def _editable_regular(regular, anchor):
@@ -80,6 +95,8 @@ class ScheduleDraft:
     ending: str = 'count'
     weekdays: tuple[int, ...] = ()
     clamp: bool = False
+    overflow: str = ''
+    range_span: int = 1
     expression: str = '+0d'
     initial_expression: str = ''
     authoring_error: str = ''
@@ -115,20 +132,28 @@ class ScheduleDraft:
         self.kind, self.expression, self._expression_mode = 'custom', view.expression, True
         self.authoring_error = ''
         self._materialized = list(view.starts) if view.starts is not None else None
+        tail = sequence_tail(view.expression) if not view.structured else None
+        self.overflow = tail.overflow if tail else ''
+        self.range_span = tail.range_span if tail else 1
         anchor = self.author_anchor(master.start, all_day=master.all_day)
         evaluated = expression_event(master, view.expression, authoring_zone=anchor.tzinfo)
         regular = (RegularSchedule.from_rule(evaluated.recurrence_rule, anchor, all_day=master.all_day)
                    if not view.structured and not evaluated.recurrence_dates and not evaluated.excluded_dates else None)
+        regular = _range_regular(tail, anchor) or regular
         if not view.structured:
             regular = retain_relative_intent(view.expression, anchor, regular)
         regular = _editable_regular(regular, anchor)
+        if regular is not None:
+            tail = sequence_tail(view.expression)
+            if tail and tail.overflow:
+                regular = replace(regular, overflow=tail.overflow, range_span=tail.range_span)
         if regular is not None and not force_custom:
             self._take_regular(regular)
         return regular
 
     def _config(self):
         return (self.kind, self.interval, self.count, self.until, self.ending, tuple(self.weekdays),
-                self.clamp, self.expression, self._expression_mode)
+                self.clamp, self.overflow, self.range_span, self.expression, self._expression_mode)
 
     @property
     def configuration_changed(self):
@@ -142,11 +167,17 @@ class ScheduleDraft:
         self.kind, self.interval = regular.kind, regular.interval
         self.count, self.until, self.weekdays, self.ending = regular.count, regular.until, regular.weekdays, regular.ending
         self.clamp = regular.clamp
+        self.overflow, self.range_span = regular.overflow, regular.range_span
 
-    def set_regular(self, kind, interval=1, count=6, until=None, weekdays=(), ending='count', clamp=False):
+    def set_regular(self, kind, interval=1, count=6, until=None, weekdays=(), ending='count', clamp=False,
+                    range_policy=None, range_span=None):
         kind = str(kind).upper()
+        if range_span is None:
+            range_span = self.range_span if range_policy is not None and kind == self.kind and self.overflow else 1
         regular = RegularSchedule(kind, interval, count, until, tuple(weekdays), ending,
-                                  bool(clamp and kind in ('MONTHLY', 'YEARLY')))
+                                  bool(clamp and kind in ('MONTHLY', 'YEARLY')),
+                                  overflow=(range_policy or '') if kind in ('MONTHLY', 'YEARLY') else '',
+                                  range_span=range_span if kind in ('MONTHLY', 'YEARLY') else 1)
         _parts(regular.kind, regular.interval, regular.weekdays)
         staged = replace(self)
         if staged._edited_master is not None:
@@ -177,7 +208,7 @@ class ScheduleDraft:
         staged.expression = expression_for_regular(regular.kind, regular.interval,
             count=regular.count if regular.ending == 'count' else None,
             until=regular.until if regular.ending == 'until' else None, clamp=regular.clamp,
-            weekdays=regular.weekdays)
+            weekdays=regular.weekdays, overflow=regular.overflow, range_span=regular.range_span)
         staged.authoring_error = ''
         staged._expression_mode = False
         staged._materialized = None
@@ -213,10 +244,19 @@ class ScheduleDraft:
         regular = (RegularSchedule.from_rule(compiled.recurrence_rule, anchor, all_day=all_day)
                    if compiled is not None and detect and not compiled.recurrence_dates
                    and not compiled.excluded_dates and not compiled.duplicate_starts else None)
+        tail = sequence_tail(text) if not structured else None
+        if detect:
+            regular = _range_regular(tail, anchor) or regular
         if not structured:
             regular = retain_relative_intent(text, anchor, regular)
         regular = _editable_regular(regular, anchor)
         staged.kind = 'custom'
+        if compiled is not None:
+            tail = sequence_tail(text)
+            staged.overflow = tail.overflow if tail else ''
+            staged.range_span = tail.range_span if tail else 1
+            if regular is not None and tail and tail.overflow:
+                regular = replace(regular, overflow=tail.overflow, range_span=tail.range_span)
         if regular:
             staged._take_regular(regular)
         staged.expression = text
@@ -314,7 +354,7 @@ class ScheduleDraft:
             return values
         if self.kind == 'once':
             return [anchor]
-        if self._expression_mode or self.kind == 'custom':
+        if self._expression_mode or self.kind == 'custom' or self.overflow:
             if is_sequence_document(self.expression):
                 prototype = self.source or Event('draft', 'draft', 'Draft', anchor,
                     anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
@@ -349,7 +389,89 @@ class ScheduleDraft:
         return self.starts(start, all_day=all_day)
 
     def regular(self):
-        return RegularSchedule(self.kind, self.interval, self.count, self.until, tuple(self.weekdays), self.ending, self.clamp)
+        return RegularSchedule(self.kind, self.interval, self.count, self.until, tuple(self.weekdays), self.ending,
+                               self.clamp, overflow=self.overflow, range_span=self.range_span)
+
+    @property
+    def range_policy(self):
+        if self.overflow:
+            return self.overflow
+        tail = sequence_tail(self.expression) if self.expression and not is_sequence_document(self.expression) else None
+        if tail and tail.overflow:
+            return tail.overflow
+        if self.source is not None:
+            if self.source.range_policy == 'cut':
+                return 'cut'
+            from .range_policies import occupied_span, range_policy_options
+            kind = self.kind if self.kind in REGULAR_KINDS else tail.frequency if tail else None
+            if kind in ('MONTHLY', 'YEARLY') and occupied_span(self.source.start, self.source.end, all_day=self.source.all_day) > 1:
+                _, fits_one_month = range_policy_options(self.source.start, self.source.end, kind,
+                    self.interval, all_day=self.source.all_day)
+                if fits_one_month:
+                    return None  # Imported constant-duration ranges are not silently reinterpreted.
+        if self.clamp or (tail and tail.clamp):
+            return 'shift'
+        if not is_sequence_document(self.expression):
+            from .patterns import calendar_step_policy
+            choice = calendar_step_policy(self.expression)
+            if choice is not None:
+                return choice
+        if self.source is None and self.kind in ('MONTHLY', 'YEARLY'):
+            return 'skip'
+        if self.source is not None and self.kind in ('MONTHLY', 'YEARLY'):
+            from .range_policies import occupied_span
+            if occupied_span(self.source.start, self.source.end, all_day=self.source.all_day) == 1:
+                return 'skip'
+        return None
+
+    def set_range_policy(self, policy, start, end, *, all_day=False):
+        from .range_policies import occupied_span, range_policy_options
+        from .patterns import expression_for_regular
+        if policy not in ('skip', 'shift', 'cut'):
+            raise RecurrenceError('Choose Skip, Shift or Cut.')
+        start, end = self._source_range(start, end, all_day=all_day)
+        tail = sequence_tail(self.expression) if self.expression and not is_sequence_document(self.expression) else None
+        kind = self.kind if self.kind in ('MONTHLY', 'YEARLY') else tail.frequency if tail else None
+        if kind not in ('MONTHLY', 'YEARLY'):
+            if tail is None and policy in ('skip', 'shift') and not is_sequence_document(self.expression):
+                if occupied_span(start, end, all_day=all_day) != 1:
+                    raise RecurrenceError('Choose a regular calendar repeat to fit a multi-day range.')
+                from .patterns import with_calendar_clamp
+                self.set_expression(with_calendar_clamp(self.expression, policy == 'shift'), start, all_day=all_day)
+                return
+            raise RecurrenceError('Choose a monthly or yearly repeat before changing its range policy.')
+        interval = self.interval if self.kind in REGULAR_KINDS else tail.interval
+        actual_span = occupied_span(start, end, all_day=all_day)
+        known_intent = actual_span if self.range_span > 1 and start.day + actual_span - 1 <= 31 else None
+        _, allow_cut = range_policy_options(start, end, kind, interval, all_day=all_day,
+            preferred_day=tail.preferred_day if tail else None, range_policy='cut' if policy == 'cut' else '',
+            span=known_intent)
+        if policy == 'cut' and not allow_cut:
+            raise RecurrenceError('Cut applies to multi-day ranges contained in one calendar month.')
+        span = occupied_span(start, end, all_day=all_day) if allow_cut else 1
+        if self.kind in REGULAR_KINDS:
+            self.set_regular(kind, interval, self.count, self.until, self.weekdays, self.ending,
+                             range_policy=policy, range_span=span)
+        else:
+            expression = expression_for_regular(tail.frequency, tail.interval, count=tail.count, until=tail.until,
+                weekdays=tail.weekdays, preferred_day=tail.preferred_day, week_start=tail.week_start,
+                overflow=policy, range_span=span)
+            self.set_expression((tail.prefix + ' ' + expression).strip(), start, all_day=all_day)
+
+    def refresh_range_policy(self, start, end, *, all_day=False):
+        if self.overflow and self.kind in ('MONTHLY', 'YEARLY'):
+            start, end = self._source_range(start, end, all_day=all_day)
+            from .range_policies import occupied_span, range_policy_options
+            span = occupied_span(start, end, all_day=all_day)
+            known_intent = span if self.range_span > 1 and start.day + span - 1 <= 31 else None
+            _, allow_cut = range_policy_options(start, end, self.kind, self.interval, all_day=all_day,
+                range_policy='cut' if self.overflow == 'cut' else '', span=known_intent)
+            self.range_span = span if allow_cut else 1
+            from .patterns import expression_for_regular
+            self.expression = expression_for_regular(self.kind, self.interval,
+                count=self.count if self.ending == 'count' else None,
+                until=self.until if self.ending == 'until' else None,
+                overflow=self.overflow, range_span=self.range_span)
 
     def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
         """Return Event recurrence/authoring fields, preserving untouched data."""
@@ -386,23 +508,24 @@ class ScheduleDraft:
             edited = replace(certified, start=anchor, end=anchor + duration)
             projected = updated_series(certified, certified, edited)
             return {name: deepcopy(getattr(projected, name)) for name in _SCHEDULE_FIELDS}
-        values = dict(recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
+        values = dict(recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, range_policy='',
                       schedule_expression='+0d', expression_anchor=anchor.date().isoformat(), schedule_syntax=2,
                       timezone_id=getattr(anchor.tzinfo, 'key', ''))
         if self.kind == 'once':
             values.update(schedule_expression='', expression_anchor='', schedule_syntax=1)
             return values
-        if self._expression_mode or self.kind == 'custom':
+        if self._expression_mode or self.kind == 'custom' or self.overflow:
             prototype = source or prototype or Event('draft', 'draft', 'Draft', anchor,
                 end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
             prototype = replace(prototype, start=anchor, end=end or anchor + (prototype.end - prototype.start),
                                 all_day=all_day, timezone_id=getattr(anchor.tzinfo, 'key', ''))
             evaluated = expression_event(prototype, self.expression, authoring_zone=anchor.tzinfo)
             values.update({name: deepcopy(getattr(evaluated, name)) for name in (
-                'recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides')})
+                'recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy')})
             values.update(schedule_expression=self.expression, expression_anchor=anchor.date().isoformat())
             return values
         values['recurrence_rule'] = self.regular().rule(anchor, all_day=all_day)
+        values['range_policy'] = 'cut' if self.overflow == 'cut' else ''
         # Rule edits preserve additional dates, exclusions and detached events.
         if source is not None:
             for name in ('recurrence_dates', 'excluded_dates', 'recurrence_overrides'):

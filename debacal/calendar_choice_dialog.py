@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QLabe
 from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .calendar_choice import CalendarChoice
-from .dialog_base import FormDialog
+from .dialog_base import FormDialog, dialog_buttons
 from .preferences import Preferences
 
 
@@ -34,9 +34,8 @@ class CalendarChoiceDialog(FormDialog):
         self.error.setWordWrap(True)
         self.error.hide()
         outer.addWidget(self.error)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons = dialog_buttons(QDialogButtonBox.StandardButton.Ok, text=accept_text)
         self.accept_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self.accept_button.setText(accept_text)
         self.accept_button.setEnabled(bool(self.calendar.count()))
         self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.reject)

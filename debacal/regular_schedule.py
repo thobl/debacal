@@ -1,6 +1,7 @@
 """One standard recurrence model for editor controls and sequence authoring."""
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from calendar import monthrange
 
 from dateutil.rrule import rrulestr
 
@@ -12,6 +13,17 @@ MAX_REPEAT_COUNT = 100000
 _DAY_NAMES = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
 
 
+def shifted_reference_start(start, kind, *, overflow='', range_span=1, preferred_day=None):
+    """An initial fitted start can precede the independent reference date."""
+    if overflow != 'shift' or kind not in ('MONTHLY', 'YEARLY') or range_span == 1:
+        return None
+    latest = monthrange(start.year, start.month)[1] - range_span + 1
+    if latest < 1:
+        return None
+    candidate = start.replace(day=min(preferred_day or start.day, latest))
+    return candidate if candidate.timestamp() < start.timestamp() else None
+
+
 def _aware(value):
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise RecurrenceError('The recurrence needs a timezone-aware start.')
@@ -19,7 +31,7 @@ def _aware(value):
 
 
 def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None,
-           preferred_day=None, selectors=(), week_start='MO'):
+           preferred_day=None, selectors=(), week_start='MO', overflow='', range_span=1):
     kind = str(kind).upper()
     if kind not in REGULAR_KINDS:
         raise RecurrenceError('Choose a daily, weekly, monthly or yearly recurrence.')
@@ -36,6 +48,32 @@ def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None,
         raise RecurrenceError('Choose a valid first weekday for a weekly recurrence.')
     if kind == 'WEEKLY' and week_start != 'MO':
         result += ';WKST=' + week_start
+    if overflow:
+        if overflow not in ('skip', 'shift', 'cut') or kind not in ('MONTHLY', 'YEARLY') or selectors:
+            raise RecurrenceError('Choose Skip, Shift or Cut for monthly/yearly calendar-day ranges.')
+        if type(range_span) is not int or not 1 <= range_span <= 31:
+            raise RecurrenceError('A calendar range must occupy between 1 and 31 days.')
+        _aware(start)
+        day = preferred_day or start.day
+        if overflow == 'shift' and range_span > 28:
+            from .range_policies import shift_range_fits
+            if not shift_range_fits(start, kind, interval, span=range_span):
+                raise RecurrenceError('This whole range cannot fit in every selected month. Choose Skip or Cut.')
+        if day + range_span - 1 > 31:
+            # An intentionally cross-month template keeps its full duration.
+            range_span = 1
+        if overflow == 'skip' and range_span > 1:
+            result += f';BYMONTHDAY={day},{day + range_span - 1};BYSETPOS=-2'
+        elif overflow == 'shift' and range_span > 1:
+            result += f';BYMONTHDAY={day},-{range_span};BYSETPOS=1'
+        elif overflow in ('shift', 'cut'):
+            result += ';BYMONTHDAY=' + ','.join(str(value) for value in range(min(28, day), day + 1))
+            result += ';BYSETPOS=-1'
+        elif preferred_day is not None:
+            result += f';BYMONTHDAY={day}'
+        if kind == 'YEARLY' and (overflow != 'skip' or range_span > 1 or preferred_day is not None):
+            result += f';BYMONTH={start.month}'
+        return result
     if selectors:
         from .patterns import PatternError, _weekday_selectors
         try:
@@ -69,7 +107,7 @@ def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None,
 
 
 def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=(), *, clamp=False,
-                   preferred_day=None, selectors=(), week_start='MO') -> date:
+                   preferred_day=None, selectors=(), week_start='MO', overflow='', range_span=1) -> date:
     """Inclusive last date of a COUNT rule, including DTSTART when it matches.
 
     Dateutil's calendar arithmetic deliberately skips nonexistent month days:
@@ -80,17 +118,22 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
         raise RecurrenceError(f'Choose between 1 and {MAX_REPEAT_COUNT:,} occurrences.')
     try:
         rule = _parts(kind, interval, weekdays, clamp=clamp, start=start,
-                      preferred_day=preferred_day, selectors=selectors, week_start=week_start)
+                      preferred_day=preferred_day, selectors=selectors, week_start=week_start,
+                      overflow=overflow, range_span=range_span)
+        prelude = shifted_reference_start(start, kind, overflow=overflow, range_span=range_span, preferred_day=preferred_day)
+        if prelude is not None and count == 1:
+            return prelude.date()
         if str(kind).upper() == 'DAILY':
             return start.date() + timedelta(days=interval * (count - 1))
         if str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
             return start.date() + timedelta(days=7 * interval * (count - 1))
-        values = rrulestr(rule + f';COUNT={count}', dtstart=start)
+        native_count = count - int(prelude is not None)
+        values = rrulestr(rule + f';COUNT={native_count}', dtstart=start)
         last = None
         generated = 0
         for generated, last in enumerate(values, 1):
             pass
-        if last is None or generated < count:
+        if last is None or generated < native_count:
             raise RecurrenceError('No recurrence fits within the supported calendar years.')
         return last.date()
     except (OverflowError, ValueError, TypeError) as exc:
@@ -101,19 +144,25 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
 
 def until_to_count(start: datetime, kind: str, interval: int, until: date, weekdays=(),
                    *, limit: int = MAX_REPEAT_COUNT, clamp=False,
-                   preferred_day=None, selectors=(), week_start='MO') -> int:
+                   preferred_day=None, selectors=(), week_start='MO', overflow='', range_span=1) -> int:
     """Count rule occurrences through an inclusive calendar date, with a cap."""
     _aware(start)
     if isinstance(until, datetime) or not isinstance(until, date):
         raise RecurrenceError('Choose a valid final recurrence date.')
     if until < start.date():
-        raise RecurrenceError('The final recurrence date must not precede the start.')
+        fitted = shifted_reference_start(start, kind, overflow=overflow, range_span=range_span, preferred_day=preferred_day)
+        if fitted is None or until < fitted.date():
+            raise RecurrenceError('The final recurrence date must not precede the start.')
     if type(limit) is not int or not 1 <= limit <= MAX_REPEAT_COUNT:
         raise RecurrenceError('Invalid recurrence count limit.')
     count = 0
     try:
         rule = _parts(kind, interval, weekdays, clamp=clamp, start=start,
-                      preferred_day=preferred_day, selectors=selectors, week_start=week_start)
+                      preferred_day=preferred_day, selectors=selectors, week_start=week_start,
+                      overflow=overflow, range_span=range_span)
+        prelude = shifted_reference_start(start, kind, overflow=overflow, range_span=range_span, preferred_day=preferred_day)
+        if prelude is not None and prelude.date() <= until:
+            count = 1
         if str(kind).upper() == 'DAILY':
             count = (until - start.date()).days // interval + 1
         elif str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
@@ -148,15 +197,20 @@ class RegularSchedule:
     preferred_day: int | None = None
     selectors: tuple[str, ...] = ()
     week_start: str = 'MO'
+    overflow: str = ''
+    range_span: int = 1
 
     def rule(self, start: datetime, *, all_day=False) -> str:
         _aware(start)
         result = _parts(self.kind, self.interval, self.weekdays, clamp=self.clamp, start=start,
-                        preferred_day=self.preferred_day, selectors=self.selectors, week_start=self.week_start)
+                        preferred_day=self.preferred_day, selectors=self.selectors, week_start=self.week_start,
+                        overflow=self.overflow, range_span=self.range_span)
         if self.ending == 'never' or (self.count is None and self.until is None):
             return result
         if self.ending == 'until':
-            if self.until is None or self.until < start.date():
+            fitted = shifted_reference_start(start, self.kind, overflow=self.overflow,
+                                             range_span=self.range_span, preferred_day=self.preferred_day)
+            if self.until is None or self.until < (fitted or start).date():
                 raise RecurrenceError('The final recurrence date must not precede the start.')
             if all_day:
                 return result + ';UNTIL=' + self.until.strftime('%Y%m%d')
@@ -174,8 +228,16 @@ class RegularSchedule:
         try:
             parts = dict(part.strip().upper().split('=', 1) for part in rule.removeprefix('RRULE:').split(';'))
             kind = parts.get('FREQ')
+            if (kind in ('MONTHLY', 'YEARLY') and parts.get('BYSETPOS') == '-1'
+                    and 'BYMONTHDAY' not in parts and 'BYDAY' not in parts and start.day <= 28):
+                # A canonicalized one-candidate position retains the implicit
+                # DTSTART day. On days <=28 this is the same clamped rule.
+                parts['BYMONTHDAY'] = str(start.day)
+                if kind == 'YEARLY':
+                    parts.setdefault('BYMONTH', str(start.month))
             allowed = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'}
             preferred_day, selectors = None, ()
+            overflow, range_span = '', 1
             week_start = parts.get('WKST', 'MO')
             if kind == 'WEEKLY':
                 allowed.add('BYDAY')
@@ -190,13 +252,29 @@ class RegularSchedule:
             clamp = False
             if kind in ('MONTHLY', 'YEARLY') and 'BYMONTHDAY' in parts:
                 raw_days = parts['BYMONTHDAY'].split(',')
-                if not all(value.isdigit() and 1 <= int(value) <= 31 for value in raw_days):
+                if not all(value.lstrip('-').isdigit() and 1 <= abs(int(value)) <= 31 for value in raw_days):
                     return None
                 candidate_days = tuple(sorted(set(int(value) for value in raw_days)))
-                preferred_day = max(candidate_days)
+                positive = [value for value in candidate_days if value > 0]
+                negative = [value for value in candidate_days if value < 0]
+                if parts.get('BYSETPOS') == '-2' and len(positive) == 2 and not negative:
+                    preferred_day = min(positive)
+                    range_span = max(positive) - preferred_day + 1
+                    overflow = 'skip'
+                    allowed.add('BYSETPOS')
+                elif parts.get('BYSETPOS') == '1' and len(positive) == len(negative) == 1:
+                    preferred_day, range_span = positive[0], -negative[0]
+                    overflow = 'shift'
+                    allowed.add('BYSETPOS')
+                else:
+                    if negative:
+                        return None
+                    preferred_day = max(candidate_days)
                 if selectors:
                     return None
-                if parts.get('BYSETPOS') == '-1':
+                if overflow:
+                    pass
+                elif parts.get('BYSETPOS') == '-1':
                     if candidate_days != tuple(range(min(28, preferred_day), preferred_day + 1)):
                         return None
                     clamp = True
@@ -220,7 +298,8 @@ class RegularSchedule:
                 return None
             days = tuple(sorted({_DAY_NAMES.index(day) for day in parts.get('BYDAY', '').split(',') if day})) if kind == 'WEEKLY' else ()
             interval = int(parts.get('INTERVAL', 1))
-            rule_options = dict(clamp=clamp, preferred_day=preferred_day, selectors=selectors, week_start=week_start)
+            rule_options = dict(clamp=clamp, preferred_day=preferred_day, selectors=selectors, week_start=week_start,
+                                overflow=overflow, range_span=range_span)
             base_rule = _parts(kind, interval, days, start=start, **rule_options)
             if (days or selectors or preferred_day is not None) and rrulestr(base_rule, dtstart=start).after(start, inc=True) != start:
                 # DTSTART is still a set member in the calendar model. A rule
@@ -232,7 +311,7 @@ class RegularSchedule:
             if 'COUNT' in parts:
                 count = int(parts['COUNT'])
                 until = count_to_until(start, kind, interval, count, days, **rule_options)
-                return cls(kind, interval, count, until, days, 'count', clamp, preferred_day, selectors, week_start)
+                return cls(kind, interval, count, until, days, 'count', clamp, preferred_day, selectors, week_start, overflow, range_span)
             if 'UNTIL' in parts:
                 value = parts['UNTIL']
                 if len(value) == 8:
@@ -250,8 +329,8 @@ class RegularSchedule:
                         until -= timedelta(days=1)
                 count = until_to_count(start, kind, interval, until, days, **rule_options)
                 last = count_to_until(start, kind, interval, count, days, **rule_options)
-                return cls(kind, interval, count, last, days, 'until', clamp, preferred_day, selectors, week_start)
-            return cls(kind, interval, None, None, days, 'never', clamp, preferred_day, selectors, week_start)
+                return cls(kind, interval, count, last, days, 'until', clamp, preferred_day, selectors, week_start, overflow, range_span)
+            return cls(kind, interval, None, None, days, 'never', clamp, preferred_day, selectors, week_start, overflow, range_span)
         except (ValueError, OverflowError, TypeError):
             return None
 

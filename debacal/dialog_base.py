@@ -2,10 +2,40 @@
 from PySide6.QtCore import Qt, QEvent, QObject
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QWidget, QTextEdit, QPlainTextEdit, QPushButton, QCheckBox,
-                              QLineEdit, QComboBox, QAbstractSpinBox, QKeySequenceEdit)
+                              QLineEdit, QComboBox, QAbstractSpinBox, QKeySequenceEdit, QDialogButtonBox)
 from shiboken6 import isValid
 
 from .shortcuts import DEFAULT_DIALOG_BINDINGS, shortcut_keys, shortcut_label, shortcut_matches
+
+
+def dialog_buttons(primary=QDialogButtonBox.StandardButton.Save, *, text=None, apply=False, close=False, parent=None):
+    """Shared closing actions: neutral Cancel, then the highlighted accept.
+
+    Apply is reserved for keeping a preferences dialog open. Temporary pickers
+    use OK, persistent forms use Save, and explicit actions can name the accept
+    button Import/Export without changing its role, position, or appearance.
+    """
+    if close:
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent)
+    else:
+        standard = primary | QDialogButtonBox.StandardButton.Cancel
+        if apply:
+            standard |= QDialogButtonBox.StandardButton.Apply
+        buttons = QDialogButtonBox(standard, parent)
+        accept = buttons.button(primary)
+        if text is not None:
+            accept.setText(text)
+        accept.setObjectName('primary')
+    # Use one explicit desktop layout across the application instead of letting
+    # custom buttons and platform defaults change the order between dialogs.
+    buttons.setStyleSheet(f'QDialogButtonBox {{ button-layout: {QDialogButtonBox.ButtonLayout.GnomeLayout.value}; }}')
+    buttons.setCenterButtons(False)
+    buttons.setContentsMargins(0, 0, 0, 0)
+    for button in buttons.buttons():
+        button.setAutoDefault(False)
+        button.setDefault(False)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return buttons
 
 
 def hint(text):

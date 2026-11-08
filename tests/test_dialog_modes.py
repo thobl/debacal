@@ -76,18 +76,18 @@ def test_function_keys_choose_modes_inside_text_fields_and_keep_each_draft(edito
         assert dialog.title.text() == title
 
 
-def test_ordinary_existing_event_can_keep_any_global_mode(editors):
+def test_ordinary_existing_event_does_not_offer_series_modes(editors):
     _, _, _, create = editors
     source = Event('ordinary', 'local', 'One event', START, START + timedelta(hours=1))
     dialog = create(source, edit_scope='future')
     assert not dialog.has_group
-    assert dialog.scope.currentData() == 'future'
-    assert dialog.scope_controls.isVisible()
+    assert dialog.scope.currentData() == 'single'
+    assert dialog.scope_controls.isHidden()
     changed = []
     dialog.mode_changed.connect(changed.append)
     QTest.mouseClick(dialog.scope_buttons['group'], Qt.MouseButton.LeftButton)
-    assert changed == ['group']
-    assert dialog.scope.currentData() == 'group'
+    assert changed == []
+    assert dialog.scope.currentData() == 'single'
     assert dialog.build_events()[0].start == source.start
     new = create()
     assert not new.scope_controls.isVisible()

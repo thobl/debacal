@@ -40,6 +40,8 @@ class ChoiceControl(SegmentedControl):
             self.buttons[data] = button
             buttons.append(button)
         self.set_buttons(buttons)
+        self._choice_buttons = buttons
+        self._option_visible = [True] * len(buttons)
         if buttons:
             buttons[0].setChecked(True)
         self.setFixedHeight(round(34 * preferences.font_scale / 100))
@@ -69,11 +71,11 @@ class ChoiceControl(SegmentedControl):
         self._index = index
         if index < 0:
             self.group.setExclusive(False)
-            for button in self._buttons:
+            for button in self._choice_buttons:
                 button.setChecked(False)
             self.group.setExclusive(True)
         else:
-            self._buttons[index].setChecked(True)
+            self._choice_buttons[index].setChecked(True)
         self.update()
         if changed:
             self.currentIndexChanged.emit(index)
@@ -82,14 +84,31 @@ class ChoiceControl(SegmentedControl):
     def setCurrentData(self, value):
         self.setCurrentIndex(self.findData(value))
 
+    def setOptionVisible(self, value, visible):
+        index = self.findData(value)
+        if index < 0 or self._option_visible[index] == bool(visible):
+            return
+        self._option_visible[index] = bool(visible)
+        self._choice_buttons[index].setVisible(visible)
+        self._buttons = [button for button, shown in zip(self._choice_buttons, self._option_visible) if shown]
+        self._arrange_buttons(self.size())
+        self.updateGeometry()
+        self.update()
+
+    def visibleCount(self):
+        return sum(self._option_visible)
+
     def resizeEvent(self, event):
-        count = max(1, len(self._buttons))
-        width, remainder = divmod(event.size().width(), count)
+        self._arrange_buttons(event.size())
+        super().resizeEvent(event)
+
+    def _arrange_buttons(self, size):
+        choices = [(index, button) for index, button in enumerate(self._choice_buttons) if self._option_visible[index]]
+        width, remainder = divmod(size.width(), max(1, len(choices)))
         captions_fit = all(self.fontMetrics().horizontalAdvance(caption) +
-                           (self._buttons[index].iconSize().width() + 8 if data in self.icons else 4) <= width
-                           for index, (caption, data) in enumerate(self.options))
-        for index, button in enumerate(self._buttons):
+                           (button.iconSize().width() + 8 if data in self.icons else 4) <= width
+                           for index, button in choices for caption, data in [self.options[index]])
+        for position, (index, button) in enumerate(choices):
             if self.icons:
                 button.setText(self.options[index][0] if captions_fit and not self.icon_only else '')
-            button.setFixedSize(width + (index < remainder), self.height())
-        super().resizeEvent(event)
+            button.setFixedSize(width + (position < remainder), self.height())

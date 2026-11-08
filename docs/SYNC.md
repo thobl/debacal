@@ -251,6 +251,51 @@ slots for one scheduling decision: confirming an occurrence keeps that actual
 slot, clears recurrence, and removes other candidate choices in the same group
 and calendar. One undo restores the entire choice set. Confirmed siblings remain.
 
+## Month-range Cut policy
+
+Skip and Shift overflow policies use standard RRULE constraints. Cut retains
+standard native starts but shortens overflowing ends at the month boundary.
+Locally it stays one small master with `range_policy="cut"`; generated ranges
+are not thousands of stored event overrides.
+
+At ICS export, every changed native range is emitted as a standard detached
+VEVENT with the same UID, its original RECURRENCE-ID, and explicit DTSTART and
+DTEND. Timed derived ranges use UTC; all-day ranges use DATE and exclusive ends.
+Other clients can display these ordinary exceptions without implementing Cut.
+Materialization covers all representable affected instances through year 9999,
+including unbounded rules. There is no rolling materialization horizon.
+Explicit manual overrides and additions always keep their own chosen ranges.
+
+The private properties record provenance so another Debacal instance can
+recover the symbolic policy:
+
+| Property | Location and meaning |
+| --- | --- |
+| `X-DEBACAL-RANGE-POLICY:cut` | Master: declares derived month-boundary ends. |
+| `X-DEBACAL-RANGE-SIGNATURE` | Master: SHA-256 of normalized scheduling, range, timezone/day-kind and shared-content fields. |
+| `X-DEBACAL-RANGE-GENERATED` | Derived child: the corresponding master fingerprint. |
+
+Import removes a generated child only when the master fingerprint matches,
+the complete set of expected affected positions is present, and that child
+matches its derived range and inherited content. An unknown property or nested
+alarm makes it a manual exception. Verified children are discarded before
+creating event payloads and stripped from retained raw ICS, keeping local
+storage and history small. Their ranges are regenerated when exporting again.
+
+A changed master, invalid signature, or missing derived child clears the local
+Cut policy and retains all remaining standard exceptions. An individually
+edited child remains an explicit override while other dates can retain Cut.
+This prevents a later upload from undoing foreign edits or silently restoring
+a deleted exception. Patching removes/replaces stale owned generated data and
+preserves unrelated master and manual-exception metadata. All-day semantic
+comparison uses calendar dates, independent of the importing machine's timezone.
+
+Export and import support at most 100,000 derived range positions per resource;
+ordinary event components keep their normal import budget. Export refuses a
+larger Cut rule with an actionable message to shorten it or choose Skip/Shift,
+instead of producing an incomplete or unimportable resource. The derivation
+cache contains scheduling triples, never full generated Event payloads.
+
 ## Live testing and current validation
 
 To exercise a real conflict through the UI:

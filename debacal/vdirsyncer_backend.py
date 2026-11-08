@@ -41,9 +41,9 @@ def semantic(event: Event | None) -> str:
         values = item.to_dict()
         for key in ("raw_ics", "id", "calendar_id", "series_id", "recurrence_id", "read_only"):
             values.pop(key, None)
-        values["start"] = item.start.astimezone(timezone.utc).isoformat()
-        values["end"] = item.end.astimezone(timezone.utc).isoformat()
-        if not item.recurrence_rule and not (item.schedule_expression and item.schedule_syntax == 2):
+        values["start"] = item.start.date().isoformat() if item.all_day else item.start.astimezone(timezone.utc).isoformat()
+        values["end"] = item.end.date().isoformat() if item.all_day else item.end.astimezone(timezone.utc).isoformat()
+        if item.all_day or (not item.recurrence_rule and not (item.schedule_expression and item.schedule_syntax == 2)):
             values.pop("timezone_id", None)
         if not item.schedule_expression:
             values.pop("schedule_syntax", None)

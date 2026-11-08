@@ -21,12 +21,13 @@ from .calendar_choice import CalendarChoice
 from .choice_control import ChoiceControl
 from .date_time_fields import DateTimeField, format_duration, parse_duration, validate_datetime
 from .date_time_picker import DateTimeRangePicker, range_duration
-from .dialog_base import FormDialog
+from .dialog_base import FormDialog, dialog_buttons
 from .event_schedule import ScheduleDraft, count_to_until, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 from .models import Event
 from .preferences import Preferences
-from .patterns import calendar_clamp_options, clamp_relevant, with_calendar_clamp
+from .patterns import PatternError, relative_sequence_steps, sequence_tail
+from .range_policies import occupied_span, range_policy_options, shift_range_fits
 from .recurrence import (ScheduleReplacement, event_zone, key_datetime, normalize_recurrence_time,
                          occurrence_id, recurrence_key, recurrence_set, updated_series)
 from .series_preview import SeriesPreview
@@ -199,7 +200,9 @@ class EventDialog(FormDialog):
         self.original, self.series = event, series
         self.calendars = list(calendars)
         self.common_fields_only = bool(common_fields_only)
-        self.has_group = bool(series or (event and (event.series_id or event.group_id)))
+        self.has_group = bool((series and series.recurring)
+                              or (event and (event.series_id or event.group_id)))
+        self._scope_available = bool(event and (self.has_group or event.recurring))
         self.scope_bindings = DEFAULT_MODE_BINDINGS | (scope_bindings or {})
         self._new_id = str(uuid4())
         self._loading = True
@@ -207,7 +210,7 @@ class EventDialog(FormDialog):
         self._validation_field = None
         self._schedule_error = None
         self._scope_sources, self._scope_values = {}, {}
-        self._scope_name = edit_scope if event and edit_scope in ('single', 'group', 'future') else 'single'
+        self._scope_name = edit_scope if self._scope_available and edit_scope in ('single', 'group', 'future') else 'single'
         self._repeat_draft = None
         self._custom_draft = None
         self._regular_values = None
@@ -250,10 +253,11 @@ class EventDialog(FormDialog):
         self.scope.setCurrentData(self._scope_name)
         header_row.addWidget(self.scope_controls, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         left.addWidget(self.header)
-        if event:
+        if self._scope_available:
             self.scope_controls.show()
         else:
             self.scope_controls.hide()
+            self.scope_controls.setEnabled(False)
         self.controls_scroll = QScrollArea()
         self.controls_scroll.setObjectName('eventEditorScroll')
         self.controls_scroll.viewport().setObjectName('eventEditorSidebarViewport')
@@ -329,9 +333,14 @@ class EventDialog(FormDialog):
         self.repeat.setFixedWidth(self.repeat.height() * self.repeat.count())
         frequency_row.addWidget(self.repeat)
         frequency_row.addStretch(1)
-        self.clamp = QCheckBox('Clamp')
-        self.clamp.setToolTip('Use the last available day in shorter months, keeping the preferred day for later months.')
-        frequency_row.addWidget(self.clamp)
+        self.overflow_policy = ChoiceControl([('Skip', 'skip'), ('Shift', 'shift'), ('Cut', 'cut')], self.preferences,
+            icons={'skip': 'overflow_skip', 'shift': 'overflow_shift', 'cut': 'overflow_cut'}, icon_only=True)
+        self.overflow_policy.setAccessibleName('Short-month handling')
+        self.overflow_policy.buttons['skip'].setToolTip('Skip · Leave out periods without all required calendar dates.')
+        self.overflow_policy.buttons['shift'].setToolTip('Shift · Move the whole occurrence earlier to fit, keeping its duration.')
+        self.overflow_policy.buttons['cut'].setToolTip('Cut · Keep the start and trim the part beyond the end of the month.')
+        self.overflow_policy.setCurrentIndex(-1)
+        frequency_row.addWidget(self.overflow_policy)
         scheduling.addLayout(frequency_row)
         self.recurrence_details = QStackedWidget()
         self.recurrence_details.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -417,7 +426,7 @@ class EventDialog(FormDialog):
         self.error.setProperty('error', True)
         self.error.hide()
         footer_layout.addWidget(self.error)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons = dialog_buttons()
         self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.reject)
         self.save_button = self.buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -432,18 +441,18 @@ class EventDialog(FormDialog):
         self.configure_keyboard([*self.scope_buttons.values(), self.calendar, self.title, self.location,
             self.all_day, self.start.lineEdit(), self.end.lineEdit(), self.duration, *self.schedule_mode.buttons.values(),
             *self.repeat.buttons.values(), self.interval, self.repeat_count, self.repeat_until.lineEdit(),
-            self.clamp, self.pattern, self.add_occurrence_button, self.description,
+            *self.overflow_policy.buttons.values(), self.pattern, self.add_occurrence_button, self.description,
             self.preview.previous_button, self.preview.today_button, self.preview.next_button, self.preview.first_button,
             self.preview.previous_occurrence_button, self.preview.next_occurrence_button, self.preview.last_button],
             [self.save_button, self.cancel_button], self.save,
-            [self.scope_bindings[action] for action in MODE_ACTIONS if self.scope_bindings.get(action)] if event else ())
+            [self.scope_bindings[action] for action in MODE_ACTIONS if self.scope_bindings.get(action)] if self._scope_available else ())
         self.mode_shortcuts = {}
         for action, scope in MODE_ACTIONS.items():
             binding = self.scope_bindings.get(action, '')
             shortcut = QShortcut(self)
             shortcut.setKeys(shortcut_sequences(binding))
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.setEnabled(bool(event and shortcut_keys(binding)))
+            shortcut.setEnabled(bool(self._scope_available and shortcut_keys(binding)))
             shortcut.activated.connect(lambda value=scope: self.scope.setCurrentData(value))
             self.mode_shortcuts[action] = shortcut
             label = shortcut_label(binding)
@@ -502,7 +511,7 @@ class EventDialog(FormDialog):
         self.repeat_until.dateTimeChanged.connect(lambda _: self._regular_changed('until'))
         self.repeat_until.picker_requested.connect(self.open_until_picker)
         self.no_end.toggled.connect(lambda _: self._regular_changed('count'))
-        self.clamp.toggled.connect(self._clamp_changed)
+        self.overflow_policy.currentChanged.connect(self._overflow_policy_changed)
         self.pattern.textChanged.connect(self.pattern_changed)
         self.pattern.editingFinished.connect(self._finish_pattern)
         self.title.textChanged.connect(self._update_preview)
@@ -591,6 +600,11 @@ class EventDialog(FormDialog):
             self._sync_presets()
         finally:
             self._loading = was_loading
+
+        if (not was_loading and hasattr(self, '_draft') and self._draft.range_policy is not None
+                and self.pattern.text() == self._draft.expression):
+            self._draft.refresh_range_policy(start, end, all_day=self.all_day.isChecked())
+            self._sync_schedule_controls()
 
     def value(self, field):
         self._validation_field = field
@@ -710,6 +724,70 @@ class EventDialog(FormDialog):
     def _can_edit_schedule(self):
         return not self.common_fields_only and (not self.has_group or (self.series is not None and self.scope.currentData() != 'single'))
 
+    def _overflow_context(self):
+        draft = self._draft
+        if draft.kind in ('MONTHLY', 'YEARLY'):
+            return draft.kind, draft.interval, None, True
+        try:
+            tail = sequence_tail(draft.expression)
+            if tail is not None:
+                if tail.unit not in ('m', 'y') or tail.weekdays:
+                    return None
+                return tail.frequency, tail.interval, tail.preferred_day, True
+            steps = relative_sequence_steps(draft.expression)
+        except PatternError:
+            return None
+        if not steps:
+            return None
+        calendar = [(amount, unit) for amount, unit, _clamp in steps if amount and unit in ('m', 'y')]
+        if not calendar:
+            return None
+        interval, unit = calendar[0]
+        positive = [(amount, unit) for amount, unit, _clamp in steps if amount]
+        uniform = all(value == calendar[0] for value in positive)
+        return ('MONTHLY' if unit == 'm' else 'YEARLY'), interval, None, uniform
+
+    def _sync_overflow_policy(self, editable, repeated):
+        context = self._overflow_context()
+        relevant = allow_cut = False
+        shift_fits = True
+        if context is not None:
+            kind, interval, preferred_day, regular = context
+            start = self._draft.schedule_anchor(self._last_start, all_day=self.all_day.isChecked())
+            duration = (self._last_end.replace(tzinfo=None) - self._last_start.replace(tzinfo=None)
+                        if self.all_day.isChecked() else
+                        range_duration(self._last_start.astimezone(start.tzinfo), self._last_end.astimezone(start.tzinfo)))
+            end = start + duration
+            relevant, allow_cut = range_policy_options(start, end, kind, interval,
+                all_day=self.all_day.isChecked(), preferred_day=preferred_day,
+                range_policy=self._draft.range_policy or '',
+                span=self._draft.range_span if self._draft.overflow else None)
+            span = (self._draft.range_span if self._draft.overflow
+                    else occupied_span(start, end, self.all_day.isChecked()))
+            shift_fits = shift_range_fits(start, kind, interval, span=span if allow_cut else 1)
+            allow_cut = allow_cut and regular
+            if not regular and occupied_span(start, end, self.all_day.isChecked()) > 1:
+                # Mixed finite programs currently express start-date steps,
+                # not a single month-contained range policy.
+                relevant = allow_cut = False
+        blocked = self.overflow_policy.blockSignals(True)
+        try:
+            self.overflow_policy.setOptionVisible('cut', allow_cut)
+            self.overflow_policy.setFixedWidth(self.overflow_policy.height() * self.overflow_policy.visibleCount())
+            policy = self._draft.range_policy
+            if allow_cut and not self._draft.overflow:
+                policy = None
+            self.overflow_policy.setCurrentData(policy if policy != 'cut' or allow_cut else 'shift')
+        finally:
+            self.overflow_policy.blockSignals(blocked)
+        self.overflow_policy.setVisible(repeated and relevant and not self.common_fields_only)
+        self.overflow_policy.setEnabled(editable)
+        self.overflow_policy.buttons['shift'].setEnabled(editable and shift_fits)
+        self.overflow_policy.buttons['shift'].setToolTip(
+            'Shift · Move the whole occurrence earlier to fit, keeping its duration.' if shift_fits else
+            'Shift · This whole range cannot fit in every month. Choose Skip or Cut.' if allow_cut else
+            'Shift · This whole range cannot fit in every month. Choose Skip or a shorter range.')
+
     def _sync_schedule_controls(self):
         was_loading, self._loading = self._loading, True
         try:
@@ -718,7 +796,7 @@ class EventDialog(FormDialog):
             self.interval.setValue(draft.interval)
             self.repeat_count.setValue(draft.count or 10)
             self.no_end.setChecked(draft.ending == 'never')
-            self.clamp.setChecked(draft.clamp)
+            self.overflow_policy.setCurrentData(draft.range_policy)
             # Resetting an unchanged QLineEdit also moves its cursor and clears
             # its undo history. Live validation must leave the user's edit alone.
             if self.pattern.text() != draft.expression:
@@ -737,14 +815,23 @@ class EventDialog(FormDialog):
         try:
             start = draft.schedule_anchor(self.value(self.start), all_day=self.all_day.isChecked())
             if draft.ending == 'until' and draft.until:
-                count = until_to_count(start, draft.kind, draft.interval, draft.until, draft.weekdays, clamp=draft.clamp)
+                count = until_to_count(start, draft.kind, draft.interval, draft.until, draft.weekdays,
+                                       **self._regular_options(draft))
                 self.repeat_count.setValue(count)
                 self.repeat_until.set_value(datetime.combine(draft.until, time.min, start.tzinfo))
             elif draft.ending != 'never':
-                day = count_to_until(start, draft.kind, draft.interval, draft.count or self.repeat_count.value(), draft.weekdays, clamp=draft.clamp)
+                day = count_to_until(start, draft.kind, draft.interval, draft.count or self.repeat_count.value(), draft.weekdays,
+                                     **self._regular_options(draft))
                 self.repeat_until.set_value(datetime.combine(day, time.min, start.tzinfo))
         finally:
             self._loading = was_loading
+
+    @staticmethod
+    def _regular_options(draft):
+        regular = draft.regular()
+        return dict(clamp=regular.clamp, preferred_day=regular.preferred_day,
+                    selectors=regular.selectors, week_start=regular.week_start,
+                    overflow=regular.overflow, range_span=regular.range_span)
 
     def _schedule_mode_changed(self, mode):
         if self._loading:
@@ -762,7 +849,9 @@ class EventDialog(FormDialog):
                 self._reset_schedule = self._repeat_reset
             else:
                 self._draft.set_regular(self.repeat.currentData() if self.repeat.currentData() in REGULAR_KINDS else 'WEEKLY',
-                                        count=self.repeat_count.value())
+                                        count=self.repeat_count.value(), range_policy='skip')
+                self._draft.refresh_range_policy(self.value(self.start), self.value(self.end),
+                                                 all_day=self.all_day.isChecked())
             self._report(self._sync_schedule_controls)
         self._update_preview()
 
@@ -776,14 +865,15 @@ class EventDialog(FormDialog):
         if self._draft.kind == 'custom':
             self._remember_custom()
             def reset():
-                values = self._regular_values or dict(interval=1, count=6, indefinite=False, clamp=False)
+                values = self._regular_values or dict(interval=1, count=6, indefinite=False, range_policy='skip')
                 draft = ScheduleDraft.from_event(authoring_zone=self.sequence_zone())
                 draft.set_regular(kind, interval=values['interval'], count=values['count'],
                                   ending='never' if values['indefinite'] else 'count',
-                                  clamp=values['clamp'] and kind in ('MONTHLY', 'YEARLY'))
+                                  range_policy=values['range_policy'] or 'skip')
+                draft.refresh_range_policy(self.value(self.start), self.value(self.end), all_day=self.all_day.isChecked())
                 start = draft.schedule_anchor(self.value(self.start), all_day=self.all_day.isChecked())
                 if draft.ending != 'never':
-                    count_to_until(start, kind, draft.interval, draft.count, draft.weekdays, clamp=draft.clamp)
+                    count_to_until(start, kind, draft.interval, draft.count, draft.weekdays, **self._regular_options(draft))
                 self._draft = draft
                 self._reset_schedule = True
                 self._schedule_error = None
@@ -799,7 +889,7 @@ class EventDialog(FormDialog):
 
     def _remember_regular(self):
         self._regular_values = dict(interval=self.interval.value(), count=self.repeat_count.value(),
-                                    indefinite=self.no_end.isChecked(), clamp=self._draft.clamp)
+                                    indefinite=self.no_end.isChecked(), range_policy=self._draft.range_policy)
 
     def _remember_custom(self):
         draft = deepcopy(self._draft)
@@ -846,12 +936,15 @@ class EventDialog(FormDialog):
                 until=self.repeat_until.value().date() if ending == 'until' else None,
                 weekdays=draft.weekdays if kind == 'WEEKLY' else (),
                 ending='never' if self.no_end.isChecked() else ending,
-                clamp=self.clamp.isChecked() and kind in ('MONTHLY', 'YEARLY'))
+                range_policy=(self.overflow_policy.currentData()
+                              if self.overflow_policy.currentData() is not None else
+                              'skip' if self._draft.kind != kind or self._draft.source is None else None))
+            draft.refresh_range_policy(self.value(self.start), self.value(self.end), all_day=self.all_day.isChecked())
             start = draft.schedule_anchor(self.value(self.start), all_day=self.all_day.isChecked())
             if draft.ending == 'until':
-                until_to_count(start, kind, draft.interval, draft.until, draft.weekdays, clamp=draft.clamp)
+                until_to_count(start, kind, draft.interval, draft.until, draft.weekdays, **self._regular_options(draft))
             elif draft.ending != 'never':
-                count_to_until(start, kind, draft.interval, draft.count, draft.weekdays, clamp=draft.clamp)
+                count_to_until(start, kind, draft.interval, draft.count, draft.weekdays, **self._regular_options(draft))
             self._draft = draft
             self._schedule_error = None
             self._sync_schedule_controls()
@@ -864,13 +957,22 @@ class EventDialog(FormDialog):
             self.repeat.setCurrentData(self._draft.kind if self._draft.kind in REGULAR_KINDS else 'RDATE')
             self.repeat.blockSignals(False)
 
-    def _clamp_changed(self, enabled):
-        if self._loading:
+    def _overflow_policy_changed(self, policy):
+        if self._loading or policy is None:
             return
-        if self._draft.kind in REGULAR_KINDS:
-            self._regular_changed(self._draft.ending)
-        else:
-            self._report(lambda: self.pattern.setText(with_calendar_clamp(self.pattern.text(), enabled)), self.pattern)
+        def change():
+            draft = deepcopy(self._draft)
+            start, end = self.value(self.start), self.value(self.end)
+            if self.pattern.text() != draft.expression:
+                draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(), detect=False)
+            draft.set_range_policy(policy, start, end, all_day=self.all_day.isChecked())
+            self._draft = draft
+            self._schedule_error = None
+            self._sync_schedule_controls()
+            self._remember_regular() if draft.kind in REGULAR_KINDS else self._remember_custom()
+            self._update_preview()
+        if not self._report(change, self.pattern):
+            self._sync_overflow_policy(self._can_edit_schedule(), self.schedule_mode.currentData() != 'single')
 
     def pattern_changed(self, *_):
         if self._loading:
@@ -1009,16 +1111,7 @@ class EventDialog(FormDialog):
         self.repeat_until.setToolTip('Not used for an indefinite pattern.' if self.no_end.isChecked()
                                     else 'Final recurrence date')
         self.custom_controls.setEnabled(editable)
-        start = self._draft.schedule_anchor(self._last_start, all_day=self.all_day.isChecked())
-        if regular:
-            relevant, enabled = clamp_relevant(start, self._draft.kind, self._draft.interval), self._draft.clamp
-        else:
-            relevant, enabled = calendar_clamp_options(self._draft.expression, start)
-        self.clamp.setVisible(repeated and relevant and not self.common_fields_only)
-        self.clamp.setEnabled(editable)
-        self.clamp.blockSignals(True)
-        self.clamp.setChecked(enabled)
-        self.clamp.blockSignals(False)
+        self._sync_overflow_policy(editable, repeated)
         self.pattern.setEnabled(editable)
         self.add_occurrence_button.setEnabled(editable)
         self.add_occurrence_button.setVisible(not self.common_fields_only)

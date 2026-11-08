@@ -20,7 +20,7 @@ from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .buttons import action_button
 from .calendar_choice import CalendarChoice
-from .dialog_base import FormDialog
+from .dialog_base import FormDialog, dialog_buttons
 from .import_sources import ImportSource
 from .import_preparation import prepare_sources, PREVIEW_CALENDAR_ID
 from .import_preview import ImportPreview
@@ -209,29 +209,29 @@ class ImportDialog(FormDialog):
         selection.addWidget(self.issues_button, 0, Qt.AlignmentFlag.AlignLeft)
         sections.addStretch()
 
-        self._divider(left)
         footer = QWidget()
         footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(18, 10, 18, 10)
+        footer_layout.setContentsMargins(0, 8, 0, 0)
         footer_layout.setSpacing(6)
         self.error = QLabel()
         self.error.setWordWrap(True)
         self.error.setTextFormat(Qt.TextFormat.PlainText)
         self.error.setProperty('error', True)
         footer_layout.addWidget(self.error)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        self.import_button = self.buttons.addButton('&Import', QDialogButtonBox.ButtonRole.AcceptRole)
+        self.buttons = dialog_buttons(QDialogButtonBox.StandardButton.Ok, text='Import')
+        self.import_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.cancel_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.reject)
         footer_layout.addWidget(self.buttons)
-        left.addWidget(footer)
         outer.addWidget(self.sidebar)
         self.preview_column = QWidget()
         self.preview_column.setObjectName('eventEditorPreview')
         preview_layout = QVBoxLayout(self.preview_column)
         preview_layout.setContentsMargins(18, 16, 18, 12)
         preview_layout.addWidget(self.preview, 1)
+        self._divider(preview_layout)
+        preview_layout.addWidget(footer)
         outer.addWidget(self.preview_column, 1)
         preview_actions = [self.preview.previous_button, self.preview.today_button, self.preview.next_button,
                            self.preview.first_button, self.preview.previous_occurrence_button,
@@ -521,7 +521,7 @@ class ImportDialog(FormDialog):
         details.setReadOnly(True)
         details.setPlainText('\n\n'.join(self._warnings))
         layout.addWidget(details)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons = dialog_buttons(close=True)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         dialog.exec()

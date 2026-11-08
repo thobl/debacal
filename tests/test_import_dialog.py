@@ -227,7 +227,8 @@ def test_import_uses_shared_sidebar_calendar_picker_and_preview_controls(dialogs
     assert widget.heading.objectName() == 'brand' and widget.heading.text() == 'Import events'
     assert widget.preview_column.height() == widget.sidebar.height()
     assert widget.preview.all_button.parentWidget() is widget.selection_section
-    assert widget.import_button.objectName() != 'primary'
+    assert widget.import_button.objectName() == 'primary'
+    assert widget.buttons.parentWidget().parentWidget() is widget.preview_column
     assert not widget.preview.message.isVisible()
     assert widget.preview.position_label.text().startswith('1/1')
 

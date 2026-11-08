@@ -1296,6 +1296,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self.reveal_search_result(event_id):
             self.active_canvas().setFocus()
 
+    def edit_search_result(self, event_id):
+        if self.reveal_search_result(event_id):
+            self.edit_event()
+
     def open_search_result(self, item):
         if self.reveal_search_result(item):
             self.active_canvas().setFocus()

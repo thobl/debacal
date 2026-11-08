@@ -85,6 +85,8 @@ class Event:
     # Version 1 marks unannotated or obsolete data; it has no interpreter.
     # Version 2 uses the explicit-reference language or a schedule document.
     schedule_syntax: int = 1
+    # Only Cut needs local range semantics; Skip/Shift are standard RRULEs.
+    range_policy: str = ""
 
     def __post_init__(self) -> None:
         if not self.id or not self.calendar_id:
@@ -95,6 +97,8 @@ class Event:
             raise ValueError("Custom schedule text and its anchor must be strings.")
         if type(self.schedule_syntax) is not int or self.schedule_syntax not in {1, 2}:
             raise ValueError("Custom schedule syntax version must be 1 or 2.")
+        if not isinstance(self.range_policy, str) or self.range_policy not in {"", "cut"}:
+            raise ValueError("The stored event range policy must be empty or cut.")
         if self.expression_anchor:
             try:
                 object.__setattr__(self, "expression_anchor", date.fromisoformat(self.expression_anchor).isoformat())

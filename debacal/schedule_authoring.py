@@ -90,7 +90,8 @@ def expression_event(event, expression, *, authoring_zone=None):
     compiled = compile_sequence(expression, anchor, all_day=event.all_day)
     candidate = replace(prototype, recurrence_rule=compiled.recurrence_rule,
                         recurrence_dates=compiled.recurrence_dates, excluded_dates=compiled.excluded_dates,
-                        recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''))
+                        recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''),
+                        range_policy=compiled.range_policy)
     return (apply_occurrence_counts(candidate, event, compiled.duplicate_starts)
             if compiled.duplicate_starts or event.recurrence_overrides else candidate)
 
@@ -238,7 +239,7 @@ def recurrence_matches(first, second):
             def signature(regular):
                 days = regular.weekdays or ((first.start.weekday(),) if regular.kind == 'WEEKLY' else ())
                 return (regular.kind, regular.interval, regular.count, days, regular.clamp,
-                        regular.selectors, regular.preferred_day, regular.week_start)
+                        regular.selectors, regular.preferred_day, regular.week_start, regular.overflow, regular.range_span)
             same_rule = signature(regulars[0]) == signature(regulars[1])
     if not same_rule:
         if first_unbounded:
@@ -265,7 +266,8 @@ def expression_matches(event, expression, *, authoring_zone=None):
         return document_matches(event, expression)
     try:
         candidate = expression_event(event, expression, authoring_zone=authoring_zone)
-        return (recurrence_matches(displayed_schedule(event), displayed_schedule(candidate))
+        return (event.range_policy == candidate.range_policy
+                and recurrence_matches(displayed_schedule(event), displayed_schedule(candidate))
                 and multiplicities(event) == multiplicities(candidate))
     except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
         return False
@@ -291,6 +293,14 @@ def _rule_expression_options(event, anchor):
         allowed.add('BYMONTH')
     if parts.keys() - allowed:
         raise RecurrenceError('This recurrence uses constraints outside the compact calendar notation.')
+
+    regular = RegularSchedule.from_rule(event.recurrence_rule, anchor, all_day=event.all_day)
+    if regular is not None and (regular.overflow or event.range_policy == 'cut'):
+        from .range_policies import occupied_span
+        return parts, dict(kind=frequency, interval=interval, weekdays=regular.weekdays,
+            preferred_day=regular.preferred_day, clamp=False, week_start=regular.week_start,
+            overflow=event.range_policy or regular.overflow,
+            range_span=regular.range_span if regular.overflow else occupied_span(event.start, event.end, all_day=event.all_day))
 
     selectors = tuple(parts.get('BYDAY', '').split(',')) if parts.get('BYDAY') else ()
     if frequency == 'WEEKLY' and selectors == (('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')[anchor.weekday()],):
@@ -457,6 +467,11 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
     if unbounded:
         expression = _tail_expression(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(expression, None, True)
+    regular_policy = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
+                                                all_day=displayed.all_day) if displayed.recurrence_rule else None
+    if regular_policy is not None and (regular_policy.overflow or event.range_policy == 'cut'):
+        expression = _tail_expression(displayed, authoring_zone=authoring_zone)
+        return SequenceAuthoring(expression, None, False)
     # Preserve named weekday/ordinal intent instead of replacing a compact
     # standard rule with an unrelated finite sample of absolute dates. This
     # path also handles an off-rule DTSTART through an explicit +0d prefix.

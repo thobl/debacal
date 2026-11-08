@@ -16,6 +16,7 @@ import re
 
 from .models import Event
 from . import ics_fallback as fallback
+from . import ics_range_policy as range_codec
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,8 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
                            (RejectedResource(uid, raw, resource_id, reason),))
     timezones = [block for block in blocks if block[0] == "BEGIN:VTIMEZONE"]
     event_blocks = [block for block in blocks if block[0] == "BEGIN:VEVENT"]
-    if len(event_blocks) > limit:
+    generated_count = sum(_property_of(block, range_codec.GENERATED) is not None for block in event_blocks)
+    if len(event_blocks) - generated_count > limit or generated_count > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f"Import exceeds {limit:,} event components.")
     grouped = {}
     generated_uids, duplicate_counts = set(), {}
@@ -260,10 +262,21 @@ def _with_uid(block, uid):
     return result
 
 
-def _resource_for_uid(data, uid, *, synthetic=False):
+def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=()):
     header, blocks = _blocks(data)
     selected = [b for b in blocks if b[0] == "BEGIN:VTIMEZONE" or
                 (b[0] == "BEGIN:VEVENT" and (_uid_of(b) == uid or (synthetic and not _uid_of(b))))]
+    if discard_generated:
+        from .ics import local_timezone
+        tz, omitted = local_timezone(), set(discard_generated)
+        retained = []
+        for block in selected:
+            if block[0] == 'BEGIN:VEVENT' and _property_of(block, range_codec.GENERATED) is not None:
+                component = fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
+                if 'RECURRENCE-ID' in component and _key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz) in omitted:
+                    continue
+            retained.append(block)
+        selected = retained
     return fallback.folded(["BEGIN:VCALENDAR", *header, *(line for block in selected for line in block), "END:VCALENDAR"]).decode()
 
 
@@ -278,8 +291,21 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
     from .recurrence import canonical_rule, occurrence_id, recurrence_set
     tz = local_timezone()
     source = _read(data, use_full)
-    if len(source) > limit:
+    generated_count = sum(range_codec.GENERATED in component for component in source)
+    if len(source) - generated_count > limit or generated_count > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f"Import exceeds {limit:,} event components.")
+    generated_safety = {}
+    if generated_count:
+        _, raw_blocks = _blocks(data)
+        for block in raw_blocks:
+            if block[0] != 'BEGIN:VEVENT' or _property_of(block, range_codec.GENERATED) is None:
+                continue
+            raw_component = fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
+            if 'RECURRENCE-ID' in raw_component:
+                key = _key(_decoded(raw_component, 'RECURRENCE-ID', tz)[0], tz)
+                slot = (_uid_of(block), key)
+                generated_safety[slot] = (range_codec.safe_generated_block(block)
+                                          and slot not in generated_safety)
     grouped = {}
     for component in source:
         if "EXRULE" in component:
@@ -332,20 +358,49 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz) for value in _decoded(master_component, "EXDATE", tz)),
-            raw_ics=_resource_for_uid(data, uid, synthetic="UID" not in master_component),
+            raw_ics='',
             schedule_expression=fallback.prop(master_component, "X-DEBACAL-PATTERN"),
             expression_anchor=fallback.prop(master_component, "X-DEBACAL-PATTERN-ANCHOR"),
             schedule_syntax=_schedule_syntax(master_component),
+            range_policy='cut' if fallback.prop(master_component, range_codec.POLICY).lower() == 'cut' else '',
         )
+        master = replace(master, recurrence_rule=canonical_rule(master.recurrence_rule, master))
+        # A foreign cancellation changes the canonical base just like EXDATE.
+        # Include it before checking the signature, rather than regenerating a
+        # range that another client intentionally removed.
+        cancelled = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz)
+                     for component in components if 'RECURRENCE-ID' in component
+                     and fallback.prop(component, 'STATUS').upper() == 'CANCELLED'}
+        if cancelled:
+            master = replace(master, excluded_dates=tuple(set(master.excluded_dates) | cancelled))
+        expected = {}
+        policy_fingerprint = range_codec.signature(master) if master.range_policy else ''
+        verified_policy = (master.range_policy == 'cut'
+                           and fallback.prop(master_component, range_codec.SIGNATURE) == policy_fingerprint)
+        if verified_policy:
+            expected = range_codec.expected_ranges(master)
+            present = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz)
+                       for component in components if 'RECURRENCE-ID' in component}
+            verified_policy = expected.keys() <= present
+        if not verified_policy:
+            master = replace(master, range_policy='')
+        discarded = set()
         overrides, exclusions = {}, set(master.excluded_dates)
         for component in components:
             if "RECURRENCE-ID" not in component:
                 continue
             key = _key(_decoded(component, "RECURRENCE-ID", tz)[0], tz)
+            if (verified_policy and generated_safety.get((uid, key), False)
+                    and range_codec.matches_generated(component, master, key, expected, decode=_decoded, tz=tz,
+                                                       fingerprint=policy_fingerprint)):
+                discarded.add(key)
+                continue
             if fallback.prop(component, "STATUS").upper() == "CANCELLED":
                 exclusions.add(key)
                 continue
-            override_start = _datetime(_decoded(component, "DTSTART", tz)[0], tz) if "DTSTART" in component else _datetime(_decoded(component, "RECURRENCE-ID", tz)[0], tz)
+            raw_override_start = _decoded(component, 'DTSTART' if 'DTSTART' in component else 'RECURRENCE-ID', tz)[0]
+            override_all_day = not isinstance(raw_override_start, datetime)
+            override_start = _datetime(raw_override_start, tz)
             if "DTEND" in component:
                 override_end = _datetime(_decoded(component, "DTEND", tz)[0], tz)
             elif "DURATION" in component:
@@ -354,20 +409,24 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 # A complete timed override with DTSTART but no endpoint is a
                 # point as well. A sparse exception that only changes metadata
                 # still inherits the master timing.
-                duration = (timedelta(days=1) if all_day else timedelta(0)) if "DTSTART" in component else event_end - event_start
+                duration = (timedelta(days=1) if override_all_day else timedelta(0)) if "DTSTART" in component else event_end - event_start
                 override_end = override_start + duration
             override = replace(
                 master, id=occurrence_id(master.id, key), start=override_start, end=override_end,
                 title=fallback.prop(component, "SUMMARY", master.title),
                 description=fallback.prop(component, "DESCRIPTION", master.description),
                 location=fallback.prop(component, "LOCATION", master.location),
+                all_day=override_all_day,
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
                 schedule_expression="", expression_anchor="",
                 schedule_syntax=1,
+                range_policy='',
             )
             overrides[key] = override.to_dict()
         master = replace(master, recurrence_overrides=overrides, excluded_dates=tuple(sorted(exclusions)))
+        master = replace(master, raw_ics=_resource_for_uid(data, uid, synthetic='UID' not in master_component,
+                                                          discard_generated=discarded))
         master = replace(master, recurrence_rule=canonical_rule(master.recurrence_rule, master))
         recurrence_set(master)  # Validate before an import reaches the SQLite transaction.
         result.append(master)
@@ -435,7 +494,7 @@ def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
     authored_v2 = bool(event.schedule_expression and event.schedule_syntax == 2)
-    return bool((event.recurrence_rule or authored_v2) and not event.all_day
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy) and not event.all_day
                 and event.timezone_id not in {"", "UTC", "Etc/UTC"})
 
 
@@ -454,6 +513,9 @@ def _known_lines(event, uid, recurrence_id=""):
         lines.append("X-DEBACAL-PATTERN-VERSION:" + str(event.schedule_syntax))
     if event.expression_anchor and not recurrence_id:
         lines.append("X-DEBACAL-PATTERN-ANCHOR:" + fallback.escaped(event.expression_anchor))
+    if event.range_policy and not recurrence_id:
+        lines.extend((range_codec.POLICY + ':' + event.range_policy,
+                      range_codec.SIGNATURE + ':' + range_codec.signature(event)))
     if recurrence_id:
         lines.append(_date_property("RECURRENCE-ID", recurrence_id))
     elif event.recurrence_rule:
@@ -493,6 +555,7 @@ def _patch_block(block, event, uid, recurrence_id=""):
              "X-DEBACAL-ID", "X-DEBACAL-CALENDAR", "X-DEBACAL-GROUP", "X-DEBACAL-CANDIDATE",
              "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"}
     known.update({"X-DEBACAL-PATTERN", "X-DEBACAL-PATTERN-ANCHOR", "X-DEBACAL-PATTERN-VERSION"})
+    known.update(range_codec.PROPERTIES)
     result, nested = ["BEGIN:VEVENT"], 0
     for line in block[1:-1]:
         key = line.split(":", 1)[0].split(";")[0].upper()
@@ -535,6 +598,18 @@ def serialize_resource(event):
     for key, payload in sorted(event.recurrence_overrides.items()):
         override = Event.from_dict(payload)
         result.append(_patch_block(detached.get(key, ["BEGIN:VEVENT", "END:VEVENT"]), override, uid, key))
+    if event.range_policy == 'cut':
+        from .recurrence import occurrence_id
+        fingerprint = range_codec.signature(event)
+        for key, start, end in range_codec.generated_ranges(event):
+            override = replace(event, id=occurrence_id(event.id, key), start=start, end=end,
+                               recurrence_rule='', recurrence_dates=(), excluded_dates=(),
+                               recurrence_overrides={}, series_id=event.id, recurrence_id=key,
+                               range_policy='', schedule_expression='', expression_anchor='',
+                               schedule_syntax=1, raw_ics='')
+            block = _patch_block(detached.get(key, ['BEGIN:VEVENT', 'END:VEVENT']), override, uid, key)
+            block.insert(-1, range_codec.GENERATED + ':' + fingerprint)
+            result.append(block)
     # Keep imported cancellation metadata while it remains excluded. Removing
     # the exclusion also removes the cancelled detached component.
     for key in set(detached) - event.recurrence_overrides.keys():

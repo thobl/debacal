@@ -22,7 +22,7 @@ from .recurrence import RecurrenceError, event_zone, key_datetime, occurrence, r
 
 
 PREFIX = 'schedule'
-_FIELDS = {'rule', 'add', 'omit', 'move'}
+_FIELDS = {'rule', 'add', 'omit', 'move', 'range_policy'}
 _RANGE_FIELDS = {'start', 'end', 'all_day', 'zone'}
 
 
@@ -55,6 +55,8 @@ def parse_document(text: str) -> dict:
         raise RecurrenceError('A schedule may contain only rule, add, omit and move fields.')
     if 'rule' in value and not isinstance(value['rule'], str):
         raise RecurrenceError('The schedule rule must be text.')
+    if value.get('range_policy', '') not in ('', 'cut'):
+        raise RecurrenceError('The schedule range policy must be cut or empty.')
     for field in ('add', 'omit'):
         items = value.get(field, [])
         if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
@@ -96,6 +98,8 @@ def document_expression(event: Event) -> str:
     written separately, even when several of its actual ranges coincide.
     """
     document = {}
+    if event.range_policy:
+        document['range_policy'] = event.range_policy
     if event.recurrence_rule:
         document['rule'] = event.recurrence_rule
     if event.recurrence_dates:
@@ -132,7 +136,7 @@ def document_event(source: Event, text: str) -> Event:
     bare = replace(source, recurrence_rule=document.get('rule', ''),
                    recurrence_dates=tuple(document.get('add', ())),
                    excluded_dates=tuple(document.get('omit', ())),
-                   recurrence_overrides={})
+                   recurrence_overrides={}, range_policy=document.get('range_policy', ''))
     moves = {}
     for raw_key, values in document.get('move', {}).items():
         canonical = (datetime.fromisoformat(raw_key).date().isoformat() if len(raw_key) == 10
@@ -177,4 +181,4 @@ def document_matches(event: Event, text: str) -> bool:
         except (RecurrenceError, ValueError, TypeError, OverflowError):
             return False
     return same_rule and all(getattr(other, field) == getattr(event, field) for field in (
-        'recurrence_dates', 'excluded_dates', 'recurrence_overrides'))
+        'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy'))

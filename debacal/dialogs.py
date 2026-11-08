@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
     QWidget, QColorDialog)
 
 from .models import Calendar
-from .dialog_base import FormDialog, hint, install_dialog_keyboard
+from .dialog_base import FormDialog, dialog_buttons, hint, install_dialog_keyboard
 from .event_dialog import EventDialog
 
 
@@ -86,7 +86,7 @@ class CalendarDialog(FormDialog):
         self.error = QLabel()
         self.error.setWordWrap(True)
         outer.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons = dialog_buttons()
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)

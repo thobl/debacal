@@ -116,6 +116,7 @@ def build_sidebar(window, root):
     window.results.setMinimumHeight(60)
     window.results.result_selected.connect(window.select_search_result)
     window.results.activated.connect(window.activate_search_result)
+    window.results.edit_requested.connect(window.edit_search_result)
     agenda.addWidget(window.results, 1)
 
     footer_widget = QWidget()

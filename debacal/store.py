@@ -893,7 +893,7 @@ class Store:
             common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
                       if getattr(edited, name) != getattr(reference, name)}
             names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "recurrence_overrides",
-                     "schedule_expression", "expression_anchor", "schedule_syntax")
+                     "schedule_expression", "expression_anchor", "schedule_syntax", "range_policy")
             schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
             if rules_equivalent(edited.recurrence_rule, base.recurrence_rule, base):
                 # Splits and ICS round trips may spell default BYDAY/INTERVAL
@@ -1120,7 +1120,7 @@ class Store:
             if value is None:
                 return None
             fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "recurrence_rule",
-                                                        "recurrence_dates", "excluded_dates"))
+                                                        "recurrence_dates", "excluded_dates", "range_policy"))
             overrides = {key: (payload.get("start"), payload.get("end"),
                                payload.get("all_day", False), payload.get("timezone_id", ""))
                          for key, payload in value.get("recurrence_overrides", {}).items()}

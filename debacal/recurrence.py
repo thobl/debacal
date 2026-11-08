@@ -573,6 +573,10 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
             return None
 
         def tail_stream(compiled, anchor):
+            # Shift may put the current period's first range before its
+            # virtual DTSTART. It is a real first tail instance, represented
+            # by RDATE rather than the native rule's later monthly starts.
+            yield from compiled.tail_prelude
             bare = replace(master, start=anchor, end=anchor + (master.end - master.start),
                            recurrence_rule=compiled.recurrence_rule,
                            recurrence_dates=(), excluded_dates=(), recurrence_overrides={})
@@ -810,6 +814,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
         rule, dates = fields['recurrence_rule'], fields['recurrence_dates']
         exclusions = fields.get('excluded_dates', ())
     shifted_authoring = None
+    compiled_replacement_fields = None
     if relative_keys is None and rules_equivalent(rule, master.recurrence_rule, master):
         if shift and master.schedule_syntax == 2 and edited.schedule_expression == master.schedule_expression:
             from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
@@ -824,10 +829,30 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 author_moved = (datetime.combine(start.date(), time.min, zone) if edited.all_day
                                 else start.astimezone(zone))
                 if expression_matches(master, master.schedule_expression, authoring_zone=zone):
-                    shifted_authoring = shift_unbounded_expression(master.schedule_expression,
-                        author_start, author_moved)
-                    rule = compile_sequence(shifted_authoring[0], author_moved,
-                                            all_day=edited.all_day).recurrence_rule
+                    try:
+                        shifted_authoring = shift_unbounded_expression(master.schedule_expression,
+                            author_start, author_moved)
+                        compiled = compile_sequence(shifted_authoring[0], author_moved,
+                                                    all_day=edited.all_day)
+                    except PatternError as error:
+                        detail = str(error)
+                        if tail.prefix.strip() and tail.preferred_day is not None:
+                            detail += (f' The sequence fixes day {tail.preferred_day}; '
+                                       'change that day or move only this event.')
+                        raise RecurrenceError(detail) from error
+                    rule = compiled.recurrence_rule
+                    if tail.overflow or compiled.tail_prelude:
+                        fields = compiled.fields
+                        if master.recurrence_overrides:
+                            # Text describes actual starts, while detached
+                            # payloads still belong to their nominal slots.
+                            # Reconcile after moving those canonical slots;
+                            # blindly adopting the compiler's EXDATEs can hide
+                            # the very exception whose actual date it added.
+                            compiled_replacement_fields = fields
+                        else:
+                            dates = fields['recurrence_dates']
+                            exclusions = fields.get('excluded_dates', ())
         if shifted_authoring is None:
             rule = shift_rule(rule, shift, master)
     overrides = {}
@@ -860,6 +885,10 @@ def updated_series(master: Event, reference: Event, edited: Event,
                       schedule_expression=expression, expression_anchor=anchor,
                       schedule_syntax=edited.schedule_syntax,
                       raw_ics=rekey_recurrence_templates(master, shift_key))
+    if compiled_replacement_fields is not None:
+        from .schedule_authoring import retain_displayed_overrides
+        candidate = replace(updated, **compiled_replacement_fields, recurrence_overrides={})
+        updated = retain_displayed_overrides(candidate, updated)
     # Relative instructions remain verbatim when their reevaluated schedule is
     # certified. Absolute programs and canonical documents are reconstructed
     # from the projected identities, never discarded as optional annotations.
@@ -880,23 +909,18 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
         id=occurrence_id(master.id, key), start=start,
         series_id=master.id, recurrence_id=key, recurrence_rule="",
         recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
+        range_policy="",
     )
     if key in master.recurrence_overrides:
         override = Event.from_dict(master.recurrence_overrides[key])
         return replace(override, **(values | {"start": override.start}),
                        calendar_id=master.calendar_id, read_only=master.read_only,
                        ical_uid=master.ical_uid)
-    zone = event_zone(master)
-    # A one-hour weekly meeting keeps its wall-clock length and local hour as
-    # the UTC offset changes. Fold-only events retain their elapsed duration.
-    wall_duration = (master.end.astimezone(zone).replace(tzinfo=None)
-                     - master.start.astimezone(zone).replace(tzinfo=None))
-    if wall_duration <= timedelta(0):
-        end = datetime.fromtimestamp(start.timestamp() + master.end.timestamp() - master.start.timestamp(), zone)
-    else:
-        end = start + wall_duration
-    if not master.all_day:
-        end = normalize_recurrence_time(end)
+    from .range_policies import occurrence_end, uncut_occurrence_end
+    # Explicit additions have their own chosen range; only native rule
+    # occurrences inherit the symbolic calendar-boundary Cut policy.
+    end = (uncut_occurrence_end(master, start) if key in master.recurrence_dates
+           else occurrence_end(master, start))
     return replace(master, end=end, **values)
 
 

@@ -254,6 +254,58 @@ def test_only_explicit_mode_shortcuts_are_available_and_remappable(editors):
     assert 'F3' in dialog.scope.buttons['future'].toolTip()
 
 
+@pytest.mark.parametrize('supplied_master', [False, True])
+def test_existing_ordinary_events_hide_scope_controls_and_ignore_scope_shortcuts(editors, supplied_master):
+    _, _, _, create = editors
+    ordinary = replace(sample(), recurrence_rule='')
+    dialog = create(ordinary if supplied_master else None, ordinary, edit_scope='group')
+    assert dialog.scope_controls.isHidden()
+    assert not dialog.scope_controls.isEnabled()
+    assert dialog.scope.currentData() == 'single'
+    assert all(not shortcut.isEnabled() for shortcut in dialog.mode_shortcuts.values())
+    assert dialog.schedule_mode.isEnabled()
+    dialog.show()
+    dialog.title.setFocus()
+    QTest.keyClick(dialog.title, Qt.Key.Key_F2)
+    assert dialog.scope.currentData() == 'single'
+    dialog.title.setText('Edited appointment')
+    event = dialog.build_events()[0]
+    assert event.title == 'Edited appointment' and not event.recurring
+
+
+def test_recurring_events_keep_the_same_scope_buttons_and_shortcuts(editors):
+    _, _, _, create = editors
+    master = sample()
+    dialog = create(master, occurrences(master)[1])
+    assert not dialog.scope_controls.isHidden()
+    assert dialog.scope_controls.isEnabled()
+    assert all(shortcut.isEnabled() for shortcut in dialog.mode_shortcuts.values())
+
+
+def test_cut_following_editor_count_and_policy_changes_use_the_full_template(editors):
+    from debacal.schedule_authoring import expression_event
+    _, _, _, create = editors
+    start = datetime(2027, 1, 28, tzinfo=ZONE)
+    template = Event('cut-range', 'local', 'Two days', start, start + timedelta(days=2), all_day=True)
+    text = 'every(1m, overflow=cut, span=2, count=3)'
+    master = replace(expression_event(template, text), schedule_expression=text,
+                     expression_anchor=start.date().isoformat(), schedule_syntax=2)
+    events = expand_series(master, start, start + timedelta(days=100))
+    selected = events[1]
+    assert selected.end - selected.start == timedelta(days=1)
+    dialog = create(master, selected, edit_scope='future')
+    dialog.repeat_count.setValue(3)
+    assert dialog._draft.range_span == 2
+    projected = dialog.preview.masters[0]
+    future = expand_series(projected, start, start + timedelta(days=120))
+    assert [item.end - item.start for item in future] == [timedelta(days=1), timedelta(days=2), timedelta(days=2)]
+    dialog.overflow_policy.setCurrentData('shift')
+    projected = dialog.preview.masters[0]
+    future = expand_series(projected, start, start + timedelta(days=120))
+    assert future[0].start.date().isoformat() == '2027-02-27'
+    assert all(item.end - item.start == timedelta(days=2) for item in future)
+
+
 @pytest.mark.parametrize(('other', 'message'), [('E', 'unique'), ('Ctrl+C', 'unique'),
                                               ('F1', 'unique')])
 def test_shortcut_editor_checks_duplicate_combinations(editors, other, message):

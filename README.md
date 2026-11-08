@@ -317,6 +317,10 @@ by calendars in the same account and remain in the secure keyring.
   **Edit selection** uses `E` or `Enter` by default. Dialog accept, form-field
   accept, and close (`Esc`) can all be remapped in Keyboard shortcuts; popup
   choices and multiline text retain their own contextual keyboard behavior.
+  Dialog actions consistently place Cancel before the highlighted closing
+  action. Persistent forms use Save, temporary date/time picking uses OK, and
+  import/export use their action names. Preferences Apply updates the view
+  without closing. Ordinary single events do not show series-scope buttons.
 
 ### Working with event series
 
@@ -418,6 +422,13 @@ are separated by spaces or commas and evaluated from a cursor at the reference:
   only if a finite instruction such as `+0d` emits it.
 * `every(1m!, day=31)` retains a preference for the 31st even when its reference
   is a clipped date such as 30 November. Without `!`, missing dates are skipped.
+* For multi-day monthly/yearly ranges, **Skip**, **Shift**, and **Cut** control
+  short-month overflow. In a non-leap year, a 28–29 January all-day event skips February, shifts to
+  27–28 February, or is cut to 28 February respectively. Cut trims at the month
+  boundary; later months recover the original duration. Intentional cross-month
+  ranges keep their normal duration. Shift is disabled if the whole range is
+  longer than a selected month. The corresponding text is
+  `every(1m, overflow=skip|shift|cut, span=2)` with one chosen policy value.
 * `every(1m!, count=13)` clamps for thirteen tail occurrences;
   `every(1d, until=13.11.2026)` includes dates through that local day. Count
   and until bounds are mutually exclusive; count measures appointments, not

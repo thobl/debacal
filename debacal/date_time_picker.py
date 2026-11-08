@@ -16,7 +16,7 @@ from .appearance import stylesheet, widget_palette
 from .buttons import icon_button
 from .calendar_widgets import calendar_gutter, text
 from .date_time_fields import format_duration, validate_datetime
-from .dialog_base import install_dialog_keyboard
+from .dialog_base import dialog_buttons, install_dialog_keyboard
 from .event_style import event_colors
 from .mini_calendar import MiniCalendar
 from .preferences import Preferences
@@ -107,10 +107,11 @@ class DateTimeRangePicker(QDialog):
         self.error.setProperty('error', True)
         self.error.hide()
         outer.addWidget(self.error)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Cancel)
-        self.apply_button = self.buttons.button(QDialogButtonBox.StandardButton.Apply)
+        self.buttons = dialog_buttons(QDialogButtonBox.StandardButton.Ok)
+        self.accept_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.apply_button = self.accept_button
         self.cancel_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        self.apply_button.clicked.connect(self.accept)
+        self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         outer.addWidget(self.buttons)
         for button in self.findChildren(QPushButton):

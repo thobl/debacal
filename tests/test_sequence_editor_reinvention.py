@@ -48,9 +48,9 @@ def test_month_clamp_control_changes_standard_rule_and_keeps_preferred_day(edito
     dialog.schedule_mode.setCurrentData('repeat')
     dialog.repeat.setCurrentData('MONTHLY')
     dialog.repeat_count.setValue(6)
-    assert not dialog.clamp.isHidden()
+    assert not dialog.overflow_policy.isHidden()
     assert [item.day for item in starts(dialog.build_events()[0])] == [31] * 6
-    dialog.clamp.setChecked(True)
+    dialog.overflow_policy.setCurrentData('shift')
     source = dialog.build_events()[0]
     assert 'BYSETPOS=-1' in source.recurrence_rule
     assert [item.day for item in starts(source)] == [31, 30, 31, 31, 28, 31]
@@ -58,8 +58,8 @@ def test_month_clamp_control_changes_standard_rule_and_keeps_preferred_day(edito
     loaded = parse_ics(export_ics([source]), 'local')[0]
     assert starts(loaded) == starts(source)
     reopened = editors(source=loaded)
-    assert reopened.clamp.isChecked()
-    reopened.clamp.setChecked(False)
+    assert reopened.overflow_policy.currentData() == 'shift'
+    reopened.overflow_policy.setCurrentData('skip')
     assert [item.day for item in starts(reopened.build_events()[0])] == [31] * 6
 
 
@@ -68,16 +68,17 @@ def test_irrelevant_clamp_option_is_hidden(editors, kind, day):
     dialog = editors(START.replace(day=day))
     dialog.schedule_mode.setCurrentData('repeat')
     dialog.repeat.setCurrentData(kind)
-    assert dialog.clamp.isHidden()
+    assert dialog.overflow_policy.isHidden()
 
 
 def test_custom_calendar_clamp_toggle_retains_other_text(editors):
     dialog = editors()
     text = '+0d  2*(+1m) +2w'
     dialog.pattern.setText(text)
-    assert not dialog.clamp.isHidden()
-    dialog.clamp.setChecked(True)
+    assert not dialog.overflow_policy.isHidden()
+    dialog.overflow_policy.setCurrentData('shift')
     assert dialog.pattern.text() == '+0d  2*(+1m!) +2w'
+    assert dialog.overflow_policy.currentData() == 'shift'
     assert expression_matches(dialog.build_events()[0], dialog.pattern.text())
 
 
@@ -85,14 +86,14 @@ def test_clamped_monthly_draft_can_switch_to_daily_then_back_to_custom(editors):
     dialog = editors()
     dialog.pattern.setText('+0d 3*+1m!')
     original = starts(dialog.build_events()[0])
-    assert dialog.clamp.isChecked()
+    assert dialog.overflow_policy.currentData() == 'shift'
     dialog.repeat.setCurrentData('DAILY')
     assert not dialog.error.text()
     assert dialog._draft.kind == 'DAILY'
     assert not dialog._draft.clamp
     dialog.repeat.setCurrentData('RDATE')
     assert starts(dialog.build_events()[0]) == original
-    assert dialog.clamp.isChecked()
+    assert dialog.overflow_policy.currentData() == 'shift'
 
 
 def test_reference_occurrence_can_be_removed_in_preview_and_stay_removed_on_move(editors):

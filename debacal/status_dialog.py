@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QListWidget,
                               QListWidgetItem, QPushButton, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from .dialog_base import install_dialog_keyboard
+from .dialog_base import dialog_buttons, install_dialog_keyboard
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +75,7 @@ class StatusDialog(QDialog):
             button.clicked.connect(lambda: self._open_preferences(preferences))
             footer.addWidget(button)
         footer.addStretch()
-        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close = dialog_buttons(close=True)
         close.rejected.connect(self.reject)
         footer.addWidget(close)
         outer.addLayout(footer)

@@ -130,7 +130,8 @@ def test_shortcut_capture_can_record_dialog_keys_and_apply_updates_live_behavior
 
 def test_scope_and_picker_actions_accept_multiple_configured_keys(desktop):
     _, show = desktop
-    event = Event('event', 'local', 'An appointment', START, START + timedelta(hours=1))
+    event = Event('event', 'local', 'An appointment', START, START + timedelta(hours=1),
+                  recurrence_rule='FREQ=WEEKLY;COUNT=4')
     dialog = show(EventDialog([Calendar('local', 'Personal', '#587c67')], START, event=event,
                               scope_bindings={'scope_all': ['Alt+A', 'Alt+B'], 'full_day': ['F8', 'F9']}))
     for key in (Qt.Key.Key_A, Qt.Key.Key_B):

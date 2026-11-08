@@ -37,6 +37,7 @@ tail     = "every(", positive_integer, unit, [ "!" ],
            { ",", option }, ")" ;
 option   = "on=", selector, { "+", selector }
          | "day=", day | "week_start=", weekday
+         | "overflow=", ( "skip" | "shift" | "cut" ) | "span=", positive_integer
          | "count=", positive_integer | "until=", full_date ;
 selector = [ ordinal ], weekday ;
 ordinal  = [ "-" ], ( "1" | "2" | "3" | "4" | "5" ) ;
@@ -90,8 +91,46 @@ Both skipping and clamping use standard RRULEs when representable. A clamped
 monthly day 31 uses `BYMONTHDAY=28,29,30,31;BYSETPOS=-1`; day 30 uses
 `28,29,30`. A clamped leap-day yearly rule also specifies `BYMONTH=2`.
 Other calendar clients therefore see the same clamping without proprietary
-copies. The editor offers **Clamp** only when the interval can encounter a
-missing date.
+copies. The editor offers its month-range policy choices only when the
+interval and event range can encounter a shorter month.
+
+### Ranges at short month boundaries
+
+Calendar-day monthly/yearly tails can specify
+`overflow=skip|shift|cut, span=N`. Span is the number of **occupied calendar
+dates** used to fit the range; an exclusive midnight endpoint does not occupy
+the following date. The editor derives it from Start and End.
+
+For an all-day reference covering **28–29 January**, span is two:
+
+| Definition | February in a non-leap year |
+| --- | --- |
+| `every(1m, overflow=skip, span=2)` | No occurrence: the whole range does not fit. |
+| `every(1m, overflow=shift, span=2)` | 27–28 February, retaining the full range. |
+| `every(1m, overflow=cut, span=2)` | 28 February only. |
+
+Skip/Shift compile their start constraints into standard RRULEs. Cut retains
+the preferred start, clamps it if necessary, and truncates the native end at
+the next month's midnight. For timed events this is a month-boundary cut,
+**not** independent clamping of the end's day and clock. It never moves an end
+before its start. Later months recover the reference's original duration.
+
+Shift is unavailable if the occupied span is longer than a selected month;
+choose Skip or Cut instead. A genuine cross-month reference keeps its ordinary
+duration and does not acquire month-contained range handling implicitly.
+Explicit additions and detached exceptions keep their own chosen ranges.
+Single-day Skip/Shift normalize to the existing ordinary/clamped notation;
+`!` remains the concise single-day clamp spelling. Bounds, `day=N`, moves and
+splits preserve the range policy and span where relevant.
+
+Cut is symbolic locally (`range_policy="cut"`). At ICS export its changed
+ranges become standard detached exceptions through year 9999, rather than a
+rolling date window. Verified derived exceptions collapse back to the small
+master on import; edits by other clients remain authoritative. See the
+[transport protocol](SYNC.md#month-range-cut-policy) for provenance checks and
+the 100,000-derived-position budget. Exceeding that budget fails before export
+with an action to shorten the recurrence or choose Skip/Shift; it never
+silently truncates the series.
 
 ### Regular tails and bounds
 
@@ -185,6 +224,7 @@ After `schedule` comes strict JSON, with these optional fields:
 | `add` | RDATE keys as ISO dates or timezone-aware datetimes. |
 | `omit` | EXDATE keys, including an excluded reference. |
 | `move` | Map of nominal recurrence keys to ranges containing `start`, `end`, and optional `all_day` and IANA `zone`. |
+| `range_policy` | Optional `"cut"` for derived month-boundary ends; absent/empty keeps ordinary durations. |
 
 Missing fields mean empty fields. `schedule{}` follows the standard DTSTART
 default and means the reference alone; `none` excludes it. Generation uses
@@ -291,6 +331,9 @@ Opening a dialog is not a mutation.
   An ordinal move is rejected before mutation if the requested new date would
   no longer satisfy that ordinal (for example, moving a last Friday on 30 April
   one day later does not make 1 May the last Saturday of May).
+  A fixed day combined with a date prefix is likewise rejected atomically when
+  the requested move cannot preserve its tail cursor and full range. The error
+  offers changing the fixed day or moving only the selected event.
   Detached payloads/identities follow corresponding logical
   occurrences. Explicit-date/document schedules translate canonically and
   reconstruct text when needed. Excluded references stay excluded.

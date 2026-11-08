@@ -26,8 +26,9 @@ def editor_factory():
     app = QApplication.instance() or QApplication([])
     owned = []
     with patch('debacal.event_dialog.local_zone', return_value=ZONE):
-        def create(scale=100, *, default_size=False):
-            source = Event('one', 'work', 'Appointment', START, START + timedelta(hours=1))
+        def create(scale=100, *, default_size=False, recurring=False):
+            source = Event('one', 'work', 'Appointment', START, START + timedelta(hours=1),
+                           recurrence_rule='FREQ=WEEKLY;COUNT=4' if recurring else '')
             dialog = EventDialog(
                 [Calendar('work', 'Work', '#587c67'), Calendar('personal', 'Personal', '#a66a46')],
                 START, event=source,
@@ -50,7 +51,7 @@ def editor_factory():
 
 @pytest.mark.parametrize('scale', [80, 100, 140])
 def test_edit_scope_shares_the_heading_row_without_a_separate_section(editor_factory, scale):
-    dialog = editor_factory(scale)
+    dialog = editor_factory(scale, recurring=True)
     assert dialog.scope_controls.parentWidget() is dialog.header
     assert abs(dialog.scope_controls.geometry().center().y() - dialog.heading.geometry().center().y()) <= 1
     assert dialog.scope_controls.geometry().left() > dialog.heading.geometry().right()

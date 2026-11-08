@@ -16,7 +16,7 @@ from .shortcuts import KeyboardShortcutsEditor
 from .theme import scheme_for
 from .date_time_fields import parse_duration, format_duration
 from .buttons import action_button
-from .dialog_base import install_dialog_keyboard
+from .dialog_base import dialog_buttons, install_dialog_keyboard
 
 
 class PreferencesDialog(QDialog):
@@ -207,8 +207,7 @@ class PreferencesDialog(QDialog):
         self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
         self.error.hide()
         footer_layout.addWidget(self.error)
-        buttons = self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-                                                  | QDialogButtonBox.StandardButton.Apply)
+        buttons = self.buttons = dialog_buttons(apply=True)
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)

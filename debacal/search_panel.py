@@ -100,6 +100,7 @@ class SearchPanel(QTreeWidget):
     """
     result_selected = Signal(str, object)
     activated = Signal(str)
+    edit_requested = Signal(str)
 
     def __init__(self, store, preferences, parent=None):
         super().__init__(parent)
@@ -147,6 +148,7 @@ class SearchPanel(QTreeWidget):
         self._items_by_id = {}
         self._updating = False
         self._mouse_selecting = False
+        self._auxiliary_press = None
         self.currentItemChanged.connect(self._current_changed)
         self.itemExpanded.connect(self._expanded_item)
         self.itemCollapsed.connect(self._collapsed_item)
@@ -782,14 +784,17 @@ class SearchPanel(QTreeWidget):
         return _disclosure_rect(rect, self.preferences.font_scale / 100) if rect.isValid() else None
 
     def mousePressEvent(self, event):
+        self._auxiliary_press = None
         item = self.itemAt(event.position().toPoint())
         fold = self.disclosure_rect(item)
         if event.button() == Qt.MouseButton.LeftButton and fold is not None and fold.contains(event.position()):
+            self._auxiliary_press = event.position().toPoint()
             self.setFocus(Qt.FocusReason.MouseFocusReason)
             item.setExpanded(not item.isExpanded())
             event.accept()
             return
         if item is not None and item.data(MORE_ROLE) is True:
+            self._auxiliary_press = event.position().toPoint()
             self._load_page(item.parent())
             event.accept()
             return
@@ -802,8 +807,26 @@ class SearchPanel(QTreeWidget):
             self.result_selected.emit(identifier, event.modifiers())
 
     def mouseDoubleClickEvent(self, event):
-        fold = self.disclosure_rect(self.itemAt(event.position().toPoint()))
-        if event.button() == Qt.MouseButton.LeftButton and fold is not None and fold.contains(event.position()):
-            event.accept()
-            return
+        item = self.itemAt(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Loading a page replaces its footer with actual event rows. A
+            # second click there still belongs to the original footer action.
+            auxiliary_press, self._auxiliary_press = self._auxiliary_press, None
+            if (auxiliary_press is not None
+                    and (event.position().toPoint() - auxiliary_press).manhattanLength() <= QApplication.startDragDistance()):
+                event.accept()
+                return
+            fold = self.disclosure_rect(item)
+            if fold is not None and fold.contains(event.position()):
+                event.accept()
+                return
+            if item is not None and item.data(MORE_ROLE) is True:
+                event.accept()
+                return
+            if identifier := self.event_id(item):
+                # Tree activation can also fold a parent. Editing is a separate
+                # action so a series row keeps its current expansion state.
+                self.edit_requested.emit(identifier)
+                event.accept()
+                return
         super().mouseDoubleClickEvent(event)
