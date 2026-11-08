@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debacal · Checkbox options</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; background:#f5f6f7; color:#28313a; }
+  body { max-width:1120px; margin:48px auto; padding:0 24px 48px; }
+  h1 { font-size:26px; font-weight:600; margin:0 0 12px; }
+  p { line-height:1.6; max-width:880px; }
+  .muted { color:#65717b; font-size:14px; }
+  .theme { display:flex; gap:8px; margin:24px 0 14px; }
+  button { font:inherit; padding:7px 16px; background:transparent; color:inherit; border:1px solid #aab4bc; border-radius:4px; cursor:pointer; }
+  button[aria-pressed="true"] { background:#dce6df; color:#365243; border-color:#799482; }
+  img { display:block; width:100%; height:auto; border-radius:6px; }
+  dl { display:grid; grid-template-columns:repeat(3,1fr); gap:28px; margin:24px 0; }
+  dt { font-weight:600; margin-bottom:8px; }
+  dd { margin:0; font-size:14px; line-height:1.6; color:#52616d; }
+  .recommend { display:inline-block; margin-left:8px; font-size:11px; font-weight:500; color:#486752; }
+  @media(max-width:700px) { body { margin-top:28px; } dl { grid-template-columns:1fr; } }
+  @media(prefers-color-scheme:dark) { :root { background:#262828; color:#e5e9e9; } .muted,dd { color:#a7b2b8; } .recommend { color:#a7c6b2; } }
+</style>
+<h1>Checkbox options</h1>
+<p>Three alternatives to the current filled square. Every selected option has a visible tick, so selection does not depend on color alone. The images below are rendered using the app’s actual Qt controls and theme.</p>
+<p class="muted">These are comparison mockups; the app’s checkbox style is unchanged.</p>
+<div class="theme" aria-label="Preview theme">
+  <button type="button" aria-pressed="true" data-mode="light">Light</button>
+  <button type="button" aria-pressed="false" data-mode="dark">Dark</button>
+</div>
+<img id="comparison" src="images/checkboxes-light.png" alt="Three native checkbox options: filled tick, outline tick, and larger framed tick. Each shows checked, unchecked and disabled states.">
+<dl>
+  <div><dt>A · Filled tick <span class="recommend">Recommended</span></dt><dd>Keeps the existing compact shape and adds a contrasting tick. It is the smallest visual change and remains clear in dense forms.</dd></div>
+  <div><dt>B · Outline tick</dt><dd>Uses an outlined box and an accent-colored tick. It resembles the app’s action icons and introduces less filled color.</dd></div>
+  <div><dt>C · Larger framed tick</dt><dd>A larger tick, stronger border, and soft fill make checked states more prominent. It requires a little more room beside compact fields.</dd></div>
+</dl>
+<p class="muted">Whichever option is chosen would be shared by event creation, imports, calendar setup, and preferences, including their disabled states.</p>
+<script>
+  const comparison = document.getElementById('comparison');
+  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
+    comparison.src = `images/checkboxes-${button.dataset.mode}.png`;
+    document.querySelectorAll('[data-mode]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+  }));
+</script>
+</html>
