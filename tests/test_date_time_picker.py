@@ -384,10 +384,10 @@ def test_dst_gap_and_invalid_ranges_keep_the_valid_draft(desktop):
         parse_datetime('28.3.2027 2:30', PREFERENCES, start)
     after = datetime(2027, 3, 28, 4, tzinfo=ZONE)
     picker = make_picker(desktop, after, after + timedelta(minutes=90), endpoint='end')
-    # Earlier-end recovery uses the event's wall clock even if the caller
-    # supplies a UTC instant; it must not silently skip the missing hour.
-    assert not picker.set_end(datetime(2027, 3, 28, 1, 30, tzinfo=timezone.utc))
-    assert picker.draft_start == after
+    # Earlier-end recovery retains 90 elapsed minutes across the missing hour.
+    assert picker.set_end(datetime(2027, 3, 28, 1, 30, tzinfo=timezone.utc))
+    assert picker.draft_start == datetime(2027, 3, 28, 1, tzinfo=ZONE)
+    assert picker.duration == timedelta(minutes=90)
 
 
 def pointer_move(strip, point):

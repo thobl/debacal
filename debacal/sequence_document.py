@@ -18,12 +18,13 @@ import json
 from zoneinfo import ZoneInfo
 
 from .models import Event
+from .event_duration import normalized_spec
 from .recurrence import RecurrenceError, event_zone, key_datetime, occurrence, recurrence_key
 
 
 PREFIX = 'schedule'
-_FIELDS = {'rule', 'add', 'omit', 'move', 'range_policy'}
-_RANGE_FIELDS = {'start', 'end', 'all_day', 'zone'}
+_FIELDS = {'rule', 'add', 'omit', 'move', 'range_policy', 'duration_spec'}
+_RANGE_FIELDS = {'start', 'end', 'all_day', 'zone', 'duration_spec'}
 
 
 def is_sequence_document(text: str) -> bool:
@@ -52,11 +53,14 @@ def parse_document(text: str) -> dict:
     except (json.JSONDecodeError, TypeError) as error:
         raise RecurrenceError(f'Invalid scheduling document: {error}') from error
     if not isinstance(value, dict) or value.keys() - _FIELDS:
-        raise RecurrenceError('A schedule may contain only rule, add, omit and move fields.')
+        raise RecurrenceError('A schedule may contain only rule, add, omit, move, range_policy and duration_spec fields.')
     if 'rule' in value and not isinstance(value['rule'], str):
         raise RecurrenceError('The schedule rule must be text.')
     if value.get('range_policy', '') not in ('', 'cut'):
         raise RecurrenceError('The schedule range policy must be cut or empty.')
+    if not isinstance(value.get('duration_spec', ''), str):
+        raise RecurrenceError('The schedule duration_spec must be text.')
+    normalized_spec(value.get('duration_spec', ''))
     for field in ('add', 'omit'):
         items = value.get(field, [])
         if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
@@ -74,6 +78,9 @@ def parse_document(text: str) -> dict:
             raise RecurrenceError('A moved occurrence all_day value must be true or false.')
         if 'zone' in item and not isinstance(item['zone'], str):
             raise RecurrenceError('A moved occurrence zone must be a timezone name.')
+        if not isinstance(item.get('duration_spec', ''), str):
+            raise RecurrenceError('A moved occurrence duration_spec must be text.')
+        normalized_spec(item.get('duration_spec', ''))
     return value
 
 
@@ -88,6 +95,8 @@ def _range_document(item: Event) -> dict:
              'all_day': item.all_day}
     if item.timezone_id:
         value['zone'] = item.timezone_id
+    if item.duration_spec:
+        value['duration_spec'] = item.duration_spec
     return value
 
 
@@ -100,6 +109,8 @@ def document_expression(event: Event) -> str:
     document = {}
     if event.range_policy:
         document['range_policy'] = event.range_policy
+    if event.duration_spec:
+        document['duration_spec'] = event.duration_spec
     if event.recurrence_rule:
         document['rule'] = event.recurrence_rule
     if event.recurrence_dates:
@@ -136,7 +147,10 @@ def document_event(source: Event, text: str) -> Event:
     bare = replace(source, recurrence_rule=document.get('rule', ''),
                    recurrence_dates=tuple(document.get('add', ())),
                    excluded_dates=tuple(document.get('omit', ())),
-                   recurrence_overrides={}, range_policy=document.get('range_policy', ''))
+                   recurrence_overrides={}, range_policy=document.get('range_policy', ''),
+                   duration_spec=document.get('duration_spec', ''))
+    if bare.duration_spec != normalized_spec(document.get('duration_spec', '')):
+        raise RecurrenceError('The schedule duration does not match the reference range.')
     moves = {}
     for raw_key, values in document.get('move', {}).items():
         canonical = (datetime.fromisoformat(raw_key).date().isoformat() if len(raw_key) == 10
@@ -153,14 +167,17 @@ def document_event(source: Event, text: str) -> Event:
         all_day = values.get('all_day', item.all_day)
         start, end = (_datetime(values[name], zone=zone) for name in ('start', 'end'))
         changed = replace(item, start=start, end=end, all_day=all_day,
-                          timezone_id=values.get('zone', item.timezone_id))
+                          timezone_id=values.get('zone', item.timezone_id),
+                          duration_spec=values.get('duration_spec', ''))
+        if changed.duration_spec != normalized_spec(values.get('duration_spec', '')):
+            raise RecurrenceError('The moved duration does not match its start/end range.')
         payload = deepcopy(original) if original is not None else item.to_dict()
         # Preserve all content and identity exactly when reading the unchanged
         # document. Range edits deliberately update only these four fields.
-        if (changed.start.isoformat(), changed.end.isoformat(), changed.all_day, changed.timezone_id) != (
-                item.start.isoformat(), item.end.isoformat(), item.all_day, item.timezone_id):
+        if (changed.start.isoformat(), changed.end.isoformat(), changed.all_day, changed.timezone_id, changed.duration_spec) != (
+                item.start.isoformat(), item.end.isoformat(), item.all_day, item.timezone_id, item.duration_spec):
             payload.update(start=changed.start.isoformat(), end=changed.end.isoformat(),
-                           all_day=changed.all_day, timezone_id=changed.timezone_id)
+                           all_day=changed.all_day, timezone_id=changed.timezone_id, duration_spec=changed.duration_spec)
         moves[canonical] = payload
     return replace(bare, recurrence_overrides=moves)
 
@@ -181,4 +198,4 @@ def document_matches(event: Event, text: str) -> bool:
         except (RecurrenceError, ValueError, TypeError, OverflowError):
             return False
     return same_rule and all(getattr(other, field) == getattr(event, field) for field in (
-        'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy'))
+        'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy', 'duration_spec'))

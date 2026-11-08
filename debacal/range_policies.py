@@ -7,15 +7,136 @@ Its finite standard exceptions are derived only when exporting to iCalendar.
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from math import gcd
 from typing import Iterator
 
 from .models import Event
+from .event_duration import add_elapsed, elapsed_duration, end_for, parse_duration_spec
 
 
 RANGE_POLICIES = ('skip', 'shift', 'cut')
+
+
+def static_range_policy_fits(prototype: Event, kind: str, interval: int = 1, *,
+                             policy: str, span: int, preferred_day: int | None = None,
+                             count: int | None = None, until: date | None = None) -> bool:
+    """Whether a native Skip/Shift rule can safely retain this duration.
+
+    Plain imported rules are unrestricted. This preflight is only for authored
+    full-month-range policies, whose static start constraints cannot repair an
+    exact-hour end that crosses a month boundary during a clock change.
+    """
+    if policy not in ('skip', 'shift') or span <= 1:
+        return True
+    from .recurrence import event_zone
+    return _static_range_policy_fits(prototype.start.isoformat(), prototype.end.isoformat(),
+        event_zone(prototype), prototype.all_day, prototype.duration_spec, str(kind).upper(), interval,
+        policy, span, preferred_day, count, until)
+
+
+@lru_cache(maxsize=512)
+def _static_range_policy_fits(start_text, end_text, zone, all_day, duration_spec, kind, interval,
+                              policy, span, preferred_day, count, until):
+    if kind not in ('MONTHLY', 'YEARLY') or type(interval) is not int or not 1 <= interval <= 999:
+        return False
+    start, end = (datetime.fromisoformat(value).astimezone(zone) for value in (start_text, end_text))
+    preferred = start.day if preferred_day is None else preferred_day
+    if not 1 <= preferred <= 31 or not 1 <= span <= 31 or preferred + span - 1 > 31:
+        return False
+    if occupied_span(start, end, all_day) > span:
+        return False
+    months = interval * (12 if kind == 'YEARLY' else 1)
+    initial = start.year * 12 + start.month - 1
+    cycle = 4800 // gcd(months, 4800)
+    # A valid selected date repeats at least once per Gregorian phase cycle.
+    # Finite bounds near year 9999 still inspect their terminal endpoint.
+    bounds_safe = (count is None and until is None or until is not None and until.year < 9999
+                   or count is not None and (initial + months * cycle * max(0, count - 1)) // 12 < 9999)
+    if bounds_safe and (all_day or isinstance(zone, timezone) or str(zone) in {'UTC', 'Etc/UTC', 'Etc/GMT', 'GMT'}):
+        return True
+    nominal_days = nominal_seconds = 0
+    if duration_spec:
+        nominal_days, nominal_seconds = parse_duration_spec(duration_spec)
+        if bounds_safe and not nominal_seconds and start.time() == time.min:
+            return True  # Nominal midnight ends retain calendar-boundary intent.
+    # Any legal two UTC offsets differ by less than 48 hours. Sufficient wall
+    # slack therefore proves exact ranges safe without enumerating centuries.
+    # Nominal day normalization and its elapsed clock part get separate slack.
+    clock = start.hour * 3600 + start.minute * 60 + start.second + start.microsecond / 1_000_000
+    remaining = []
+    for last in range(28, 32):
+        if policy == 'skip' and preferred + span - 1 > last:
+            continue
+        day = preferred if policy == 'skip' else min(preferred, last - span + 1)
+        if day < 1:
+            return False
+        remaining.append((last - day + 1) * 86400 - clock)
+    seconds = elapsed_duration(start, end).total_seconds()
+    conservative = (nominal_days * 86400 + nominal_seconds + 96 * 3600 if duration_spec else
+                    seconds + 48 * 3600)
+    if bounds_safe and remaining and conservative <= min(remaining):
+        return True
+    prototype = Event('range-check', 'range-check', 'Range check', start, end, all_day=all_day,
+                      timezone_id=getattr(zone, 'key', ''), duration_spec=duration_spec)
+    maximum = (9999 * 12 + 11 - initial) // months + 1
+    emitted = 0
+    clock_time = start.timetz().replace(fold=0)
+    nominal_delta = timedelta(days=nominal_days)
+    from .recurrence import normalize_recurrence_time
+    for period in range(maximum):
+        year, position = divmod(initial + period * months, 12)
+        month = position + 1
+        if until is not None and date(year, month, 1) > until:
+            return True
+        last = monthrange(year, month)[1]
+        if policy == 'skip' and preferred + span - 1 > last:
+            continue
+        day = preferred if policy == 'skip' else min(preferred, last - span + 1)
+        if day < 1:
+            return False
+        nominal = datetime.combine(date(year, month, day), clock_time)
+        if period == 0 and nominal.timestamp() < start.timestamp():
+            continue
+        if until is not None and nominal.date() > until:
+            return True
+        if year == 9999 and month == 12:
+            try:
+                actual = nominal if all_day else normalize_recurrence_time(nominal)
+                final = _last_occupied(actual, end_for(prototype, actual), all_day)
+            except (ValueError, OverflowError):
+                if count is None and until is None:
+                    continue  # Unbounded rules stop at the representable horizon.
+                return False
+            if (final.year, final.month) != (year, month):
+                return False
+        else:
+            boundary = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=zone)
+            if all_day:
+                pass  # The static occupied-day constraint proves these ranges.
+            elif duration_spec:
+                # Most starts are ordinary clocks. Only a forward gap needs
+                # a round trip before nominal days advance from its real time.
+                actual = nominal
+                if nominal.replace(fold=1).utcoffset() > nominal.utcoffset():
+                    actual = normalize_recurrence_time(nominal)
+                    if (actual.year, actual.month) != (year, month):
+                        return False
+                cursor = actual + nominal_delta
+                available = ((boundary - cursor).total_seconds()
+                             - (boundary.utcoffset() - cursor.utcoffset()).total_seconds())
+                if nominal_seconds > available:
+                    return False
+            else:
+                wall_remaining = (last - day + 1) * 86400 - clock
+                actual_remaining = wall_remaining - (boundary.utcoffset() - nominal.utcoffset()).total_seconds()
+                if actual_remaining <= 0 or seconds > actual_remaining:
+                    return False
+        emitted += 1
+        if count is not None and emitted >= count:
+            return True
+    return count is None or emitted >= count
 
 
 @lru_cache(maxsize=512)
@@ -40,14 +161,21 @@ def shift_range_fits(start: datetime, kind: str, interval: int = 1, span: int = 
     return span <= _minimum_month_length(start.year % 400, start.month, kind, interval)
 
 
+def _last_occupied(start: datetime, end: datetime, all_day: bool) -> datetime:
+    if end.timestamp() <= start.timestamp():
+        return start
+    local_end = end if all_day else end.astimezone(start.tzinfo)
+    return (local_end - timedelta(microseconds=1) if all_day else
+            add_elapsed(local_end, -timedelta(microseconds=1)))
+
+
 def occupied_span(start: datetime, end: datetime, all_day: bool = False) -> int:
     """Number of occupied calendar days, respecting the exclusive end.
 
     An event ending at midnight does not occupy the following date. All-day
     ranges have the same exclusive-end convention as timed ranges.
     """
-    local_end = end if all_day else end.astimezone(start.tzinfo)
-    last = local_end - timedelta(microseconds=1) if end.timestamp() > start.timestamp() else start
+    last = _last_occupied(start, end, all_day)
     return max(1, (last.date() - start.date()).days + 1)
 
 
@@ -66,8 +194,7 @@ def range_policy_options(start: datetime, end: datetime, kind: str, interval: in
         return False, False
     if start.tzinfo is None or end.tzinfo is None:
         return False, False
-    local_end = end if all_day else end.astimezone(start.tzinfo)
-    last = local_end - timedelta(microseconds=1) if end.timestamp() > start.timestamp() else start
+    last = _last_occupied(start, end, all_day)
     same_month = (start.year, start.month) == (last.year, last.month)
     month_contained = same_month or range_policy == 'cut' or span is not None
     # Intentional cross-month templates still offer the original start-only
@@ -97,16 +224,8 @@ def cut_policy_active(master: Event) -> bool:
 
 
 def uncut_occurrence_end(master: Event, start: datetime) -> datetime:
-    """Apply the reference's wall duration, including fold-only/point ranges."""
-    from .recurrence import event_zone, normalize_recurrence_time
-    zone = event_zone(master)
-    wall_duration = (master.end.astimezone(zone).replace(tzinfo=None)
-                     - master.start.astimezone(zone).replace(tzinfo=None))
-    if wall_duration <= timedelta(0):
-        end = datetime.fromtimestamp(start.timestamp() + master.end.timestamp() - master.start.timestamp(), zone)
-    else:
-        end = start + wall_duration
-    return end if master.all_day else normalize_recurrence_time(end)
+    """Apply the master's exact or nominal iCalendar duration to this start."""
+    return end_for(master, start)
 
 
 def occurrence_end(master: Event, start: datetime) -> datetime:

@@ -90,6 +90,27 @@ def test_deleted_version_and_postpone_do_not_choose_automatically(app):
         dialog.deleteLater()
 
 
+def test_equal_endpoints_still_explain_duration_and_timezone_conflicts(app):
+    start = datetime(2026, 1, 15, 9, tzinfo=ZoneInfo('Europe/Berlin'))
+    nominal = Event('example', 'local', 'Meeting', start, start + timedelta(days=1),
+                    recurrence_rule='FREQ=DAILY', duration_spec='P1D')
+    exact = replace(nominal, duration_spec='')
+    dialog = ConflictDialog(replace(make_conflict(), local=nominal, remote=exact), Preferences())
+    try:
+        row = dialog.fields.index('Duration')
+        assert dialog.comparison.item(row, 1).text() == '1d (calendar)'
+        assert dialog.comparison.item(row, 2).text() == '24h (elapsed)'
+        assert dialog.comparison.item(row, 1).background().color().name() == scheme_for(dialog.preferences).notice_background
+        assert dialog.describe(nominal)['Start'] == dialog.describe(exact)['Start']
+        assert dialog.describe(nominal)['End'] == dialog.describe(exact)['End']
+        utc = replace(exact, start=start.astimezone(timezone.utc), end=exact.end.astimezone(timezone.utc), timezone_id='')
+        assert dialog.describe(nominal)['Timezone'] == 'Europe/Berlin'
+        assert dialog.describe(utc)['Timezone'] == 'UTC'
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
 def test_all_day_conflicts_keep_calendar_dates_and_chosen_date_language(app):
     start = datetime(2026, 11, 1, tzinfo=timezone.utc)
     local = Event('all-day', 'local', 'November date', start, start + timedelta(days=1), all_day=True)

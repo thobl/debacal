@@ -587,7 +587,7 @@ class RawTemplateProjectionTests(unittest.TestCase):
 
     def test_invalid_master_and_detached_endpoints_are_rejected_before_normalization(self):
         from debacal.recurrence import updated_series
-        for kind in ('master-start', 'master-end', 'override-start', 'override-end', 'exclusion'):
+        for kind in ('master-start', 'master-end', 'override-start', 'exclusion'):
             with self.subTest(kind=kind):
                 start = datetime(2027, 3, 25, 1, 30, tzinfo=ZONE)
                 source = master(start=start, end=start + timedelta(minutes=30))

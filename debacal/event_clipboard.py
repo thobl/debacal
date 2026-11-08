@@ -9,6 +9,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from .models import Event
+from .event_duration import end_for
 from .recurrence import canonicalize_authored_primary, event_zone, key_datetime, occurrence, occurrence_id, recurrence_key, recurrence_set, updated_series, _valid_wall_time
 
 
@@ -38,18 +39,13 @@ def calendar_day_delta(reference: Event, target: datetime) -> int:
 
 
 def _moved_times(event: Event, shift: timedelta, zone, *, target: datetime | None = None) -> tuple[datetime, datetime]:
-    original_start, original_end = event.start.astimezone(zone), event.end.astimezone(zone)
+    original_start = event.start.astimezone(zone)
     # datetime arithmetic resets fold to zero, even for a zero-day duplicate.
-    # Preserve each endpoint's repeated-hour choice while moving its wall date.
+    # Preserve the start's repeated-hour choice while moving its wall date.
     start = (original_start.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_start.fold)
-    end = (original_end.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_end.fold)
     if target is not None and start.timestamp() != target.timestamp():
-        # An explicit target can select the other copy of a repeated hour.
-        # Honor that instant and retain the source's elapsed duration.
         start = target.astimezone(zone)
-        end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
-    if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and event.end.timestamp() > event.start.timestamp()):
-        end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
+    end = end_for(event, start)
     for value in (start, end):
         if not _valid_wall_time(value):
             raise ValueError(f'The local time {value:%d.%m.%Y %H:%M} falls in a daylight-saving clock change. Choose another time.')

@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 
 from .models import Event
+from .event_duration import end_for
 from .recurrence import (RecurrenceError, event_zone, key_datetime, occurrence,
                          recurrence_key, recurrence_set)
 
@@ -70,11 +71,7 @@ def _shifted(value, source, candidate, shift):
 
 
 def _end_at(item, start):
-    zone = start.tzinfo
-    duration = item.end.astimezone(zone).replace(tzinfo=None) - item.start.astimezone(zone).replace(tzinfo=None)
-    if duration > timedelta():
-        return start + duration
-    return datetime.fromtimestamp(start.timestamp() + item.end.timestamp() - item.start.timestamp(), zone)
+    return end_for(item, start)
 
 
 def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, ordinary_first=True):

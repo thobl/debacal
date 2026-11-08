@@ -80,10 +80,13 @@ def test_generated_end_clock_in_gap_normalizes_without_changing_the_rule_or_losi
     assert gap.start == GAP.replace(hour=1)
     assert gap.end == ACTUAL
     assert gap.end.timestamp() - gap.start.timestamp() == 3600
-    # A new prototype with a normalized endpoint would encode a different
-    # wall duration for all future events, so the unsupported split is atomic.
-    with pytest.raises(RecurrenceError, match='clock gap'):
-        partition_series(master, gap)
+    # DTEND supplies an exact one-hour duration. Rebasing on the normalized
+    # endpoint must retain that hour for later occurrences, so this split is safe.
+    head, tail = partition_series(master, gap)
+    combined = sorted([*expand_event(head, *BOUNDS), *expand_event(tail, *BOUNDS)],
+                      key=lambda item: item.start.timestamp())
+    assert [(item.start.timestamp(), item.end.timestamp()) for item in combined] == [
+        (item.start.timestamp(), item.end.timestamp()) for item in values]
 
 
 def test_gap_exclusion_uses_one_instant_in_canonical_set_and_calendar_preview():

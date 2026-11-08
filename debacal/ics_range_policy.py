@@ -42,6 +42,8 @@ def signature(event):
         'title': event.title, 'description': event.description, 'location': event.location,
         'candidate': event.candidate, 'group': event.group_id or '',
     }
+    if event.duration_spec:
+        value['duration_spec'] = event.duration_spec
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 

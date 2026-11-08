@@ -87,6 +87,9 @@ class Event:
     schedule_syntax: int = 1
     # Only Cut needs local range semantics; Skip/Shift are standard RRULEs.
     range_policy: str = ""
+    # Timed ranges normally retain elapsed time. RFC DURATION day/week parts
+    # retain nominal calendar days instead; clock-only durations need no flag.
+    duration_spec: str = ""
 
     def __post_init__(self) -> None:
         if not self.id or not self.calendar_id:
@@ -135,6 +138,22 @@ class Event:
         object.__setattr__(self, "recurrence_dates", tuple(sorted({canonical_date(value) for value in self.recurrence_dates})))
         object.__setattr__(self, "excluded_dates", tuple(sorted({canonical_date(value) for value in self.excluded_dates})))
         object.__setattr__(self, "recurrence_overrides", {canonical_date(key): deepcopy(value) for key, value in self.recurrence_overrides.items()})
+        if not isinstance(self.duration_spec, str):
+            raise ValueError('An event duration specification must be text.')
+        if self.duration_spec:
+            from .event_duration import add_duration, normalized_spec
+            spec = normalized_spec(self.duration_spec)
+            if spec and not self.all_day:
+                zone = ZoneInfo(self.timezone_id) if self.timezone_id else self.start.tzinfo
+                try:
+                    matches = add_duration(self.start.astimezone(zone), spec).timestamp() == self.end.timestamp()
+                except (OverflowError, ValueError) as exc:
+                    raise ValueError('The nominal duration exceeds the supported calendar range.') from exc
+                if not matches:
+                    spec = ''  # An explicit endpoint edit replaces nominal intent.
+            else:
+                spec = ''
+            object.__setattr__(self, 'duration_spec', spec)
 
     @property
     def recurring(self) -> bool:
@@ -156,6 +175,9 @@ class Event:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Event:
         value = dict(value)
+        if 'duration_spec' not in value:
+            from .event_duration import retained_duration_spec
+            value['duration_spec'] = retained_duration_spec(value.get('raw_ics', ''))
         for field in ("start", "end"):
             if isinstance(value[field], str):
                 value[field] = datetime.fromisoformat(value[field])
@@ -164,6 +186,12 @@ class Event:
                 zone = ZoneInfo(value["timezone_id"])
             except (ValueError, ZoneInfoNotFoundError) as exc:
                 raise ValueError(f"Unknown event timezone: {value['timezone_id']}") from exc
-            value["start"] = value["start"].astimezone(zone)
-            value["end"] = value["end"].astimezone(zone)
+            if value.get('all_day'):
+                # DATE values float. A midnight clock gap must not turn its
+                # retained date into 01:00 (or a different civil date).
+                value["start"] = value["start"].replace(tzinfo=zone)
+                value["end"] = value["end"].replace(tzinfo=zone)
+            else:
+                value["start"] = value["start"].astimezone(zone)
+                value["end"] = value["end"].astimezone(zone)
         return cls(**value)

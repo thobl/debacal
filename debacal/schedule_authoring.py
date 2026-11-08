@@ -88,6 +88,24 @@ def expression_event(event, expression, *, authoring_zone=None):
     prototype = authoring_event(event, authoring_zone)
     anchor = prototype.start
     compiled = compile_sequence(expression, anchor, all_day=event.all_day)
+    tail = sequence_tail(expression)
+    if tail is not None and tail.overflow in ('skip', 'shift') and tail.range_span > 1:
+        from .event_duration import end_for
+        from .range_policies import static_range_policy_fits
+        starts = compiled.tail_start
+        parts = dict(part.split('=', 1) for part in compiled.recurrence_rule.split(';') if '=' in part)
+        positive_days = [int(value) for value in parts.get('BYMONTHDAY', '').split(',')
+                         if value and int(value) > 0]
+        preferred = tail.preferred_day or (min(positive_days) if positive_days else starts.day)
+        timed_start = starts.replace(hour=int(parts.get('BYHOUR', starts.hour)),
+                                    minute=int(parts.get('BYMINUTE', starts.minute)),
+                                    second=int(parts.get('BYSECOND', starts.second)))
+        checked_prototype = replace(prototype, start=timed_start, end=end_for(prototype, timed_start))
+        if not static_range_policy_fits(checked_prototype, tail.frequency, tail.interval,
+                policy=tail.overflow, span=tail.range_span, preferred_day=preferred,
+                count=tail.count, until=tail.until):
+            raise RecurrenceError('Skip/Shift cannot safely retain this duration in every selected month. '
+                                  'Use a calendar-day duration such as 2d, choose Cut, or use an earlier end date.')
     candidate = replace(prototype, recurrence_rule=compiled.recurrence_rule,
                         recurrence_dates=compiled.recurrence_dates, excluded_dates=compiled.excluded_dates,
                         recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''),

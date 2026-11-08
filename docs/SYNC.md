@@ -148,6 +148,14 @@ server before claiming that it restores those 880 resources.
 
 ## Discovery and recurring resources
 
+The final review on 8 November 2026 verified discovery and initial pull against
+the supplied Nextcloud test account using the default vdirsyncer backend. A
+uniquely identified recurring test resource also passed creation, series and
+occurrence edits, EXDATE synchronization, deletion, and verified cleanup. This
+establishes provider connectivity and the tested write path; it does not resolve
+the separate historical Group-cache inventory question above. No account
+credentials or calendar contents are included in the review artifacts.
+
 Add calendar accepts a Nextcloud server/account URL or a direct CalDAV collection.
 Discovery follows the principal and calendar-home properties, including well-known
 and Nextcloud DAV endpoints. Users choose discovered event calendars; names,
@@ -197,6 +205,16 @@ semantics. Metadata uses normal iCalendar TEXT escaping and UTF-8 line folding;
 Unicode whitespace inside a definition is preserved as text. These properties
 are per series, rather than a global VCALENDAR setting. Detached exceptions use
 the master definition.
+
+Timed `DTSTART`/`DTEND` ranges retain their exact elapsed duration on recurrence.
+Nominal calendar-day/week `DURATION` values retain their written distinction
+from clock durations: `P1D` can be 23 or 25 hours at a clock change, while
+`PT24H` is always 24 hours. Both parsers preserve that distinction before a
+calendar library can normalize the lexical value. Nominal masters use named-zone
+`DTSTART` plus `DURATION`; exact ranges use `DTEND`. Fixed detached exceptions
+use explicit UTC endpoints, including ambiguous repeated-hour selections.
+Sync comparisons include nominal duration intent so a remote mode change cannot
+be mistaken for an unchanged resource just because its current endpoints match.
 
 Another Debacal instance restores the definition even when its local calendar
 IDs or display timezone differ. Sequence clock times continue to use the series'

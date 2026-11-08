@@ -17,6 +17,7 @@ from .series_preview import SeriesPreview
 from .timeutil import local_zone, now
 from .theme import scheme_for
 from .dialog_base import install_dialog_keyboard
+from .date_time_fields import format_event_duration
 
 
 class ConflictDialog(QDialog):
@@ -158,8 +159,13 @@ class ConflictDialog(QDialog):
                 '' if event.all_day else ' ' + preferences.format_time(value))
         values = {'State': 'Event exists', 'Title': event.title, 'Start': stamp(event.start),
                   'End (exclusive)' if event.all_day else 'End': stamp(event.end),
+                  'Duration': format_event_duration(event.start, event.end, all_day=event.all_day,
+                                                    duration_spec=event.duration_spec) + (
+                      '' if event.all_day else ' (calendar)' if event.duration_spec else ' (elapsed)'),
                   'All day': 'Yes' if event.all_day else 'No', 'Location': event.location,
                   'Notes': event.description, 'Alternative slot': 'Yes' if event.candidate else 'No'}
+        if not event.all_day:
+            values['Timezone'] = event.timezone_id or str(event.start.tzinfo)
         if event.recurring:
             values.update({'Repeat': event.recurrence_rule or 'Chosen dates',
                            'Additional dates': '\n'.join(event.recurrence_dates),

@@ -11,14 +11,17 @@ from PySide6.QtCore import QDate, QDateTime, QEvent, QLocale, QTime, QTimeZone, 
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
 from .buttons import icon_button
+from .event_duration import elapsed_duration, normalized_spec, parse_duration_spec
 from .preferences import Preferences
 from .timeutil import now
 
 
-def validate_datetime(value):
+def validate_datetime(value, *, all_day=False):
     """Reject impossible local clocks without normalizing an event silently."""
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError('Choose a date and time with a timezone.')
+    if all_day:
+        return value  # Floating dates do not require a real local midnight.
     returned = value.astimezone(timezone.utc).astimezone(value.tzinfo)
     if returned.replace(tzinfo=None) != value.replace(tzinfo=None):
         raise ValueError('This local time does not exist because the clocks change. Choose another time.')
@@ -77,7 +80,7 @@ def parse_datetime(text, preferences=None, reference=None, *, all_day=False):
             example += ' ' + preferences.format_time(reference)
         raise ValueError('Use a date' + ('' if all_day else ' and time') + ' such as ' + example + '.') from exc
     if all_day:
-        return validate_datetime(datetime.combine(parsed.date(), time.min, reference.tzinfo))
+        return validate_datetime(datetime.combine(parsed.date(), time.min, reference.tzinfo), all_day=True)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=reference.tzinfo, fold=reference.fold)
     else:
@@ -103,7 +106,8 @@ def parse_duration(text, *, all_day=False):
                 normalized = re.sub(r'\s+', '', normalized)
                 if re.fullmatch(r'\d+(?:\.\d+)?', normalized):
                     normalized += 'd' if all_day else 'min'
-                unit_values = {'d': 86400, 'day': 86400, 'days': 86400,
+                unit_values = {'w': 604800, 'week': 604800, 'weeks': 604800,
+                               'd': 86400, 'day': 86400, 'days': 86400,
                                'h': 3600, 'hr': 3600, 'hour': 3600, 'hours': 3600,
                                'm': 60, 'min': 60, 'mins': 60, 'minute': 60, 'minutes': 60,
                                's': 1, 'sec': 1, 'secs': 1}
@@ -124,18 +128,50 @@ def parse_duration(text, *, all_day=False):
     return value
 
 
-def format_duration(value, *, all_day=False):
+def parse_event_duration(text, *, all_day=False):
+    """Return a duration and optional nominal calendar-day instructions.
+
+    Whole day/week units in a timed field express calendar duration. Hours,
+    minutes, bare numbers and preset timedeltas express exact elapsed time.
+    """
+    value = parse_duration(text, all_day=all_day)
+    if all_day or not isinstance(text, str):
+        return value, ''
+    normalized = re.sub(r'\s+', '', text.strip().lower().replace(',', '.'))
+    days = sum((Decimal(piece[1]) * (7 if piece[2] in ('w', 'week', 'weeks') else 1)
+                for piece in re.finditer(r'(\d+(?:\.\d+)?)([a-z]+)', normalized)
+                if piece[2] in ('w', 'week', 'weeks', 'd', 'day', 'days')), Decimal(0))
+    if days <= 0 or days != days.to_integral_value() or value.microseconds:
+        return value, ''
+    seconds = int(value.total_seconds()) - int(days) * 86400
+    return value, normalized_spec(f'P{int(days)}D' + (f'T{seconds}S' if seconds else ''))
+
+
+def format_duration(value, *, all_day=False, elapsed=False):
     value = parse_duration(value, all_day=all_day)
     if all_day:
         return str(value.days) + (' day' if value.days == 1 else ' days')
     microseconds = (value.days * 86400 + value.seconds) * 1_000_000 + value.microseconds
     days, rest = divmod(microseconds, 86_400_000_000)
     hours, rest = divmod(rest, 3_600_000_000)
+    if elapsed:
+        hours += days * 24
+        days = 0
     minutes, rest = divmod(rest, 60_000_000)
     seconds = (format(Decimal(rest) / 1_000_000, 'f').rstrip('0').rstrip('.')
                if rest % 1_000_000 else str(rest // 1_000_000))
     return ' '.join(part for part in (f'{days}d' if days else '', f'{hours}h' if hours else '',
                                        f'{minutes}min' if minutes else '', f'{seconds}s' if rest else '') if part)
+
+
+def format_event_duration(start, end, *, all_day=False, duration_spec=''):
+    if all_day:
+        return format_duration(end.replace(tzinfo=None) - start.replace(tzinfo=None), all_day=True)
+    if duration_spec:
+        days, seconds = parse_duration_spec(duration_spec)
+        return f'{days}d' + (' ' + format_duration(timedelta(seconds=seconds), elapsed=True) if seconds else '')
+    duration = elapsed_duration(start, end)
+    return format_duration(duration, elapsed=True) if duration else '0min'
 
 
 class DateTimeField(QWidget):
@@ -193,8 +229,8 @@ class DateTimeField(QWidget):
     def set_value(self, value):
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise ValueError('Choose a date and time with a timezone.')
-        changed = (value.timestamp(), str(value.tzinfo), value.fold) != (
-            self._value.timestamp(), str(self._value.tzinfo), self._value.fold)
+        changed = (value.timestamp(), str(value.tzinfo), value.fold, value.replace(tzinfo=None)) != (
+            self._value.timestamp(), str(self._value.tzinfo), self._value.fold, self._value.replace(tzinfo=None))
         previous_date = self._value.date()
         self._value = value
         self._format()
@@ -214,7 +250,7 @@ class DateTimeField(QWidget):
                 formatted += ' ' + self.preferences.format_time(self._value)
         if previous.strip() == formatted:
             value = self._value.replace(hour=0, minute=0, second=0, microsecond=0) if self._all_day else self._value
-            return validate_datetime(value)
+            return validate_datetime(value, all_day=self._all_day)
         return parse_datetime(previous, self.preferences, self._value, all_day=self._all_day)
 
     def commit(self):

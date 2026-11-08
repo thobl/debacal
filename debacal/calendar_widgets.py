@@ -20,6 +20,7 @@ from .theme import corner_radius, scheme_for
 from .event_style import event_colors, source_outline
 from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
+from .event_duration import add_elapsed, end_for
 
 # Default aliases remain available to standalone painter callers. Live surfaces
 # resolve their own preferences through paint_colors rather than mutating these.
@@ -114,10 +115,15 @@ def event_tooltip(event, preferences, calendar=None):
         when += ' · All day'
     else:
         when += ' · ' + preferences.format_time(start)
+        changing_offset = end.utcoffset() != start.utcoffset()
+        if changing_offset:
+            when += ' ' + (start.tzname() or start.strftime('%z'))
         if end.timestamp() != start.timestamp():
             when += ('–' if end.date() == start.date() else
                      ' — ' + preferences.format_date(end.date(), weekday=True) + ' · ')
             when += preferences.format_time(end)
+            if changing_offset:
+                when += ' ' + (end.tzname() or end.strftime('%z'))
     lines = [event.title, when]
     if calendar is not None:
         lines.append(calendar.name)
@@ -1010,12 +1016,15 @@ class CalendarCanvas(QWidget):
             local = item.start.astimezone(local_zone())
             duration = (item.end.astimezone(timezone.utc) - item.start.astimezone(timezone.utc)).total_seconds() / 60
             original_min = local.hour * 60 + local.minute + local.second / 60 + local.microsecond / 60_000_000
-            start_min = min(max(0, original_min + minute - old_min), max(0, 1440 - duration))
+            start_min = min(max(0, original_min + minute - old_min), 1440 - 1 / 60_000_000)
             self.ghost = (day, start_min, start_min + duration)
         if kind != 'create' and self.ghost:
             target_day, begin, finish = self.ghost
             start = item.start if kind == 'resize' else at(self.days[target_day]) + timedelta(minutes=begin)
-            end = at(self.days[target_day]) + timedelta(minutes=finish)
+            end = (at(self.days[target_day]) + timedelta(minutes=finish)
+                   if kind == 'resize' else end_for(item, start))
+            if kind == 'resize':
+                end = end.replace(fold=item.end.astimezone(local_zone()).fold)
             self.drag_preview_requested.emit(item.id, start, end, event.modifiers())
         self.update()
 
@@ -1046,9 +1055,11 @@ class CalendarCanvas(QWidget):
                 if kind == 'create':
                     self.create_requested.emit(start, end)
                 elif kind == 'resize':
+                    end = end.replace(fold=item.end.astimezone(local_zone()).fold)
                     self.move_requested.emit(item.id, item.start, end)
                     self.move_scoped_requested.emit(item, item.start, end, event.modifiers())
                 else:
+                    end = end_for(item, start)
                     self.move_requested.emit(item.id, start, end)
                     self.move_scoped_requested.emit(item, start, end, event.modifiers())
         if deferred and not ghost:
@@ -1091,7 +1102,7 @@ class CalendarCanvas(QWidget):
         else:
             _, minute = self.position(point)
             start = at(day) + timedelta(minutes=minute)
-            self.create_requested.emit(start, start + timedelta(minutes=self.preferences.default_event_duration_minutes))
+            self.create_requested.emit(start, add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes)))
         self.update()
 
     def contextMenuEvent(self, event):
@@ -1511,7 +1522,7 @@ class MonthCanvas(QWidget):
             self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
         else:
             start = at(day, 9)
-            self.create_requested.emit(start, start + timedelta(minutes=self.preferences.default_event_duration_minutes))
+            self.create_requested.emit(start, add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes)))
 
     def mouseMoveEvent(self, event):
         point = event.position()
@@ -1532,8 +1543,8 @@ class MonthCanvas(QWidget):
             item, _, origin = self.drag
             shift = timedelta(days=(day - origin).days)
             start = item.start if item.all_day else item.start.astimezone(local_zone())
-            end = item.end if item.all_day else item.end.astimezone(local_zone())
-            self.ghost = replace(item, start=start + shift, end=end + shift)
+            target = (start.replace(tzinfo=None) + shift).replace(tzinfo=start.tzinfo, fold=start.fold)
+            self.ghost = replace(item, start=target, end=end_for(item, target))
             self.drag_preview_requested.emit(item.id, self.ghost.start, self.ghost.end, event.modifiers())
             self.update()
             return

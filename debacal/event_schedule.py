@@ -13,6 +13,7 @@ from typing import Iterable
 from dateutil.rrule import rrulestr
 
 from .models import Event
+from .event_duration import add_duration, add_elapsed, elapsed_duration, end_for, same_duration
 from .coincident_occurrences import apply_occurrence_counts, multiplicities
 from .patterns import (DEFAULT_LIMIT, compile_sequence, expand_sequence,
                        is_relative_sequence, reconstruct_sequence, sequence_tail)
@@ -41,17 +42,14 @@ def _checked(value):
     return value
 
 
-def _range_end(start, reference_start, reference_end, *, all_day=False):
-    """Move a prototype's range without losing repeated-hour endpoint choices."""
-    zone = start.tzinfo
-    original_start, original_end = ((reference_start, reference_end) if all_day else
-                                    (reference_start.astimezone(zone), reference_end.astimezone(zone)))
-    duration = original_end.replace(tzinfo=None) - original_start.replace(tzinfo=None)
-    if all_day or duration > timedelta(0):
-        end = (start.replace(tzinfo=None) + duration).replace(tzinfo=zone, fold=original_end.fold)
-        if end.timestamp() >= start.timestamp():
-            return end
-    return datetime.fromtimestamp(start.timestamp() + reference_end.timestamp() - reference_start.timestamp(), zone)
+def _range_end(start, reference_start, reference_end, *, all_day=False, duration_spec='', duration_zone=None):
+    """Move a range using floating days, nominal duration, or exact elapsed time."""
+    if all_day:
+        return start + (reference_end.replace(tzinfo=None) - reference_start.replace(tzinfo=None))
+    if duration_spec:
+        zone = duration_zone or reference_start.tzinfo
+        return add_duration(start.astimezone(zone), duration_spec).astimezone(start.tzinfo)
+    return add_elapsed(start, elapsed_duration(reference_start, reference_end))
 
 
 def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> RegularSchedule | None:
@@ -289,16 +287,16 @@ class ScheduleDraft:
                     reference_start=staged._primary_reference_start or start,
                     reference_end=staged._primary_reference_end or source.end)
             elif structured or source.recurrence_overrides:
-                duration = source.end.astimezone(anchor.tzinfo).replace(tzinfo=None) - source.start.astimezone(anchor.tzinfo).replace(tzinfo=None)
-                prototype = replace(source, start=anchor, end=anchor + duration, all_day=all_day,
+                prototype = replace(source, start=anchor, end=end_for(source, anchor), all_day=all_day,
                                     timezone_id=getattr(anchor.tzinfo, 'key', ''))
                 candidate = expression_event(prototype, text, authoring_zone=anchor.tzinfo)
                 if not structured:
                     shift = anchor.replace(tzinfo=None) - source_anchor.replace(tzinfo=None)
                     candidate = retain_displayed_overrides(candidate, source, shift=shift)
                 staged._store_graphical(candidate, reference_start=start,
-                    reference_end=start + ((staged._primary_reference_end - staged._primary_reference_start)
-                                           if staged._primary_reference_start and staged._primary_reference_end else duration))
+                    reference_end=end_for(replace(source,
+                        start=staged._primary_reference_start or source.start,
+                        end=staged._primary_reference_end or source.end), start))
         elif structured:
             # There is no existing payload to inherit for a new event. The
             # real dialog range replaces this temporary prototype on saving.
@@ -327,11 +325,11 @@ class ScheduleDraft:
         """
         self._primary_reference_start, self._primary_reference_end = start, end
 
-    def _source_range(self, start, end=None, *, all_day=False):
+    def _source_range(self, start, end=None, *, all_day=False, duration_spec=None):
         if self.source is None or self._primary_reference_start is None:
             return start, end
         return self._range_from_reference(self.source, start, end, self._primary_reference_start,
-                                          self._primary_reference_end, all_day=all_day)
+                                          self._primary_reference_end, all_day=all_day, duration_spec=duration_spec)
 
     def author_anchor(self, start, *, all_day=False):
         _aware(start)
@@ -488,10 +486,11 @@ class ScheduleDraft:
 
     def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
         """Return Event recurrence/authoring fields, preserving untouched data."""
+        chosen_spec = prototype.duration_spec if prototype is not None else None
         if self._edited_master is not None:
-            effective = self._project_edited(start, end=end, all_day=all_day)
+            effective = self._project_edited(start, end=end, all_day=all_day, duration_spec=chosen_spec)
             return {name: deepcopy(getattr(effective, name)) for name in _SCHEDULE_FIELDS}
-        anchor = self.author_anchor(self._source_range(start, end, all_day=all_day)[0], all_day=all_day)
+        anchor = self.author_anchor(self._source_range(start, end, all_day=all_day, duration_spec=chosen_spec)[0], all_day=all_day)
         if self._edited_fields is not None:
             return deepcopy(self._edited_fields)
         source = self.source
@@ -518,7 +517,10 @@ class ScheduleDraft:
             projection_anchor = (datetime.combine(anchor.date(), time.min, event_zone(source))
                                  if all_day else anchor)
             edited = replace(certified, start=projection_anchor,
-                             end=_range_end(projection_anchor, source.start, source.end, all_day=all_day))
+                end=_range_end(projection_anchor, source.start, source.end, all_day=all_day,
+                    duration_spec=source.duration_spec if chosen_spec is None else chosen_spec,
+                    duration_zone=event_zone(source)),
+                duration_spec=source.duration_spec if chosen_spec is None else chosen_spec)
             projected = updated_series(certified, certified, edited)
             return {name: deepcopy(getattr(projected, name)) for name in _SCHEDULE_FIELDS}
         values = dict(recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, range_policy='',
@@ -531,7 +533,8 @@ class ScheduleDraft:
             prototype = source or prototype or Event('draft', 'draft', 'Draft', anchor,
                 end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
             prototype = replace(prototype, start=anchor,
-                                end=end or _range_end(anchor, prototype.start, prototype.end, all_day=all_day),
+                                end=end or end_for(prototype, anchor),
+                                duration_spec=prototype.duration_spec if chosen_spec is None else chosen_spec,
                                 all_day=all_day, timezone_id=getattr(anchor.tzinfo, 'key', ''))
             evaluated = expression_event(prototype, self.expression, authoring_zone=anchor.tzinfo)
             values.update({name: deepcopy(getattr(evaluated, name)) for name in (
@@ -547,18 +550,19 @@ class ScheduleDraft:
         prototype = source or Event('draft', 'draft', 'Draft', anchor,
             end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
         candidate = replace(prototype, start=anchor,
-                            end=end or _range_end(anchor, prototype.start, prototype.end, all_day=all_day),
+                            end=end or end_for(prototype, anchor),
+                            duration_spec=prototype.duration_spec if chosen_spec is None else chosen_spec,
                             all_day=all_day, **values)
         values['schedule_expression'] = reconstruct_authoring(candidate, authoring_zone=anchor.tzinfo,
                                                              prefer_literal=False).expression
         return values
 
-    def _project_edited(self, start, *, end=None, all_day=False):
+    def _project_edited(self, start, *, end=None, all_day=False, duration_spec=None):
         master = self._edited_master
         reference_start = self._edited_reference_start or master.start
         reference_end = self._edited_reference_end or master.end
         canonical_start, canonical_end = self._range_from_reference(master, start, end, reference_start,
-                                                                     reference_end, all_day=all_day)
+            reference_end, all_day=all_day, duration_spec=duration_spec)
         if all_day:
             # All-day dates float: a picker in another display zone must not
             # turn the source's midnight into an earlier/later calendar day.
@@ -573,11 +577,12 @@ class ScheduleDraft:
                 and canonical_end.timestamp() == master.end.timestamp()
                 and all_day == master.all_day and not phase_edit):
             return master
-        edited = replace(master, start=canonical_start, end=canonical_end, all_day=all_day)
+        edited = replace(master, start=canonical_start, end=canonical_end, all_day=all_day,
+                         duration_spec=master.duration_spec if duration_spec is None else duration_spec)
         projected = updated_series(master, master, edited)
         return canonicalize_authored_primary(projected, primary_range=(start, end)) if phase_edit else projected
 
-    def _range_from_reference(self, master, start, end, reference_start, reference_end, *, all_day=False):
+    def _range_from_reference(self, master, start, end, reference_start, reference_end, *, all_day=False, duration_spec=None):
         zone = self.author_anchor(start, all_day=all_day).tzinfo
 
         def wall(value):
@@ -592,23 +597,23 @@ class ScheduleDraft:
                 # endpoint instants are authoritative, including fold-only
                 # changes that leave every written clock unchanged.
                 return canonical_start, end.astimezone(zone)
-        duration_start, duration_end = master.start, master.end
+        duration_source = master
         if end is not None:
-            chosen_duration = wall(end) - wall(start)
-            if (chosen_duration != wall(reference_end) - wall(reference_start)
-                    or chosen_duration <= timedelta(0) and end.timestamp() - start.timestamp()
-                       != reference_end.timestamp() - reference_start.timestamp()):
-                duration_start, duration_end = start, end
-        canonical_end = _range_end(canonical_start, duration_start, duration_end, all_day=all_day)
+            previous = replace(master, start=reference_start, end=reference_end)
+            chosen = replace(master, start=start, end=end, all_day=all_day,
+                             duration_spec=master.duration_spec if duration_spec is None else duration_spec)
+            if not same_duration(previous, chosen):
+                duration_source = chosen
+        canonical_end = end_for(duration_source, canonical_start)
         return canonical_start, canonical_end
 
-    def primary_range(self, start, end, *, all_day=False):
+    def primary_range(self, start, end, *, all_day=False, duration_spec=None):
         """Canonical range for a graphical draft's possibly detached UI primary."""
         if self._edited_master is None:
             if self.configuration_changed:
-                return self._source_range(start, end, all_day=all_day)
+                return self._source_range(start, end, all_day=all_day, duration_spec=duration_spec)
             return start, end
-        effective = self._project_edited(start, end=end, all_day=all_day)
+        effective = self._project_edited(start, end=end, all_day=all_day, duration_spec=duration_spec)
         return effective.start, effective.end
 
     def _adopt_graphical(self, master, *, reference_start=None, reference_end=None):
@@ -693,7 +698,7 @@ class ScheduleDraft:
         return self._edited_master
 
     def add_occurrence(self, master: Event, start: datetime, end: datetime | None = None,
-                       *, reference_start=None, reference_end=None):
+                       *, reference_start=None, reference_end=None, duration_spec=None):
         if not master.all_day:
             _checked(start)
         existing = expand_event(master, start - timedelta(seconds=1), start + timedelta(seconds=1), limit=1000)
@@ -707,23 +712,29 @@ class ScheduleDraft:
                            and recurrence_key(Event.from_dict(changed.recurrence_overrides[key]).start, master.all_day)
                            == recurrence_key(start, master.all_day))
             if end is not None:
-                _checked(end)
-                if end.timestamp() <= start.timestamp():
-                    raise RecurrenceError('The end must be after the start.')
+                if not master.all_day:
+                    _checked(end)
+                if end.timestamp() < start.timestamp() or master.all_day and end.timestamp() == start.timestamp():
+                    raise RecurrenceError('The end must not be before the start.')
                 payloads = deepcopy(changed.recurrence_overrides)
-                payloads[new_key] = replace(Event.from_dict(payloads[new_key]), start=start, end=end).to_dict()
+                item = Event.from_dict(payloads[new_key])
+                payloads[new_key] = replace(item, start=start, end=end,
+                    duration_spec=item.duration_spec if duration_spec is None else duration_spec).to_dict()
                 changed = replace(changed, recurrence_overrides=payloads)
             self._adopt_graphical(changed, reference_start=reference_start, reference_end=reference_end)
             return self._edited_master
         key = recurrence_key(start, master.all_day)
         overrides = deepcopy(master.recurrence_overrides)
         if end is not None:
-            _checked(end)
-            if end.timestamp() <= start.timestamp():
-                raise RecurrenceError('The end must be after the start.')
+            if not master.all_day:
+                _checked(end)
+            if end.timestamp() < start.timestamp() or master.all_day and end.timestamp() == start.timestamp():
+                raise RecurrenceError('The end must not be before the start.')
             default = occurrence(master, start, key)
-            if end != default.end:
-                overrides[key] = replace(default, start=start, end=end).to_dict()
+            item = replace(default, start=start, end=end,
+                           duration_spec=default.duration_spec if duration_spec is None else duration_spec)
+            if end.timestamp() != default.end.timestamp() or item.duration_spec != default.duration_spec:
+                overrides[key] = item.to_dict()
         changed = replace(master, recurrence_dates=tuple(set(master.recurrence_dates) | {key}),
                           excluded_dates=tuple(value for value in master.excluded_dates if value != key),
                           recurrence_overrides=overrides)
@@ -731,23 +742,26 @@ class ScheduleDraft:
         return self._edited_master
 
     def edit_occurrence(self, master: Event, instance: Event, start: datetime, end: datetime,
-                        *, reference_start=None, reference_end=None):
+                        *, reference_start=None, reference_end=None, duration_spec=None):
         """Move/resize an occurrence while keeping its original RECURRENCE-ID.
 
         A detached exception changes its displayed range, not its place in the
         standard recurrence. In particular this does not create an EXDATE plus
         a new RDATE, or replace an existing exception's nominal identity.
         """
-        _checked(start)
-        _checked(end)
-        if end.timestamp() <= start.timestamp():
-            raise RecurrenceError('The end must be after the start.')
+        if not master.all_day:
+            _checked(start)
+            _checked(end)
+        if end.timestamp() < start.timestamp() or master.all_day and end.timestamp() == start.timestamp():
+            raise RecurrenceError('The end must not be before the start.')
         key = instance.recurrence_id or recurrence_key(instance.start, master.all_day)
-        if start == instance.start and end == instance.end:
+        spec = instance.duration_spec if duration_spec is None else duration_spec
+        if (start.timestamp() == instance.start.timestamp() and end.timestamp() == instance.end.timestamp()
+                and spec == instance.duration_spec):
             return master
         original = occurrence(master, key_datetime(key, master), key)
         overrides = deepcopy(master.recurrence_overrides)
-        overrides[key] = replace(original, start=start, end=end).to_dict()
+        overrides[key] = replace(original, start=start, end=end, duration_spec=spec).to_dict()
         changed = replace(master, recurrence_overrides=overrides,
                           excluded_dates=tuple(value for value in master.excluded_dates if value != key))
         self._adopt_graphical(changed, reference_start=reference_start, reference_end=reference_end)

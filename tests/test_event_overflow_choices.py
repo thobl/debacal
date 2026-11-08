@@ -1,6 +1,7 @@
 """The event editor explains short-month choices without changing imports."""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
@@ -94,6 +95,71 @@ def test_multi_day_range_offers_three_icon_choices_and_defaults_to_skip(editors)
                [('Skip', choices.buttons['skip']), ('Shift', choices.buttons['shift']), ('Cut', choices.buttons['cut'])])
     assert ranges(dialog) == [('2027-01-28', '2027-01-30'), ('2027-03-28', '2027-03-30'), ('2027-04-28', '2027-04-30')]
     assert dialog.repeat_until.value().date().isoformat() == '2027-04-28'
+
+
+@pytest.mark.parametrize('kind,start,count', [
+    ('MONTHLY', datetime(2024, 1, 30, tzinfo=ZoneInfo('Europe/Berlin')), 3),
+    ('YEARLY', datetime(2023, 3, 30, tzinfo=ZoneInfo('Europe/Berlin')), 2),
+])
+def test_elapsed_range_disables_unsafe_policies_but_keeps_cut_available(editors, kind, start, count):
+    with patch('debacal.event_dialog.local_zone', return_value=start.tzinfo):
+        dialog = editors(start, start + timedelta(hours=48), all_day=False)
+        monthly(dialog, count)
+        dialog.repeat.setCurrentData(kind)
+        choices = dialog.overflow_policy
+        assert not choices.isHidden()
+        for policy in ('skip', 'shift'):
+            button = choices.buttons[policy]
+            assert not button.isEnabled()
+            assert 'month' in button.toolTip() and '2d' in button.toolTip() and 'Cut' in button.toolTip()
+            previous = choices.currentData()
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            assert choices.currentData() == previous
+        assert choices.buttons['cut'].isEnabled()
+        if kind == 'YEARLY':
+            assert 'Clock changes' in choices.buttons['cut'].toolTip()
+        choices.buttons['cut'].click()
+        assert not dialog.error.text()
+        assert dialog.build_events()[0].range_policy == 'cut'
+
+
+def test_calendar_day_duration_reenables_safe_policies_and_restores_their_tooltips(editors):
+    start = datetime(2024, 1, 30, tzinfo=ZoneInfo('Europe/Berlin'))
+    with patch('debacal.event_dialog.local_zone', return_value=start.tzinfo):
+        dialog = editors(start, start + timedelta(hours=48), all_day=False)
+        monthly(dialog)
+        assert not dialog.overflow_policy.buttons['skip'].isEnabled()
+        dialog.duration.setText('2d')
+        dialog._duration_changed()
+        for policy in ('skip', 'shift'):
+            button = dialog.overflow_policy.buttons[policy]
+            assert button.isEnabled()
+            assert 'Use a calendar-day duration' not in button.toolTip()
+        saved, = dialog.build_events()
+        assert saved.duration_spec == 'P2D'
+        dialog.duration.setText('48h')
+        dialog._duration_changed()
+        assert not dialog.overflow_policy.buttons['skip'].isEnabled()
+        assert not dialog.overflow_policy.buttons['shift'].isEnabled()
+
+
+def test_policy_safety_tracks_each_choices_count_and_the_active_until_bound(editors):
+    start = datetime(2024, 1, 30, tzinfo=ZoneInfo('Europe/Berlin'))
+    with patch('debacal.event_dialog.local_zone', return_value=start.tzinfo):
+        dialog = editors(start, start + timedelta(hours=48), all_day=False)
+        monthly(dialog, 1)
+        skip, shift = (dialog.overflow_policy.buttons[policy] for policy in ('skip', 'shift'))
+        assert skip.isEnabled() and shift.isEnabled()
+        dialog.repeat_count.setValue(2)
+        # Skip reaches March as its second occurrence. Shift's second is still
+        # in February, before the March clock change.
+        assert not skip.isEnabled() and shift.isEnabled()
+        dialog.repeat_count.setValue(3)
+        assert not skip.isEnabled() and not shift.isEnabled()
+        dialog.repeat_until.set_value(datetime(2024, 3, 29, tzinfo=start.tzinfo))
+        assert skip.isEnabled() and shift.isEnabled()
+        dialog.no_end.setChecked(True)
+        assert not skip.isEnabled() and not shift.isEnabled()
 
 
 @pytest.mark.parametrize('policy, february', [('shift', ('2027-02-27', '2027-03-01')),

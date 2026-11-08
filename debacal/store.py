@@ -15,6 +15,7 @@ from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 from .models import Calendar, Event
+from .event_duration import add_duration, end_for, same_duration
 from .schedule_replacement import ScheduleReplacement
 
 
@@ -712,18 +713,7 @@ class Store:
         zone = event_zone(master)
         wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
         shift = wall(edited.start) - wall(reference.start)
-        reference_duration = wall(reference.end) - wall(reference.start)
-        edited_duration = wall(edited.end) - wall(edited.start)
-        resized = reference_duration != edited_duration
-        if not resized and reference_duration.total_seconds() <= 0:
-            resized = (edited.end.timestamp() - edited.start.timestamp()
-                       != reference.end.timestamp() - reference.start.timestamp())
-
-        def end_for(start, source):
-            duration = wall(source.end) - wall(source.start)
-            if duration.total_seconds() > 0:
-                return (wall(start) + duration).replace(tzinfo=zone)
-            return datetime.fromtimestamp(start.timestamp() + source.end.timestamp() - source.start.timestamp(), zone)
+        resized = not same_duration(reference, edited)
 
         base = master
         if (reference.series_id and projected.schedule_expression != master.schedule_expression
@@ -750,9 +740,12 @@ class Store:
                 ical_uid=moved.ical_uid, series_id=moved.series_id,
                 recurrence_id=moved.recurrence_id, start=moved.start,
                 end=(moved.end if moved_key in authoritative_keys else
-                     end_for(moved.start, edited if resized else original)),
+                     end_for(edited if resized else original, moved.start)),
+                duration_spec=(moved.duration_spec if moved_key in authoritative_keys else
+                               edited.duration_spec if resized else original.duration_spec),
             ).to_dict()
-        return replace(projected, end=end_for(projected.start, duration_source), recurrence_overrides=overrides)
+        return replace(projected, end=end_for(duration_source, projected.start),
+                       duration_spec=duration_source.duration_spec, recurrence_overrides=overrides)
 
     def _review_selection(self, refs, scope, reference=None, expected_masters=()):
         from .selection import affected_visible, selection_roots, validate_scope
@@ -831,13 +824,7 @@ class Store:
             return clone_event(value, new_id=identifier, new_uid=uid,
                                calendar_id=calendar_id, group_id=value.group_id)
 
-        reference_zone = event_zone(reference)
-        reference_wall = lambda value: value.astimezone(reference_zone).replace(tzinfo=None)
-        old_duration = reference_wall(reference.end) - reference_wall(reference.start)
-        new_duration = reference_wall(edited.end) - reference_wall(edited.start)
-        resized = old_duration != new_duration
-        if old_duration <= timedelta(0) and not resized:
-            resized = reference.end.timestamp() - reference.start.timestamp() != edited.end.timestamp() - edited.start.timestamp()
+        resized = not same_duration(reference, edited)
         changed = {}
         for root in roots:
             root_scope = "group" if is_whole_root(root) else scope
@@ -857,10 +844,8 @@ class Store:
             # does apply the new duration to every selected event.
             resize_source = resized and (source.all_day == reference.all_day or 'all_day' in common_changes)
             if resize_source:
-                duration = wall(edited.end) - wall(edited.start)
-                end = (start.replace(tzinfo=None) + duration).replace(tzinfo=zone, fold=edited.end.astimezone(zone).fold)
-                if duration <= timedelta(0):
-                    end = datetime.fromtimestamp(start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
+                end = add_duration(start, edited.duration_spec) if edited.duration_spec else end_for(edited, start)
+            duration_spec = edited.duration_spec if resize_source else source.duration_spec
             if common_changes.get("all_day") is True:
                 from datetime import time
                 days = calendar_day_delta(reference, edited.start)
@@ -869,7 +854,7 @@ class Store:
             if not all(_valid_wall_time(value) for value in (start, end)):
                 raise ValueError("A selected event falls in a daylight-saving clock change. Choose another time.")
             if root_scope == "single":
-                value = replace(root, start=start, end=end, **common_changes)
+                value = replace(root, start=start, end=end, duration_spec=duration_spec, **common_changes)
                 if root.series_id:
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                                     schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
@@ -893,7 +878,8 @@ class Store:
             base = master
             if root_scope == "future" and master.recurring:
                 _, base = partition_series(master, root)
-            submission = replace(base, start=start, end=end, **(schedule_changes | common_changes))
+            submission = replace(base, start=start, end=end, duration_spec=duration_spec,
+                                 **(schedule_changes | common_changes))
             if root_scope == "future" and master.recurring:
                 before, projected = updated_future(master, root, submission, replace_schedule)
             else:
@@ -907,12 +893,12 @@ class Store:
                 projected = self._preserve_mouse_exceptions(master, source, submission, projected,
                                                             authoritative_keys=explicit_keys)
             if resize_source:
-                span = wall(edited.end) - wall(edited.start)
                 def resized_end(value):
-                    return ((wall(value) + span).replace(tzinfo=zone) if span > timedelta(0) else
-                            datetime.fromtimestamp(value.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone))
-                projected = replace(projected, end=resized_end(projected.start), recurrence_overrides={
-                    key: replace(Event.from_dict(payload), end=resized_end(Event.from_dict(payload).start)).to_dict()
+                    return add_duration(value, edited.duration_spec) if edited.duration_spec else end_for(edited, value)
+                projected = replace(projected, end=resized_end(projected.start), duration_spec=edited.duration_spec,
+                    recurrence_overrides={
+                    key: replace(Event.from_dict(payload), end=resized_end(Event.from_dict(payload).start),
+                                 duration_spec=edited.duration_spec).to_dict()
                     for key, payload in projected.recurrence_overrides.items()})
             if common_changes:
                 projected = replace(projected, **common_changes, recurrence_overrides={
@@ -1112,6 +1098,14 @@ class Store:
         if value is None:
             return None
         result = {key: item for key, item in value.items() if key != "raw_ics"}
+        if 'duration_spec' not in value and not value.get('all_day'):
+            from .event_duration import retained_duration_spec
+            if retained_duration_spec(value.get('raw_ics', '')):
+                # Only legacy nominal DURATION rows need model decoding.
+                # Ordinary event/history comparisons keep their cheap path.
+                result['duration_spec'] = Event.from_dict(value).duration_spec
+        if not result.get('duration_spec'):
+            result.pop('duration_spec', None)
         if not result.get("schedule_expression"):
             result.pop("schedule_syntax", None)
         if result.get("recurrence_overrides"):
@@ -1197,9 +1191,9 @@ class Store:
             if value is None:
                 return None
             fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "recurrence_rule",
-                                                        "recurrence_dates", "excluded_dates", "range_policy"))
+                                                        "recurrence_dates", "excluded_dates", "range_policy", "duration_spec"))
             overrides = {key: (payload.get("start"), payload.get("end"),
-                               payload.get("all_day", False), payload.get("timezone_id", ""))
+                               payload.get("all_day", False), payload.get("timezone_id", ""), payload.get('duration_spec', ''))
                          for key, payload in value.get("recurrence_overrides", {}).items()}
             return fields, overrides
 

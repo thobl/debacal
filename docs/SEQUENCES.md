@@ -20,6 +20,24 @@ records relative intent. Stale or obsolete annotations are reconstructed from
 canonical data, never interpreted as trusted instructions. Title, location,
 notes, alarms and detached content remain in the event model.
 
+### Duration semantics
+
+Timed ranges with an explicit end retain their **elapsed** duration, including
+through daylight-saving changes. A nominal calendar-day duration is distinct:
+`1d` means the same local clock on the next day, whereas `24h` means exactly
+24 elapsed hours. The duration field accepts both; default durations and preset
+buttons are elapsed minutes. All-day ranges always count floating calendar
+dates. Moving Start retains the selected duration semantics; explicitly changing
+End or stretching an endpoint chooses an elapsed range.
+
+The model stores nominal timed intent in `duration_spec`, using RFC 5545
+`DURATION` spelling, such as `P1D` or `P1DT2H`. Days advance first in the event's
+timezone and clock units then advance elapsed time. An empty value means an
+exact duration derived from the endpoints. Pure-clock specifications such as
+`PT24H` normalize to that exact mode, never to `P1D`. Recurrence expansion,
+copy/move/split, overlap queries, editors, and ICS transport use this shared
+duration model. Detached exceptions retain their explicit chosen endpoints.
+
 ## Short syntax
 
 ```ebnf
@@ -125,6 +143,14 @@ Single-day Skip/Shift normalize to the existing ordinary/clamped notation;
 `!` remains the concise single-day clamp spelling. Bounds, `day=N`, moves and
 splits preserve the range policy and span where relevant.
 
+A timed elapsed range can occupy an extra local date when a clock changes.
+Before authoring a month-contained Skip/Shift rule, the implementation verifies
+that its native start constraints keep the actual range within every selected
+month, respecting Count/Until. Unsafe choices are unavailable rather than
+silently overflowing; choose a calendar-day duration (for example `2d`), Cut,
+or an earlier endpoint. Plain imported RRULEs keep their standard meaning and
+are not subject to this authoring constraint.
+
 Cut is symbolic locally (`range_policy="cut"`). At ICS export its changed
 ranges become standard detached exceptions through year 9999, rather than a
 rolling date window. Verified derived exceptions collapse back to the small
@@ -227,6 +253,7 @@ After `schedule` comes strict JSON, with these optional fields:
 | `omit` | EXDATE keys, including an excluded reference. |
 | `move` | Map of nominal recurrence keys to ranges containing `start`, `end`, and optional `all_day` and IANA `zone`. |
 | `range_policy` | Optional `"cut"` for derived month-boundary ends; absent/empty keeps ordinary durations. |
+| `duration_spec` | Optional nominal timed duration, e.g. `"P1D"`; absent/empty retains exact elapsed duration. Also allowed on a moved range. |
 
 Missing fields mean empty fields. `schedule{}` follows the standard DTSTART
 default and means the reference alone; `none` excludes it. Generation uses

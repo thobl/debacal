@@ -343,7 +343,7 @@ def test_unsupported_future_partition_is_reported_before_dialog_or_mutation(work
     assert 'whole-series' in window.local_issues[-1].details
 
 
-def test_paste_rejects_nonexistent_end_without_creating_an_event(workspace):
+def test_paste_elapsed_hour_crosses_clock_gap_without_losing_duration(workspace):
     _, window, store, master, _, _ = workspace
     source_start = datetime(2027, 3, 27, 1, 30, tzinfo=ZONE)
     source = Event('clock-gap', 'local', 'Clock change', source_start, source_start + timedelta(hours=1))
@@ -352,4 +352,13 @@ def test_paste_rejects_nonexistent_end_without_creating_an_event(workspace):
         window.paste_events(scope='single', target=source_start + timedelta(days=1))
     assert store.list_events() == [master]
     assert len(store.history()) == 1
-    assert 'clock change' in window.local_issues[-1].details
+    assert not window.local_issues
+    assert window.pending_paste is not None and not window.pending_paste.error
+    prepared, = window.pending_paste.events
+    assert prepared.start == datetime(2027, 3, 28, 1, 30, tzinfo=ZONE)
+    assert prepared.end == datetime(2027, 3, 28, 3, 30, tzinfo=ZONE)
+    assert prepared.end.timestamp() - prepared.start.timestamp() == 3600
+    window.confirm_paste()
+    assert len(store.list_events()) == 2 and len(store.history()) == 2
+    window.undo()
+    assert store.list_events() == [master]

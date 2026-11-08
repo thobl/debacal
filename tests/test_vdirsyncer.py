@@ -256,6 +256,29 @@ def test_repaired_remote_resources_clear_stale_quarantine_errors(tmp_path):
         store.close()
 
 
+def test_standalone_remote_duration_mode_change_conflicts_with_a_local_title_edit(tmp_path):
+    from zoneinfo import ZoneInfo
+    store, calendar, cli, backend = setup(tmp_path)
+    try:
+        start = datetime(2027, 1, 2, 9, tzinfo=ZoneInfo('Europe/Berlin'))
+        nominal = replace(sample(), start=start, end=start + timedelta(days=1), duration_spec='P1D')
+        cli.remote[nominal.ical_uid] = export_ics([nominal]).decode()
+        sync(store, calendar, backend)
+        source = store.get_event(nominal.id)
+        store.apply('Local title edit', [replace(source, title='Local title')])
+        exact = replace(source, duration_spec='')
+        remote_data = export_ics([exact]).decode()
+        cli.remote[nominal.ical_uid] = remote_data
+        result = sync(store, calendar, backend)
+        assert len(result.conflicts) == 1 and result.sent == 0
+        assert cli.remote[nominal.ical_uid] == remote_data
+        assert store.get_event(nominal.id).title == 'Local title'
+        assert store.get_event(nominal.id).duration_spec == 'P1D'
+        assert store.pending_changes()
+    finally:
+        store.close()
+
+
 def test_installed_module_runs_despite_a_broken_console_launcher(tmp_path, monkeypatch):
     pytest.importorskip("vdirsyncer")
     broken = tmp_path / "vdirsyncer"

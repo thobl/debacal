@@ -138,14 +138,15 @@ class PreferencesDialog(QDialog):
         self.visible_end.setToolTip(self.visible_start.toolTip())
 
         form = self.calendar_section(calendar_layout, 'Event durations')
-        self.default_duration = QLineEdit(format_duration(timedelta(minutes=preferences.default_event_duration_minutes)))
+        self.default_duration = QLineEdit(format_duration(
+            timedelta(minutes=preferences.default_event_duration_minutes), elapsed=True))
         self.default_duration.setAccessibleName('Default event duration')
         self.default_duration.setMaximumWidth(round(180 * preferences.font_scale / 100))
         self.default_duration.setPlaceholderText('1h')
         self.default_duration.setToolTip('Used for a new timed event when no end is chosen. Dragged ranges keep their '
                                         'chosen duration; all-day events default to one day.')
         form.addRow('Default duration', self.default_duration)
-        self.duration_presets = QLineEdit(', '.join(format_duration(timedelta(minutes=value))
+        self.duration_presets = QLineEdit(', '.join(format_duration(timedelta(minutes=value), elapsed=True)
                                                    for value in preferences.duration_presets_minutes))
         self.duration_presets.setAccessibleName('Duration buttons')
         self.duration_presets.setPlaceholderText('30min, 45min, 1h')
@@ -387,8 +388,8 @@ class PreferencesDialog(QDialog):
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(Preferences().visible_start_hour)
         self.visible_end.setValue(Preferences().visible_end_hour)
-        self.default_duration.setText(format_duration(timedelta(minutes=Preferences().default_event_duration_minutes)))
-        self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value))
+        self.default_duration.setText(format_duration(timedelta(minutes=Preferences().default_event_duration_minutes), elapsed=True))
+        self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value), elapsed=True)
                                                for value in Preferences().duration_presets_minutes))
         self.appearance_editor.set_preferences(Preferences())
         self.update_preview()

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import re
 
 from .models import Event
+from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
 from . import ics_fallback as fallback
 from . import ics_range_policy as range_codec
 
@@ -180,10 +181,22 @@ def _read(data, use_full=True):
     calendar = ICalendar.from_ical(data)
     if calendar.name != "VCALENDAR":
         raise ValueError("Expected a VCALENDAR document.")
+    originals = calendar.walk('VEVENT')
+    lexical = None
+    if any('DURATION' in component for component in originals):
+        # vDuration normalizes PT24H to P1D. That changes elapsed hours into
+        # nominal calendar days, so retain this property's original grammar.
+        lexical = [fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
+                   for block in _blocks(data)[1] if block[0] == 'BEGIN:VEVENT']
+        if len(lexical) != len(originals):
+            raise ValueError('Could not match event duration properties to their source components.')
     result = []
-    for original in calendar.walk("VEVENT"):
+    for index, original in enumerate(originals):
         component = {"_decoded": {}}
         for key, values in original.items():
+            if key == 'DURATION' and lexical is not None:
+                component[key] = lexical[index].get(key, [])
+                continue
             values = values if isinstance(values, list) else [values]
             for value in values:
                 raw = value.to_ical()
@@ -217,6 +230,27 @@ def _decoded(component, key, tz):
 def _key(value, tz):
     from .ics import occurrence_key
     return occurrence_key(_datetime(value, tz) if isinstance(value, datetime) else value, tz=tz)
+
+
+def _component_end(component, start, all_day, tz, *, inherited=None, duration_zone=None):
+    if 'DTEND' in component and 'DURATION' in component:
+        raise ValueError('An event must use DTEND or DURATION, not both.')
+    if 'DTEND' in component:
+        if len(component['DTEND']) != 1:
+            raise ValueError('An event must have only one DTEND.')
+        return _datetime(_decoded(component, 'DTEND', tz)[0], tz), ''
+    if 'DURATION' in component:
+        if len(component['DURATION']) != 1:
+            raise ValueError('An event must have only one DURATION.')
+        value = fallback.prop(component, 'DURATION')
+        days, seconds = parse_duration_spec(value)
+        if all_day and (seconds or not days):
+            raise ValueError('An all-day event duration must use positive whole days or weeks.')
+        cursor = start if all_day or duration_zone is None else start.astimezone(duration_zone)
+        return add_duration(cursor, value), '' if all_day else normalized_spec(value)
+    if inherited is not None:
+        return end_for(inherited, start), inherited.duration_spec if not all_day else ''
+    return start + (timedelta(days=1) if all_day else timedelta(0)), ''
 
 
 def _schedule_syntax(component):
@@ -374,14 +408,8 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         raw_start = _decoded(master_component, "DTSTART", tz)[0]
         all_day = not isinstance(raw_start, datetime)
         event_start = _datetime(raw_start, tz)
-        if "DTEND" in master_component:
-            event_end = _datetime(_decoded(master_component, "DTEND", tz)[0], tz)
-        elif "DURATION" in master_component:
-            event_end = event_start + fallback.duration(fallback.prop(master_component, "DURATION"))
-        else:
-            # RFC 5545: DATE without an end lasts one day; DATE-TIME without
-            # an end is a point, not an invented one-hour appointment.
-            event_end = event_start + (timedelta(days=1) if all_day else timedelta(0))
+        # DATE without an endpoint lasts one floating day; DATE-TIME is a point.
+        event_end, duration_spec = _component_end(master_component, event_start, all_day, tz)
         event_id = str(uuid5(NAMESPACE_URL, f"debacal:{calendar_id}:{uid}:"))
         if fallback.prop(master_component, "X-DEBACAL-CALENDAR") == calendar_id:
             event_id = fallback.prop(master_component, "X-DEBACAL-ID", event_id)
@@ -399,6 +427,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             group_id=fallback.prop(master_component, "X-DEBACAL-GROUP") or None,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
+            duration_spec=duration_spec,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz) for value in _decoded(master_component, "EXDATE", tz)),
@@ -445,22 +474,21 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             raw_override_start = _decoded(component, 'DTSTART' if 'DTSTART' in component else 'RECURRENCE-ID', tz)[0]
             override_all_day = not isinstance(raw_override_start, datetime)
             override_start = _datetime(raw_override_start, tz)
-            if "DTEND" in component:
-                override_end = _datetime(_decoded(component, "DTEND", tz)[0], tz)
-            elif "DURATION" in component:
-                override_end = override_start + fallback.duration(fallback.prop(component, "DURATION"))
-            else:
-                # A complete timed override with DTSTART but no endpoint is a
-                # point as well. A sparse exception that only changes metadata
-                # still inherits the master timing.
-                duration = (timedelta(days=1) if override_all_day else timedelta(0)) if "DTSTART" in component else event_end - event_start
-                override_end = override_start + duration
+            override_zone = override_start.tzinfo
+            override_timezone_id = (str(component.get('DTSTART', [({}, '')])[0][0].get('TZID', ''))
+                                    or master.timezone_id)
+            if 'DTSTART' not in component:
+                from .recurrence import event_zone
+                override_zone, override_timezone_id = event_zone(master), master.timezone_id
+            override_end, override_spec = _component_end(component, override_start, override_all_day, tz,
+                inherited=master if 'DTSTART' not in component else None, duration_zone=override_zone)
             override = replace(
                 master, id=occurrence_id(master.id, key), start=override_start, end=override_end,
                 title=fallback.prop(component, "SUMMARY", master.title),
                 description=fallback.prop(component, "DESCRIPTION", master.description),
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,
+                duration_spec=override_spec, timezone_id=override_timezone_id,
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
                 schedule_expression="", expression_anchor="",
@@ -538,14 +566,22 @@ def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
     authored_v2 = bool(event.schedule_expression and event.schedule_syntax == 2)
-    return bool((event.recurrence_rule or authored_v2 or event.range_policy) and not event.all_day
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec) and not event.all_day
                 and event.timezone_id not in {"", "UTC", "Etc/UTC"})
 
 
 def _known_lines(event, uid, recurrence_id=""):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
-    if not recurrence_id and _named_start(event):
+    nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id)
+    fixed_late_start = False
+    if nominal_duration and not event.recurring:
+        from .recurrence import event_zone
+        local_start = event.start.astimezone(event_zone(event))
+        fixed_late_start = bool(local_start.fold and local_start.replace(fold=0).timestamp() != local_start.timestamp())
+        if fixed_late_start:
+            nominal_duration = False  # One fixed range can use exact UTC endpoints.
+    if not recurrence_id and not fixed_late_start and _named_start(event):
         zone = ZoneInfo(event.timezone_id)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
         lines.append(f"DTSTART;TZID={event.timezone_id}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
@@ -558,6 +594,9 @@ def _known_lines(event, uid, recurrence_id=""):
                 lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
             else:
                 lines.append(f"DTEND;TZID={event.timezone_id}:{local_end:%Y%m%dT%H%M%S}")
+    if nominal_duration:
+        lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
+        lines.append('DURATION:' + event.duration_spec)
     lines.insert(0, "UID:" + fallback.escaped(uid))
     if event.schedule_expression and not recurrence_id:
         lines.append("X-DEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))

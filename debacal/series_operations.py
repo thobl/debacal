@@ -15,6 +15,7 @@ from uuid import uuid4
 from dateutil.rrule import rrulestr
 
 from .models import Event
+from .event_duration import end_for
 from .recurrence import (
     RecurrenceError, ScheduleReplacement, canonical_rule, event_zone,
     key_datetime, occurrence_id, recurrence_key, recurrence_set,
@@ -50,12 +51,7 @@ def _rule_iterator(master):
 
 
 def _end_at(master, start):
-    zone = event_zone(master)
-    duration = master.end.astimezone(zone).replace(tzinfo=None) - master.start.astimezone(zone).replace(tzinfo=None)
-    if duration > timedelta(0):
-        return start + duration
-    elapsed = master.end.astimezone(timezone.utc) - master.start.astimezone(timezone.utc)
-    return (start.astimezone(timezone.utc) + elapsed).astimezone(zone)
+    return end_for(master, start)
 
 
 def _has_visible_occurrence(master):

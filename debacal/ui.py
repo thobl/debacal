@@ -38,6 +38,7 @@ from .credentials import CredentialStore
 from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspace_bindings,
                         normalize_bindings, shortcut_label, shortcut_matches, shortcut_sequences)
 from .event_navigation import adjacent_event_day, event_day
+from .event_duration import add_elapsed
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': ['E', 'Return'], 'delete_event': 'Del',
@@ -551,7 +552,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if all_day:
             end = end or start + timedelta(days=1)
         elif end is None:
-            end = start + timedelta(minutes=self.preferences.default_event_duration_minutes)
+            end = add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes))
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
                              default_calendar_id=default.id if default else None, scope_bindings=self.bindings)

@@ -44,10 +44,21 @@ def semantic(event: Event | None) -> str:
             values.pop(key, None)
         values["start"] = item.start.date().isoformat() if item.all_day else item.start.astimezone(timezone.utc).isoformat()
         values["end"] = item.end.date().isoformat() if item.all_day else item.end.astimezone(timezone.utc).isoformat()
-        if item.all_day or (not item.recurrence_rule and not (item.schedule_expression and item.schedule_syntax == 2)):
+        nominal = bool(item.duration_spec and not item.series_id)
+        if nominal and not item.recurring:
+            from .recurrence import event_zone
+            start = item.start.astimezone(event_zone(item))
+            nominal = not (start.fold and start.replace(fold=0).timestamp() != start.timestamp())
+        if item.all_day or (not nominal and (not item.recurring or
+                not item.recurrence_rule and not (item.schedule_expression and item.schedule_syntax == 2))):
             values.pop("timezone_id", None)
         if not item.schedule_expression:
             values.pop("schedule_syntax", None)
+        if not nominal:
+            # Detached/fixed occurrences export exact UTC endpoints. Their
+            # optional nominal intent is unrepresentable there. Ordinary
+            # standalone DURATION retains intent for later copies and moves.
+            values.pop('duration_spec', None)
         values["recurrence_rule"] = normalized_rule(canonical_rule(item.recurrence_rule, item), item)
         values["recurrence_dates"] = sorted(item.recurrence_dates)
         values["excluded_dates"] = sorted(item.excluded_dates)
