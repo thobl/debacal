@@ -213,7 +213,7 @@ def test_finite_standard_preview_conversion_preserves_base_dates_exclusions_and_
     store.apply('Create', [source])
     before = utc(value.start for value in expand_series(source, *BOUNDS))
     dialog = create(source)
-    assert dialog.repeat.currentData() == 'WEEKLY'
+    assert dialog.repeat.currentData() == 'RDATE'
     extra = START + timedelta(days=3)
     click(dialog, extra.date())
     assert dialog.repeat.currentData() == 'RDATE' and dialog.schedule_replacement

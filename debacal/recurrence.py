@@ -355,6 +355,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
 
     zone = event_zone(master)
     wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+    shared_changes = {name: getattr(edited, name) for name in ('title', 'description', 'location')
+                      if getattr(edited, name) != getattr(reference, name)}
 
     def same_duration(first, second):
         first_wall = wall(first.end) - wall(first.start)
@@ -367,7 +369,9 @@ def updated_series(master: Event, reference: Event, edited: Event,
         updated = replace(edited, id=master.id, calendar_id=master.calendar_id,
                           ical_uid=master.ical_uid, raw_ics=master.raw_ics,
                           series_id="", recurrence_id="", read_only=master.read_only,
-                          group_id=master.group_id, recurrence_overrides={})
+                          group_id=master.group_id, recurrence_overrides={},
+                          **{name: shared_changes.get(name, getattr(master, name))
+                             for name in ('title', 'description', 'location')})
         overrides = {}
         if updated.recurring:
             rules = recurrence_set(updated)
@@ -396,8 +400,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 checked_wall(override_end)
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                                          start=override_start, end=override_end,
-                                         timezone_id=updated.timezone_id, title=updated.title,
-                                         description=updated.description, location=updated.location,
+                                         timezone_id=updated.timezone_id, **shared_changes,
                                          all_day=updated.all_day, candidate=updated.candidate,
                                          schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
             # New or changed detached ranges are authoritative. Retain their
@@ -417,7 +420,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                     calendar_id=master.calendar_id, ical_uid=master.ical_uid,
                     series_id=master.id, recurrence_id=key, timezone_id=updated.timezone_id,
                     read_only=master.read_only, group_id=master.group_id,
-                    title=updated.title, description=updated.description, location=updated.location,
+                    **shared_changes,
                     candidate=updated.candidate,
                     recurrence_rule="", recurrence_dates=(), excluded_dates=(),
                     recurrence_overrides={}, raw_ics="", all_day=updated.all_day,
@@ -452,6 +455,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
     if rules_equivalent(rule, master.recurrence_rule, master):
         if shift and master.schedule_syntax == 2 and edited.schedule_expression == master.schedule_expression:
             from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
+            from .schedule_authoring import expression_matches
             try:
                 tail = sequence_tail(master.schedule_expression)
             except PatternError:
@@ -461,13 +465,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
                                 else master.start.astimezone(zone))
                 author_moved = (datetime.combine(start.date(), time.min, zone) if edited.all_day
                                 else start.astimezone(zone))
-                try:
-                    original = compile_sequence(master.schedule_expression, author_start, all_day=master.all_day)
-                    stale_authoring = (not rules_equivalent(original.recurrence_rule, master.recurrence_rule, master) or
-                        not set(original.recurrence_dates) <= set(master.recurrence_dates) or
-                        not set(original.excluded_dates) <= set(master.excluded_dates))
-                except PatternError:
-                    stale_authoring = True
+                stale_authoring = not expression_matches(master, master.schedule_expression,
+                                                          authoring_zone=zone)
                 if not stale_authoring:
                     shifted_authoring = shift_unbounded_expression(master.schedule_expression,
                         author_start, author_moved)
@@ -490,13 +489,12 @@ def updated_series(master: Event, reference: Event, edited: Event,
         overrides[moved_key] = replace(value, id=occurrence_id(master.id, moved_key),
                                        start=override_start, end=override_end,
                                        recurrence_id=moved_key, timezone_id=master.timezone_id,
-                                       title=edited.title, description=edited.description,
-                                       location=edited.location, all_day=edited.all_day,
+                                       **shared_changes, all_day=edited.all_day,
                                        candidate=edited.candidate,
                                        schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
     expression, anchor = edited.schedule_expression, edited.expression_anchor
     from .ics_resources import rekey_recurrence_templates
-    updated = replace(master, title=edited.title, description=edited.description, location=edited.location,
+    updated = replace(master, **shared_changes,
                       start=start, end=end, all_day=edited.all_day, candidate=edited.candidate,
                       recurrence_rule=rule, recurrence_dates=dates,
                       excluded_dates=exclusions, recurrence_overrides=overrides,
@@ -504,7 +502,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
                       schedule_syntax=edited.schedule_syntax,
                       raw_ics=rekey_recurrence_templates(master, shift_key))
     if expression:
-        from .patterns import PatternError, compile_sequence, sequence_tail, shift_schedule_expression, shift_unbounded_expression
+        from .patterns import PatternError, sequence_tail, shift_schedule_expression, shift_unbounded_expression
+        from .schedule_authoring import expression_matches
         try:
             tail = sequence_tail(expression) if edited.schedule_syntax == 2 else None
         except PatternError:
@@ -520,14 +519,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
             elif shift:
                 author_start = (datetime.combine(updated.start.date(), time.min, zone) if updated.all_day
                                 else updated.start.astimezone(zone))
-                try:
-                    compiled = compile_sequence(expression, author_start, all_day=updated.all_day)
-                    already_projected = (expression != master.schedule_expression and
-                        rules_equivalent(compiled.recurrence_rule, updated.recurrence_rule, updated) and
-                        set(compiled.recurrence_dates) <= set(updated.recurrence_dates) and
-                        set(compiled.excluded_dates) <= set(updated.excluded_dates))
-                except PatternError:
-                    already_projected = False
+                already_projected = expression_matches(updated, expression, authoring_zone=zone)
                 if shifted_authoring is not None:
                     expression, anchor = shifted_authoring
                 elif not already_projected:

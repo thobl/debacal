@@ -280,6 +280,12 @@ by calendars in the same account and remain in the secure keyring.
   The time strip labels both endpoints and brackets the duration. During a drag,
   the original range and duration remain visible beside the live range. Its
   full-day toggle uses the same configurable shortcut as the main calendar.
+  Hover over the left timeline to preview a new start/end time, then click to
+  choose it. The event box on the right can be moved or resized independently.
+  Mouse and arrow adjustments use five-minute steps; Alt+arrow uses one minute
+  and Shift+arrow one hour. Dragging near an edge pans the visible hours within
+  the day. Both endpoint clocks stay on the left, with short leader lines when
+  their labels would otherwise overlap.
   Duration edits and preset buttons adjust End. All-day fields show the first and
   last included dates. Repeat controls show synchronized count and final-date
   fields; choose Indefinite for an ongoing rule.
@@ -416,7 +422,23 @@ day/month dates, relative steps, clock changes and repeated groups, omitting a
 year whenever the shorter form selects exactly the same date. Regular gaps and
 repeated blocks use multipliers when that makes the expression shorter. Calendar
 clicks remain available after simplification. Hand-entered text keeps its
-formatting until a calendar click changes the selection.
+formatting until a calendar click changes the selection. Live validation keeps
+the text cursor, selection, and undo history intact; invalid pending text cannot
+save an older schedule in its place.
+
+Graphical edits to an ongoing daily, weekly, monthly, or yearly series generate
+a finite prefix followed by `every(...)`, including its added and removed dates.
+For example, skipping the second and third occurrences of an endless weekly
+series produces `+3 every(1w)`. The original event remains, followed by another
+three weeks later and weekly events thereafter. Per-occurrence ranges and
+content remain standard detached exceptions and survive text edits when their
+nominal dates remain in the sequence.
+
+Text conversions share one checked authoring model across the editor, series
+moves, and following-event splits. A generated expression must reproduce the
+complete nominal recurrence, including additions and exclusions. Unsupported
+rules or oversized prefixes retain their canonical calendar data; conversion
+fails without partially changing the draft or substituting another frequency.
 
 Saving creates one undoable operation. Regular schedules use standard RRULE;
 uniform hour/minute sequences use finite `HOURLY`/`MINUTELY` rules with a count.

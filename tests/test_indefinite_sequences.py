@@ -17,6 +17,7 @@ from debacal.recurrence import (
     RecurrenceError, expand_event, occurrence, recurrence_key, rules_equivalent, updated_series,
 )
 from debacal.series_operations import partition_series
+from debacal.schedule_authoring import expression_matches
 from debacal.store import Store
 
 
@@ -172,8 +173,9 @@ def test_switching_an_indefinite_regular_rule_to_custom_preserves_its_exceptions
     with patch('debacal.event_schedule.base_schedule_starts', side_effect=AssertionError('finite expansion')):
         draft.use_sequence(source)
         fields = draft.fields(START)
-        assert draft.validation_starts(START) == [START]
-    assert fields['schedule_expression'] == 'every(1w)'
+        assert len(draft.validation_starts(START)) > 1
+    assert fields['schedule_expression'] != 'every(1w)'
+    assert expression_matches(source, fields['schedule_expression'])
     assert fields['recurrence_dates'] == source.recurrence_dates
     assert fields['excluded_dates'] == source.excluded_dates
     assert fields['recurrence_overrides'] == source.recurrence_overrides
@@ -291,13 +293,15 @@ def test_graphical_exceptions_to_an_infinite_tail_survive_source_reopen_and_sync
     draft = ScheduleDraft.from_event(source)
     changed = draft.toggle_date(source, (START + timedelta(weeks=1)).date())
     changed = draft.toggle_date(changed, (START + timedelta(days=2)).date())
-    assert draft.expression == source.schedule_expression
+    assert draft.expression != source.schedule_expression
+    assert expression_matches(changed, draft.expression)
     assert recurrence_key(START + timedelta(weeks=1)) in changed.excluded_dates
     assert recurrence_key(START + timedelta(days=2)) in changed.recurrence_dates
     loaded = assert_roundtrip(changed)
     reopened = ScheduleDraft.from_event(loaded)
     fields = reopened.fields(loaded.start, loaded.end)
-    assert fields['schedule_expression'] == source.schedule_expression
+    assert fields['schedule_expression'] == changed.schedule_expression
+    assert expression_matches(loaded, fields['schedule_expression'])
     assert fields['excluded_dates'] == changed.excluded_dates
     assert fields['recurrence_dates'] == changed.recurrence_dates
 
@@ -310,7 +314,7 @@ def test_graphical_exceptions_to_an_infinite_tail_survive_source_reopen_and_sync
 def test_stale_remote_tail_metadata_never_overwrites_canonical_rules_or_exceptions(changes):
     source = authored('+1d +3d every(2d)', **changes)
     draft = ScheduleDraft.from_event(source)
-    assert not draft.expression
+    assert draft.expression and expression_matches(source, draft.expression)
     # Merely opening/editing a title must retain imported fields exactly.
     fields = draft.fields(source.start, source.end)
     assert fields['recurrence_rule'] == source.recurrence_rule
@@ -328,7 +332,7 @@ def test_stale_remote_tail_metadata_never_overwrites_canonical_rules_or_exceptio
 def test_malformed_or_unrepresentable_remote_tail_annotations_do_not_block_standard_moves(text):
     source = authored('every(1w)', schedule_expression=text)
     draft = ScheduleDraft.from_event(source)
-    assert not draft.expression
+    assert draft.expression and expression_matches(source, draft.expression)
     selected = visible(source)[1]
     delta = timedelta(days=1)
     renamed = updated_series(source, selected, moved_selection(source, selected, timedelta(0)))

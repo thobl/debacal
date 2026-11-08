@@ -207,7 +207,8 @@ def test_unbounded_calendar_edit_keeps_rule_and_uses_standard_exclusions_and_rda
     moved = replace(added, start=added.start + timedelta(days=1), end=added.end + timedelta(days=1),
                     **draft.fields(added.start + timedelta(days=1)))
     assert recurrence_key(added_start + timedelta(days=1)) in moved.recurrence_dates
-    assert 'BYDAY=TH' in moved.recurrence_rule
+    regular_starts = [item.start for item in visible(moved) if item.start != added_start + timedelta(days=1)]
+    assert all(value.weekday() == 3 for value in regular_starts)
 
 
 def test_graph_edits_keep_primary_exclusion_and_detached_exception_identity():

@@ -77,39 +77,20 @@ def _refresh_authoring(part, source):
     if not source.schedule_expression:
         return part
     try:
-        from .patterns import PatternError, compile_sequence, expression_for_regular, sequence_tail, simplify_sequence
-        if source.schedule_syntax == 2 and sequence_tail(source.schedule_expression):
-            parts = _rule_parts(part) if part.recurrence_rule else {}
-            if parts and not {'COUNT', 'UNTIL'} & parts.keys():
-                expression = expression_for_regular(parts.get('FREQ'), int(parts.get('INTERVAL', '1')))
-                anchor = (datetime.combine(part.start.date(), time.min, event_zone(part)) if part.all_day
-                          else part.start.astimezone(event_zone(part)))
-                compiled = compile_sequence(expression, anchor, all_day=part.all_day)
-                # The new DTSTART is an actual tail occurrence. Constraints
-                # formerly needed to distinguish the prototype now equal the
-                # new default clock/date and can be removed without changing
-                # any occurrence. This also lets future moves follow DTSTART.
-                equivalent = dict(parts)
-                defaults = {'BYHOUR': anchor.hour, 'BYMINUTE': anchor.minute, 'BYSECOND': anchor.second}
-                if parts.get('FREQ') in ('MONTHLY', 'YEARLY'):
-                    defaults['BYMONTHDAY'] = anchor.day
-                if parts.get('FREQ') == 'YEARLY':
-                    defaults['BYMONTH'] = anchor.month
-                for name, value in defaults.items():
-                    if equivalent.get(name) == str(value):
-                        equivalent.pop(name)
-                equivalent_rule = _rule_text(equivalent)
-                if rules_equivalent(compiled.recurrence_rule, equivalent_rule, part):
-                    return replace(part, recurrence_rule=equivalent_rule, schedule_expression=expression,
-                                   expression_anchor=anchor.date().isoformat(), schedule_syntax=2)
-        starts = base_schedule_starts(part, limit=500)
-        expression = simplify_sequence(starts)
+        from .patterns import PatternError
+        from .schedule_authoring import authoring_anchor, reconstruct_authoring, simplified_rule
+        # Use the same certified conversion as the editor. In particular, a
+        # split tail's expression must include all retained additions/removals.
+        normalized = replace(part, recurrence_rule=simplified_rule(part))
+        authoring = reconstruct_authoring(normalized)
+        anchor = authoring_anchor(normalized)
+        expression = authoring.expression
         if not expression:
-            expression = f'{part.start.day}.{part.start.month}.{part.start.year:04d}'
+            expression = f'{anchor.day}.{anchor.month}.{anchor.year:04d}'
     except (RecurrenceError, PatternError, ValueError, OverflowError):
         return part  # Standard rules/dates remain authoritative and intact.
-    return replace(part, schedule_expression=expression,
-                   expression_anchor=part.start.astimezone(event_zone(part)).date().isoformat(), schedule_syntax=2)
+    return replace(normalized, schedule_expression=expression,
+                   expression_anchor=anchor.date().isoformat(), schedule_syntax=2)
 
 
 def partition_series(master: Event, reference: Event) -> tuple[Event | None, Event | None]:

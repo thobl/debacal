@@ -664,7 +664,10 @@ class EventDialog(FormDialog):
             self.interval.setValue(draft.interval)
             self.repeat_count.setValue(draft.count or 10)
             self.no_end.setChecked(draft.ending == 'never')
-            self.pattern.setText(draft.expression)
+            # Resetting an unchanged QLineEdit also moves its cursor and clears
+            # its undo history. Live validation must leave the user's edit alone.
+            if self.pattern.text() != draft.expression:
+                self.pattern.setText(draft.expression)
             self.custom_input.setCurrentIndex(1 if draft.kind == 'advanced' else 0)
             if draft.until:
                 self.repeat_until.set_value(datetime.combine(draft.until, time.min, self._last_start.tzinfo))
@@ -857,37 +860,41 @@ class EventDialog(FormDialog):
             self._validation_field = self.end
             raise ValueError('The end must be after the start.')
         source = self.schedule_source()
+        draft = self._draft
         single = self.has_group and self.scope.currentData() == 'single'
         if not single and self._schedule_error and self.schedule_mode.currentData() != 'single':
             message, self._validation_field = self._schedule_error
             raise ValueError(message)
-        if not single and self.schedule_mode.currentData() != 'single' and self._draft.kind != 'advanced':
-            if self.pattern.text() != self._draft.expression:
+        if not single and self.schedule_mode.currentData() != 'single' and draft.kind != 'advanced':
+            if self.pattern.text() != draft.expression:
                 self._validation_field = self.pattern
-                self._draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(), detect=not self.pattern.hasFocus())
+                # Previewing or validating pending text is a pure projection.
+                # Only the explicit editor handlers commit a new draft.
+                draft = deepcopy(draft)
+                draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(), detect=not self.pattern.hasFocus())
         if single:
             fields = ScheduleDraft.from_event().fields(start, all_day=self.all_day.isChecked())
         else:
-            self._validation_field = self.repeat if self._draft.kind == 'advanced' else self.pattern
-            fields = self._draft.fields(start, end, all_day=self.all_day.isChecked())
+            self._validation_field = self.repeat if draft.kind == 'advanced' else self.pattern
+            fields = draft.fields(start, end, all_day=self.all_day.isChecked())
         self.schedule_replacement = bool(self.series and self.scope.currentData() != 'single' and
-            (self._draft.configuration_changed or (source and source.recurring and self._draft.kind == 'once')))
+            (draft.configuration_changed or (source and source.recurring and draft.kind == 'once')))
         if self.schedule_replacement and self._reset_schedule:
             self.schedule_replacement = ScheduleReplacement.RESET
         stored_start, stored_end = ((start, end) if single else
-                                   self._draft.primary_range(start, end, all_day=self.all_day.isChecked()))
+                                   draft.primary_range(start, end, all_day=self.all_day.isChecked()))
         values = dict(id=self.original.id if self.original else self._new_id,
                       calendar_id=self.calendar.currentData() or 'local', title=self.title.text().strip() or 'Untitled event',
                       start=stored_start, end=stored_end, location=self.location.text(), description=self.description.toPlainText(),
                       all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives', **fields)
-        if self._draft.kind == 'once' or single:
+        if draft.kind == 'once' or single:
             values['schedule_syntax'] = 1
         event = replace(self.original, **values) if self.original else Event(**values)
         if event.recurring:
             recurrence_set(event)
-            if not single and (self._draft.kind == 'custom' or self._draft.expression):
+            if not single and (draft.kind == 'custom' or draft.expression):
                 duration = range_duration(event.start, event.end)
-                for value in self._draft.validation_starts(start, all_day=self.all_day.isChecked()):
+                for value in draft.validation_starts(start, all_day=self.all_day.isChecked()):
                     validate_datetime(value)
                     validate_datetime(value + duration)
         return [event]
