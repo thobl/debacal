@@ -62,6 +62,7 @@ class RangeFields(QWidget):
         self._arranging = True
         try:
             scale = self.preferences.font_scale / 100
+            widths = []
             for field in self.fields:
                 field.ensurePolished()
                 caption = self.preferences.format_date(date(2026, 11, 28))
@@ -69,10 +70,14 @@ class RangeFields(QWidget):
                     caption += ' ' + self.preferences.format_time(time(23, 55))
                 width = (field.lineEdit().fontMetrics().horizontalAdvance(caption)
                          + round(18 * scale) + field.button.width() + 2)
-                field.setFixedWidth(max(round(164 * scale), min(round(210 * scale), width)))
+                width = max(round(164 * scale), min(round(210 * scale), width))
+                widths.append(width)
+                field.setMinimumWidth(width)
+                field.setMaximumWidth(16777215)
+                field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             for label in self.labels:
                 label.ensurePolished()
-            needed = sum(field.width() for field in self.fields)
+            needed = sum(widths)
             needed += sum(label.fontMetrics().horizontalAdvance(label.text()) for label in self.labels) + 24
             self._wide = self.width() >= needed
             for field, label in zip(self.fields, self.labels):
@@ -90,7 +95,9 @@ class RangeFields(QWidget):
                     label.setFixedWidth(label.fontMetrics().horizontalAdvance('Duration'))
                     self.row.addWidget(label, index, 0)
                     self.row.addWidget(field, index, 1)
-            self.row.setColumnStretch(4 if self._wide else 2, 1)
+            self.row.setColumnStretch(1, 1)
+            if self._wide:
+                self.row.setColumnStretch(3, 1)
         finally:
             self._arranging = False
 
@@ -101,7 +108,7 @@ class RangeFields(QWidget):
     def minimumSizeHint(self):
         # A wide arrangement must not force its parent to stay wide before a
         # resize can reflow the fields into their two-row arrangement.
-        width = max(field.width() for field in self.fields)
+        width = max(field.minimumWidth() for field in self.fields)
         width += max(label.fontMetrics().horizontalAdvance('Duration') for label in self.labels) + 8
         return QSize(width, super().minimumSizeHint().height())
 
@@ -393,10 +400,10 @@ class EventDialog(FormDialog):
         self.notes_section, notes = self._section(sections)
         notes.addWidget(self._heading('Notes'))
         self.description = QTextEdit()
-        self.description.setFixedHeight(round(96 * scale))
-        self.description.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        notes.addWidget(self.description)
-        sections.addStretch(1)
+        self.description.setMinimumHeight(round(96 * scale))
+        self.description.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        notes.addWidget(self.description, 1)
+        sections.setStretch(sections.indexOf(self.notes_section), 1)
         outer.addWidget(self.sidebar)
         self.preview_column = QWidget()
         self.preview_column.setObjectName('eventEditorPreview')

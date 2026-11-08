@@ -299,8 +299,8 @@ by calendars in the same account and remain in the secure keyring.
   Ctrl+Enter saves from anywhere. In calendar-source setup, Enter discovers a new
   CalDAV account before saving its selected calendars. Start and End accept typed
   dates and times or open a shared month-and-time-range picker from the button
-  inside each field. The editor keeps Notes compact and Save/Cancel beneath the
-  wider preview on the right. Moving Start
+  inside each field. Notes uses the remaining space in the shorter dialog, with
+  Save/Cancel beneath the wider preview on the right. Moving Start
   preserves duration; setting an earlier End moves Start back by that duration.
   The time strip labels both endpoints and brackets the duration. During a drag,
   an outline retains the original range beside the live time and duration. Its

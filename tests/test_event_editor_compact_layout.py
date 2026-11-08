@@ -75,6 +75,9 @@ def test_endpoint_and_duration_labels_stay_inline_without_horizontal_overflow(ed
             assert abs(label.geometry().center().y() - field.geometry().center().y()) <= 1
             assert label.geometry().right() < field.geometry().left()
             assert field.geometry().right() < dialog.range_fields.width()
+        assert abs(dialog.end.geometry().right() + 1 - dialog.range_fields.width()) <= 1
+        if not dialog.range_fields._wide:
+            assert abs(dialog.start.geometry().right() + 1 - dialog.range_fields.width()) <= 1
         duration = dialog.duration_fields
         assert abs(duration.label.geometry().center().y() - dialog.duration.geometry().center().y()) <= 1
         assert duration.label.geometry().right() < dialog.duration.geometry().left()
@@ -118,15 +121,18 @@ def test_embedded_picker_commits_pending_keyboard_date_and_keeps_duration(editor
 
 
 @pytest.mark.parametrize('scale', [80, 100, 140])
-def test_default_editor_has_compact_notes_and_actions_below_the_right_preview(editor_factory, scale):
+def test_default_editor_stays_short_and_notes_fill_space_above_right_preview_actions(editor_factory, scale):
     with patch.object(QScreen, 'availableGeometry', return_value=QRect(0, 0, 1920, 1080)):
         dialog = editor_factory(scale, default_size=True)
     assert dialog.preview.width() >= dialog.preview.height() * .8
-    assert dialog.description.height() <= round(100 * scale / 100)
+    assert dialog.height() <= round(700 * scale / 100)
+    assert dialog.description.height() >= round(96 * scale / 100)
     assert dialog.preview_column.isAncestorOf(dialog.buttons)
     assert not dialog.sidebar.isAncestorOf(dialog.buttons)
     assert dialog.save_button.mapTo(dialog, QPoint()).x() > dialog.sidebar.width()
     height = dialog.description.height()
     dialog.resize(dialog.width(), dialog.height() + 180)
     QApplication.processEvents()
-    assert dialog.description.height() == height
+    assert dialog.description.height() > height
+    body = dialog.controls_scroll.widget()
+    assert abs(dialog.notes_section.geometry().bottom() + 1 - body.height()) <= 1
