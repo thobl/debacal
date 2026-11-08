@@ -1,0 +1,9 @@
+include LICENSE README.md pyproject.toml
+recursive-include packaging/linux *.desktop *.svg
+recursive-include tests *.py
+prune packaging/arch
+prune design
+prune docs
+prune .github
+prune scripts
+global-exclude __pycache__ *.py[cod] *.sqlite3* *.db .env .env.*

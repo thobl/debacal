@@ -25,7 +25,7 @@ creation, and provides **Open my calendars** to switch into a real workspace.
 ## When synchronization runs
 
 In a connected workspace, automatic syncing defaults to a first attempt about
-1.5 seconds after startup and then every minute while the app remains open.
+1.5 seconds after startup and then every five minutes while the app remains open.
 **Preferences → Automatic syncing** pauses or resumes this behavior;
 **Sync every** accepts 1–1,440 minutes. The setting survives restart. Pausing
 automatic syncing also suppresses the startup attempt. **Sync** / `Ctrl+R`
@@ -129,7 +129,7 @@ at that UID rather than aborting the calendar. Structural corruption is reported
 rather than being mistaken for an empty calendar. A fixed resource is retried on
 the next sync and removed from quarantine when it becomes valid.
 
-The supplied `large-calendar.ics` is used as a local regression fixture when
+The optional `large-calendar.ics` is used as a local regression fixture when
 present. This private calendar file is excluded from version control. It contains
 1,638 event components and 1,442 UID masters. The previously
 failing UNTIL rule now parses, and a candidate upload is tested beside the entire

@@ -1,0 +1,117 @@
+name: Checks and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.14']
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install desktop libraries and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libxcb-cursor0 desktop-file-utils
+      - name: Install app and tests
+        run: python -m pip install -e '.[dev]'
+      - run: desktop-file-validate packaging/linux/debacal.desktop
+      - run: python -m pytest -q
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Install reproducible release toolchain
+        run: python -m pip install build==1.6.1 setuptools==84.2.1 wheel
+      - name: Build and verify release assets
+        run: python scripts/build_release.py --tag "$RELEASE_TAG"
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${RELEASE_TAG}.md"
+          test -f "$notes"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "debacal ${RELEASE_TAG#v}" --notes-file "$notes"
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file "$notes"
+  receipt:
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+      CHECK_RESULT: ${{ needs.test.result }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Record publication receipt for SSH-only maintainers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --json url,tagName,publishedAt,isDraft,assets > /tmp/debacal-release-receipt.json; then
+            printf '{}' > /tmp/debacal-release-receipt.json
+          fi
+          : > /tmp/debacal-failed-checks.log
+          if [ "$RELEASE_RESULT" != success ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "failure") | .id' > /tmp/debacal-failed-jobs
+            while read -r job; do
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" >> /tmp/debacal-failed-checks.log || true
+            done < /tmp/debacal-failed-jobs
+          fi
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('/tmp/debacal-release-receipt.json')
+          receipt = json.loads(path.read_text())
+          receipt.update(result=os.environ['RELEASE_RESULT'], checks=os.environ['CHECK_RESULT'],
+              workflow_url=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          logs = Path('/tmp/debacal-failed-checks.log').read_text(errors='replace')
+          if logs:
+              receipt['failed_checks'] = logs[-100000:]
+          path.write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git ls-remote --exit-code origin refs/notes/debacal-releases >/dev/null 2>&1; then
+            git fetch origin refs/notes/debacal-releases:refs/notes/debacal-releases
+          fi
+          git notes --ref=debacal-releases add -f -F /tmp/debacal-release-receipt.json HEAD
+          git push origin refs/notes/debacal-releases

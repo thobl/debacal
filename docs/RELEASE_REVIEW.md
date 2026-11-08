@@ -161,7 +161,7 @@ X11 checks use an isolated display. Packaging checks build the wheel without
 network dependencies, install into a fresh temporary target, and verify its CLI
 and an offscreen demo launch/screenshot from outside the checkout.
 
-Final full-suite result: **2,985 tests and 169 subtests passed**. The final run
+Full-suite result after release preparation: **2,990 tests and 169 subtests passed**. The run
 uses disposable profiles and offscreen rendering, with sandbox escalation only
 for the local-socket integration tests. Python compilation and Git whitespace
 checks also passed.
@@ -190,5 +190,33 @@ Wayland or every window manager's behavior. OAuth, unsupported advanced calendar
 features, and additional providers remain outside the verified scope. A wholly
 skipped civil date (such as 30 December 2011 in Pacific/Apia) is not supported as
 a standalone all-day range; ordinary midnight clock gaps are covered. A Linux
-desktop package/application integration and a project license also remain to be
-chosen before distribution; the wheel check alone does not provide those.
+desktop launcher, Arch build recipe, release wheel/source packages, and 0BSD
+license were added during release preparation after this review. See the
+[installation guide](INSTALL.md) for current packaging.
+
+## Publication preparation
+
+The README is now a short introduction with synthetic screenshots; the detailed
+reference lives in the [user guide](USER_GUIDE.md). The project uses 0BSD.
+
+The Arch recipe was built with makepkg without installing it system-wide.
+Its real check phase ran against the extracted release archive: **2,942 tests
+and 169 subtests passed; 5 maintainer-tool tests were skipped** because those
+tools are intentionally outside the source archive. The recipe's documented
+local-IPC exclusions applied; the complete workspace suite covers those tests.
+Package contents, Python launcher, desktop entry, icon and license were checked,
+and the packaged application launched with a disposable demo profile.
+
+The release source, wheel and Arch recipe bundle reproduced byte-for-byte in
+separate staging trees with the documented toolchain. The wheel also installed
+and launched outside the checkout. Source archives use an explicit input list,
+normalized timestamps/ownership, and omit local data and development galleries.
+
+Before the initial GitHub upload, all reachable history was audited. Private
+author/committer metadata was replaced with a public GitHub no-reply identity;
+personal export-filename references were generalized. The bulk-calendar test
+now generates its own synthetic data. No calendar exports, profiles, databases,
+credentials, personal notes, or private server/account details are tracked.
+Historical image metadata and known-identifying-text checks were reviewed
+alongside their synthetic fixture generators. This is an audit of known
+identifiers and content, not a mathematical proof of the absence of all PII.

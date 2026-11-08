@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Debacal calendar</title>
+  <rect x="12" y="24" width="104" height="92" rx="16" fill="#f7f8f4" stroke="#3d5a49" stroke-width="4"/>
+  <path d="M14 54V41a15 15 0 0 1 15-15h70a15 15 0 0 1 15 15v13z" fill="#587c67"/>
+  <rect x="36" y="12" width="12" height="28" rx="6" fill="#3d5a49"/>
+  <rect x="80" y="12" width="12" height="28" rx="6" fill="#3d5a49"/>
+  <rect x="28" y="69" width="20" height="14" rx="3" fill="#587c67"/>
+  <rect x="55" y="69" width="20" height="14" rx="3" fill="#697ab1"/>
+  <rect x="82" y="69" width="18" height="14" rx="3" fill="#d5ad32"/>
+  <path d="M29 98h32m15 0h23" fill="none" stroke="#a0b29f" stroke-width="8" stroke-linecap="round"/>
+</svg>

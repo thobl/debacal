@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Debacal
+GenericName=Calendar
+GenericName[de]=Kalender
+Comment=Manage calendars, event series, and alternative time slots
+Comment[de]=Kalender, Terminserien und alternative Termine verwalten
+Exec=debacal -- %F
+TryExec=debacal
+Icon=debacal
+Terminal=false
+Categories=Office;Calendar;
+Keywords=Calendar;CalDAV;Nextcloud;Events;Schedule;
+Keywords[de]=Kalender;CalDAV;Nextcloud;Termine;Terminplan;
+MimeType=text/calendar;
+StartupNotify=true
+StartupWMClass=debacal

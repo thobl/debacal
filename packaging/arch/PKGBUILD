@@ -1,0 +1,56 @@
+# Maintainer: thobl (https://github.com/thobl)
+pkgname=debacal
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Local-first desktop calendar with CalDAV sync and flexible event series'
+arch=('any')
+url='https://github.com/thobl/debacal'
+license=('0BSD')
+depends=(
+  'python>=3.11'
+  'pyside6>=6.7' 'pyside6<7'
+  'python-icalendar>=6' 'python-icalendar<8'
+  'python-caldav>=2' 'python-caldav<4'
+  'vdirsyncer>=0.21' 'vdirsyncer<0.22'
+  'python-dateutil>=2.9' 'python-dateutil<3'
+  'python-keyring>=25' 'python-keyring<26'
+  'desktop-file-utils'
+  'hicolor-icon-theme'
+)
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+checkdepends=('python-pytest>=9')
+optdepends=(
+  'gnome-keyring: secure password storage with Secret Service'
+  'kwallet: secure password storage in Plasma'
+  'python-dbus: KWallet keyring backend support'
+)
+source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
+# Filled from the final release source archive; this recipe is excluded from it.
+sha256sums=('5d2369fddf0b8185274d6e636acfe562281f9301f89d3e2157c105b8a081cdcd')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  desktop-file-validate packaging/linux/debacal.desktop
+  export QT_QPA_PLATFORM=offscreen
+  export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+  export XDG_DATA_HOME="${srcdir}/check-data"
+  export XDG_CONFIG_HOME="${srcdir}/check-config"
+  export XDG_CACHE_HOME="${srcdir}/check-cache"
+  local excluded=()
+  if [[ ${DEBACAL_FULL_CHECK:-0} != 1 ]]; then
+    # Build chroots may deny local sockets. Full IPC coverage runs in CI.
+    excluded=(--ignore=tests/test_single_instance.py --ignore=tests/test_launch.py --ignore=tests/test_stdin.py)
+  fi
+  python -m pytest -q "${excluded[@]}"
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  python -m installer --destdir="${pkgdir}" dist/*.whl
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

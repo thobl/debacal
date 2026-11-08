@@ -768,13 +768,17 @@ def test_unclosed_remote_component_is_never_inferred_deleted_and_other_uid_sends
     assert parse_ics(cli.remote["candidate"], "remote")[0].candidate
 
 
-def test_supplied_calendar_import_query_and_candidate_bridge(tmp_path):
-    import pytest
+def test_large_calendar_import_query_and_candidate_bridge(tmp_path):
     from debacal.ics import parse_ics_report
-    reproduction = Path(__file__).resolve().parents[1] / "large-calendar.ics"
-    if not reproduction.exists():
-        pytest.skip("The user's private reproduction calendar is not included")
-    report = parse_ics_report(reproduction.read_bytes(), "remote")
+    # A self-contained bulk import must keep healthy resources queryable and
+    # allow an unrelated queued UID to upload. No local calendar export is used.
+    examples = []
+    for index in range(1442):
+        item = sample(id=f'bulk-{index}', title=f'Sample appointment {index}')
+        offset = timedelta(days=index % 45)
+        examples.append(replace(item, start=item.start + offset, end=item.end + offset,
+                                recurrence_rule='FREQ=WEEKLY;COUNT=4' if index % 60 == 0 else ''))
+    report = parse_ics_report(export_ics(examples), "remote")
     assert len(report.events) == 1442
     assert not report.issues
     store, calendar, cli, backend = setup(tmp_path)

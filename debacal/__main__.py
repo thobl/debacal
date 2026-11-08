@@ -164,6 +164,7 @@ def configure_application(app):
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
     app.setApplicationName('debacal')
+    app.setDesktopFileName('debacal')
     app.setOrganizationName('debacal')
     app.setApplicationDisplayName('Debacal')
 
