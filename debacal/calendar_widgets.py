@@ -61,20 +61,17 @@ def day_number_rect(left, width, scale):
     return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
 
 
-def paint_selected_date(painter, label, day, selected, widget, size):
-    """Underline the action date without adding a badge or changing its type."""
-    if day != selected or label.width() <= 0 or label.height() <= 2:
-        return
+def paint_day_state(painter, header, day_box, day, selected, today, widget):
+    """Use one visual language: selected header fill and today's square border."""
     scale = display_scale(widget)
-    font = ui_font(widget.preferences, size)
-    font.setBold(True)
-    metrics = QFontMetricsF(font)
-    width = min(label.width(), metrics.horizontalAdvance(str(day.day)))
-    baseline = label.center().y() + (metrics.ascent() - metrics.descent()) / 2
-    y = min(label.bottom() - scale, baseline + metrics.descent() + scale)
+    colors = paint_colors(widget)
     painter.save()
-    painter.setPen(QPen(paint_colors(widget).muted, 1.5 * scale))
-    painter.drawLine(QPointF(label.left(), y), QPointF(label.left() + width, y))
+    if day == selected:
+        painter.fillRect(header, colors.date_selection)
+    if day == today:
+        painter.setPen(QPen(colors.accent, 2 * scale))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(day_box.adjusted(scale, scale, -scale, -scale))
     painter.restore()
 
 
@@ -99,9 +96,14 @@ def paint_week_caption(painter, gutter, scale, color):
 
 @lru_cache(maxsize=128)
 def _scheme_colors(scheme):
-    return SimpleNamespace(**{key: QColor(getattr(scheme, key)) for key in (
+    colors = SimpleNamespace(**{key: QColor(getattr(scheme, key)) for key in (
         'background', 'panel', 'ink', 'muted', 'accent', 'weekend', 'line',
         'control_surface', 'selection', 'selection_edge', 'now', 'outside_month', 'weekend_background', 'on_accent')})
+    # A selected date must stand apart from adjacent-month shading. Reuse the
+    # palette's own selection shades so custom/light/dark themes remain coherent.
+    colors.date_selection = QColor(*(
+        (first + second + 1) // 2 for first, second in zip(colors.selection.getRgb()[:3], colors.selection_edge.getRgb()[:3])))
+    return colors
 
 
 def paint_colors(widget):
@@ -365,6 +367,7 @@ class DayHeader(QWidget):
             return
         w = (self.width() - self.gutter) / len(self.days)
         scale = display_scale(self)
+        current_day = now().date()
         week = self.week_rect()
         if week is not None:
             paint_week_caption(p, self.gutter, scale, colors.muted)
@@ -373,17 +376,16 @@ class DayHeader(QWidget):
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
             x = self.gutter + i * w
-            today = day == now().date()
+            today = day == current_day
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(QRectF(x, 0, w, self.height()), shade)
-            if today:
-                p.fillRect(QRectF(x, 0, w, self.height()), colors.selection)
+            header = QRectF(x, 0, w, self.height())
+            paint_day_state(p, header, header, day, self.selected_day, current_day, self)
             day_color = weekend_text(day, self.preferences, colors,
                                      colors.accent if today else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
             number = day_number_rect(x, w, scale)
-            paint_selected_date(p, number, day, self.selected_day, self, DAY_NUMBER_SIZE)
             text(p, number, str(day.day),
                  weekend_text(day, self.preferences, colors, colors.accent if today else colors.ink), DAY_NUMBER_SIZE, True)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
@@ -1494,14 +1496,11 @@ class MonthCanvas(QWidget):
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(rect, shade)
-            if day == self.selected_day:
-                p.fillRect(QRectF(x, y, width, self.month_row_metrics()[0]), colors.selection)
+            paint_day_state(p, QRectF(x, y, width, self.month_row_metrics()[0]),
+                            rect, day, self.selected_day, today, self)
             p.setPen(QPen(colors.line, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
-            if day == today:
-                p.setPen(QPen(colors.accent, 2 * scale))
-                p.drawRect(rect.adjusted(scale, scale, -scale, -scale))
             number = QRectF(x + 10, y + 3 * scale, width - 18, day_label_height)
             text(p, number, str(day.day),
                  weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink), 10, True)
