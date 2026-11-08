@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from heapq import heappush, heappop
+from html import escape
 import calendar
 import math
 
@@ -12,19 +13,19 @@ from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
 from .timeutil import local_zone, now
-from .calendar_widgets import event_tooltip, paint_colors
-from .event_style import source_outline
+from .calendar_widgets import paint_colors
 from .theme import corner_radius
 from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
+from .year_presence import paint_day_presence
 
 
 class YearView(QWidget):
     """Paint a year in three or four columns without scanning events on paint.
 
     Each day's markers summarize calendars, rather than trying to fit event
-    titles into small cells. A marker selects its first (or selected) event;
-    the day context menu lists up to 100 events. Month headings open the month,
+    titles into small cells. Days select a date; their context menu lists up to
+    100 events. Month headings open the month,
     week numbers open the week, and double-clicking any day creates an all-day
     event.
     """
@@ -45,6 +46,7 @@ class YearView(QWidget):
         self.year = now().year
         self.events = []
         self.calendars = {}
+        self._source_order = {}
         self.selected_ids = set()
         self.selected_id = None
         self.selected_day = None
@@ -70,7 +72,6 @@ class YearView(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._default_tooltip = ('Click a month heading to open Month view, or a week number to open Week view. '
-                                 'Click a colored marker to select an event. '
                                  'Double-click a day to create an all-day event.')
         self.setToolTip(self._default_tooltip)
 
@@ -163,6 +164,10 @@ class YearView(QWidget):
         self._set_year(year)
         self.events = list(events)
         self.calendars = {value.id: value for value in calendars}
+        self._source_order = {identity: index for index, identity in enumerate(self.calendars)}
+        self.events = [value for value in self.events
+                       if value.calendar_id not in self.calendars
+                       or (self.calendars[value.calendar_id].visible and self.calendars[value.calendar_id].enabled)]
         self._event_map = {value.id: value for value in self.events}
         self._intervals = {}
         values = []
@@ -255,21 +260,6 @@ class YearView(QWidget):
                 value = date(self.year, month, day)
                 rect = QRectF(grid.x() + column * cell_width, grid.y() + row * cell_height, cell_width, cell_height)
                 self._day_rects[value] = rect
-                summary = self._summaries[(value - self._first).days] if self._summaries else {}
-                selected = self._selected_summaries[(value - self._first).days] if self._selected_summaries else {}
-                markers = sorted(summary, key=lambda identity: (identity not in selected, identity))[:3]
-                marker_width = min(8 * scale, max(3 * scale, (cell_width - 8 * scale) / max(1, len(markers))))
-                total = len(markers) * marker_width + max(0, len(markers) - 1) * 2 * scale
-                left = rect.center().x() - total / 2
-                for number, identity in enumerate(markers):
-                    event_id = selected.get(identity, summary[identity])[1]
-                    marker = QRectF(left + number * (marker_width + 2 * scale), rect.bottom() - 5 * scale,
-                                    marker_width, 3 * scale)
-                    hit = marker.adjusted(-2 * scale, -2 * scale, 2 * scale, 2 * scale)
-                    self._marker_hits.append((hit, event_id, value, identity))
-                    event = self._event_map.get(event_id)
-                    if event is not None:
-                        self.hits.append((hit, event))
 
     def day_rect(self, day):
         self._ensure_geometry()
@@ -298,9 +288,6 @@ class YearView(QWidget):
 
     def event_rect(self, identity):
         self._ensure_geometry()
-        hit = next((rect for rect, event in self.hits if event.id == identity), None)
-        if hit is not None:
-            return QRectF(hit)
         interval = self._intervals.get(identity)
         return self.day_rect(self.days[interval[0]]) if interval else None
 
@@ -320,6 +307,25 @@ class YearView(QWidget):
                 if len(result) >= limit:
                     break
         return result
+
+    def calendars_on_day(self, day):
+        """Distinct active sources, in the same order as the calendar list."""
+        offset = (day - self._first).days
+        if not 0 <= offset < len(self._summaries):
+            return ()
+        return tuple(sorted(self._summaries[offset],
+                            key=lambda identity: (self._source_order.get(identity, len(self._source_order)), identity)))
+
+    def _day_tooltip(self, day):
+        heading = '<b>' + escape(self.preferences.format_date(day, weekday=True)) + '</b>'
+        summary = self._summaries[(day - self._first).days]
+        rows = []
+        for identity in self.calendars_on_day(day):
+            source = self.calendars.get(identity)
+            count = summary[identity][0]
+            rows.append(escape(source.name if source else identity) + f' · {count:,} '
+                        + ('event' if count == 1 else 'events'))
+        return heading + ('<br>' + '<br>'.join(rows) if rows else '')
 
     def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter):
         painter.setFont(ui_font(self.preferences, size, bold))
@@ -360,20 +366,27 @@ class YearView(QWidget):
                         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), corner_radius(self, 3) * scale, corner_radius(self, 3) * scale)
                     self._text(painter, rect, str(self.preferences.week_number(start)), colors.accent if hovered else colors.muted,
                                7, hovered)
+            painter.setPen(QPen(colors.line, .45))
+            for row in range(7):
+                y = grid.y() + row * grid.height() / 6
+                painter.drawLine(grid.x(), y, grid.right(), y)
         for day, rect in self._day_rects.items():
             if not rect.intersects(event.rect()):
                 continue
             offset = (day - self._first).days
             selected = bool(self._selected_summaries[offset]) if self._selected_summaries else False
             preview = bool(self._preview_summaries[offset]) if self._preview_summaries else False
-            box = rect.adjusted(1 * scale, 0, -1 * scale, 0)
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 painter.fillRect(rect, shade)
+            identities = self.calendars_on_day(day)
+            sources = [self.calendars[identity].color if identity in self.calendars else colors.muted for identity in identities]
+            number_rect = paint_day_presence(painter, rect, sources, self.preferences, colors)
             if day == self.selected_day or selected or preview or day == today:
-                color = colors.control_surface if day == self.selected_day or selected else colors.selection
-                painter.setBrush(color)
-                pen = QPen(colors.line, 1) if day == self.selected_day or selected else QPen(Qt.PenStyle.NoPen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                pen = QPen(colors.line, 1.5 * scale)
+                if day == today:
+                    pen = QPen(colors.accent, 1.5 * scale)
                 if preview:
                     identity = min(self._preview_summaries[offset])
                     source = self.calendars.get(identity)
@@ -382,25 +395,11 @@ class YearView(QWidget):
                     color = QColor(source.color) if source is not None else colors.accent
                     pen = QPen(color if color.isValid() else colors.accent, 1, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
-                indicator = box.adjusted(2 * scale, scale, -2 * scale, -scale) if shade is not None else box
+                indicator = rect.adjusted(scale, scale, -scale, -scale)
                 painter.drawRoundedRect(indicator, corner_radius(self, 4) * scale, corner_radius(self, 4) * scale)
-            number_rect = rect.adjusted(0, -2 * scale, 0, -3 * scale)
             self._text(painter, number_rect, str(day.day),
                        weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink),
                        8, selected or day == today)
-        for hit, _identity, day, calendar_id in self._marker_hits:
-            if not hit.intersects(event.rect()):
-                continue
-            calendar_value = self.calendars.get(calendar_id)
-            color = QColor(calendar_value.color) if calendar_value else colors.muted
-            if not color.isValid():
-                color = colors.accent
-            marker = hit.adjusted(2 * scale, 2 * scale, -2 * scale, -2 * scale)
-            painter.setBrush(color)
-            selected = self._selected_summaries[(day - self._first).days]
-            painter.setPen(QPen(QColor(source_outline(color.darker(145), colors.background)), 1.5)
-                           if calendar_id in selected else QPen(Qt.PenStyle.NoPen))
-            painter.drawRoundedRect(marker, 1 * scale, 1 * scale)
         painter.end()
 
     def _select_event(self, identity, modifiers):
@@ -432,11 +431,7 @@ class YearView(QWidget):
             return
         self._placement_consumed = False
         self.set_selected_day(day)
-        marker = next((identity for rect, identity, _day, _calendar in reversed(self._marker_hits) if rect.contains(point)), None)
-        if marker is not None:
-            self._select_event(marker, event.modifiers())
-        else:
-            self.day_selected.emit(day)
+        self.day_selected.emit(day)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -476,11 +471,7 @@ class YearView(QWidget):
                 self.setToolTip(self._default_tooltip)
         day = self.day_at(event.position())
         if hovered is None:
-            marker = next((identity for rect, identity, _day, _calendar in reversed(self._marker_hits)
-                           if rect.contains(event.position())), None)
-            item = self._event_map.get(marker)
-            self.setToolTip(event_tooltip(item, self.preferences, self.calendars.get(item.calendar_id))
-                            if item is not None else self._default_tooltip)
+            self.setToolTip(self._day_tooltip(day) if day is not None else self._default_tooltip)
         if self.placement_active and day is not None:
             self.placement_moved.emit(datetime.combine(day, time.min, local_zone()))
         super().mouseMoveEvent(event)
@@ -498,13 +489,6 @@ class YearView(QWidget):
         if day is None or self.placement_active:
             return
         self.set_selected_day(day)
-        marker = next((identity for rect, identity, _day, _calendar in reversed(self._marker_hits)
-                       if rect.contains(event.pos())), None)
-        if marker is not None:
-            if marker not in self.selected_ids and marker != self.selected_id:
-                self._select_event(marker, Qt.KeyboardModifier.NoModifier)
-            self.context_requested.emit(marker, event.globalPos())
-            return
         menu = QMenu(self)
         menu.addAction('Open day', lambda: self.open_day.emit(day))
         values = self.events_on_day(day)

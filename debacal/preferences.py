@@ -58,6 +58,7 @@ class Preferences:
     corner_style: str = 'subtle'
     font_family: str = 'system'
     default_event_duration_minutes: int = 60
+    year_view_style: str = 'tracks'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -93,6 +94,8 @@ class Preferences:
             raise ValueError('Choose a predefined or custom color palette.')
         if not isinstance(self.agenda_style, str) or self.agenda_style not in ('cards', 'grouped', 'timeline'):
             raise ValueError('Choose event cards, cards grouped by day, or a day timeline.')
+        if not isinstance(self.year_view_style, str) or self.year_view_style not in ('tracks', 'tints'):
+            raise ValueError('Choose calendar tracks or tinted day cells for Year view.')
         if not isinstance(self.control_style, str) or self.control_style not in ('underlined', 'filled'):
             raise ValueError('Choose underlined or filled button groups.')
         if self.appearance_mode not in ('light', 'dark'):

@@ -155,7 +155,7 @@ class PreferencesDialog(QDialog):
         appearance_layout.addWidget(self.appearance_editor)
         for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
                      'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'font_family',
-                     'show_sidebar_title', 'sidebar_title', 'corner_style'):
+                     'show_sidebar_title', 'sidebar_title', 'corner_style', 'year_view_style'):
             setattr(self, name, getattr(self.appearance_editor, name))
 
         source_page, source_layout, _ = self.category('Calendar sources')

@@ -151,6 +151,9 @@ Sidebar sets a custom title or hides it to save space. When hidden, its Preferen
 button moves to the sidebar footer while retaining its horizontal position.
 Colors offers weekend text color (the default), background shading, or no
 highlight. Today keeps its marker as well as the chosen weekend treatment.
+Year view offers Calendar tracks (default, option A) and Tinted day cells
+(option C), with selectable previews. Apply changes the appearance immediately;
+both choices use the same calendar summaries and navigation.
 
 **Calendar sources** groups connected calendars by account. Refresh an account
 to discover additional calendars, then check which ones to connect. Names in
@@ -168,15 +171,20 @@ by calendars in the same account and remain in the secure keyring.
   day-column boundaries and weekday labels, including reserved scrollbar space;
   hiding week numbers keeps the empty gutter to preserve that alignment.
   Click the mini calendar to jump.
-* **Year overview:** twelve month cards show calendar-colored event markers.
-  Click a month heading to open Month view, or a marker to select its event;
-  Ctrl+click adds to the selection. Double-click a day to create an all-day event.
+* **Year overview:** twelve month cards summarize which visible calendars have
+  events each day. Calendar tracks show broad color bars beneath each date;
+  Tinted day cells show soft color segments with solid edges. Each calendar
+  appears once per day, including across multi-day events, in sidebar order.
+  Busy days show +N for additional calendars; hovering shows all calendar names
+  and event counts. Click a month heading to open Month view. A day selects its
+  date; double-click it to create an all-day event.
   Click a week number to open that week. Week numbers appear by default in
   Month and Day/Week views too, and can be switched off in Calendar preferences.
   Right-click a day to inspect its events or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
-  [Calendar-presence design studies](design/2026-11-year-overview/index.html)
-  compare larger tracks, tiles, and tinted day cells before changing its indicators.
+  Individual event actions are available from the day's context menu or a
+  detailed view. The original [design studies](design/2026-11-year-overview/index.html)
+  show these appearances alongside the unimplemented tiles option.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
   selection. Highlights keep the calendar color, with a thicker border and bar.
   Escape clears the selection. Clicking empty space clears it too.

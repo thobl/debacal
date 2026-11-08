@@ -28,13 +28,13 @@ def event(identity='event', **changes):
                          START + timedelta(hours=1)), **changes)
 
 
-@pytest.fixture
-def view():
+@pytest.fixture(params=['tracks', 'tints'])
+def view(request):
     app = QApplication.instance() or QApplication([])
     with patch('debacal.year_view.local_zone', return_value=ZONE), \
          patch('debacal.year_view.now', return_value=START):
         widget = YearView()
-        widget.set_preferences(Preferences(locale_name='en_GB'))
+        widget.set_preferences(Preferences(locale_name='en_GB', year_view_style=request.param))
         widget.resize(1040, widget.heightForWidth(1040))
         widget.set_data(2026, [], [Calendar('local', 'Local', '#123456')])
         widget.show()
@@ -111,7 +111,7 @@ def test_year_clipping_cross_year_event_and_far_events(view):
     assert view.event_rect('outside') is None
 
 
-def test_exact_selected_occurrences_highlight_all_their_days_and_prefer_selected_marker(view):
+def test_exact_selected_occurrences_highlight_all_their_days_without_event_targets(view):
     values = [event('first'), event('selected', end=START + timedelta(days=3))]
     view.set_data(2026, values, [Calendar('local', 'Read-only calendar', '#aabbcc', read_only=True)])
     assert summary(view, DAY)['local'] == (2, 'first')
@@ -122,14 +122,14 @@ def test_exact_selected_occurrences_highlight_all_their_days_and_prefer_selected
     for day in (DAY, DAY + timedelta(days=1), DAY + timedelta(days=2), DAY + timedelta(days=3)):
         selected = view._selected_summaries[(day - date(2026, 1, 1)).days]
         assert selected['local'][1] == 'selected'
-    assert any(identity == 'selected' for _rect, identity, _day, _calendar in view._marker_hits)
+    assert not view._marker_hits and not view.hits
     assert not view.grab().isNull()
     view.set_selection(set())
     assert not any(view._selected_summaries)
     assert view.selected_id is None
 
 
-def test_markers_select_with_modifiers_without_clearing_previous_day_selection(view):
+def test_calendar_indicators_select_the_day_without_selecting_an_arbitrary_event(view):
     view.set_data(2026, [event()], [Calendar('local', 'Local', '#123456')])
     days, scoped, legacy = [], [], []
     view.day_selected.connect(days.append)
@@ -137,12 +137,12 @@ def test_markers_select_with_modifiers_without_clearing_previous_day_selection(v
     view.selected.connect(legacy.append)
     rect = view.event_rect('event')
     QTest.mouseClick(view, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier, rect.center().toPoint())
-    assert days == []
-    assert scoped == [('event', Qt.KeyboardModifier.ControlModifier)] and legacy == ['event']
-    assert view.selected_day == DAY and view.selected_id == 'event'
+    assert days == [DAY]
+    assert not scoped and not legacy
+    assert view.selected_day == DAY and view.selected_id is None
     empty = date(2026, 11, 8)
     QTest.mouseClick(view, Qt.MouseButton.LeftButton, pos=view.day_rect(empty).center().toPoint())
-    assert days == [empty]
+    assert days == [DAY, empty]
 
 
 def test_month_heading_drills_down_and_day_double_click_always_creates_all_day(view):
@@ -207,21 +207,23 @@ def test_supported_date_boundaries_render_without_overflow(view, year):
     assert not view.grab().isNull()
 
 
-def test_selected_fourth_calendar_is_pinned_into_the_three_visible_markers(view):
+def test_selection_does_not_reorder_calendar_presence_or_add_event_targets(view):
     calendars = [Calendar(identity, 'Synthetic ' + identity, color)
                  for identity, color in [('a', '#a14747'), ('b', '#47815a'), ('c', '#4767a1'), ('d', '#925ca1')]]
     values = [event('event-' + calendar.id, calendar_id=calendar.id) for calendar in calendars]
     view.set_data(2026, values, calendars)
     view._ensure_geometry()
-    assert {value.id for _rect, value in view.hits} == {'event-a', 'event-b', 'event-c'}
+    assert view.calendars_on_day(DAY) == ('a', 'b', 'c', 'd')
+    assert not view.hits and not view._marker_hits
     view.set_selection({'event-d'})
     view._ensure_geometry()
-    assert len(view.hits) == 3
-    assert 'event-d' in {value.id for _rect, value in view.hits}
+    assert not view.hits and not view._marker_hits
+    assert view.calendars_on_day(DAY) == ('a', 'b', 'c', 'd')
     selected = []
     view.selected_scoped.connect(lambda identity, _modifiers: selected.append(identity))
     QTest.mouseClick(view, Qt.MouseButton.LeftButton, pos=view.event_rect('event-d').center().toPoint())
-    assert selected == ['event-d']
+    assert selected == []
+    assert view.selected_ids == {'event-d'}
 
 
 def test_preview_outline_uses_its_event_calendar_even_if_creation_target_changes(view):
@@ -249,35 +251,17 @@ def test_preview_outline_uses_its_event_calendar_even_if_creation_target_changes
     assert outlines == [QColor(blue.color)]
 
 
-def test_year_selection_keeps_calendar_marker_color_without_blue_ink(view):
-    from PySide6.QtGui import QColor, QPen
-    from debacal.event_style import contrast_ratio
-    source = Calendar('orange', 'Orange', '#ed7135')
-    item = event('chosen', calendar_id=source.id)
-    view.set_data(2026, [item], [source])
-    view.set_selection({item.id})
-    with patch('debacal.year_view.QPen', wraps=QPen) as pens, \
-            patch.object(view, '_text', wraps=view._text) as labels:
-        view.grab()
-    source_edges = [call.args[0] for call in pens.call_args_list
-                    if len(call.args) > 1 and call.args[1] == 1.5 and isinstance(call.args[0], QColor)]
-    assert source_edges
-    assert source_edges[0].hslHueF() == pytest.approx(QColor(source.color).hslHueF(), abs=.01)
-    assert contrast_ratio(source_edges[0], '#ffffff') >= 3
-    assert not any(call.args[0] == QColor('#2c527c') for call in pens.call_args_list if call.args)
-    assert not any(len(call.args) > 3 and call.args[3] == QColor('#2c527c') for call in labels.call_args_list)
-
-
-def test_year_event_marker_tooltip_shows_details_without_interface_help(view):
-    from dataclasses import replace
-    source = Calendar('local', 'Personal', '#b37a4d')
+def test_year_day_tooltip_summarizes_calendars_and_counts_without_event_details(view):
+    source = Calendar('local', 'Personal <plans> & family', '#b37a4d')
     item = replace(event('chosen'), title='A <meeting>', location='Room & garden', description='Bring notes')
-    view.set_data(2026, [item], [source])
-    marker = view.event_rect(item.id)
+    view.set_data(2026, [item, replace(item, id='second')], [source])
+    day = view.day_rect(DAY)
     QTest.mouseMove(view, QPoint(1, 1))
-    QTest.mouseMove(view, marker.center().toPoint())
+    QTest.mouseMove(view, day.center().toPoint())
     tooltip = view.toolTip()
-    assert 'A &lt;meeting&gt;' in tooltip and 'Room &amp; garden' in tooltip and 'Bring notes' in tooltip
+    assert 'Personal &lt;plans&gt; &amp; family' in tooltip and '2' in tooltip
+    assert view.preferences.format_date(DAY) in tooltip
+    assert not any(detail in tooltip for detail in ('meeting', 'Room', 'Bring notes'))
     assert not any(phrase in tooltip for phrase in ('Click ', 'Double-click', 'select an event'))
 
 
@@ -292,7 +276,7 @@ def test_context_menu_keeps_ampersands_literal_in_event_titles(view):
     assert any(label.endswith('Research && Development &&&& Design') for label in labels)
 
 
-def test_marker_context_requests_shared_event_actions_without_clearing_selection(view):
+def test_day_context_lists_explicit_events_without_choosing_one_from_a_calendar_indicator(view):
     from PySide6.QtGui import QContextMenuEvent
     first, second = event('first'), event('second', start=START + timedelta(days=1), end=START + timedelta(days=1, hours=1))
     view.set_data(2026, [first, second], [Calendar('local', 'Local', '#123456')])
@@ -305,6 +289,13 @@ def test_marker_context_requests_shared_event_actions_without_clearing_selection
     context = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, view.mapToGlobal(point))
     with patch('debacal.year_view.QMenu') as constructor:
         view.contextMenuEvent(context)
-        constructor.assert_not_called()
-    assert contexts == [first.id] and not day_changes and not selections
+        constructor.assert_called_once_with(view)
+        labels = [call.args[0] for call in constructor.return_value.addAction.call_args_list]
+        assert labels[0] == 'Open day'
+        assert any(first.title in label for label in labels[1:])
+        assert not contexts and not day_changes and not selections
+        # Event selection remains available through an explicit menu choice.
+        choose_event = constructor.return_value.addAction.return_value.triggered.connect.call_args.args[0]
+        choose_event(False)
+    assert selections == [first.id] and not contexts
     assert view.selected_ids == {first.id, second.id}

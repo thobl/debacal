@@ -133,7 +133,7 @@ def test_year_shortcut_leap_year_navigation_drilldown_and_creation(desktop):
     assert selected == [(date(2029, 4, 12), True)]
 
 
-def test_year_markers_preserve_ctrl_selection_and_search_follows_other_year(desktop):
+def test_year_day_indicators_do_not_select_events_and_search_follows_other_year(desktop):
     app, window, store = desktop
     a = Event('a', 'local', 'First', START, START + timedelta(hours=1))
     b = replace(a, id='b', title='Second', start=START + timedelta(days=2), end=START + timedelta(days=2, hours=1))
@@ -145,7 +145,8 @@ def test_year_markers_preserve_ctrl_selection_and_search_follows_other_year(desk
     QTest.mouseClick(window.year, Qt.MouseButton.LeftButton, pos=window.year.event_rect(a.id).center().toPoint())
     QTest.mouseClick(window.year, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier,
                      pos=window.year.event_rect(b.id).center().toPoint())
-    assert window.selected_ids == {a.id, b.id}
+    assert not window.selected_ids
+    assert window.selected_day == b.start.date()
     window.search.setText('Next year')
     window.cycle_search_result(1)
     settle(app)

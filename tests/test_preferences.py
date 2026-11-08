@@ -77,6 +77,22 @@ class PreferencesTests(unittest.TestCase):
             with Store(path) as store:
                 self.assertEqual(Preferences.load(store).control_style, 'filled')
 
+    def test_year_view_style_defaults_and_survives_restart(self):
+        self.assertEqual(Preferences().year_view_style, 'tracks')
+        self.assertEqual(Preferences.from_dict({'date_format': 'iso'}).year_view_style, 'tracks')
+        for invalid in (None, [], {}, True, '', 'tiles'):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(Preferences.from_dict({'year_view_style': invalid, 'date_format': 'iso'}),
+                                 Preferences(date_format='iso'))
+                with self.assertRaises(ValueError):
+                    Preferences(year_view_style=invalid)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'calendar.sqlite3'
+            with Store(path) as store:
+                Preferences(year_view_style='tints').save(store)
+            with Store(path) as store:
+                self.assertEqual(Preferences.load(store).year_view_style, 'tints')
+
     def test_legacy_week_number_default_is_enabled_once_and_can_be_disabled_again(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'calendar.sqlite3'

@@ -57,11 +57,15 @@ def test_visual_options_are_real_clickable_and_keyboard_operable_controls(deskto
     app, _ = desktop
     item = dialog(desktop)
     editor = item.appearance_editor
-    assert list(editor.section_widgets) == ['Colors', 'Font', 'Interface', 'Sidebar']
+    assert list(editor.section_widgets) == ['Colors', 'Font', 'Interface', 'Year view', 'Sidebar']
     assert editor.section_widgets['Font'].isAncestorOf(item.font_scale)
     assert editor.section_widgets['Font'].isAncestorOf(item.font_family)
     assert not editor.findChildren(QTabWidget)
     assert editor.section_widgets['Colors'].isAncestorOf(item.weekend_style)
+    assert editor.section_widgets['Year view'].isAncestorOf(item.year_view_style)
+    assert isinstance(item.year_view_style, VisualChoice)
+    assert [option[1] for option in item.year_view_style.options] == ['tracks', 'tints']
+    assert item.year_view_style.currentData() == 'tracks'
     assert isinstance(item.color_scheme, VisualChoice) and not isinstance(item.color_scheme, QComboBox)
     choose(item.color_scheme, 'cool')
     assert item.color_scheme.currentData() == editor.preview.preferences.color_scheme == 'cool'
@@ -94,12 +98,14 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
         item.custom_surface.setColor('#6c7288')
         item.custom_weekend.setColor('#a82a64')
         item.weekend_style.setCurrentIndex(item.weekend_style.findData('background'))
+        item.year_view_style.setCurrentIndex(item.year_view_style.findData('tints'))
         item.show_sidebar_title.setChecked(False)
         item.sidebar_title.setText('Work calendar')
         settle(app)
         pending = item.appearance_editor.preview.preferences
         assert pending.appearance_mode == 'dark' and pending.custom_accent == '#2854b9'
         assert pending.weekend_style == 'background' and not pending.show_sidebar_title
+        assert pending.year_view_style == 'tints'
         assert Preferences.load(store) == window.preferences == original
         QTest.mouseClick(item.buttons.button(QDialogButtonBox.StandardButton.Apply), Qt.MouseButton.LeftButton)
         settle(app)
@@ -107,7 +113,8 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
         assert window.preferences == Preferences.load(store) == replace(
             original, appearance_mode='dark', color_scheme='custom', custom_accent='#2854b9',
             custom_surface='#6c7288', custom_weekend='#a82a64', weekend_style='background',
-            show_sidebar_title=False, sidebar_title='Work calendar')
+            year_view_style='tints', show_sidebar_title=False, sidebar_title='Work calendar')
+        assert window.year.preferences.year_view_style == 'tints'
         item.reject()
         window.close()
         window.executor.shutdown(wait=True)

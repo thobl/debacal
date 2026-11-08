@@ -158,7 +158,7 @@ def test_calendar_category_owns_functional_controls_and_selected_category_uses_s
                   widget.visible_start, widget.visible_end, widget.week_numbers, widget.duration_presets):
         assert widget.calendar_page.isAncestorOf(field)
         assert not widget.appearance_editor.isAncestorOf(field)
-    assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Font', 'Interface', 'Sidebar'}
+    assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Font', 'Interface', 'Year view', 'Sidebar'}
     for name in ('Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts'):
         assert widget.set_category(name)
         for row in range(widget.categories.count()):

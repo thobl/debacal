@@ -14,6 +14,7 @@ from .event_style import event_colors
 from .calendar_appearance import weekend_fill, weekend_text
 from .theme import SCHEMES, corner_radius, scheme_for
 from .fonts import ui_font
+from .year_presence import paint_day_presence
 
 
 def _label(painter, rect, value, color, size=11, bold=False, align=Qt.AlignmentFlag.AlignLeft):
@@ -121,6 +122,16 @@ def _sample(painter, rect, kind, value, preferences):
         candidate = replace(preferences, corner_style=value)
         _card(painter, rect.adjusted(5, 1, -5, -1), colors.selection, colors.accent,
               corner_radius(candidate, 5))
+    elif kind == 'year_view':
+        sources = ('#587c67', '#b6815c', '#627fa0')
+        width, height = min(42, rect.width() / 3), min(35, rect.height())
+        left, top = rect.center().x() - width * 1.5, rect.center().y() - height / 2
+        for index in range(3):
+            cell = QRectF(left + index * width, top, width, height)
+            painter.fillRect(cell, QColor(colors.panel))
+            number = paint_day_presence(painter, cell, sources[:index + 1], preferences, colors,
+                                       style=value, scale=1)
+            _label(painter, number, str(8 + index), colors.ink, 9, align=Qt.AlignmentFlag.AlignCenter)
     painter.restore()
 
 
@@ -137,7 +148,7 @@ class _ChoiceButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def sizeHint(self):
-        return QSize(96, (55 if self.kind == 'agenda' else 34) + max(18, self.fontMetrics().height()) + 8)
+        return QSize(96, (55 if self.kind in ('agenda', 'year_view') else 34) + max(18, self.fontMetrics().height()) + 8)
 
     def minimumSizeHint(self):
         return QSize(0, self.sizeHint().height())
@@ -165,7 +176,7 @@ class _ChoiceButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(colors.focus), 1, Qt.PenStyle.DotLine))
             painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 3, 3)
-        sample_height = 43 if self.kind == 'agenda' else 22
+        sample_height = 43 if self.kind in ('agenda', 'year_view') else 22
         sample = QRectF(8, 7, self.width() - 16, sample_height)
         _sample(painter, sample, self.kind, self.value, preferences)
         _label(painter, QRectF(7, sample_height + 11, self.width() - 28, self.height() - sample_height - 15), self.text(), colors.ink,
@@ -476,6 +487,13 @@ class AppearanceEditor(QWidget):
             ('Rounded', 'rounded', 'Softer corners on controls and event cards.')], 'corners', preferences)
         self.corner_style.setAccessibleName('Corner shape')
         self._choice(layout, 'Corners', self.corner_style)
+        layout = self._section(outer, 'Year view')
+        self.year_view_style = VisualChoice([
+            ('Calendar tracks', 'tracks', 'Stack wide calendar-color bars beneath each date.'),
+            ('Tinted day cells', 'tints', 'Tint each day with calendar-color segments and solid color edges.')],
+            'year_view', preferences)
+        self.year_view_style.setAccessibleName('Year view appearance')
+        self._choice(layout, 'Calendar indicators', self.year_view_style)
         layout = self._section(outer, 'Sidebar')
         self.agenda_style = VisualChoice([
             ('Event cards', 'cards', 'Show dates and times inside each event card.'),
@@ -496,7 +514,7 @@ class AppearanceEditor(QWidget):
 
         outer.addStretch()
         self._choices = (self.appearance_mode, self.color_scheme, self.control_style, self.corner_style,
-                         self.agenda_style, self.weekend_style)
+                         self.agenda_style, self.weekend_style, self.year_view_style)
         for choice in self._choices:
             choice.currentIndexChanged.connect(self._update)
         self.font_scale.valueChanged.connect(self._update)
@@ -539,6 +557,7 @@ class AppearanceEditor(QWidget):
                     custom_accent=color(self.custom_accent), custom_surface=color(self.custom_surface),
                     custom_weekend=color(self.custom_weekend), control_style=self.control_style.currentData(),
                     corner_style=self.corner_style.currentData(), agenda_style=self.agenda_style.currentData(),
+                    year_view_style=self.year_view_style.currentData(),
                     weekend_style=self.weekend_style.currentData(), font_scale=self.font_scale.value(),
                     font_family=self.font_family.currentData(),
                     show_sidebar_title=self.show_sidebar_title.isChecked(),
@@ -566,7 +585,8 @@ class AppearanceEditor(QWidget):
         for field in self._choices:
             field_name = {id(self.appearance_mode): 'appearance_mode', id(self.color_scheme): 'color_scheme',
                           id(self.control_style): 'control_style', id(self.corner_style): 'corner_style',
-                          id(self.agenda_style): 'agenda_style', id(self.weekend_style): 'weekend_style'}[id(field)]
+                          id(self.agenda_style): 'agenda_style', id(self.weekend_style): 'weekend_style',
+                          id(self.year_view_style): 'year_view_style'}[id(field)]
             field.setCurrentIndex(field.findData(getattr(preferences, field_name)))
         for name in ('custom_accent', 'custom_surface', 'custom_weekend'):
             getattr(self, name).setColor(getattr(preferences, name))

@@ -14,6 +14,8 @@ counts additional calendars; it does not count individual appointments.
 `options.py` subclasses the production year view for its layout, but filters and
 aggregates visible calendars and removes individual event hit targets. No
 production calendar rendering or interactions are changed by these studies.
+The app now implements A and C with a shared renderer and an Appearance preference;
+this gallery retains the original proposals for comparison.
 
 Recreate all 18 screenshots and the geometry report from the repository root:
 
