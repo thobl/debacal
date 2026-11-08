@@ -9,20 +9,21 @@ from uuid import uuid4
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
-    QSizePolicy, QSpinBox, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QBoxLayout, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
+    QSizePolicy, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
+from .buttons import action_button, icon_button
+from .calendar_choice import CalendarChoice
 from .choice_control import ChoiceControl
 from .date_time_fields import DateTimeField, format_duration, parse_duration, validate_datetime
 from .date_time_picker import DateTimeRangePicker, range_duration
-from .dialog_base import FormDialog, _calendar_color_icon
+from .dialog_base import FormDialog
 from .event_schedule import ScheduleDraft, count_to_until, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
-from .icons import icon
 from .models import Event
 from .preferences import Preferences
 from .recurrence import event_zone, key_datetime, recurrence_key, recurrence_set, updated_series
@@ -96,6 +97,36 @@ class DurationFields(QWidget):
         super().resizeEvent(event)
 
 
+class RegularFields(QWidget):
+    """Keep the finite bounds compact, with Indefinite beside Until when roomy."""
+    def __init__(self, preferences):
+        super().__init__()
+        self.preferences = preferences
+        self._wide = None
+
+    def configure(self, layout, until_row, indefinite):
+        self.grid, self.until_row, self.indefinite = layout, until_row, indefinite
+        self._arrange()
+
+    def _arrange(self):
+        if not hasattr(self, 'grid'):
+            return
+        wide = self.width() >= round(400 * self.preferences.font_scale / 100)
+        if wide == self._wide:
+            return
+        self._wide = wide
+        if wide:
+            self.until_row.removeWidget(self.indefinite)
+            self.grid.addWidget(self.indefinite, 1, 3)
+        else:
+            self.grid.removeWidget(self.indefinite)
+            self.until_row.addWidget(self.indefinite)
+
+    def resizeEvent(self, event):
+        self._arrange()
+        super().resizeEvent(event)
+
+
 class EventDialog(FormDialog):
     """Keep primary timing independent of preview selection and occurrence edits."""
     mode_changed = Signal(str)
@@ -118,6 +149,7 @@ class EventDialog(FormDialog):
         self._new_id = str(uuid4())
         self._loading = True
         self._validation_field = None
+        self._schedule_error = None
         self._scope_sources, self._scope_values = {}, {}
         self._scope_name = edit_scope if event and edit_scope in ('single', 'group', 'future') else 'single'
         self._repeat_draft = None
@@ -174,13 +206,8 @@ class EventDialog(FormDialog):
         self.form.setContentsMargins(0, 0, 0, 0)
         self.form.setHorizontalSpacing(10)
         self.form.setVerticalSpacing(8)
-        self.calendar = QComboBox()
-        for calendar in self.calendars:
-            if calendar.kind != 'ics' and not calendar.read_only:
-                self.calendar.addItem(_calendar_color_icon(calendar.color, self.preferences), calendar.name, calendar.id)
         target = event.calendar_id if event else default_calendar_id
-        if target and self.calendar.findData(target) >= 0:
-            self.calendar.setCurrentIndex(self.calendar.findData(target))
+        self.calendar = CalendarChoice(self.calendars, self.preferences, selected_id=target)
         self.calendar.setEnabled(event is None)
         self.title = QLineEdit()
         self.location = QLineEdit()
@@ -214,13 +241,17 @@ class EventDialog(FormDialog):
         self._divider(sections)
         self.schedule_section, scheduling = self._section(sections)
         scheduling.addWidget(self._heading('Schedule'))
-        self.schedule_mode = ChoiceControl([('Single', 'single'), ('Repeat', 'repeat'), ('Alternatives', 'alternatives')], self.preferences)
+        self.schedule_mode = ChoiceControl([('Single', 'single'), ('Repeat', 'repeat'), ('Alternatives', 'alternatives')], self.preferences,
+                                          icons={'single': 'single', 'repeat': 'repeat', 'alternatives': 'alternatives'})
         scheduling.addWidget(self.schedule_mode)
         self.repeat = ChoiceControl([('Daily', 'DAILY'), ('Weekly', 'WEEKLY'), ('Monthly', 'MONTHLY'),
-                                     ('Yearly', 'YEARLY'), ('Custom', 'RDATE')], self.preferences)
+                                     ('Yearly', 'YEARLY'), ('Custom', 'RDATE')], self.preferences,
+                                    icons={'DAILY': 'day', 'WEEKLY': 'week', 'MONTHLY': 'month', 'YEARLY': 'year', 'RDATE': 'sequence'})
         self.repeat.setCurrentData('WEEKLY')
         scheduling.addWidget(self.repeat)
-        self.regular_controls = QWidget()
+        self.recurrence_details = QStackedWidget()
+        self.recurrence_details.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.regular_controls = RegularFields(self.preferences)
         limits = QGridLayout(self.regular_controls)
         limits.setContentsMargins(0, 0, 0, 0)
         limits.setHorizontalSpacing(8)
@@ -228,22 +259,23 @@ class EventDialog(FormDialog):
         self.interval = QSpinBox()
         self.interval.setRange(1, 999)
         self.interval.setKeyboardTracking(False)
-        self.interval.setMaximumWidth(round(70 * scale))
+        self.interval.setMaximumWidth(round(60 * scale))
         self.repeat_count = QSpinBox()
         self.repeat_count.setRange(1, 100000)
         self.repeat_count.setKeyboardTracking(False)
         self.repeat_count.setValue(10)
-        self.repeat_count.setMaximumWidth(round(95 * scale))
+        self.repeat_count.setMaximumWidth(round(85 * scale))
         self.repeat_count.setToolTip('Total occurrences, including the primary event.')
         self.repeat_until = DateTimeField(self.preferences)
         self.repeat_until.setAllDay(True)
         self.repeat_until.setAccessibleName('Last recurrence date')
+        self.repeat_until.setMaximumWidth(round(145 * scale))
         until_heading = QWidget()
         until_row = QHBoxLayout(until_heading)
         until_row.setContentsMargins(0, 0, 0, 0)
         until_row.setSpacing(4)
         until_row.addWidget(QLabel('Until'), 1)
-        self.no_end = QCheckBox('No end')
+        self.no_end = QCheckBox('Indefinite')
         until_row.addWidget(self.no_end)
         limits.addWidget(QLabel('Every'), 0, 0)
         limits.addWidget(QLabel('Count'), 0, 1)
@@ -252,27 +284,36 @@ class EventDialog(FormDialog):
         limits.addWidget(self.repeat_count, 1, 1)
         limits.addWidget(self.repeat_until, 1, 2)
         limits.setColumnStretch(2, 1)
-        scheduling.addWidget(self.regular_controls)
+        self.regular_controls.configure(limits, until_row, self.no_end)
+        self.recurrence_details.addWidget(self.regular_controls)
         self.custom_controls = QWidget()
-        custom = QHBoxLayout(self.custom_controls)
+        custom = QVBoxLayout(self.custom_controls)
         custom.setContentsMargins(0, 0, 0, 0)
         custom.setSpacing(4)
         self.pattern = QLineEdit()
         self.pattern.setAccessibleName('Sequence')
         self.pattern.setPlaceholderText('4*(+2) +3 3*+2')
-        self.custom_rule = QLineEdit()
-        self.custom_rule.setAccessibleName('iCalendar recurrence rule')
-        self.custom_rule.setPlaceholderText('FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10')
-        custom.addWidget(self.pattern, 1)
-        custom.addWidget(self.custom_rule, 1)
-        self.rule_button = self._icon_button('settings', 'Edit an iCalendar recurrence rule', self.show_advanced_rule)
-        custom.addWidget(self.rule_button)
-        scheduling.addWidget(self.custom_controls)
-        self.add_occurrence_button = QPushButton('Add occurrence')
-        self.add_occurrence_button.setIcon(icon('new', scheme_for(self.preferences).accent))
-        self.add_occurrence_button.setProperty('iconOnly', True)
-        self.add_occurrence_button.clicked.connect(self.add_occurrence)
-        scheduling.addWidget(self.add_occurrence_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.custom_input = QStackedWidget()
+        sequence_page = QWidget()
+        sequence_layout = QVBoxLayout(sequence_page)
+        sequence_layout.setContentsMargins(0, 0, 0, 0)
+        sequence_layout.setSpacing(4)
+        sequence_layout.addWidget(QLabel('Sequence'))
+        sequence_layout.addWidget(self.pattern)
+        self.custom_input.addWidget(sequence_page)
+        self.advanced_page = QWidget()
+        advanced = QVBoxLayout(self.advanced_page)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        advanced.setSpacing(4)
+        self.advanced_summary = QLabel('Imported custom recurrence')
+        self.advanced_summary.setToolTip('This recurrence is preserved. Adjust dates in the preview or choose a regular pattern.')
+        advanced.addWidget(self.advanced_summary)
+        self.convert_sequence_button = action_button('Edit as sequence', lambda: self._frequency_changed('RDATE'))
+        advanced.addWidget(self.convert_sequence_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.custom_input.addWidget(self.advanced_page)
+        custom.addWidget(self.custom_input)
+        self.recurrence_details.addWidget(self.custom_controls)
+        scheduling.addWidget(self.recurrence_details)
         self._divider(sections)
         self.notes_section, notes = self._section(sections)
         notes.addWidget(self._heading('Notes'))
@@ -304,6 +345,10 @@ class EventDialog(FormDialog):
         right = QVBoxLayout(self.preview_column)
         right.setContentsMargins(18, 16, 18, 12)
         self.preview = SeriesPreview()
+        self.add_occurrence_button = icon_button('new', 'Add occurrence at another date or time', self.add_occurrence,
+                                                preferences=self.preferences)
+        self.add_occurrence_button.setProperty('previewGlyph', 'new')
+        self.preview.controls.month_bar.layout().addWidget(self.add_occurrence_button)
         self.preview.month_label.setObjectName('heading')
         right.addWidget(self.preview, 1)
         outer.addWidget(self.preview_column, 1)
@@ -314,8 +359,8 @@ class EventDialog(FormDialog):
         self.configure_keyboard([*self.scope_buttons.values(), self.calendar, self.title, self.location,
             self.all_day, self.start.lineEdit(), self.end.lineEdit(), self.duration, *self.schedule_mode.buttons.values(),
             *self.repeat.buttons.values(), self.interval, self.repeat_count, self.repeat_until.lineEdit(),
-            self.pattern, self.custom_rule, self.add_occurrence_button, self.description,
-            self.preview.previous_button, self.preview.next_button, self.preview.first_button,
+            self.pattern, self.convert_sequence_button, self.add_occurrence_button, self.description,
+            self.preview.previous_button, self.preview.today_button, self.preview.next_button, self.preview.first_button,
             self.preview.previous_occurrence_button, self.preview.next_occurrence_button, self.preview.last_button],
             [self.save_button, self.cancel_button], self.save,
             [*self.scope_bindings.values(), scope_shortcut] if event else ())
@@ -363,15 +408,7 @@ class EventDialog(FormDialog):
         layout.addWidget(line)
 
     def _icon_button(self, name, caption, action):
-        button = QPushButton()
-        button.setIcon(icon(name, scheme_for(self.preferences).accent))
-        button.setProperty('iconOnly', True)
-        button.setToolTip(caption)
-        button.setAccessibleName(caption)
-        button.setFixedSize(28, 30)
-        button.setAutoDefault(False)
-        button.clicked.connect(lambda _checked=False: action())
-        return button
+        return icon_button(name, caption, action, preferences=self.preferences)
 
     def _connect(self):
         self.scope.currentChanged.connect(self.scope_changed)
@@ -394,7 +431,6 @@ class EventDialog(FormDialog):
         self.no_end.toggled.connect(lambda _: self._regular_changed('count'))
         self.pattern.textChanged.connect(self.pattern_changed)
         self.pattern.editingFinished.connect(self._finish_pattern)
-        self.custom_rule.textChanged.connect(self._advanced_changed)
         self.title.textChanged.connect(self._update_preview)
         self.location.textChanged.connect(self._update_preview)
         self.description.textChanged.connect(self._update_preview)
@@ -425,6 +461,7 @@ class EventDialog(FormDialog):
         return event_zone(source) if source and source.schedule_expression and source.schedule_syntax == 2 else local_zone()
 
     def _load_scope(self, scope, start=None, end=None):
+        self._schedule_error = None
         reference = self.edit_reference
         source = self.schedule_source(scope)
         if reference:
@@ -608,7 +645,7 @@ class EventDialog(FormDialog):
             self.repeat_count.setValue(draft.count or 10)
             self.no_end.setChecked(draft.ending == 'never')
             self.pattern.setText(draft.expression)
-            self.custom_rule.setText(draft.advanced_rule)
+            self.custom_input.setCurrentIndex(1 if draft.kind == 'advanced' else 0)
             if draft.until:
                 self.repeat_until.set_value(datetime.combine(draft.until, time.min, self._last_start.tzinfo))
             self._sync_ending()
@@ -636,6 +673,7 @@ class EventDialog(FormDialog):
         if self._loading:
             return
         if mode == 'single':
+            self._schedule_error = None
             self._repeat_draft = deepcopy(self._draft)
             self._draft = ScheduleDraft.from_event(authoring_zone=self.sequence_zone())
             self._sync_schedule_controls()
@@ -655,33 +693,47 @@ class EventDialog(FormDialog):
             self.schedule_mode.setCurrentData('repeat')
         if kind == 'RDATE':
             def change():
-                if self._draft.kind not in ('once', 'custom') and not self._draft.expression:
-                    from .patterns import reconstruct_sequence
-                    self.pattern.blockSignals(True)
-                    self.pattern.setText(reconstruct_sequence(self._draft.starts(self.value(self.start), all_day=self.all_day.isChecked())))
-                    self.pattern.blockSignals(False)
-                self._draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked(), detect=False)
+                master = self._project_preview(self.build_events()[0])
+                draft = deepcopy(self._draft)
+                draft.use_sequence(master, reference_start=self.value(self.start), reference_end=self.value(self.end))
+                self._draft = draft
+                self._schedule_error = None
+                self._sync_schedule_controls()
             if not self._report(change, self.pattern):
                 self.repeat.blockSignals(True)
                 self.repeat.setCurrentData(self._draft.kind if self._draft.kind in REGULAR_KINDS else 'RDATE')
                 self.repeat.blockSignals(False)
-                return
+                return False
         else:
             self._regular_changed('count')
         self._update_preview()
+        return True
 
     def _regular_changed(self, ending):
         if self._loading or self.repeat.currentData() not in REGULAR_KINDS:
             return
         def change():
             kind = self.repeat.currentData()
-            self._draft.set_regular(kind, interval=self.interval.value(), count=self.repeat_count.value(),
+            draft = deepcopy(self._draft)
+            draft.set_regular(kind, interval=self.interval.value(), count=self.repeat_count.value(),
                 until=self.repeat_until.value().date() if ending == 'until' else None,
-                weekdays=self._draft.weekdays if kind == 'WEEKLY' else (),
+                weekdays=draft.weekdays if kind == 'WEEKLY' else (),
                 ending='never' if self.no_end.isChecked() else ending)
+            start = draft.schedule_anchor(self.value(self.start), all_day=self.all_day.isChecked())
+            if draft.ending == 'until':
+                until_to_count(start, kind, draft.interval, draft.until, draft.weekdays)
+            elif draft.ending != 'never':
+                count_to_until(start, kind, draft.interval, draft.count, draft.weekdays)
+            self._draft = draft
+            self._schedule_error = None
             self._sync_schedule_controls()
             self._update_preview()
-        self._report(change, self.repeat_until if ending == 'until' else self.repeat_count)
+        field = self.repeat_until if ending == 'until' else self.repeat_count
+        if not self._report(change, field):
+            self._schedule_error = (self.error.text(), field)
+            self.repeat.blockSignals(True)
+            self.repeat.setCurrentData(self._draft.kind if self._draft.kind in REGULAR_KINDS else 'RDATE')
+            self.repeat.blockSignals(False)
 
     def pattern_changed(self, *_):
         if self._loading:
@@ -693,41 +745,30 @@ class EventDialog(FormDialog):
             self._draft.kind = 'custom'
             self._loading = False
         def change():
-            self._draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked(),
-                                       detect=not self.pattern.hasFocus())
+            draft = deepcopy(self._draft)
+            draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked(),
+                                 detect=not self.pattern.hasFocus())
+            self._draft = draft
+            self._schedule_error = None
             was_loading, self._loading = self._loading, True
-            if self.schedule_mode.currentData() == 'single':
-                self.schedule_mode.setCurrentData('repeat')
-            self._sync_schedule_controls()
-            self._loading = was_loading
+            try:
+                if self.schedule_mode.currentData() == 'single':
+                    self.schedule_mode.setCurrentData('repeat')
+                self._sync_schedule_controls()
+            finally:
+                self._loading = was_loading
             self._update_preview()
         self._report(change, self.pattern)
 
     def _finish_pattern(self):
-        if not self._loading:
+        if not self._loading and self._draft.kind == 'custom':
             def finish():
-                self._draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked())
+                draft = deepcopy(self._draft)
+                draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked())
+                self._draft = draft
                 self._sync_schedule_controls()
                 self._update_preview()
             self._report(finish, self.pattern)
-
-    def show_advanced_rule(self):
-        self._loading = True
-        if self.schedule_mode.currentData() == 'single':
-            self.schedule_mode.setCurrentData('repeat')
-        self.repeat.setCurrentData('RDATE')
-        self._draft.kind = 'advanced'
-        self._draft.advanced_rule = self.custom_rule.text() or 'FREQ=WEEKLY;COUNT=10'
-        self.custom_rule.setText(self._draft.advanced_rule)
-        self._loading = False
-        self._update_preview()
-        self.custom_rule.setFocus()
-
-    def _advanced_changed(self, *_):
-        if not self._loading:
-            self._draft.kind = 'advanced'
-            self._draft.advanced_rule = self.custom_rule.text().strip().removeprefix('RRULE:').upper()
-            self._update_preview()
 
     def sequence_starts(self):
         return self._draft.starts(self.value(self.start), all_day=self.all_day.isChecked())
@@ -744,6 +785,9 @@ class EventDialog(FormDialog):
             raise ValueError('The end must be after the start.')
         source = self.schedule_source()
         single = self.has_group and self.scope.currentData() == 'single'
+        if not single and self._schedule_error and self.schedule_mode.currentData() != 'single':
+            message, self._validation_field = self._schedule_error
+            raise ValueError(message)
         if not single and self.schedule_mode.currentData() != 'single' and self._draft.kind != 'advanced':
             if self.pattern.text() != self._draft.expression:
                 self._validation_field = self.pattern
@@ -751,7 +795,7 @@ class EventDialog(FormDialog):
         if single:
             fields = ScheduleDraft.from_event().fields(start, all_day=self.all_day.isChecked())
         else:
-            self._validation_field = self.custom_rule if self._draft.kind == 'advanced' else self.pattern
+            self._validation_field = self.repeat if self._draft.kind == 'advanced' else self.pattern
             fields = self._draft.fields(start, end, all_day=self.all_day.isChecked())
         self.schedule_replacement = bool(self.series and self.scope.currentData() != 'single' and
             (self._draft.configuration_changed or (source and source.recurring and self._draft.kind == 'once')))
@@ -792,15 +836,13 @@ class EventDialog(FormDialog):
         self.repeat.setVisible(repeated and not self.common_fields_only)
         self.repeat.setEnabled(editable)
         regular = repeated and self._draft.kind in REGULAR_KINDS
-        self.regular_controls.setVisible(regular and not self.common_fields_only)
+        self.recurrence_details.setVisible(repeated and not self.common_fields_only)
+        self.recurrence_details.setCurrentWidget(self.regular_controls if regular else self.custom_controls)
         self.regular_controls.setEnabled(editable)
         self.repeat_count.setEnabled(editable and not self.no_end.isChecked())
         self.repeat_until.setEnabled(editable and not self.no_end.isChecked())
-        custom = repeated and self._draft.kind in ('custom', 'advanced')
-        self.custom_controls.setVisible(custom and not self.common_fields_only)
         self.custom_controls.setEnabled(editable)
-        self.pattern.setVisible(self._draft.kind != 'advanced')
-        self.custom_rule.setVisible(self._draft.kind == 'advanced')
+        self.custom_input.setCurrentIndex(1 if self._draft.kind == 'advanced' else 0)
         self.pattern.setEnabled(editable)
         self.add_occurrence_button.setEnabled(editable)
         self.add_occurrence_button.setVisible(not self.common_fields_only)
@@ -962,7 +1004,7 @@ class EventDialog(FormDialog):
         try:
             self._scope_name = scope
             if scope in self._scope_values:
-                self._restore(self._scope_values[scope])
+                self._report(lambda: self._restore(self._scope_values[scope]))
             else:
                 self._load_scope(scope)
         finally:
@@ -974,7 +1016,9 @@ class EventDialog(FormDialog):
         return dict(start=self._last_start, end=self._last_end, duration=self._duration,
             start_text=self.start.text(), end_text=self.end.text(), title=self.title.text(), location=self.location.text(),
             notes=self.description.toPlainText(), all_day=self.all_day.isChecked(), timed_range=self._timed_range,
-            mode=self.schedule_mode.currentData(), draft=deepcopy(self._draft), repeat_draft=deepcopy(self._repeat_draft))
+            mode=self.schedule_mode.currentData(), draft=deepcopy(self._draft), repeat_draft=deepcopy(self._repeat_draft),
+            schedule_error=self._schedule_error, interval=self.interval.value(), count=self.repeat_count.value(),
+            until_text=self.repeat_until.text(), pattern_text=self.pattern.text())
 
     def _restore(self, state):
         self.all_day.setChecked(state['all_day'])
@@ -986,8 +1030,13 @@ class EventDialog(FormDialog):
         self.location.setText(state['location'])
         self.description.setPlainText(state['notes'])
         self._draft, self._repeat_draft = state['draft'], state['repeat_draft']
+        self._schedule_error = state['schedule_error']
         self.schedule_mode.setCurrentData(state['mode'])
         self._sync_schedule_controls()
+        self.interval.setValue(state['interval'])
+        self.repeat_count.setValue(state['count'])
+        self.repeat_until.setText(state['until_text'])
+        self.pattern.setText(state['pattern_text'])
 
     def save(self):
         try:

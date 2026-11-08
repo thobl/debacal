@@ -1,7 +1,7 @@
 """Workspace layout and controls, separate from event and synchronization logic."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
+    QWidget, QHBoxLayout, QVBoxLayout,
     QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
@@ -12,17 +12,14 @@ from .icons import icon
 from .theme import scheme_for
 from .year_view import YearView
 from .workspace_header import SegmentedControl, WorkspaceHeader
+from .buttons import action_button
 
 
 class WorkspaceChrome:
     """Build widgets and connect them to the window's application actions."""
 
     def button(self, title, action, parent_layout=None, primary=False):
-        button = QPushButton(title)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.clicked.connect(lambda _=False: action())
-        if primary:
-            button.setObjectName('primary')
+        button = action_button(title, action, primary=primary)
         if parent_layout is not None:
             parent_layout.addWidget(button)
         return button

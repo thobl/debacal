@@ -2,16 +2,109 @@
 from datetime import datetime, time, timedelta, timezone
 from itertools import islice
 
-from .recurrence import canonical_rule, event_zone, expand_series, key_datetime, normalized_rule, occurrence, recurrence_key, recurrence_set
+from .recurrence import canonical_rule, event_zone, expand_series, key_datetime, normalized_rule, occurrence, occurrence_id, recurrence_key, recurrence_set
 
 
 NAVIGATION_LIMIT = 10000
+POSITION_LIMIT = 2000
 
 
 class PreviewNavigation:
     def __init__(self, masters):
-        self.masters = list(masters)
+        self.masters = []
+        self._signature = None
         self._finite = None
+        self._positions = None
+        self._positions_checked = False
+        self._known_positions = {}
+        self.rebind(masters)
+
+    def rebind(self, masters):
+        """Retain cheap position data across title and duration changes."""
+        masters = list(masters)
+        signature = tuple((item.id, item.start.isoformat(), item.all_day, item.timezone_id,
+                           item.recurrence_rule, item.recurrence_dates, item.excluded_dates,
+                           tuple(sorted((key, value.get('start')) for key, value in item.recurrence_overrides.items())))
+                          for item in masters)
+        self._finite = None
+        if signature != self._signature:
+            self._positions = None
+            self._positions_checked = False
+            self._known_positions = {}
+        self._signature, self.masters = signature, masters
+
+    def _position_budget(self, master):
+        if not master.recurrence_rule:
+            return True
+        fields = normalized_rule(master.recurrence_rule, master)
+        if 'COUNT' in fields:
+            return int(fields['COUNT']) <= POSITION_LIMIT
+        if 'UNTIL' not in fields:
+            return False
+        canonical = dict(part.split('=', 1) for part in canonical_rule(master.recurrence_rule, master).split(';'))
+        boundary = canonical['UNTIL']
+        until = (datetime.strptime(boundary, '%Y%m%d').replace(tzinfo=event_zone(master)) if len(boundary) == 8 else
+                 datetime.strptime(boundary, '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc).astimezone(event_zone(master)))
+        first = master.start.astimezone(event_zone(master))
+        seconds = max(0, (until.replace(tzinfo=None) - first.replace(tzinfo=None)).total_seconds())
+        units = {'SECONDLY': 1, 'MINUTELY': 60, 'HOURLY': 3600, 'DAILY': 86400,
+                 'WEEKLY': 604800, 'MONTHLY': 28 * 86400, 'YEARLY': 365 * 86400}
+        return seconds / (units.get(fields.get('FREQ'), 1) * int(fields.get('INTERVAL', 1))) <= POSITION_LIMIT
+
+    def _position_records(self):
+        if self._positions_checked:
+            return self._positions
+        self._positions_checked = True
+        if not self.bounded or any(not self._position_budget(item) for item in self.masters):
+            return None
+        positions = {}
+        for master in self.masters:
+            if not master.recurring:
+                positions[master.id] = master.start.timestamp()
+                continue
+            if not master.recurrence_rule:
+                keys = {recurrence_key(master.start, master.all_day), *master.recurrence_dates,
+                        *master.recurrence_overrides} - set(master.excluded_dates)
+            else:
+                keys = set()
+                for index, value in enumerate(islice(recurrence_set(master), POSITION_LIMIT + 1)):
+                    if index == POSITION_LIMIT:
+                        return None
+                    keys.add(recurrence_key(value, master.all_day))
+                keys.update(set(master.recurrence_overrides) - set(master.excluded_dates))
+            for key in keys:
+                nominal = key_datetime(key, master)
+                if nominal.astimezone(timezone.utc).astimezone(nominal.tzinfo).replace(tzinfo=None) != nominal.replace(tzinfo=None):
+                    continue
+                actual = (datetime.fromisoformat(master.recurrence_overrides[key]['start'])
+                          if key in master.recurrence_overrides else nominal)
+                positions[occurrence_id(master.id, key)] = actual.timestamp()
+        self._positions = sorted((timestamp, key) for key, timestamp in positions.items())
+        return self._positions
+
+    def position(self, reference):
+        """Return a one-based chronological position and exact total when cheap.
+
+        Large/complex or infinite rules never enumerate their history for a
+        label. An unknown ordinal/total is represented by None. Adjacent jumps
+        retain a known ordinal as the user navigates an unbounded series.
+        """
+        if self._finite is not None:
+            records = [(item.start.timestamp(), item.id) for item in self._finite]
+        else:
+            records = self._position_records()
+        if records is not None:
+            index = next((index + 1 for index, (_stamp, key) in enumerate(records) if key == reference.id), None)
+            return index, len(records)
+        if reference.id in self._known_positions:
+            return self._known_positions[reference.id], None
+        if len(self.masters) == 1:
+            master = self.masters[0]
+            if (not master.recurrence_dates and not master.excluded_dates and not master.recurrence_overrides
+                    and reference.start.timestamp() == master.start.timestamp()):
+                self._known_positions[reference.id] = 1
+                return 1, None
+        return None, None
 
     @property
     def bounded(self):
@@ -148,5 +241,8 @@ class PreviewNavigation:
                     break
         if not candidates:
             return None
-        return min(candidates, key=lambda item: (item.start.timestamp(), item.id)) if direction > 0 else max(
+        result = min(candidates, key=lambda item: (item.start.timestamp(), item.id)) if direction > 0 else max(
             candidates, key=lambda item: (item.start.timestamp(), item.id))
+        if reference.id in self._known_positions:
+            self._known_positions[result.id] = self._known_positions[reference.id] + direction
+        return result

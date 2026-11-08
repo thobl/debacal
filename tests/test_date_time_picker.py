@@ -7,7 +7,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QDialog
@@ -49,6 +49,35 @@ def make_picker(desktop, start=START, end=None, **options):
     picker.show()
     settle(app)
     return picker
+
+
+def test_constructing_a_picker_never_shows_a_temporary_top_level_window(desktop):
+    app, widgets = desktop
+    parent = QDialog()
+    widgets.append(parent)
+    parent.show()
+    settle(app)
+    shown = []
+    class Observer(QObject):
+        def eventFilter(self, widget, event):
+            if event.type() == QEvent.Type.Show and getattr(widget, 'isWindow', lambda: False)():
+                shown.append(widget)
+            return False
+    observer = Observer()
+    app.installEventFilter(observer)
+    try:
+        picker = DateTimeRangePicker(START, START + timedelta(hours=1), parent=parent)
+        widgets.append(picker)
+        assert shown == []
+        assert picker.full_day_button.parentWidget() is picker
+        assert picker.windowType() == Qt.WindowType.Dialog
+        assert picker.windowModality() == Qt.WindowModality.WindowModal
+        picker.open()
+        settle(app)
+        assert shown == [picker]
+        assert picker.windowHandle().transientParent() is parent.windowHandle()
+    finally:
+        app.removeEventFilter(observer)
 
 
 @pytest.mark.parametrize('text', ['4.11.2026 9:5', '04.11.2026 09:05', '2026-11-4 9:05',

@@ -34,7 +34,7 @@ AXIS_SIZE = 8
 ALL_DAY_SIZE = 7
 WEEK_CAPTION_SIZE = WEEKDAY_SIZE
 DAY_NUMBER_SIZE = 17
-WEEK_NUMBER_SIZE = DAY_NUMBER_SIZE
+WEEK_NUMBER_SIZE = 13
 
 
 @lru_cache(maxsize=64)
@@ -58,6 +58,19 @@ def weekday_label_rect(left, width, scale):
 
 def day_number_rect(left, width, scale):
     return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
+
+
+def week_number_rect(left, width, scale):
+    """Use a quieter week number while retaining the day-number baseline."""
+    metrics = []
+    for size in (DAY_NUMBER_SIZE, WEEK_NUMBER_SIZE):
+        font = QFont('Sans Serif')
+        font.setPointSizeF(size * scale)
+        font.setBold(True)
+        metrics.append(QFontMetricsF(font))
+    offset = ((metrics[0].ascent() - metrics[0].descent()) -
+              (metrics[1].ascent() - metrics[1].descent())) / 2
+    return QRectF(left, 28 * scale + offset, width, math.ceil(28 * scale))
 
 
 def paint_week_caption(painter, gutter, scale, color):
@@ -300,7 +313,7 @@ class DayHeader(QWidget):
         week = self.week_rect()
         if week is not None:
             paint_week_caption(p, self.gutter, scale, colors.muted)
-            text(p, QRectF(week.left(), 28 * scale, week.width(), math.ceil(28 * scale)),
+            text(p, week_number_rect(week.left(), week.width(), scale),
                  str(self.preferences.week_number(self.days[0])), colors.accent, WEEK_NUMBER_SIZE, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):

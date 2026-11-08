@@ -162,13 +162,6 @@ def test_save_focuses_the_invalid_title_datetime_duration_or_sequence_field(desk
     sequence.title.setFocus()
     sequence.save()
     assert sequence.pattern.hasFocus() and 'closing' in sequence.error.text()
-    rule = create()
-    rule.schedule_mode.setCurrentData('repeat')
-    rule.show_advanced_rule()
-    rule.custom_rule.setText('FREQ=UNKNOWN')
-    rule.title.setFocus()
-    rule.save()
-    assert rule.custom_rule.hasFocus() and rule.error.text()
 
 
 def test_entering_an_earlier_end_moves_the_start_and_preserves_duration(desktop):

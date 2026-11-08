@@ -65,11 +65,14 @@ def test_last_then_previous_and_first_respect_exclusions_and_moved_exceptions(de
     preview = make([source])
     selected = QSignalSpy(preview.occurrence_selected)
     assert preview.last_button.isEnabled()
+    assert preview.position_label.text().startswith('1/4')
     preview.last_button.click()
     settle(app)
     assert preview.selected_event.start == moved.start and selected.count() == 1
+    assert preview.position_label.text().startswith('4/4')
     preview.previous_occurrence_button.click()
     assert preview.selected_event.start == START + timedelta(days=3)
+    assert preview.position_label.text().startswith('3/4')
     preview.first_button.click()
     assert preview.selected_event.start == START
     assert preview.masters == [source]
@@ -93,8 +96,51 @@ def test_unbounded_preview_expands_visible_month_only_and_disables_last(desktop)
         assert len(preview.visible_events) == 42 - (START.date() - preview.grid_start).days
         assert not preview.last_button.isEnabled()
         assert 'no last occurrence' in preview.last_button.toolTip()
+        assert preview.position_label.text().startswith('1/∞')
         preview.next_occurrence_button.click()
         assert preview.selected_event.start == START + timedelta(days=1)
+        assert preview.position_label.text().startswith('2/∞')
+
+
+def test_today_browses_current_month_without_moving_the_primary_or_selection(desktop):
+    _, make = desktop
+    source = master(recurrence_rule='FREQ=DAILY;COUNT=5')
+    preview = make([source])
+    preview.next_occurrence_button.click()
+    selected = preview.selected_event
+    today = START.replace(year=2027, month=2, day=12)
+    with patch('debacal.series_preview.now', return_value=today):
+        preview.today_button.click()
+    assert preview.current_month == today.date().replace(day=1)
+    assert preview.selected_event == selected
+    assert preview.primary == source
+
+
+def test_occurrence_position_tracks_all_dates_without_a_second_footer(desktop):
+    _, make = desktop
+    preview = make([master(recurrence_rule='FREQ=DAILY;COUNT=5')])
+    for _ in range(3):
+        preview.next_occurrence_button.click()
+    assert preview.position_label.text().startswith('4/5')
+    assert preview.error_label.isHidden()
+
+
+def test_position_cache_survives_title_and_duration_edits_without_rescanning_rules():
+    source = master(recurrence_rule='FREQ=DAILY;COUNT=500')
+    navigation = PreviewNavigation([source])
+    assert navigation.position(occurrence(source, START)) == (1, 500)
+    changed = replace(source, title='Renamed', end=source.end + timedelta(hours=1))
+    navigation.rebind([changed])
+    with patch('debacal.preview_navigation.recurrence_set', side_effect=AssertionError('Position cache was lost')):
+        assert navigation.position(occurrence(changed, START + timedelta(days=3))) == (4, 500)
+
+
+def test_position_does_not_enumerate_large_or_unbounded_rules():
+    for rule in ('FREQ=DAILY', 'FREQ=DAILY;COUNT=100000'):
+        source = master(recurrence_rule=rule)
+        navigation = PreviewNavigation([source])
+        with patch('debacal.preview_navigation.recurrence_set', side_effect=AssertionError('Do not scan history')):
+            assert navigation.position(occurrence(source, START)) == (1, None)
 
 
 def test_large_explicit_schedule_counts_dates_without_expanding_invisible_events(desktop):

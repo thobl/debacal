@@ -33,6 +33,9 @@ _SHAPES = {
     'settings': '<path d="M8 2h4l.6 2 1.7 1 2-.5 2 3.5-1.5 1.5v2l1.5 1.5-2 3.5-2-.5-1.7 1-.6 2H8l-.6-2-1.7-1-2 .5-2-3.5L3.2 11V9L1.7 7.5l2-3.5 2 .5 1.7-1Z"/><circle cx="10" cy="10" r="3"/>',
     'conflict': '<path d="m10 2 8 15H2Z"/><path d="M10 7v4m0 3v.1"/>',
     'confirm': '<path d="m4 10 4 4 8-8"/>',
+    'repeat': '<path d="M4 6h10l-3-3m3 3-3 3M16 14H6l3 3m-3-3 3-3"/>',
+    'alternatives': '<rect x="2" y="2" width="6" height="6" rx="1"/><rect x="12" y="12" width="6" height="6" rx="1"/><path d="m12 5 3 3 3-3M15 8V3M5 12v5m-2-2 2 2 2-2"/>',
+    'sequence': '<path d="M7 3H5v5l-2 2 2 2v5h2M13 3h2v5l2 2-2 2v5h-2M9 10h2"/>',
 }
 
 

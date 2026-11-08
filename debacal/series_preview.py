@@ -3,17 +3,17 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QFrame, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from .calendar_appearance import weekend_fill, weekend_text
 from .calendar_widgets import WEEKDAY_SIZE, display_scale, text
 from .event_style import event_colors
-from .icons import icon
 from .models import Event
 from .preferences import Preferences
 from .preview_navigation import PreviewNavigation
+from .preview_controls import PreviewControls
 from .recurrence import expand_events, key_datetime, occurrence, recurrence_key
 from .theme import scheme_for
 from .timeutil import local_zone, now
@@ -25,21 +25,6 @@ def _start(event):
 
 def _end(event):
     return event.end if event.all_day else event.end.astimezone(local_zone())
-
-
-def _endpoint_icon(color, last=False):
-    pixels = QPixmap(40, 40)
-    pixels.setDevicePixelRatio(2)
-    pixels.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixels)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor(color), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-    bar, edge, point = (15, 7, 12) if last else (5, 13, 8)
-    painter.drawLine(QPointF(bar, 5), QPointF(bar, 15))
-    painter.drawLine(QPointF(edge, 5), QPointF(point, 10))
-    painter.drawLine(QPointF(point, 10), QPointF(edge, 15))
-    painter.end()
-    return QIcon(pixels)
 
 
 class SeriesPreview(QWidget):
@@ -78,17 +63,20 @@ class SeriesPreview(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(5)
-        months = QHBoxLayout()
-        months.setSpacing(4)
-        self.previous_button = self._button('previous', 'Previous month', lambda: self.navigate_month(-1))
-        self.next_button = self._button('next', 'Next month', lambda: self.navigate_month(1))
-        self.month_label = QLabel()
-        self.month_label.setObjectName('sidebarSectionHeading')
-        self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        months.addWidget(self.previous_button)
-        months.addWidget(self.month_label, 1)
-        months.addWidget(self.next_button)
-        outer.addLayout(months)
+        self.controls = PreviewControls(self.preferences, self)
+        for name in ('previous_button', 'today_button', 'next_button', 'month_label', 'first_button',
+                     'previous_occurrence_button', 'next_occurrence_button', 'last_button', 'position_label'):
+            setattr(self, name, getattr(self.controls, name))
+        self.controls.previous_month_requested.connect(lambda: self.navigate_month(-1))
+        self.controls.next_month_requested.connect(lambda: self.navigate_month(1))
+        self.controls.today_requested.connect(self.show_today)
+        self.controls.first_requested.connect(self.show_first_date)
+        self.controls.previous_requested.connect(lambda: self.navigate_occurrence(-1))
+        self.controls.next_requested.connect(lambda: self.navigate_occurrence(1))
+        self.controls.last_requested.connect(self.show_last_date)
+        self.first_button.setToolTip('Primary event')
+        self.first_button.setAccessibleName('Primary event')
+        outer.addWidget(self.controls.month_bar)
         self.scroll = QScrollArea()
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setWidgetResizable(True)
@@ -98,37 +86,14 @@ class SeriesPreview(QWidget):
         self.grid = _PreviewGrid(self)
         self.scroll.setWidget(self.grid)
         outer.addWidget(self.scroll, 1)
-        navigation = QHBoxLayout()
-        navigation.setSpacing(3)
-        self.first_button = self._button('first', 'Primary event', self.show_first_date)
-        self.previous_occurrence_button = self._button('previous', 'Previous occurrence', lambda: self.navigate_occurrence(-1))
-        self.next_occurrence_button = self._button('next', 'Next occurrence', lambda: self.navigate_occurrence(1))
-        self.last_button = self._button('last', 'Last occurrence', self.show_last_date)
-        self.position_label = QLabel()
-        self.position_label.setProperty('muted', True)
-        self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        navigation.addWidget(self.first_button)
-        navigation.addWidget(self.previous_occurrence_button)
-        navigation.addWidget(self.position_label, 1)
-        navigation.addWidget(self.next_occurrence_button)
-        navigation.addWidget(self.last_button)
-        outer.addLayout(navigation)
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
-        self.summary.setProperty('muted', True)
-        outer.addWidget(self.summary)
+        outer.addWidget(self.controls.occurrence_bar)
+        self.error_label = QLabel()
+        self.error_label.setWordWrap(True)
+        self.error_label.setProperty('error', True)
+        self.error_label.hide()
+        outer.addWidget(self.error_label)
         self.setMinimumHeight(310)
         self._rebuild()
-
-    def _button(self, glyph, caption, callback):
-        button = QPushButton()
-        button.setProperty('iconOnly', True)
-        button.setProperty('previewGlyph', glyph)
-        button.setAccessibleName(caption)
-        button.setToolTip(caption)
-        button.setAutoDefault(False)
-        button.clicked.connect(lambda _checked=False: callback())
-        return button
 
     @property
     def primary(self):
@@ -166,7 +131,7 @@ class SeriesPreview(QWidget):
         if self.masters and not self._initialized:
             self.current_month = min(_start(event).date() for event in self.masters).replace(day=1)
             self._initialized = True
-        self._navigation = PreviewNavigation(self.masters)
+        self._navigation.rebind(self.masters)
         self._navigation_failure = ''
         self._rebuild()
         if previous:
@@ -251,6 +216,9 @@ class SeriesPreview(QWidget):
         self._initialized = True
         self._rebuild()
 
+    def show_today(self):
+        self.show_month(now().date())
+
     def show_first_date(self):
         if self._primary is not None:
             self.show_month(_start(self._primary).date())
@@ -302,7 +270,8 @@ class SeriesPreview(QWidget):
     def _rebuild(self):
         ordinal = self.current_month.toordinal() - (self.current_month.weekday() - self.preferences.first_weekday) % 7
         self.grid_start = date.fromordinal(max(1, ordinal))
-        self.month_label.setText(self.preferences.format_month(self.current_month))
+        self.controls.set_preferences(self.preferences)
+        self.controls.set_month(self.current_month)
         self.error, self.total_occurrences = '', None
         self.anchor_dates = {_start(self._primary).date()} if self._primary else set()
         self.added_dates, self.excluded_dates = set(), set()
@@ -330,17 +299,8 @@ class SeriesPreview(QWidget):
             last = min(date.max.toordinal(), self.grid_start.toordinal() + 41, last_day.toordinal())
             for ordinal in range(first, last + 1):
                 self._by_day.setdefault(date.fromordinal(ordinal), []).append(item)
-        count = sum(_start(event).date().replace(day=1) == self.current_month for event in self.visible_events)
-        number = f'{count} of {self.total_occurrences}' if self.total_occurrences is not None else str(count)
-        self.summary.setText('Preview unavailable: ' + self.error if self.error else number +
-                             (' occurrence' if count == 1 and self.total_occurrences in (None, 1) else ' occurrences') + ' this month')
-        scale, colors = display_scale(self), scheme_for(self.preferences)
-        for button in self.findChildren(QPushButton):
-            glyph = button.property('previewGlyph')
-            if glyph:
-                button.setIcon(_endpoint_icon(colors.accent, glyph == 'last') if glyph in ('first', 'last') else icon(glyph, colors.accent))
-                button.setIconSize(QSize(round(18 * scale), round(18 * scale)))
-                button.setFixedSize(round(30 * scale), round(30 * scale))
+        self.error_label.setText('Preview unavailable: ' + self.error if self.error else '')
+        self.error_label.setVisible(bool(self.error))
         self.previous_button.setEnabled(self.current_month > date.min)
         self.next_button.setEnabled(self.current_month < date(9999, 12, 1))
         self._layout_grid()
@@ -352,19 +312,28 @@ class SeriesPreview(QWidget):
         selected = self._selected or self._primary_occurrence()
         ready = bool(self.masters) and not self.error
         self.first_button.setEnabled(ready)
+        if not ready:
+            self.last_button.setEnabled(False)
+            self.previous_occurrence_button.setEnabled(False)
+            self.next_occurrence_button.setEnabled(False)
+            self.controls.set_position(None)
+            return
         self.last_button.setEnabled(ready and self._navigation.bounded and not self._navigation_failure)
         self.last_button.setToolTip(self._navigation_failure or ('Last occurrence' if self._navigation.bounded else 'This series has no last occurrence.'))
         self.previous_occurrence_button.setEnabled(ready)
         self.next_occurrence_button.setEnabled(ready)
-        if self.total_occurrences is not None and self.total_occurrences <= 1:
+        index, total = self._navigation.position(selected) if selected else (None, self.total_occurrences)
+        if total is not None:
+            self.total_occurrences = total
+        self.controls.set_position(selected, index, total, unbounded=not self._navigation.bounded,
+                                   display_zone=local_zone())
+        if total is not None and total <= 1:
             self.previous_occurrence_button.setEnabled(False)
             self.next_occurrence_button.setEnabled(False)
-        if selected:
-            value = _start(selected)
-            self.position_label.setText(self.preferences.format_date(value.date()) +
-                                        ('' if selected.all_day else ' · ' + self.preferences.format_time(value)))
-        else:
-            self.position_label.clear()
+        elif index is not None:
+            self.previous_occurrence_button.setEnabled(ready and index > 1)
+            if total is not None:
+                self.next_occurrence_button.setEnabled(ready and index < total)
         values = self._navigation._finite
         if values is not None and selected:
             index = next((index for index, item in enumerate(values) if item.id == selected.id), -1)

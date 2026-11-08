@@ -110,7 +110,7 @@ def test_date_markers_are_replaced_by_actual_occurrences_without_losing_exclusio
         pixels = preview.grid.grab().toImage()
     labels = [call.args[2] for call in draw.call_args_list]
     assert not {'+', '×', '●', 'skipped'}.intersection(labels)
-    assert 'Added date' not in preview.summary.text() and 'Skipped date' not in preview.summary.text()
+    assert 'Added date' not in preview.position_label.text() and 'Skipped date' not in preview.position_label.text()
     skipped = START.date() + timedelta(days=1)
     blank = preview.grid.cell_rect(skipped)
     assert pixels.pixelColor(round(blank.left() + 9), round(blank.top() + 25)) == QColor('#ffffff')

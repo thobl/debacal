@@ -3,8 +3,9 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from threading import Event as ThreadEvent, get_ident
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from threading import Event as ThreadEvent, Lock, get_ident
 from unittest.mock import patch
 
 import pytest
@@ -12,10 +13,13 @@ from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
-from debacal.import_dialog import ImportDialog
+from debacal.import_dialog import ImportDialog, _navigate_preview
 from debacal.import_sources import ImportSource
 from debacal.ics import export_ics
 from debacal.models import Calendar, Event
+from debacal.calendar_choice import CalendarChoice
+from debacal.preview_controls import PreviewControls
+from debacal.preview_navigation import PreviewNavigation
 
 
 CALENDARS = [Calendar('local', 'Personal', '#5f8a67'),
@@ -203,3 +207,134 @@ def test_changing_sources_while_loading_cannot_show_or_import_the_old_snapshot(d
         widget.save()
     assert widget.selected_sources == (second,)
     assert [event.title for event in widget.selected_prepared.events] == ['Current source']
+
+
+def wait_navigation(widget):
+    elapsed = QElapsedTimer()
+    elapsed.start()
+    while (widget._navigation_future is not None or widget._page_future is not None or not widget.preview_ready) and elapsed.elapsed() < 3000:
+        QApplication.processEvents()
+        QTest.qWait(5)
+    assert widget._navigation_future is None and widget._page_future is None and widget.preview_ready
+
+
+def test_import_uses_shared_sidebar_calendar_picker_and_preview_controls(dialogs):
+    widget = dialogs(CALENDARS, sources=[ImportSource.from_data(contents())])
+    wait_navigation(widget)
+    assert isinstance(widget.calendar, CalendarChoice)
+    assert isinstance(widget.preview.controls, PreviewControls)
+    assert widget.sidebar.objectName() == 'eventEditorSidebar'
+    assert widget.heading.objectName() == 'brand' and widget.heading.text() == 'Import events'
+    assert widget.preview_column.height() == widget.sidebar.height()
+    assert widget.preview.all_button.parentWidget() is widget.selection_section
+    assert widget.import_button.objectName() != 'primary'
+    assert not widget.preview.message.isVisible()
+    assert widget.preview.position_label.text().startswith('1/1')
+
+
+def test_occurrence_navigation_crosses_months_without_changing_import_selection(dialogs):
+    start = datetime(2026, 11, 30, 9, tzinfo=timezone.utc)
+    series = Event('series', 'source', 'Recurring appointment', start, start + timedelta(hours=1),
+                   recurrence_rule='FREQ=DAILY;COUNT=5')
+    widget = dialogs(CALENDARS, sources=[ImportSource.from_data(export_ics([series]))])
+    wait_navigation(widget)
+    snapshot = widget.selection.snapshot(masters=widget.prepared_import.events)
+    assert widget.preview.position_label.text().startswith('1/5')
+    assert not widget.preview.previous_occurrence_button.isEnabled()
+    QTest.mouseClick(widget.preview.last_button, Qt.MouseButton.LeftButton)
+    wait_navigation(widget)
+    assert widget.preview.current_month == date(2026, 12, 1)
+    assert widget.preview.focused_event.start == start + timedelta(days=4)
+    assert widget.preview.position_label.text().startswith('5/5')
+    assert not widget.preview.next_occurrence_button.isEnabled()
+    QTest.mouseClick(widget.preview.previous_occurrence_button, Qt.MouseButton.LeftButton)
+    wait_navigation(widget)
+    assert widget.preview.position_label.text().startswith('4/5')
+    QTest.mouseClick(widget.preview.first_button, Qt.MouseButton.LeftButton)
+    wait_navigation(widget)
+    assert widget.preview.current_month == date(2026, 11, 1)
+    assert widget.preview.focused_event.start == start
+    assert widget.selection.snapshot(masters=widget.prepared_import.events) == snapshot
+    assert not hasattr(widget.preview, 'details')
+    assert not widget.selected_sources
+
+
+def test_import_navigation_and_position_counts_run_off_the_gui_thread(dialogs):
+    ui_thread = get_ident()
+    calls = []
+    methods = {name: getattr(PreviewNavigation, name) for name in ('adjacent', 'last', 'position')}
+
+    def check(name):
+        def call(self, *args, **kwargs):
+            assert get_ident() != ui_thread
+            calls.append(name)
+            return methods[name](self, *args, **kwargs)
+        return call
+
+    with patch.object(PreviewNavigation, 'adjacent', check('adjacent')), \
+         patch.object(PreviewNavigation, 'last', check('last')), \
+         patch.object(PreviewNavigation, 'position', check('position')):
+        widget = dialogs(CALENDARS, sources=[ImportSource.from_data(contents())])
+        wait_navigation(widget)
+        QTest.mouseClick(widget.preview.first_button, Qt.MouseButton.LeftButton)
+        wait_navigation(widget)
+        QTest.mouseClick(widget.preview.last_button, Qt.MouseButton.LeftButton)
+        wait_navigation(widget)
+    assert set(calls) == set(methods)
+
+
+def test_enter_on_preview_navigation_navigates_without_accepting_import(dialogs):
+    widget = dialogs(CALENDARS, sources=[ImportSource.from_data(contents())])
+    wait_navigation(widget)
+    current = widget.preview.current_month
+    widget.preview.next_button.setFocus()
+    QTest.keyClick(widget.preview.next_button, Qt.Key.Key_Return)
+    wait_navigation(widget)
+    assert widget.preview.current_month != current
+    assert widget.result() == QDialog.DialogCode.Rejected
+    assert not widget.selected_sources
+
+
+def test_unbounded_import_has_no_last_occurrence_and_keeps_browsing_available(dialogs):
+    start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+    series = Event('series', 'source', 'Ongoing', start, start + timedelta(hours=1), recurrence_rule='FREQ=WEEKLY')
+    widget = dialogs(CALENDARS, sources=[ImportSource.from_data(export_ics([series]))])
+    wait_navigation(widget)
+    assert not widget.preview.last_button.isEnabled()
+    assert '∞' in widget.preview.position_label.text()
+    assert widget.preview.next_occurrence_button.isEnabled()
+    assert widget.preview.next_button.isEnabled() and widget.preview.today_button.isEnabled()
+
+
+def test_rapid_focus_requests_cannot_overlap_the_shared_position_cache():
+    start = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+    source = Event('event', 'source', 'A source event', start, start + timedelta(hours=1))
+    navigation = PreviewNavigation([source])
+    started, release, second_scheduled, second_entered = (ThreadEvent() for _ in range(4))
+    calls, lock = [], Lock()
+
+    def position(reference):
+        calls.append(reference.id)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(timeout=2)
+        else:
+            second_entered.set()
+        return 1, 1
+
+    def second():
+        second_scheduled.set()
+        return _navigate_preview(navigation, 'position', source, lock)
+
+    with patch.object(navigation, 'position', side_effect=position), ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(_navigate_preview, navigation, 'position', source, lock)
+        try:
+            assert started.wait(timeout=2)
+            following = executor.submit(second)
+            assert second_scheduled.wait(timeout=2)
+            assert not second_entered.wait(timeout=.05)
+        finally:
+            release.set()
+        assert first.result(timeout=2)[1] == (1, 1)
+        assert following.result(timeout=2)[1] == (1, 1)
+    assert calls == [source.id, source.id]

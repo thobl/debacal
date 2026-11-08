@@ -1,27 +1,34 @@
 """Keyboard-operable choices painted with the workspace's shared group style."""
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import QButtonGroup, QPushButton, QSizePolicy
+from PySide6.QtCore import Signal, QSize
+from PySide6.QtWidgets import QButtonGroup, QSizePolicy
 
 from .workspace_header import SegmentedControl
+from .buttons import action_button
+from .icons import icon
+from .theme import scheme_for
 
 
 class ChoiceControl(SegmentedControl):
     currentIndexChanged = Signal(int)
     currentChanged = Signal(object)
 
-    def __init__(self, options, preferences, parent=None):
+    def __init__(self, options, preferences, parent=None, *, icons=None):
         super().__init__(parent)
         self.preferences = preferences
         self.options = list(options)
+        self.icons = icons or {}
         self.buttons = {}
         self.group = QButtonGroup(self)
         self._index = 0
         buttons = []
         for index, (caption, data) in enumerate(self.options):
-            button = QPushButton(caption)
+            button = action_button(caption)
             button.setCheckable(True)
             button.setAutoDefault(False)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(caption)
+            if data in self.icons:
+                button.setIcon(icon(self.icons[data], scheme_for(preferences).accent))
+                button.setIconSize(QSize(round(18 * preferences.font_scale / 100), round(18 * preferences.font_scale / 100)))
             button.setStyleSheet('padding: 0 2px;')
             button.setToolTip(caption)
             button.clicked.connect(lambda _checked=False, value=index: self.setCurrentIndex(value))
@@ -38,6 +45,10 @@ class ChoiceControl(SegmentedControl):
 
     def count(self):
         return len(self.options)
+
+    def minimumSizeHint(self):
+        # Hidden stacked pages must not retain an earlier button-width minimum.
+        return QSize(0, self.height())
 
     def currentIndex(self):
         return self._index
@@ -71,6 +82,11 @@ class ChoiceControl(SegmentedControl):
     def resizeEvent(self, event):
         count = max(1, len(self._buttons))
         width, remainder = divmod(event.size().width(), count)
+        captions_fit = all(self.fontMetrics().horizontalAdvance(caption) +
+                           (self._buttons[index].iconSize().width() + 8 if data in self.icons else 4) <= width
+                           for index, (caption, data) in enumerate(self.options))
         for index, button in enumerate(self._buttons):
+            if self.icons:
+                button.setText(self.options[index][0] if captions_fit else '')
             button.setFixedSize(width + (index < remainder), self.height())
         super().resizeEvent(event)

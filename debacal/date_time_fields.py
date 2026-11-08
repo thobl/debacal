@@ -7,12 +7,11 @@ import re
 import warnings
 
 from dateutil.parser import UnknownTimezoneWarning, parse as parse_date
-from PySide6.QtCore import QDate, QDateTime, QLocale, QSize, QTime, QTimeZone, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
+from PySide6.QtCore import QDate, QDateTime, QLocale, QTime, QTimeZone, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
-from .icons import icon
+from .buttons import icon_button
 from .preferences import Preferences
-from .theme import scheme_for
 from .timeutil import now
 
 
@@ -156,14 +155,7 @@ class DateTimeField(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         self.edit = QLineEdit(self)
-        self.button = QPushButton(self)
-        self.button.setIcon(icon('day', scheme_for(self.preferences).accent))
-        self.button.setIconSize(QSize(18, 18))
-        self.button.setProperty('iconOnly', True)
-        self.button.setFixedSize(30, 30)
-        self.button.setAutoDefault(False)
-        self.button.setToolTip('Choose date and time')
-        self.button.setAccessibleName('Choose date and time')
+        self.button = icon_button('day', 'Choose date and time', preferences=self.preferences, parent=self)
         self.button.clicked.connect(self.picker_requested.emit)
         self.edit.editingFinished.connect(self.editingFinished.emit)
         self.edit.textChanged.connect(lambda _text: self.edit.setProperty('invalid', False))

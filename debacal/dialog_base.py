@@ -1,11 +1,8 @@
 """Shared keyboard behavior and small controls for native dialogs."""
-from PySide6.QtCore import Qt, QEvent, QRectF
-from PySide6.QtGui import QKeySequence, QColor, QPixmap, QIcon, QShortcut, QPainter, QPen
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QLabel, QWidget, QTextEdit, QPushButton, QCheckBox,
                               QLineEdit, QComboBox, QAbstractSpinBox, QDateTimeEdit)
-
-from .theme import scheme_for
-from .event_style import source_outline
 
 
 def hint(text):
@@ -13,28 +10,6 @@ def hint(text):
     label.setWordWrap(True)
     label.setProperty('muted', True)
     return label
-
-
-def _calendar_color_icon(value, preferences):
-    """Use the source list's square swatch without dimming an editing target."""
-    colors = scheme_for(preferences)
-    source = QColor(value)
-    if not source.isValid():
-        source = QColor(colors.accent)
-    scale = preferences.font_scale / 100
-    size = round(16 * scale)
-    swatch = QPixmap(size * 2, size * 2)
-    swatch.setDevicePixelRatio(2)
-    swatch.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(swatch)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(source)
-    painter.setPen(QPen(QColor(source_outline(source.darker(145).name(), colors.panel)), max(1, scale)))
-    painter.drawRoundedRect(QRectF(2 * scale, 2 * scale, 12 * scale, 12 * scale), 2 * scale, 2 * scale)
-    painter.end()
-    icon = QIcon(swatch)
-    icon.addPixmap(swatch, QIcon.Mode.Disabled)
-    return icon
 
 
 class FormDialog(QDialog):

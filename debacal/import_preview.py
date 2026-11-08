@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from PySide6.QtCore import Qt, QSize, QRectF, QPointF, Signal
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from .calendar_widgets import MonthCanvas, display_scale, event_tooltip
-from .icons import icon
+from .calendar_widgets import MonthCanvas, display_scale, event_tooltip, text
+from .buttons import action_button
 from .event_style import event_colors
 from .theme import scheme_for
 from .models import Calendar
 from .preferences import Preferences
+from .preview_controls import PreviewControls
 from .timeutil import local_zone, now
 
 
@@ -77,10 +78,28 @@ class _ImportMonth(MonthCanvas):
 
     def _paint_month_event(self, painter, rect, item, **options):
         included = self.is_included(item)
+        selected = item.id == self.selected_id
+        colors = scheme_for(self)
+        calendar = self.calendars.get(item.calendar_id)
+        style = event_colors(calendar.color if calendar else colors.accent, self, alpha=38 if item.candidate else 52)
+        edge = QColor(style.selected_outline if selected else style.outline)
         painter.save()
         if not included:
             painter.setOpacity(.32)
-        super()._paint_month_event(painter, rect, item, **options)
+        painter.setPen(QPen(edge, 2 if selected else 1,
+                            Qt.PenStyle.DashLine if item.candidate else Qt.PenStyle.SolidLine))
+        painter.setBrush(QColor(style.fill))
+        painter.drawRoundedRect(rect, 3, 3)
+        ink = QColor(style.ink)
+        before, after = options.get('before'), options.get('after')
+        if before:
+            text(painter, QRectF(rect.left() + 5, rect.top(), 12, rect.height()), '‹', ink, 10)
+        if after:
+            text(painter, QRectF(rect.right() - 17, rect.top(), 12, rect.height()), '›', ink, 10)
+        caption = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
+        label = rect.adjusted(19 if before else 5, 0, -19 if after else -3, 0)
+        painter.setClipRect(label)
+        text(painter, label, caption, ink, 8)
         painter.restore()
         if not included:
             calendar = self.calendars.get(item.calendar_id)
@@ -205,6 +224,8 @@ class ImportPreview(QWidget):
     date_toggled = Signal(object)
     selection_all_requested = Signal(bool)
     selection_month_requested = Signal(object)
+    navigation_requested = Signal(str, object)
+    occurrence_focused = Signal(object)
 
     def __init__(self, preferences=None, parent=None):
         super().__init__(parent)
@@ -213,40 +234,48 @@ class ImportPreview(QWidget):
         self._first_date = None
         self._calendars = []
         self._loading = False
+        self._navigation_available = self._navigation_loading = False
+        self._navigation_bounded = True
+        self._focused_event = None
+        self._position = (None, None, False)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(5)
-        toolbar = QHBoxLayout()
+        self.controls = PreviewControls(self.preferences, self)
+        for name in ('previous_button', 'today_button', 'next_button', 'month_label', 'first_button',
+                     'previous_occurrence_button', 'next_occurrence_button', 'last_button', 'position_label'):
+            setattr(self, name, getattr(self.controls, name))
+        self.month_label.setObjectName('heading')
+        self.controls.previous_month_requested.connect(lambda: self.navigate_month(-1))
+        self.controls.next_month_requested.connect(lambda: self.navigate_month(1))
+        self.controls.today_requested.connect(lambda: self.show_month(now().date()))
+        self.controls.first_requested.connect(self.show_first_date)
+        self.controls.previous_requested.connect(lambda: self._request_navigation('previous'))
+        self.controls.next_requested.connect(lambda: self._request_navigation('next'))
+        self.controls.last_requested.connect(lambda: self._request_navigation('last'))
+        outer.addWidget(self.controls.month_bar)
+        self.selection_controls = QWidget()
+        toolbar = QHBoxLayout(self.selection_controls)
+        toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(4)
-        self.previous_button = self._button('previous', 'Previous month', lambda: self.navigate_month(-1), toolbar)
-        self.today_button = self._button('today', 'Show this month', lambda: self.show_month(now().date()), toolbar)
-        self.next_button = self._button('next', 'Next month', lambda: self.navigate_month(1), toolbar)
-        self.month_label = QLabel()
-        self.month_label.setObjectName('section')
-        toolbar.addSpacing(6)
-        toolbar.addWidget(self.month_label, 1)
-        self.all_button = QPushButton('All')
+        self.all_button = action_button('All')
         self.all_button.setToolTip('Select all dates from the import')
         self.all_button.clicked.connect(lambda: self.selection_all_requested.emit(True))
         toolbar.addWidget(self.all_button)
-        self.none_button = QPushButton('None')
+        self.none_button = action_button('None')
         self.none_button.setToolTip('Deselect all dates from the import')
         self.none_button.clicked.connect(lambda: self.selection_all_requested.emit(False))
         toolbar.addWidget(self.none_button)
-        self.month_button = QPushButton('This month')
+        self.month_button = action_button('This month')
         self.month_button.setToolTip('Select only events starting in this month')
         self.month_button.clicked.connect(lambda: self.selection_month_requested.emit(self.current_month))
         toolbar.addWidget(self.month_button)
-        self.first_button = QPushButton('First event')
-        self.first_button.setToolTip('Show the first imported event')
-        self.first_button.clicked.connect(self.show_first_date)
-        self.first_button.setEnabled(False)
-        toolbar.addWidget(self.first_button)
-        outer.addLayout(toolbar)
+        outer.addWidget(self.selection_controls)
         self.canvas = _ImportMonth(self)
-        self.canvas.occurrence_toggled.connect(self.occurrence_toggled)
+        self.canvas.occurrence_toggled.connect(self._toggle_occurrence)
         self.canvas.date_toggled.connect(self.date_toggled)
         outer.addWidget(self.canvas, 1)
+        outer.addWidget(self.controls.occurrence_bar)
         self.message = QLabel()
         self.message.setProperty('muted', True)
         self.message.setTextFormat(Qt.TextFormat.PlainText)
@@ -255,40 +284,91 @@ class ImportPreview(QWidget):
         self.set_preferences(self.preferences)
         self.set_events(self.current_month, (), ())
 
-    def _button(self, symbol, title, action, layout):
-        button = QPushButton()
-        button.setIcon(icon(symbol, scheme_for(self).accent))
-        button.setProperty('iconName', symbol)
-        button.setIconSize(QSize(18, 18))
-        button.setProperty('iconOnly', True)
-        button.setToolTip(title)
-        button.setAccessibleName(title)
-        button.clicked.connect(lambda _checked=False: action())
-        layout.addWidget(button)
-        return button
-
     def set_preferences(self, preferences):
         self.preferences = preferences
         self.canvas.set_preferences(preferences)
-        size = max(26, round(30 * preferences.font_scale / 100))
-        for button in (self.previous_button, self.today_button, self.next_button):
-            button.setFixedSize(size, size)
-            button.setIcon(icon(button.property('iconName'), scheme_for(self).accent))
+        self.controls.set_preferences(preferences)
         self._update_heading()
+        self.set_position(*self._position)
 
     def _update_heading(self):
-        self.month_label.setText(self.preferences.format_month(self.current_month))
+        self.controls.set_month(self.current_month)
         self.previous_button.setEnabled(self.current_month > date(2, 1, 1))
         self.next_button.setEnabled(self.current_month < date(9998, 12, 1))
 
     def set_events(self, month, events, calendars):
         self.current_month = month.replace(day=1)
+        events = list(events)
         self._calendars = [calendars] if isinstance(calendars, Calendar) else list(calendars)
-        self.canvas.selected_id = None
-        self.canvas.set_selection(())
+        previous = self._focused_event
+        selected = next((item for item in events if previous and item.id == previous.id), previous)
+        if selected is None and events:
+            selected = next((item for item in events if self._display_date(item).replace(day=1) == self.current_month), events[0])
+        self.canvas.selected_id = selected.id if selected else None
         self.canvas.set_data(self.preferences.week_start(self.current_month), self.current_month.month,
-                             list(events), self._calendars)
+                             events, self._calendars)
+        self.set_focused_event(selected, request_position=selected is not None and (previous is None or previous.id != selected.id))
         self._update_heading()
+
+    @staticmethod
+    def _display_date(event):
+        return event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
+
+    @property
+    def focused_event(self):
+        return self._focused_event
+
+    def set_focused_event(self, event, *, request_position=False):
+        self._focused_event = event
+        self.canvas.selected_id = event.id if event else None
+        self.canvas._focus_event = event
+        self.canvas._focus_day = self._display_date(event) if event else None
+        self.canvas._shape_cache.clear()
+        self.canvas.update()
+        self.controls.set_position(event, *self._position[:2], unbounded=self._position[2])
+        self._update_navigation()
+        if event is not None and request_position:
+            self.occurrence_focused.emit(event)
+
+    def _toggle_occurrence(self, event):
+        self._position = (None, None, not self._navigation_bounded)
+        self.set_focused_event(event, request_position=True)
+        self.occurrence_toggled.emit(event)
+
+    def set_navigation_available(self, available, *, bounded=True):
+        self._navigation_available = bool(available)
+        self._navigation_bounded = bool(bounded)
+        self._update_navigation()
+
+    def set_navigation_loading(self, loading):
+        self._navigation_loading = bool(loading)
+        self._update_navigation()
+
+    def _update_navigation(self):
+        ready = self._navigation_available and not self._navigation_loading
+        index, total, _unbounded = self._position
+        self.first_button.setEnabled(not self._navigation_loading and (self._navigation_available or self._first_date is not None))
+        self.previous_occurrence_button.setEnabled(ready and self._focused_event is not None and index != 1)
+        self.next_occurrence_button.setEnabled(ready and self._focused_event is not None and (index is None or index != total))
+        self.last_button.setEnabled(ready and self._navigation_bounded)
+        self.last_button.setToolTip('Last occurrence' if self._navigation_bounded else 'This import contains a series with no last occurrence.')
+
+    def set_position(self, index=None, total=None, unbounded=False):
+        self._position = index, total, unbounded
+        self.controls.set_position(self._focused_event, index, total, unbounded=unbounded)
+        self._update_navigation()
+
+    def show_event(self, event, index=None, total=None, *, unbounded=False):
+        self._position = index, total, unbounded
+        self.set_focused_event(event)
+        day = self._display_date(event)
+        if day.replace(day=1) != self.current_month:
+            self.show_month(day)
+        self.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _request_navigation(self, action):
+        if self._navigation_available:
+            self.navigation_requested.emit(action, self._focused_event)
 
     def set_selection(self, included_ids):
         """Set inclusion for this page; None displays every occurrence included."""
@@ -296,7 +376,7 @@ class ImportPreview(QWidget):
 
     def set_first_date(self, day):
         self._first_date = day
-        self.first_button.setEnabled(day is not None)
+        self._update_navigation()
 
     def set_loading(self, loading):
         self._loading = bool(loading)
@@ -310,6 +390,7 @@ class ImportPreview(QWidget):
 
     def set_message(self, message):
         self.message.setText(message)
+        self.message.setVisible(bool(message))
 
     def set_error(self, message):
         self.set_loading(False)
@@ -330,5 +411,7 @@ class ImportPreview(QWidget):
             self.show_month(date(year, month + 1, 1))
 
     def show_first_date(self):
-        if self._first_date is not None:
+        if self._navigation_available:
+            self._request_navigation('first')
+        elif self._first_date is not None:
             self.show_month(self._first_date)

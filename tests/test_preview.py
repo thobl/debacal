@@ -57,15 +57,15 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(preview.current_month, date(2026, 11, 1))
         self.assertEqual(preview.grid_start, date(2026, 10, 26))
         self.assertEqual(len(preview.visible_events), 5)  # Four November dates and 2 December.
-        self.assertIn('4 occurrences this month', preview.summary.text())
+        self.assertTrue(preview.position_label.text().startswith('1/10'))
         self.assertEqual(len(preview.events_on(date(2026, 11, 11))), 1)
         self.assertEqual(preview.events_on(date(2026, 11, 12)), [])
         QTest.mouseClick(preview.next_button, Qt.MouseButton.LeftButton)
         self.assertEqual(preview.current_month, date(2026, 12, 1))
-        self.assertIn('5 occurrences this month', preview.summary.text())
+        self.assertTrue(preview.position_label.text().startswith('1/10'))
         QTest.mouseClick(preview.next_button, Qt.MouseButton.LeftButton)
         self.assertEqual(preview.current_month, date(2027, 1, 1))
-        self.assertIn('1 occurrence this month', preview.summary.text())
+        self.assertTrue(preview.position_label.text().startswith('1/10'))
 
     def test_editor_rebuild_keeps_browsed_month_even_when_ids_and_start_change(self):
         master = self.event(recurrence_rule='FREQ=WEEKLY;COUNT=10')
@@ -99,7 +99,7 @@ class PreviewTests(unittest.TestCase):
         preview = self.preview([self.event(recurrence_dates=('2026-12-10T14:00:00+01:00',
                                                             '2027-01-10T14:00:00+01:00'))])
         self.assertEqual(preview.total_occurrences, 3)
-        self.assertIn('1 of 3 occurrences this month', preview.summary.text())
+        self.assertTrue(preview.position_label.text().startswith('1/3'))
 
     def test_click_requests_date_edit_only_when_enabled(self):
         preview = self.preview([self.event()])
@@ -142,7 +142,7 @@ class PreviewTests(unittest.TestCase):
         self.assertFalse(preview.grab().isNull())
         preview.set_events([self.event(recurrence_rule='FREQ=INVALID')])
         self.assertTrue(preview.error)
-        self.assertIn('Preview unavailable', preview.summary.text())
+        self.assertIn('Preview unavailable', preview.error_label.text())
         self.assertEqual(preview.visible_events, [])
 
     def test_month_background_is_stable_when_calendars_are_toggled(self):

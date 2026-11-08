@@ -67,6 +67,11 @@ that occurrence, or click a day to toggle events starting on that date.
 Multi-day events remain whole. **All**, **None**, and **This month** set the
 starting selection; exclusions stay visible, dimmed and crossed out. Choices
 persist while navigating months. Changing the destination updates the preview color.
+The import dialog shares the event editor's two-column layout, calendar picker,
+and preview navigation. Today returns to the current month; First, Previous,
+Next, and Last step through occurrences, with a compact position such as 4/5.
+Navigation prepares distant months in the background and leaves date inclusion
+choices unchanged.
 Excluding dates from a series retains its standard rule with EXDATE; explicitly
 choosing a few occurrences imports only those dates, as a finite RDATE series
 or an individual event. The preview does not edit the source calendar.
@@ -254,7 +259,7 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   preserves duration; setting an earlier End moves Start back by that duration.
   Duration edits and preset buttons adjust End. All-day fields show the first and
   last included dates. Repeat controls show synchronized count and final-date
-  fields; choose No end for an ongoing rule.
+  fields; choose Indefinite for an ongoing rule.
 
 ### Working with event series
 
@@ -375,9 +380,12 @@ Saving creates one undoable operation. Regular schedules use standard RRULE;
 uniform hour/minute sequences use finite `HOURLY`/`MINUTELY` rules with a count.
 Irregular schedules use standard RDATE, retaining their structure in other calendar
 clients. The **Schedule** controls support daily, weekly, monthly and yearly
-schedules with interval/count/end-date controls. Custom's settings button exposes
-standard RRULE text for schedules beyond those controls, including multiple
-weekdays. Imported advanced rules remain intact until explicitly edited.
+schedules with interval/count/end-date controls. Custom uses the sequence
+language; there is no raw RRULE editor. Imported advanced rules remain intact
+during ordinary edits. Finite imported patterns can be converted with **Edit as
+sequence**, while the preview can add or remove dates without flattening an
+unbounded rule. The recurrence controls share one height so Notes stays in place
+when switching patterns.
 
 Custom sequence definitions also synchronize between Debacal instances. The ICS
 master stores the exact expression, language version and anchor in

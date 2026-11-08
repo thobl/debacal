@@ -300,6 +300,13 @@ class ScheduleDraft:
         self._edited_fields = None
         self._edited_master = None
 
+    def use_sequence(self, master, *, reference_start=None, reference_end=None):
+        """Change the authoring view while retaining canonical exceptions."""
+        # Refuse an unbounded/oversized conversion before touching the draft.
+        base_schedule_starts(master, limit=DEFAULT_LIMIT)
+        self._adopt_graphical(master, reference_start=reference_start, reference_end=reference_end)
+        self.kind = 'custom'
+
     def set_expression(self, text, start, *, all_day=False, detect=True, _canonical=False):
         if self._edited_master is not None and not _canonical:
             self.source = self._edited_master

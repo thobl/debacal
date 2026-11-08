@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 import math
 
-from PySide6.QtCore import QDate, QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QDate, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
 )
 
 from .appearance import stylesheet, widget_palette
+from .buttons import icon_button
 from .calendar_widgets import calendar_gutter, text
 from .date_time_fields import format_duration, validate_datetime
 from .event_style import event_colors
-from .icons import icon
 from .mini_calendar import MiniCalendar
 from .preferences import Preferences
 from .theme import scheme_for
@@ -35,7 +35,9 @@ class DateTimeRangePicker(QDialog):
     """
     def __init__(self, start, end, *, endpoint='start', preferences=None,
                  calendar_color='#587c67', parent=None, all_day=False):
-        super().__init__(parent)
+        super().__init__(parent, Qt.WindowType.Dialog)
+        # Establish the final transient-dialog modality before its first map.
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         if endpoint not in ('start', 'end'):
             raise ValueError('Choose the start or end picker.')
         validate_datetime(start)
@@ -63,10 +65,8 @@ class DateTimeRangePicker(QDialog):
         self.day_label = QLabel()
         self.day_label.setObjectName('sidebarSectionHeading')
         header.addWidget(self.day_label, 1)
-        self.full_day_button = QPushButton()
-        self.full_day_button.setProperty('iconOnly', True)
-        self.full_day_button.setIcon(icon('expand', scheme_for(self.preferences).accent))
-        self.full_day_button.setIconSize(QSize(18, 18))
+        # setVisible() below must never map a temporary, parentless window.
+        self.full_day_button = icon_button('expand', 'Show all 24 hours', preferences=self.preferences, parent=self)
         self.full_day_button.setCheckable(True)
         self.full_day_button.setToolTip('Show all 24 hours')
         self.full_day_button.setAccessibleName('Show all 24 hours')

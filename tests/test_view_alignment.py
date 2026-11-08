@@ -244,8 +244,14 @@ def test_week_caption_and_number_align_with_day_labels_and_numbers(workspace, sc
     week_call = next(call for call in calls if call.args[2] == week and call.args[1].right() < header.gutter)
     day_call = next(call for call in calls if call.args[2] == str(header.days[0].day)
                     and call.args[1].left() > header.gutter)
-    assert week_call.args[4] == day_call.args[4] == 17
-    assert day_call.args[1].top() == week_call.args[1].top()
+    assert week_call.args[4] == 13 < day_call.args[4] == 17
+    def baseline(call):
+        font = QFont('Sans Serif')
+        font.setPointSizeF(call.args[4] * scale / 100)
+        font.setBold(True)
+        metrics = QFontMetricsF(font)
+        return call.args[1].center().y() + (metrics.ascent() - metrics.descent()) / 2
+    assert baseline(day_call) == pytest.approx(baseline(week_call))
     assert day_call.args[1].height() == week_call.args[1].height()
     caption = next(call for call in calls if call.args[2] == 'WEEK')
     weekday = next(call for call in calls if call.args[2] == window.preferences.weekday_name(header.days[0]).upper())

@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSe
 from PySide6.QtGui import QKeySequence, QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLineEdit, QMenu, QDialog, QFileDialog, QInputDialog,
+    QLineEdit, QMenu, QDialog, QFileDialog,
     QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
 )
 
@@ -33,6 +33,7 @@ from .selection import EventSelection, affected_visible, capture_selection, sele
 from .placement import PastePlacement, initial_paste_target
 from .search_panel import MORE_ROLE, event_matches_query
 from .status_dialog import StatusDialog, StatusIssue
+from .calendar_choice_dialog import CalendarChoiceDialog
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
@@ -1271,9 +1272,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error('Add a writable calendar first.', title='No writable calendar',
                               action_label='Add calendar…', action=self.add_calendar)
             return None
-        labels = [f'{c.name} ({c.kind})' for c in calendars]
-        label, ok = QInputDialog.getItem(self, 'Choose calendar', 'Calendar', labels, 0, False)
-        return calendars[labels.index(label)] if ok else None
+        target = self.store.get_default_calendar()
+        dialog = CalendarChoiceDialog(calendars, self, preferences=self.preferences,
+            selected_id=target.id if target else None, writable_only=writable,
+            title='Choose calendar' if writable else 'Export calendar',
+            accept_text='Continue' if writable else 'Export…')
+        try:
+            return dialog.selected_calendar if dialog.exec() == QDialog.DialogCode.Accepted else None
+        finally:
+            dialog.deleteLater()
 
     def import_ics(self, calendar_id=None):
         self.import_files((), calendar_id=calendar_id)
