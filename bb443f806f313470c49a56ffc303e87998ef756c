@@ -1,0 +1,7 @@
+{
+  "result": "skipped",
+  "checks": "failure",
+  "reference": "refs/heads/main",
+  "commit": "bb443f806f313470c49a56ffc303e87998ef756c",
+  "workflow_url": "https://github.com/thobl/debacal/actions/runs/42519349257"
+}
