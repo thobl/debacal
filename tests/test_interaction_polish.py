@@ -224,7 +224,7 @@ def test_editing_search_root_opens_all_scope_and_keeps_standard_recurrence(works
     assert not changed.recurrence_overrides
 
 
-@pytest.mark.parametrize('key,scope,renamed', [(Qt.Key.Key_F2, 'single', 1), (Qt.Key.Key_F4, 'future', 3)])
+@pytest.mark.parametrize('key,scope,renamed', [(Qt.Key.Key_F1, 'single', 1), (Qt.Key.Key_F3, 'future', 3)])
 def test_search_root_editor_can_switch_to_one_or_following(workspace, key, scope, renamed):
     app, window, store = workspace
     master = sample('series', recurring=True)

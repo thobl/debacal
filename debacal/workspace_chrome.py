@@ -257,7 +257,7 @@ class WorkspaceChrome:
             if show:
                 layout.addWidget(self.preferences_button)
             else:
-                layout.insertWidget(layout.count() - 1, self.preferences_button)
+                layout.addWidget(self.preferences_button)
             self.preferences_button.show()
         self.brand_bar.setVisible(show)
 

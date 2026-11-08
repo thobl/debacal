@@ -55,6 +55,7 @@ class Preferences:
     show_sidebar_title: bool = True
     sidebar_title: str = 'debacal'
     duration_presets_minutes: tuple[int, ...] = (30, 45, 60)
+    corner_style: str = 'subtle'
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -90,6 +91,8 @@ class Preferences:
             raise ValueError('Choose underlined or filled button groups.')
         if self.appearance_mode not in ('light', 'dark'):
             raise ValueError('Choose a light or dark appearance.')
+        if self.corner_style not in ('square', 'subtle', 'rounded'):
+            raise ValueError('Choose square, subtle, or rounded corners.')
         for field in CUSTOM_COLORS:
             if not valid_rgb(getattr(self, field)):
                 raise ValueError('Use a six-digit RGB color such as #475f52.')

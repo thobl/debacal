@@ -26,12 +26,19 @@ class Calendar:
     read_only: bool = False
     server_color: str = ""
     use_server_color: bool = True
+    enabled: bool = True
+    server_name: str = ""
+    name_alias: str = ""
 
     def __post_init__(self) -> None:
         if not self.id or not self.name.strip():
             raise ValueError("A calendar needs an ID and a name.")
         if self.kind not in {"local", "caldav", "ics"}:
             raise ValueError(f"Unknown calendar type: {self.kind}")
+        if type(self.enabled) is not bool:
+            raise ValueError("A calendar's enabled state must be true or false.")
+        if not isinstance(self.server_name, str) or not isinstance(self.name_alias, str):
+            raise ValueError("Calendar source names and aliases must be text.")
         if self.server_color and self.use_server_color:
             object.__setattr__(self, "color", self.server_color)
         if self.url:

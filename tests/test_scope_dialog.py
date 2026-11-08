@@ -9,19 +9,20 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
-from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication
 
-from debacal.dialogs import EventDialog, ShortcutsDialog
+from debacal.dialogs import EventDialog
+from debacal.event_scope import DEFAULT_MODE_BINDINGS
+from debacal.shortcuts import KeyboardShortcutsEditor
 from debacal.models import Event
 from debacal.recurrence import expand_series, recurrence_key
 from debacal.store import Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
-BINDINGS = {'edit_event': 'E', 'copy_event': 'C', 'paste_event': 'V',
-            'delete_event': 'Del', 'day_view': 'D', 'cycle_scope': 'Alt+S', 'undo': 'Ctrl+Z'}
+BINDINGS = DEFAULT_MODE_BINDINGS | {'edit_event': 'E', 'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V',
+            'delete_event': 'Del', 'day_view': 'D', 'undo': 'Ctrl+Z'}
 
 
 @pytest.fixture
@@ -215,7 +216,7 @@ def test_unsupported_future_partition_retains_previous_scope_and_draft(editors):
     assert 'week-number' in dialog.error.text()
 
 
-def test_alt_scope_shortcut_works_inside_text_and_ctrl_copy_paste_stays_native(editors):
+def test_function_mode_keys_work_inside_text_and_ctrl_copy_paste_stays_native(editors):
     app, _, _, create = editors
     master = sample()
     dialog = create(master, occurrences(master)[1])
@@ -232,48 +233,42 @@ def test_alt_scope_shortcut_works_inside_text_and_ctrl_copy_paste_stays_native(e
     QTest.keyClick(dialog.title, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
     assert dialog.title.text() == 'Copy this text'
     QTest.keyClick(dialog.title, Qt.Key.Key_S, Qt.KeyboardModifier.AltModifier)
+    assert dialog.scope.currentData() == 'single'
+    QTest.keyClick(dialog.title, Qt.Key.Key_F2)
     assert dialog.scope.currentData() == 'group'
     dialog.description.setFocus()
-    QTest.keyClick(dialog.description, Qt.Key.Key_S, Qt.KeyboardModifier.AltModifier)
+    QTest.keyClick(dialog.description, Qt.Key.Key_F3)
     assert dialog.scope.currentData() == 'future'
 
 
-def test_scope_shortcut_is_configurable_and_one_off_does_not_cycle(editors):
+def test_only_explicit_mode_shortcuts_are_available_and_remappable(editors):
     _, _, _, create = editors
     one = create()
-    one.cycle_scope()
-    assert one.scope.currentData() == 'single' and not one.scope_shortcut.isEnabled()
+    assert one.scope.currentData() == 'single'
+    assert not hasattr(one, 'cycle_scope') and not hasattr(one, 'scope_shortcut')
+    assert all(not shortcut.isEnabled() for shortcut in one.mode_shortcuts.values())
     master = sample()
-    dialog = create(master, occurrences(master)[1], scope_shortcut='Alt+X',
-                    scope_modifiers={'all': 'Meta', 'following': 'Alt'})
-    assert dialog.scope_shortcut.key().toString() == 'Alt+X'
-    assert 'F3' in dialog.scope.buttons['group'].toolTip()
-    assert 'F4' in dialog.scope.buttons['future'].toolTip()
+    dialog = create(master, occurrences(master)[1], scope_bindings={'scope_all': 'Alt+A'})
+    assert dialog.mode_shortcuts['scope_all'].key().toString() == 'Alt+A'
+    assert 'Alt+A' in dialog.scope.buttons['group'].toolTip()
+    assert 'F3' in dialog.scope.buttons['future'].toolTip()
 
 
-@pytest.mark.parametrize(('other', 'message'), [('Ctrl+E', 'unique'), ('Shift+C', 'unique'),
-                                              ('Ctrl+Shift+V', 'unique'), ('Ctrl+E, X', 'start')])
-def test_shortcut_editor_checks_generated_scope_collisions(editors, other, message):
+@pytest.mark.parametrize(('other', 'message'), [('E', 'unique'), ('Ctrl+C', 'unique'),
+                                              ('F1', 'unique'), ('Ctrl+C, X', 'start')])
+def test_shortcut_editor_checks_duplicates_and_chord_prefixes(editors, other, message):
     _, _, widgets, _ = editors
-    dialog = ShortcutsDialog(BINDINGS | {'other': other}, BINDINGS | {'other': other})
-    widgets.append(dialog)
-    dialog.save()
-    assert dialog.result() != QDialog.DialogCode.Accepted
-    assert message in dialog.error.text()
+    editor = KeyboardShortcutsEditor(BINDINGS | {'other': other}, BINDINGS | {'other': other})
+    widgets.append(editor)
+    with pytest.raises(ValueError, match=message):
+        editor.value()
 
 
-def test_shortcut_editor_saves_scope_preferences_and_rejects_ambiguity(editors):
+def test_shortcut_editor_restores_mode_defaults(editors):
     _, _, widgets, _ = editors
-    dialog = ShortcutsDialog(BINDINGS, BINDINGS)
-    widgets.append(dialog)
-    dialog.scope_modifiers['all'].setCurrentText('Alt')
-    dialog.scope_modifiers['following'].setCurrentText('Alt')
-    dialog.save()
-    assert 'different' in dialog.error.text()
-    dialog.scope_modifiers['following'].setCurrentText('Meta')
-    dialog.save()
-    assert dialog.result() == QDialog.DialogCode.Accepted
-    assert dialog.result_scope_modifiers == {'all': 'Alt', 'following': 'Meta'}
-    assert dialog.result_bindings == BINDINGS
-    dialog.restore_defaults(BINDINGS)
-    assert {key: field.currentText() for key, field in dialog.scope_modifiers.items()} == {'all': 'Ctrl', 'following': 'Shift'}
+    editor = KeyboardShortcutsEditor(BINDINGS, BINDINGS)
+    widgets.append(editor)
+    editor.fields['scope_all'].setKeySequence('Alt+A')
+    assert editor.value()['scope_all'] == 'Alt+A'
+    editor.restore_defaults()
+    assert editor.value() == BINDINGS

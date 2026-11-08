@@ -14,6 +14,7 @@ from .preferences import Preferences
 from .timeutil import local_zone, now
 from .calendar_widgets import event_tooltip, paint_colors
 from .event_style import source_outline
+from .theme import corner_radius
 from .calendar_appearance import weekend_text, weekend_fill
 
 
@@ -339,7 +340,7 @@ class YearView(QWidget):
                 continue
             painter.setPen(QPen(colors.line, 1))
             painter.setBrush(colors.panel)
-            painter.drawRoundedRect(outer, 7 * scale, 7 * scale)
+            painter.drawRoundedRect(outer, corner_radius(self, 7) * scale, corner_radius(self, 7) * scale)
             self._text(painter, heading, self._month_names[month - 1], colors.accent, 11, True, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             for column, label in enumerate(self._weekday_names):
                 rect = QRectF(grid.x() + column * grid.width() / 7, outer.y() + 31 * scale, grid.width() / 7, 18 * scale)
@@ -358,7 +359,7 @@ class YearView(QWidget):
                     if hovered:
                         painter.setPen(Qt.PenStyle.NoPen)
                         painter.setBrush(colors.selection)
-                        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 3 * scale, 3 * scale)
+                        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), corner_radius(self, 3) * scale, corner_radius(self, 3) * scale)
                     self._text(painter, rect, str(self.preferences.week_number(start)), colors.accent if hovered else colors.muted,
                                7, hovered)
         for day, rect in self._day_rects.items():
@@ -384,7 +385,7 @@ class YearView(QWidget):
                     pen = QPen(color if color.isValid() else colors.accent, 1, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
                 indicator = box.adjusted(2 * scale, scale, -2 * scale, -scale) if shade is not None else box
-                painter.drawRoundedRect(indicator, 4 * scale, 4 * scale)
+                painter.drawRoundedRect(indicator, corner_radius(self, 4) * scale, corner_radius(self, 4) * scale)
             number_rect = rect.adjusted(0, -2 * scale, 0, -3 * scale)
             self._text(painter, number_rect, str(day.day),
                        weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink),

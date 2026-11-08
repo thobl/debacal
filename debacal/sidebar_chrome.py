@@ -122,7 +122,7 @@ def build_sidebar(window, root):
     footer_widget.setObjectName('sidebarFooter')
     footer = QHBoxLayout(footer_widget)
     window.sidebar_footer = footer_widget
-    footer.setContentsMargins(18, 6, 14, 6)
+    footer.setContentsMargins(18, 6, 18, 6)
     footer.setSpacing(4)
     window.sync_btn = window.icon_button('sync', 'Sync calendars', window.sync_now, footer, 'sync')
     window.status = ElidedButton()

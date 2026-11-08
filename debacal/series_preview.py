@@ -15,7 +15,7 @@ from .preferences import Preferences
 from .preview_navigation import PreviewNavigation
 from .preview_controls import PreviewControls
 from .recurrence import expand_events, key_datetime, occurrence, recurrence_key
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .timeutil import local_zone, now
 
 
@@ -461,7 +461,7 @@ class _PreviewGrid(QWidget):
                 painter.setPen(QPen(edge, 2 * scale if selected else scale,
                                      Qt.PenStyle.DashLine if item.candidate else Qt.PenStyle.SolidLine))
                 painter.setBrush(QColor(style.fill))
-                painter.drawRoundedRect(card, 3 * scale, 3 * scale)
+                painter.drawRoundedRect(card, corner_radius(preview.preferences, 3) * scale, corner_radius(preview.preferences, 3) * scale)
                 left = 4 * scale
                 if preview.is_primary(item) and _start(item).date() == day:
                     painter.setPen(QPen(edge, scale))

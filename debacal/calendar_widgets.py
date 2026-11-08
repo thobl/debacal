@@ -16,8 +16,7 @@ from .layout import layout_events
 from .recurrence import overlaps
 from .preferences import Preferences
 from .timeutil import local_zone, now
-from .event_scope import normalize_scope_modifiers, scope_from_modifiers
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .event_style import event_colors, source_outline
 from .calendar_appearance import weekend_text, weekend_fill
 
@@ -325,7 +324,7 @@ class DayHeader(QWidget):
             if today:
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(colors.selection)
-                p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), 4, 4)
+                p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), corner_radius(self, 4), corner_radius(self, 4))
             day_color = weekend_text(day, self.preferences, colors,
                                      colors.accent if today else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
@@ -381,7 +380,6 @@ class CalendarCanvas(QWidget):
         self._drag_pointer = None
         self.preferences = Preferences()
         self.gutter = calendar_gutter(self.preferences)
-        self.scope_modifiers = normalize_scope_modifiers()
         self.gesture_modifiers = Qt.KeyboardModifier.NoModifier
         self.initialize_confirmation()
         # Keep a late-night point's minimum visual marker fully visible below
@@ -512,7 +510,7 @@ class CalendarCanvas(QWidget):
         colors = paint_colors(self)
         painter.setPen(QPen(colors.accent, 1.2))
         painter.setBrush(colors.panel)
-        painter.drawRoundedRect(rect, 3, 3)
+        painter.drawRoundedRect(rect, corner_radius(self, 3), corner_radius(self, 3))
         painter.setPen(QPen(colors.accent, max(1.4, 1.5 * display_scale(self))))
         painter.drawLine(QPointF(rect.left() + rect.width() * .22, rect.top() + rect.height() * .52),
                          QPointF(rect.left() + rect.width() * .43, rect.top() + rect.height() * .72))
@@ -613,7 +611,7 @@ class CalendarCanvas(QWidget):
             colors = paint_colors(self)
             painter.setPen(QPen(colors.accent, 1.5))
             painter.setBrush(colors.panel)
-            painter.drawRoundedRect(rect, 4, 4)
+            painter.drawRoundedRect(rect, corner_radius(self, 4), corner_radius(self, 4))
             text(painter, rect, '+', colors.accent, 13, True, Qt.AlignmentFlag.AlignCenter)
 
     def time_feedback(self):
@@ -649,7 +647,7 @@ class CalendarCanvas(QWidget):
         rect = QRectF(x + 6, min(max(self.time_top + 2, y - 22 * scale), self.height() - 23 * scale), label_width, 20 * scale)
         painter.setPen(QPen(QColor(style.outline) if creating else colors.line, 1))
         painter.setBrush(QColor(style.fill) if creating else colors.background)
-        painter.drawRoundedRect(rect, 3, 3)
+        painter.drawRoundedRect(rect, corner_radius(self, 3), corner_radius(self, 3))
         label_color = QColor(source_outline(accent, style.fill, 4.5)) if creating else accent
         text(painter, rect, label, label_color, 8, creating, Qt.AlignmentFlag.AlignCenter)
 
@@ -701,10 +699,6 @@ class CalendarCanvas(QWidget):
 
     def set_selected_day(self, day):
         self.selected_day = day
-        self.update()
-
-    def set_scope_modifiers(self, settings):
-        self.scope_modifiers = normalize_scope_modifiers(settings)
         self.update()
 
     def rects(self, events=None):
@@ -807,7 +801,7 @@ class CalendarCanvas(QWidget):
                 style = event_colors(color.name(), self, alpha=45)
                 p.setPen(QPen(QColor(style.outline), 2, Qt.PenStyle.DashLine))
                 p.setBrush(QColor(style.fill))
-                p.drawRoundedRect(rect, 5, 5)
+                p.drawRoundedRect(rect, corner_radius(self, 5), corner_radius(self, 5))
                 if self.drag and self.drag[0] != 'create':
                     scope = self.scope
                     label = {'single': 'One event', 'group': 'All events', 'future': 'This and following'}[scope]
@@ -826,7 +820,7 @@ class CalendarCanvas(QWidget):
         p.setBrush(QColor(style.fill))
         p.setPen(QPen(edge, 2 if selected or preview else 1,
                       Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
-        p.drawRoundedRect(rect, 5, 5)
+        p.drawRoundedRect(rect, corner_radius(self, 5), corner_radius(self, 5))
         if selected:
             p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), edge)
         # QPainter draws no text in nonpositive label rectangles. Dense
@@ -1214,7 +1208,7 @@ class MonthCanvas(QWidget):
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine)
                        if selected or preview or item.all_day else Qt.PenStyle.NoPen)
         painter.setBrush(QColor(style.fill))
-        painter.drawRoundedRect(rect, 3, 3)
+        painter.drawRoundedRect(rect, corner_radius(self, 3), corner_radius(self, 3))
         if selected:
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
         ink = QColor(style.ink)
@@ -1368,7 +1362,7 @@ class MonthCanvas(QWidget):
                     p.setBrush(colors.selection)
                     p.drawRoundedRect(QRectF(x + 5 * scale, y + 2 * scale,
                                             max(0, min(28 * scale, width - 10 * scale)), 26 * scale),
-                                      4 * scale, 4 * scale)
+                                      corner_radius(self, 4) * scale, corner_radius(self, 4) * scale)
                 else:
                     p.fillRect(rect, colors.selection)
             p.setPen(QPen(colors.line, 1))
@@ -1672,7 +1666,7 @@ class AllDayCanvas(MonthCanvas):
         painter.setPen(QPen(edge, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine))
         painter.setBrush(QColor(style.fill))
-        painter.drawRoundedRect(rect, 4, 4)
+        painter.drawRoundedRect(rect, corner_radius(self, 4), corner_radius(self, 4))
         if selected:
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
         first, last = self.days[0], self.days[-1] + timedelta(days=1)

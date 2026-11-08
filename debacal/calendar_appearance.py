@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QColor, QPen, QFont
 from PySide6.QtWidgets import QCalendarWidget
 
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .timeutil import now
 
 
@@ -45,7 +45,7 @@ class CalendarDateGrid(QCalendarWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(colors.selection))
             painter.drawRoundedRect(QRectF(rect).adjusted(scale, scale, -scale, -scale),
-                                    2 * scale, 2 * scale)
+                                    corner_radius(self, 2) * scale, corner_radius(self, 2) * scale)
         if today:
             painter.setPen(QPen(QColor(colors.accent), max(1, scale)))
             painter.drawLine(rect.left() + round(5 * scale), rect.bottom() - round(2 * scale),

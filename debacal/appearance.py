@@ -4,7 +4,7 @@ import re
 from string import Template
 from PySide6.QtGui import QColor, QPalette
 
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .control_glyphs import control_glyphs
 
 
@@ -106,7 +106,7 @@ QMenu::item:selected { background: $selection; color: $ink; }
 QTabWidget::pane { background: $background; border: 1px solid $line; }
 QWidget#preferencesPage, QWidget#appearancePage { background: $background; }
 QTabBar::tab { background: $control_surface; color: $ink; padding: 8px 12px; border: 1px solid $line; }
-QTabBar::tab:selected { background: $selection; color: $accent; }
+QTabBar::tab:selected { background: $accent; color: $on_accent; font-weight: bold; border-color: $accent; }
 QTabBar::tab:hover { background: $hover; }
 QTableWidget { background: $panel; color: $ink; gridline-color: $line; border: 1px solid $line; }
 QHeaderView::section { background: $control_surface; color: $ink; padding: 6px; border: 1px solid $line; }
@@ -121,6 +121,8 @@ def stylesheet(font_scale=100, color_scheme='neutral'):
     disabled_up, disabled_down = control_glyphs(scheme.disabled)
     style = _BASE_STYLE.substitute(asdict(scheme) | {
         'arrow_up': up, 'arrow_down': down, 'arrow_disabled_up': disabled_up, 'arrow_disabled_down': disabled_down})
+    style = re.sub(r'(border(?:-[a-z]+)*-radius:) (\d+)px',
+                   lambda match: match[1] + ' ' + str(corner_radius(color_scheme, int(match[2]))) + 'px', style)
     return re.sub(r"font-size: (\d+)px",
                   lambda match: f"font-size: {round(int(match[1]) * font_scale / 100)}px",
                   style)

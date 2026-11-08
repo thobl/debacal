@@ -49,7 +49,7 @@ class SearchResultDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipRect(option.rect)
         paint_event_card(painter, card, colors, selected=selected, focused=focused,
-                         focus_color=scheme.focus, scale=scale)
+                         focus_color=scheme.focus, scale=scale, preferences=widget)
 
         left, width = card.left() + 8 * scale, max(0, card.width() - 16 * scale)
         if fold is not None:

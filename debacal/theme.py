@@ -68,6 +68,12 @@ SCHEMES = {
 CUSTOM_COLORS = {'custom_accent': '#475f52', 'custom_surface': '#88939b', 'custom_weekend': '#925866'}
 
 
+def corner_radius(preferences=None, base=4):
+    """One corner treatment for native controls and painted calendar surfaces."""
+    preferences = getattr(preferences, 'preferences', preferences)
+    return base * {'square': 0, 'subtle': 1, 'rounded': 2}.get(getattr(preferences, 'corner_style', 'subtle'), 1)
+
+
 def valid_rgb(value):
     """Palette inputs are opaque RGB values, independent of Qt color names."""
     return isinstance(value, str) and re.fullmatch(r'#[0-9a-fA-F]{6}', value) is not None

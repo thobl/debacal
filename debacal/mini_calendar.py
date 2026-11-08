@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from .preferences import Preferences
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .calendar_appearance import CalendarDateGrid, weekend_text, weekend_fill
 from .button_focus import install_button_focus
 
@@ -63,12 +63,12 @@ class _YearPopup(QFrame):
     def set_preferences(self, preferences):
         colors = scheme_for(preferences)
         self.setStyleSheet(f'''
-            QFrame#miniYearPopup {{ background: {colors.panel}; color: {colors.ink}; border: 1px solid {colors.line}; border-radius: 6px; }}
-            QFrame#miniYearPopup QPushButton {{ padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; }}
+            QFrame#miniYearPopup {{ background: {colors.panel}; color: {colors.ink}; border: 1px solid {colors.line}; border-radius: {corner_radius(preferences, 6)}px; }}
+            QFrame#miniYearPopup QPushButton {{ padding: 5px 8px; border: 1px solid transparent; border-radius: {corner_radius(preferences, 4)}px; }}
             QFrame#miniYearPopup QPushButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }}
             QFrame#miniYearPopup QPushButton:hover {{ background: {colors.control_surface}; }}
             QFrame#miniYearPopup QPushButton:checked {{ background: {colors.selection}; color: {colors.ink}; font-weight: bold; }}
-            QFrame#miniYearPopup QToolButton {{ border: 1px solid transparent; background: transparent; padding: 3px; border-radius: 4px; }}
+            QFrame#miniYearPopup QToolButton {{ border: 1px solid transparent; background: transparent; padding: 3px; border-radius: {corner_radius(preferences, 4)}px; }}
             QFrame#miniYearPopup QToolButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }}
             QFrame#miniYearPopup QToolButton:hover {{ background: {colors.control_surface}; }}
         ''')
@@ -218,7 +218,7 @@ class MiniCalendar(QWidget):
         self.calendar.updateCells()
         for button in (self.previous_button, self.next_button, self.month_button, self.year_button):
             button.setStyleSheet(f'QToolButton {{ border: 1px solid transparent; background: transparent; color: {colors.ink}; '
-                                f'padding: 2px; border-radius: 4px; }} '
+                                f'padding: 2px; border-radius: {corner_radius(preferences, 4)}px; }} '
                                 f'QToolButton[keyboardFocus="true"]:focus {{ border-color: {colors.focus}; }} '
                                 f'QToolButton:hover {{ background: {colors.control_surface}; }} '
                                 f'QToolButton:pressed {{ background: {colors.selection}; }}')

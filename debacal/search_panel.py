@@ -462,6 +462,9 @@ class SearchPanel(QTreeWidget):
         if query:
             self._ensure_index()
             matching = self._matching_indices(query)
+            active = self._calendars.keys()
+            matching = [index for index in matching
+                        if (self._index[index][1] if self._projection_index else self._index[index][0].calendar_id) in active]
             descriptions, more = self._matching_descriptions(query, matching)
             signature = (self._cache_generation, True, tuple((index, keys) for index, keys, _entry in descriptions), more)
         else:

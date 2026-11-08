@@ -119,8 +119,9 @@ without it. Existing imported definitions are retained. UTC events export offlin
 
 ## Workflow
 
-**Preferences → Appearance** groups visual options into Colors, Calendar, and
-Layout. Click a preview card to choose a style; the sample changes immediately,
+**Preferences** uses a category sidebar beside its settings. Appearance groups
+compact choices into Colors, Interface, Sidebar, and Calendar, with one pinned
+live preview. Click a preview card to choose a style; the sample changes immediately,
 while Apply saves the choices to the workspace. Colors offers light/dark modes,
 Neutral/Warm/Cool presets, and a custom palette with three choices: accent,
 surface tint, and weekend color. Text and borders adjust automatically for
@@ -131,19 +132,29 @@ source-colored event cards keep their selection and keyboard focus cues. Choose
 a calendar by name to create in it; its eye button controls visibility separately.
 Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
-Appearance → Calendar → Upcoming events offers event cards, cards grouped by
+Appearance → Sidebar → Upcoming events offers event cards, cards grouped by
 day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their
 clock column. Muted day captions sit below the stronger Next events heading.
 Calendars and Next events share the same section-heading style.
 Selected events use the calendar's source-colored border and vertical bar in
 both the sidebar and calendar.
-Choose **Appearance → Layout → Button groups** for Underlined (default) or Filled
+Choose **Appearance → Interface → Button groups** for Underlined (default) or Filled
 choices. Both styles retain the same placement and toolbar separator.
-Layout also sets text size and a custom sidebar title, or hides the title to
-save space. When hidden, its Preferences button moves to the sidebar footer.
-Calendar offers weekend text color (the default), background shading, or no
+Interface also sets text size and Square, Subtle (default), or Rounded corners.
+Sidebar sets a custom title or hides it to save space. When hidden, its Preferences
+button moves to the sidebar footer while retaining its horizontal position.
+Colors offers weekend text color (the default), background shading, or no
 highlight. Today keeps its marker as well as the chosen weekend treatment.
+
+**Calendar sources** groups connected calendars by account. Refresh an account
+to discover additional calendars, then check which ones to connect. Names in
+Debacal are local aliases; the source name stays visible. Calendar colors can be
+overridden or reset with Use server color. Apply saves these changes, while
+Cancel discards changes since the last Apply. Disconnecting a calendar hides it
+and stops its syncing, while retaining cached events, history, and queued edits;
+reconnecting restores access to those local changes. Saved passwords are shared
+by calendars in the same account and remain in the secure keyring.
 
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
   `H`/`L` move backward/forward by the current view's period; `T` returns to today.
@@ -181,8 +192,8 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   the hover guide uses a readable color independent of calendars. Creation drags
   show their starting time and the selected creation calendar's color.
 * **Keyboard selection:** arrow keys move selection and scroll
-  only as far as needed to reveal an event. Selection modes are `F2` for one
-  occurrence, `F3` for all events in its series, and `F4` for this and following.
+  only as far as needed to reveal an event. Selection modes are `F1` for one
+  occurrence, `F2` for all events in its series, and `F3` for this and following.
   The highlight shows the affected events; `E`, Delete, moving, resizing and
   copying use that same selection. The mode persists until changed.
 * **Copy / paste:** `Ctrl+C` copies the selection;
@@ -247,7 +258,7 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   visible hours; the time grid still expands for events outside those hours.
   Events configures the duration buttons in the event editor.
   Sync groups automatic sync intervals and conflict notifications. Keyboard
-  shortcuts (`F1`) lets you remap actions and selection-mode keys, with duplicate
+  shortcuts groups related actions and lets you remap actions and selection-mode keys, with duplicate
   and ambiguous sequences rejected. Settings survive restart.
   Apply saves changes and updates the workspace without closing Preferences.
   Save applies and closes; Cancel discards edits made since the last Apply.
@@ -263,11 +274,11 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
 
 ### Working with event series
 
-Choose **One event** (`F2`), **All in series** (`F3`), or **This and following**
-(`F4`) before selecting events. Changing the mode updates the affected highlights
+Choose **One event** (`F1`), **All in series** (`F2`), or **This and following**
+(`F3`) before selecting events. Changing the mode updates the affected highlights
 immediately, including for Ctrl-added selections. The toolbar and event editor
 use the same segmented controls and remappable keys, including while typing in
-the editor. `Alt+S` also cycles modes. Ctrl and Shift do not change the scope of
+the editor. Ctrl and Shift do not change the scope of
 an action. Ctrl+click toggles selection and Ctrl+drag copies.
 
 Operations use the union of selected events, avoiding duplicate changes where
@@ -285,7 +296,7 @@ partitioned by their original recurrence IDs. The complete split is one undoable
 operation and synchronizes as ordinary calendar resources. Splitting at the
 first occurrence updates the original resource without leaving an empty past.
 
-Copy in `F3` mode for whole series, or `F4` for their future parts. Pasting keeps
+Copy in `F2` mode for whole series, or `F3` for their future parts. Pasting keeps
 exactly the captured selection even if the mode has since changed. It stages a
 preview rather than writing immediately. **Paste here…** in a context menu sets
 the initial preview position to that event's time. All-day copies retain their

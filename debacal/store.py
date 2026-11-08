@@ -191,9 +191,11 @@ class Store:
             (calendar.id, self._json(calendar.to_dict())),
         )
 
-    def list_calendars(self) -> list[Calendar]:
+    def list_calendars(self, *, include_disabled: bool = False) -> list[Calendar]:
         with self._lock:
             calendars = self._calendars_by_creation_order()
+            if not include_disabled:
+                calendars = [calendar for calendar in calendars if calendar.enabled]
             saved = self.get_setting('calendar_order')
             if not isinstance(saved, list):
                 return calendars
@@ -219,7 +221,7 @@ class Store:
         if any(not isinstance(identity, str) for identity in requested) or len(set(requested)) != len(requested):
             raise ValueError('Calendar order must contain unique calendar IDs.')
         with self._transaction():
-            calendars = self.list_calendars()
+            calendars = self.list_calendars(include_disabled=True)
             available = {calendar.id for calendar in calendars}
             if any(identity not in available for identity in requested):
                 raise ValueError('Calendar not found.')
@@ -249,12 +251,56 @@ class Store:
                 raise ValueError("Calendar not found.")
             self._write_calendar(replace(calendar, visible=visible))
 
+    def apply_calendar_preferences(self, originals: dict[str, Calendar], calendars: Iterable[Calendar]) -> bool:
+        """Apply source drafts atomically, rebasing onto the latest sync metadata.
+
+        Disabled subscriptions retain their events, history, and pending writes.
+        Only settings edited in this dialog replace concurrent calendar values.
+        """
+        drafts = list(calendars)
+        if len({calendar.id for calendar in drafts}) != len(drafts):
+            raise ValueError('Calendar source settings contain duplicate calendars.')
+        changed = False
+        with self._transaction():
+            for draft in drafts:
+                current = self.get_calendar(draft.id)
+                original = originals.get(draft.id)
+                if current is None:
+                    if original is not None:
+                        raise ValueError('A calendar changed while Preferences was open. Reopen Calendar sources.')
+                    self.save_calendar(draft)
+                    changed = True
+                    continue
+                if original is None:
+                    raise ValueError('A calendar was added while Preferences was open. Reopen Calendar sources.')
+                if (current.kind, current.url, current.username) != (draft.kind, draft.url, draft.username):
+                    raise ValueError('Create a new source to change an existing calendar account.')
+                values = {}
+                for name in ('enabled', 'use_server_color', 'name_alias'):
+                    if getattr(draft, name) != getattr(original, name):
+                        values[name] = getattr(draft, name)
+                for name in ('server_color', 'server_name', 'read_only'):
+                    if (getattr(draft, name) != getattr(original, name)
+                            and getattr(current, name) == getattr(original, name)):
+                        values[name] = getattr(draft, name)
+                server_name = values.get('server_name', current.server_name)
+                alias = values.get('name_alias', current.name_alias)
+                if draft.name != original.name or 'name_alias' in values or 'server_name' in values:
+                    values['name'] = alias or (server_name if draft.kind == 'caldav' and server_name else draft.name)
+                if not draft.use_server_color and (draft.color != original.color or draft.use_server_color != original.use_server_color):
+                    values['color'] = draft.color
+                updated = replace(current, **values)
+                if updated != current:
+                    self.save_calendar(updated)
+                    changed = True
+        return changed
+
     def get_default_calendar(self) -> Calendar | None:
         """Return the chosen writable calendar, with a stable local fallback."""
         with self._lock:
             # A display reorder must not change an implicit creation target.
             writable = [calendar for calendar in self._calendars_by_creation_order()
-                        if calendar.kind != 'ics' and not calendar.read_only]
+                        if calendar.enabled and calendar.kind != 'ics' and not calendar.read_only]
             selected = self.get_setting('default_calendar_id')
             configured = next((calendar for calendar in writable if calendar.id == selected), None)
             return configured or next((calendar for calendar in writable if calendar.kind == 'local'), None) or next(iter(writable), None)
@@ -264,7 +310,7 @@ class Store:
             calendar = self.get_calendar(calendar_id)
             if calendar is None:
                 raise ValueError('Default calendar not found.')
-            if calendar.kind == 'ics' or calendar.read_only:
+            if not calendar.enabled or calendar.kind == 'ics' or calendar.read_only:
                 raise ValueError('Choose a writable default calendar.')
             self.set_setting('default_calendar_id', calendar_id)
 
@@ -924,6 +970,8 @@ class Store:
             calendar = calendars[calendar_id]
             if calendar is None:
                 raise ValueError("Calendar not found.")
+            if not calendar.enabled:
+                raise ValueError("This calendar is disabled. Enable it in Calendar sources before editing its events.")
             if calendar.read_only:
                 raise ValueError("This calendar is read-only on its server. Copy the event to a writable calendar to edit it.")
             if calendar.kind == "ics":

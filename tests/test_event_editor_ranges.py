@@ -118,8 +118,8 @@ def test_invalid_sequence_cannot_save_previous_valid_pattern(editor):
     assert not editor.preview.date_editing
 
 
-def test_new_event_scope_cycle_has_no_effect(editor):
-    editor.cycle_scope()
+def test_new_event_has_no_legacy_scope_cycle(editor):
+    assert not hasattr(editor, 'cycle_scope')
     assert editor.scope.currentData() == 'single'
     assert editor.value(editor.start) == START
 

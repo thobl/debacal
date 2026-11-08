@@ -1,4 +1,4 @@
-"""Calendar source, history and shortcut dialogs; event editing has its own module."""
+"""Calendar source and history dialogs; event editing has its own module."""
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
 
 from .models import Calendar
 from .dialog_base import FormDialog, hint
-from .event_scope import normalize_scope_modifiers, expanded_scope_bindings
 from .event_dialog import EventDialog
 
 
@@ -239,7 +238,7 @@ class CalendarDialog(FormDialog):
             self.result_calendars = [Calendar(id=str(uuid4()), name=source.name,
                 color=source.color if self.use_server_color.isChecked() else self.color.currentData(),
                 server_color=source.color, use_server_color=self.use_server_color.isChecked(), kind='caldav', url=source.url,
-                username=self.username.text().strip(), read_only=source.read_only)
+                username=self.username.text().strip(), read_only=source.read_only, server_name=source.name)
                 for index, source in enumerate(self.discovered)
                 if self.discovered_list.item(index).checkState() == Qt.CheckState.Checked]
             if not self.result_calendars:
@@ -257,6 +256,11 @@ class CalendarDialog(FormDialog):
             read_only=self.original.read_only if self.original else False,
             server_color=(self.original.server_color or self.original.color) if self.original and self.original.kind == 'caldav' else '',
             use_server_color=self.use_server_color.isChecked() if self.kind.currentData() == 'caldav' else False,
+            enabled=self.original.enabled if self.original else True,
+            server_name=self.original.server_name if self.original else '',
+            name_alias=(self.name.text().strip() if self.original and self.original.kind == 'caldav'
+                        and self.name.text().strip() != (self.original.server_name or self.original.name)
+                        else self.original.name_alias if self.original and self.name.text().strip() == self.original.name else ''),
         )
         self.result_calendars = [self.result_calendar]
         self.accept()
@@ -310,50 +314,3 @@ class HistoryDialog(QDialog):
             self.reload()
         except ValueError as exc:
             self.message.setText(str(exc))
-
-
-class ShortcutsDialog(QDialog):
-    """Compatibility dialog around the shared Preferences keyboard editor."""
-    def __init__(self, bindings, defaults, parent=None, scope_modifiers=None):
-        from .shortcuts import KeyboardShortcutsEditor
-        super().__init__(parent)
-        self.setWindowTitle('Keyboard shortcuts')
-        self.resize(470, 600)
-        outer = QVBoxLayout(self)
-        self.editor = KeyboardShortcutsEditor(bindings, defaults, self)
-        self.fields = self.editors = self.editor.fields
-        self.error = self.editor.error
-        outer.addWidget(self.editor)
-        self.scope_modifiers = {}
-        for key, value in normalize_scope_modifiers(scope_modifiers).items():
-            field = QComboBox(self)
-            field.addItems(('Ctrl', 'Shift', 'Alt', 'Meta'))
-            field.setCurrentText(value)
-            field.hide()
-            self.scope_modifiers[key] = field
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-                                   | QDialogButtonBox.StandardButton.RestoreDefaults)
-        buttons.accepted.connect(self.save)
-        buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.restore_defaults)
-        outer.addWidget(buttons)
-
-    def restore_defaults(self, defaults=None):
-        if isinstance(defaults, dict):
-            self.editor.defaults = dict(defaults)
-        self.editor.restore_defaults()
-        for key, value in normalize_scope_modifiers().items():
-            self.scope_modifiers[key].setCurrentText(value)
-
-    def save(self):
-        from .shortcuts import validate_bindings
-        try:
-            bindings = self.editor.value()
-            self.result_scope_modifiers = normalize_scope_modifiers(
-                {key: field.currentText() for key, field in self.scope_modifiers.items()})
-            validate_bindings(expanded_scope_bindings(bindings, self.result_scope_modifiers))
-        except ValueError as exc:
-            self.error.setText(str(exc))
-            return
-        self.result_bindings = bindings
-        self.accept()

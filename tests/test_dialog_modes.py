@@ -9,10 +9,11 @@ from zoneinfo import ZoneInfo
 import pytest
 from PySide6.QtCore import Qt, QCoreApplication, QEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication
 
-from debacal.dialogs import EventDialog, ShortcutsDialog
-from debacal.event_scope import DEFAULT_MODE_BINDINGS, expanded_scope_bindings
+from debacal.dialogs import EventDialog
+from debacal.event_scope import DEFAULT_MODE_BINDINGS
+from debacal.shortcuts import KeyboardShortcutsEditor
 from debacal.models import Event
 from debacal.recurrence import expand_series
 from debacal.store import Store
@@ -60,16 +61,16 @@ def test_function_keys_choose_modes_inside_text_fields_and_keep_each_draft(edito
     assert dialog.scope_controls.isVisible()
     dialog.title.setFocus()
     dialog.title.setText('Single draft')
-    QTest.keyClick(dialog.title, Qt.Key.Key_F3)
+    QTest.keyClick(dialog.title, Qt.Key.Key_F2)
     assert dialog.scope.currentData() == 'group'
     assert dialog.scope_buttons['group'].isChecked()
     dialog.title.setText('All draft')
     dialog.description.setFocus()
-    QTest.keyClick(dialog.description, Qt.Key.Key_F4)
+    QTest.keyClick(dialog.description, Qt.Key.Key_F3)
     assert dialog.scope.currentData() == 'future'
     dialog.title.setText('Following draft')
-    for key, mode, title in [(Qt.Key.Key_F2, 'single', 'Single draft'), (Qt.Key.Key_F3, 'group', 'All draft'),
-                             (Qt.Key.Key_F4, 'future', 'Following draft')]:
+    for key, mode, title in [(Qt.Key.Key_F1, 'single', 'Single draft'), (Qt.Key.Key_F2, 'group', 'All draft'),
+                             (Qt.Key.Key_F3, 'future', 'Following draft')]:
         QTest.keyClick(dialog.description, key)
         assert dialog.scope.currentData() == mode
         assert dialog.title.text() == title
@@ -115,14 +116,10 @@ def test_mode_keys_are_remappable_and_common_field_editing_stays_limited(editors
 def test_new_bindings_do_not_reserve_held_modifier_scope_variants(editors):
     _, _, dialogs, _ = editors
     bindings = DEFAULT_MODE_BINDINGS | {'edit_event': 'E', 'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'other': 'Shift+E'}
-    assert expanded_scope_bindings(bindings) == bindings
-    dialog = ShortcutsDialog(bindings, bindings)
+    dialog = KeyboardShortcutsEditor(bindings, bindings)
     dialogs.append(dialog)
-    dialog.save()
-    assert dialog.result() == QDialog.DialogCode.Accepted
-    assert dialog.result_bindings == bindings
-    duplicate = ShortcutsDialog(bindings | {'other': 'F2'}, bindings)
+    assert dialog.value() == bindings
+    duplicate = KeyboardShortcutsEditor(bindings | {'other': 'F2'}, bindings)
     dialogs.append(duplicate)
-    duplicate.save()
-    assert duplicate.result() != QDialog.DialogCode.Accepted
-    assert 'unique' in duplicate.error.text()
+    with pytest.raises(ValueError, match='unique'):
+        duplicate.value()

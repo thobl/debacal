@@ -41,7 +41,7 @@ def test_events_preferences_apply_preserve_other_categories_and_validate():
         assert dialog.result_preferences == replace(original, duration_presets_minutes=(15, 60, 90))
         assert dialog.isVisible()
         dialog.duration_presets.setText('15min, 0')
-        assert not dialog.apply() and dialog.tabs.tabText(dialog.tabs.currentIndex()) == 'Events'
+        assert not dialog.apply() and dialog.page_heading.text() == 'Events'
         assert dialog.result_preferences.duration_presets_minutes == (15, 60, 90)
         dialog.restore_defaults()
         dialog.save()

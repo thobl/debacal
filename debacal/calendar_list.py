@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, Q
 from .compact_controls import ElidedButton
 from .event_style import source_outline
 from .icons import icon
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 
 
 class CalendarRow(QWidget):
@@ -63,7 +63,7 @@ class CalendarRow(QWidget):
         edge = source_outline(QColor(source).darker(145).name(), scheme.sidebar)
         self.swatch.setFixedSize(round(12 * factor), round(12 * factor))
         self.swatch.setStyleSheet(f'background: {source}; border: {max(1, round(factor))}px solid {edge}; '
-                                 f'border-radius: {round(2 * factor)}px;')
+                                 f'border-radius: {round(corner_radius(self.preferences, 2) * factor)}px;')
         self.swatch.setAccessibleName(calendar.name + ' calendar color')
         self.choice.setText(calendar.name.replace('&', '&&'))
         checked = bool(current and writable)

@@ -189,7 +189,7 @@ class AgendaResultDelegate(SearchResultDelegate):
             painter.drawText(QRectF(body.left(), body.top(), rail - body.left() - 6 * scale, body.height()),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, row.clock)
         paint_event_card(painter, card, colors, selected=selected, focused=focused,
-                         focus_color=scheme.focus, scale=scale)
+                         focus_color=scheme.focus, scale=scale, preferences=widget)
         title_font = QFont(normal)
         title_font.setBold(True)
         painter.setFont(title_font)

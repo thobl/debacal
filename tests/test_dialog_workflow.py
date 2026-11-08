@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
-from debacal.dialogs import CalendarDialog, EventDialog, ShortcutsDialog
+from debacal.dialogs import CalendarDialog, EventDialog
 from debacal.discovery import DiscoveredCalendar
 from debacal.models import Calendar, Event
 from debacal.recurrence import base_schedule_starts, expand_series, occurrence, recurrence_key
@@ -348,15 +348,12 @@ def test_discovery_identity_change_restores_discover_default_and_cannot_save_sta
     second.cancel()
 
 
-def test_shortcuts_dialog_uses_shared_editor_and_collision_validation(desktop):
+def test_grouped_shortcut_editor_uses_collision_validation(desktop):
     _, _, show, _, _ = desktop
-    bindings = {'scope_single': 'F2', 'scope_all': 'F3', 'scope_following': 'F4', 'edit_event': 'E'}
-    dialog = show(ShortcutsDialog(bindings, bindings))
-    assert isinstance(dialog.editor, KeyboardShortcutsEditor)
-    assert dialog.fields is dialog.editor.fields
-    dialog.fields['edit_event'].setKeySequence('F2')
-    dialog.save()
-    assert 'unique' in dialog.error.text() and dialog.result() == QDialog.DialogCode.Rejected
-    dialog.restore_defaults(bindings)
-    dialog.save()
-    assert dialog.result() == QDialog.DialogCode.Accepted and dialog.result_bindings == bindings
+    bindings = {'scope_single': 'F1', 'scope_all': 'F2', 'scope_following': 'F3', 'edit_event': 'E'}
+    editor = show(KeyboardShortcutsEditor(bindings, bindings))
+    editor.fields['edit_event'].setKeySequence('F2')
+    with pytest.raises(ValueError, match='unique'):
+        editor.value()
+    editor.restore_defaults()
+    assert editor.value() == bindings

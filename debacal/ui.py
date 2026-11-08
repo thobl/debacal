@@ -11,7 +11,7 @@ import math
 from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QCursor, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QApplication, QMainWindow, QWidget, QHBoxLayout,
     QLineEdit, QMenu, QDialog, QFileDialog,
     QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
 )
@@ -34,15 +34,17 @@ from .placement import PastePlacement, initial_paste_target
 from .search_panel import MORE_ROLE, event_matches_query
 from .status_dialog import StatusDialog, StatusIssue
 from .calendar_choice_dialog import CalendarChoiceDialog
+from .credentials import CredentialStore
+from .shortcuts import migrate_selection_bindings
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
     'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
     'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'year_view': 'Y', 'full_day': 'F',
     'undo': 'Ctrl+Z', 'redo': 'Ctrl+Y',
-    'history': 'Ctrl+H', 'shortcuts': 'F1', 'sync': 'Ctrl+R',
+    'history': 'Ctrl+H', 'sync': 'Ctrl+R',
     'edit_single': '', 'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
-    'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V', 'cycle_scope': 'Alt+S',
+    'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V',
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
 } | DEFAULT_MODE_BINDINGS
@@ -159,14 +161,20 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         saved_bindings['redo'] = ''
             store.set_setting('keybindings', saved_bindings)
             store.set_setting('keybindings_version', 5)
-        self.bindings = DEFAULT_BINDINGS | saved_bindings
+        version = store.get_setting('keybindings_version', 0)
+        current_bindings = migrate_selection_bindings(saved_bindings, DEFAULT_BINDINGS, migrate_modes=version < 6)
+        if current_bindings != saved_bindings or version < 6:
+            store.set_setting('keybindings', current_bindings)
+            store.set_setting('keybindings_version', 6)
+        self.bindings = DEFAULT_BINDINGS | current_bindings
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
+        self._source_credential_saves = set()
         self.engine = None
+        self.credentials = CredentialStore(namespace=credential_namespace)
         if enable_sync and store.path != ':memory:':
             from .sync import SyncEngine
-            from .credentials import CredentialStore
-            self.engine = SyncEngine(store.path, credential_store=CredentialStore(namespace=credential_namespace))
+            self.engine = SyncEngine(store.path, credential_store=self.credentials)
         self.setWindowTitle('Debacal' + (' — ' + profile_label if profile_label else ''))
         self.resize(1400, 900)
         self.setMinimumSize(1030, 690)
@@ -334,12 +342,40 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def show_preferences(self, category=None):
         dialog = PreferencesDialog(self.preferences, self,
-                                   bindings=self.bindings, default_bindings=DEFAULT_BINDINGS)
+                                   bindings=self.bindings, default_bindings=DEFAULT_BINDINGS,
+                                   store=self.store, credentials=self.credentials, executor=self.executor,
+                                   allow_remote=not self.demo_mode)
         dialog.applied.connect(self.apply_preferences)
+        dialog.calendars_changed.connect(self.preferences_sources_changed)
+        dialog.credential_requested.connect(self.save_source_credentials)
         if category:
             dialog.set_category(category)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
+        finally:
+            if dialog.source_editor is not None:
+                dialog.source_editor.finish()
+            dialog.deleteLater()
+
+    def preferences_sources_changed(self):
+        self.selection.replace([event for event in self.selection.refs
+                                if (calendar := self.store.get_calendar(event.calendar_id)) and calendar.enabled])
+        self.refresh(calendars=True)
+        if self.engine and not self._source_credential_saves:
+            self.engine.sync_now()
+
+    def save_source_credentials(self, calendar_id, password, remember):
+        if self.engine:
+            engine = self.engine
+            future = engine.set_password(calendar_id, password, remember=remember)
+            self._source_credential_saves.add(future)
+            future.add_done_callback(lambda result: self.tasks.put(('account_credentials', result)))
+        else:
+            calendar = self.store.get_calendar(calendar_id)
+            if calendar is not None:
+                future = self.executor.submit(self.credentials.save, calendar, password, remember=remember)
+                future.add_done_callback(lambda result: self.tasks.put(('credentials', result)))
 
     def apply_preferences(self, preferences, bindings):
         """Apply dialog choices once, shared by live Apply and Save."""
@@ -701,7 +737,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def event_writable(self, event):
         calendar = self.store.get_calendar(event.calendar_id)
-        return bool(calendar and calendar.kind != 'ics' and not calendar.read_only and not event.read_only)
+        return bool(calendar and calendar.enabled and calendar.kind != 'ics' and not calendar.read_only and not event.read_only)
 
 
     def select_event(self, event_id, day=None, additive=False):
@@ -1046,9 +1082,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def show_history(self):
         HistoryDialog(self.store, self.refresh, self).exec()
 
-    def show_shortcuts(self):
-        self.show_preferences('keyboard')
-
     def run_search(self, *_):
         if self._revealing_search_result:
             return
@@ -1242,16 +1275,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def add_calendar(self, calendar=None):
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
-            credentials=self.engine.credentials if self.engine else None)
+            credentials=self.credentials)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 password_set = False
                 credential_save = None
                 for calendar in dialog.result_calendars:
                     # Discovery can be repeated without adding duplicate sources.
-                    existing = next((c for c in self.store.list_calendars() if c.kind == calendar.kind and c.url and c.url == calendar.url and c.username == calendar.username), None)
+                    existing = next((c for c in self.store.list_calendars(include_disabled=True) if c.kind == calendar.kind and c.url and c.url == calendar.url and c.username == calendar.username), None)
                     if existing and existing.id != calendar.id:
                         calendar = replace(calendar, id=existing.id, visible=existing.visible,
+                            enabled=True, name_alias=existing.name_alias,
+                            name=existing.name if existing.name_alias else calendar.name,
                             use_server_color=existing.use_server_color, color=existing.color)
                     self.store.save_calendar(calendar)
                     if self.engine and dialog.password.text() and not password_set:
@@ -1511,7 +1546,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self._closed:
             return
         while not self.tasks.empty():
-            _, future = self.tasks.get()
+            kind, future = self.tasks.get()
+            if kind == 'account_credentials':
+                self._source_credential_saves.discard(future)
+                if self.engine and not self._source_credential_saves:
+                    self.engine.sync_now()
+                continue
+            if kind == 'credentials':
+                try:
+                    future.result()
+                except ValueError as exc:
+                    self.report_error(str(exc), title='Account password could not be saved')
+                continue
             detail = ''
             try:
                 report = future.result()
@@ -1698,14 +1744,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             'scope_single': lambda: self.set_selection_mode('single'),
             'scope_all': lambda: self.set_selection_mode('group'),
             'scope_following': lambda: self.set_selection_mode('future'),
-            'cycle_scope': lambda: self.set_selection_mode({'single': 'group', 'group': 'future', 'future': 'single'}[self.selection.scope]),
             'today': self.today, 'previous': lambda: self.navigate(-1), 'next': lambda: self.navigate(1),
             'day_view': lambda: self.set_view('day'), 'week_view': lambda: self.set_view('week'),
             'full_day': self.toggle_full_day,
             'month_view': lambda: self.set_view('month'), 'year_view': lambda: self.set_view('year'),
             'undo': self.undo, 'redo': self.redo, 'history': self.show_history,
             'export_selection': self.export_selection,
-            'shortcuts': self.show_shortcuts, 'sync': self.sync_now,
+            'sync': self.sync_now,
             'select_left': lambda: self.select_by_arrow('left'), 'select_right': lambda: self.select_by_arrow('right'),
             'select_up': lambda: self.select_by_arrow('up'), 'select_down': lambda: self.select_by_arrow('down'),
         }

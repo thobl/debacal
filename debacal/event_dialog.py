@@ -133,7 +133,7 @@ class EventDialog(FormDialog):
 
     def __init__(self, calendars, start, end=None, event=None, parent=None,
                  preferences=None, edit_scope='single', series=None, default_calendar_id=None,
-                 scope_shortcut='Alt+S', scope_modifiers=None, scope_bindings=None, common_fields_only=False):
+                 scope_bindings=None, common_fields_only=False):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self.setPalette(widget_palette(self.preferences))
@@ -363,7 +363,7 @@ class EventDialog(FormDialog):
             self.preview.previous_button, self.preview.today_button, self.preview.next_button, self.preview.first_button,
             self.preview.previous_occurrence_button, self.preview.next_occurrence_button, self.preview.last_button],
             [self.save_button, self.cancel_button], self.save,
-            [*self.scope_bindings.values(), scope_shortcut] if event else ())
+            [self.scope_bindings[action] for action in MODE_ACTIONS if self.scope_bindings.get(action)] if event else ())
         self.mode_shortcuts = {}
         for action, scope in MODE_ACTIONS.items():
             shortcut = QShortcut(QKeySequence(self.scope_bindings.get(action, '')), self)
@@ -372,10 +372,6 @@ class EventDialog(FormDialog):
             shortcut.activated.connect(lambda value=scope: self.scope.setCurrentData(value))
             self.mode_shortcuts[action] = shortcut
             self.scope_buttons[scope].setToolTip(self.scope_buttons[scope].text() + ' · ' + self.scope_bindings.get(action, ''))
-        self.scope_shortcut = QShortcut(QKeySequence(scope_shortcut), self)
-        self.scope_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.scope_shortcut.setEnabled(bool(event and self.has_group and scope_shortcut))
-        self.scope_shortcut.activated.connect(self.cycle_scope)
         self.title.setFocus()
         self.title.selectAll()
 
@@ -981,11 +977,6 @@ class EventDialog(FormDialog):
         picker.accepted.connect(lambda: self._report(apply))
         self.range_picker = picker
         picker.open()
-
-    def cycle_scope(self):
-        if not self.original:
-            return
-        self.scope.setCurrentIndex((self.scope.currentIndex() + 1) % self.scope.count())
 
     def scope_changed(self, scope):
         if self._loading or not self.original or scope == self._scope_name:

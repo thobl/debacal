@@ -234,6 +234,9 @@ class SyncEngine:
                         for calendar in store.list_calendars():
                             if self._stop.is_set():
                                 break
+                            calendar = store.get_calendar(calendar.id)
+                            if calendar is None or not calendar.enabled:
+                                continue
                             if calendar.kind == "local":
                                 continue
                             connected += 1
@@ -271,6 +274,8 @@ class SyncEngine:
     def _sync_vdir(self, store, calendar):
         password = self._password(calendar)
         calendar = self._refresh_metadata(store, calendar, password)
+        if not calendar.enabled:
+            return
         result = self._vdir_backend.sync(store, calendar, password)
         for issue in getattr(result, "issues", ()):
             self._emit("issue", f"{calendar.name}: resource {issue.resource_id}: {issue.reason}", calendar.id)
@@ -347,12 +352,20 @@ class SyncEngine:
                 parsed = urlsplit(url)
                 return (parsed.scheme.lower(), parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), unquote(parsed.path).rstrip("/"))
             by_url = {collection_key(item.url): item for item in found}
-            for current in store.list_calendars():
+            for current in store.list_calendars(include_disabled=True):
                 if current.kind != "caldav" or account_key(current) != key:
                     continue
                 metadata = by_url.get(collection_key(current.url))
-                if metadata and metadata.color and metadata.color != current.server_color:
-                    store.save_calendar(replace(current, server_color=metadata.color))
+                if metadata:
+                    alias = (current.name_alias or (current.name if not current.server_name and current.name != metadata.name else ''))
+                    changes = {'server_name': metadata.name,
+                               'name_alias': alias,
+                               'name': alias or metadata.name}
+                    if metadata.color:
+                        changes['server_color'] = metadata.color
+                    refreshed = replace(current, **changes)
+                    if refreshed != current:
+                        store.save_calendar(refreshed)
         except Exception:
             self._emit("issue", f"{calendar.name}: server calendar colors could not be refreshed; existing colors were kept.", calendar.id)
         return store.get_calendar(calendar.id) or calendar

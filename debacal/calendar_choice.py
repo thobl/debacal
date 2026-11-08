@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QComboBox
 
 from .event_style import source_outline
 from .preferences import Preferences
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 
 
 def calendar_color_icon(value, preferences):
@@ -23,7 +23,7 @@ def calendar_color_icon(value, preferences):
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setBrush(source)
     painter.setPen(QPen(QColor(source_outline(source.darker(145).name(), colors.panel)), max(1, scale)))
-    painter.drawRoundedRect(QRectF(2 * scale, 2 * scale, 12 * scale, 12 * scale), 2 * scale, 2 * scale)
+    painter.drawRoundedRect(QRectF(2 * scale, 2 * scale, 12 * scale, 12 * scale), corner_radius(preferences, 2) * scale, corner_radius(preferences, 2) * scale)
     painter.end()
     result = QIcon(swatch)
     result.addPixmap(swatch, QIcon.Mode.Disabled)

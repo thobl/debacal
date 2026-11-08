@@ -270,7 +270,7 @@ def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(deskto
         assert other.bindings['redo'] == expected
         assert 'redo_alternative' not in other.bindings
         assert 'redo_alternative' not in store.get_setting('keybindings')
-        assert store.get_setting('keybindings_version') == 5
+        assert store.get_setting('keybindings_version') == 6
         if 'history' in saved:
             assert other.bindings['history'] == saved['history']
         validate_bindings(other.bindings)

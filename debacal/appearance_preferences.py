@@ -2,18 +2,17 @@
 from dataclasses import replace
 from datetime import date
 
-from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal, QRegularExpression
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal, QRegularExpression
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QFormLayout, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
+    QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
     QVBoxLayout, QWidget,
 )
 
 from .event_style import event_colors
 from .calendar_appearance import weekend_fill, weekend_text
-from .preferences import Preferences
-from .theme import SCHEMES, scheme_for
+from .theme import SCHEMES, corner_radius, scheme_for
 
 
 def _label(painter, rect, value, color, size=11, bold=False, align=Qt.AlignmentFlag.AlignLeft):
@@ -41,7 +40,7 @@ def _segments(painter, rect, preferences):
         painter.fillRect(rect, QColor(colors.panel))
         painter.fillRect(QRectF(rect.left(), rect.top(), third, rect.height()), QColor(colors.selection))
         painter.restore()
-        _card(painter, rect, QColor('transparent'), colors.control_edge, 4)
+        _card(painter, rect, QColor('transparent'), colors.control_edge, corner_radius(preferences))
     else:
         painter.setPen(QPen(QColor(colors.control_edge), 1))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
@@ -57,22 +56,24 @@ def _sample(painter, rect, kind, value, preferences):
     colors = scheme_for(preferences)
     painter.save()
     painter.setClipRect(rect)
-    if kind in ('palette', 'mode'):
-        candidate = replace(preferences, **({'color_scheme': value} if kind == 'palette' else {'appearance_mode': value}))
+    if kind == 'palette':
+        candidate = replace(preferences, color_scheme=value)
         colors = scheme_for(candidate)
-        painter.fillRect(rect, QColor(colors.background))
-        painter.fillRect(QRectF(rect.left(), rect.top(), rect.width() * .25, rect.height()), QColor(colors.sidebar))
-        for index, color in enumerate((colors.accent, colors.weekend, '#7f79a5')):
-            painter.fillRect(QRectF(rect.left() + 6, rect.top() + 7 + index * 10, 5, 5), QColor(color))
-        for index in range(4):
-            x = rect.left() + rect.width() * (.29 + index * .17)
-            painter.setPen(QPen(QColor(colors.line), 1))
-            painter.drawLine(x, rect.top() + 4, x, rect.bottom() - 3)
-        selected = QRectF(rect.left() + rect.width() * .31, rect.top() + 9, rect.width() * .25, 12)
-        _card(painter, selected, colors.selection, colors.accent)
-        _label(painter, QRectF(rect.left() + rect.width() * .61, rect.top() + 26, rect.width() * .3, 12), 'Sat Sun', colors.weekend, 9)
+        for index, color in enumerate((colors.sidebar, colors.accent, colors.weekend, colors.ink)):
+            painter.fillRect(QRectF(rect.left() + index * rect.width() / 4, rect.top(), rect.width() / 4, rect.height()), QColor(color))
+    elif kind == 'mode':
+        candidate = replace(preferences, appearance_mode=value)
+        colors = scheme_for(candidate)
+        _card(painter, rect.adjusted(1, 1, -1, -1), colors.background, colors.control_edge,
+              corner_radius(preferences, 3))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(colors.ink))
+        painter.drawEllipse(rect.center(), 7, 7)
+        if value == 'dark':
+            painter.setBrush(QColor(colors.background))
+            painter.drawEllipse(rect.center() + QPointF(4, -3), 6, 6)
     elif kind == 'controls':
-        _segments(painter, rect.adjusted(6, 7, -6, -7), replace(preferences, control_style=value))
+        _segments(painter, rect.adjusted(3, 1, -3, -1), replace(preferences, control_style=value))
     elif kind == 'agenda':
         x = rect.left() + (24 if value == 'timeline' else 3)
         if value != 'cards':
@@ -101,6 +102,10 @@ def _sample(painter, rect, kind, value, preferences):
             ink = weekend_text(index + 4, candidate, colors)
             _label(painter, cell.adjusted(1, 0, -1, 0), title, ink, 11, True,
                    Qt.AlignmentFlag.AlignCenter)
+    elif kind == 'corners':
+        candidate = replace(preferences, corner_style=value)
+        _card(painter, rect.adjusted(5, 1, -5, -1), colors.selection, colors.accent,
+              corner_radius(candidate, 5))
     painter.restore()
 
 
@@ -117,7 +122,7 @@ class _ChoiceButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def sizeHint(self):
-        return QSize(112, 62 + max(18, self.fontMetrics().height()) + 8)
+        return QSize(96, (55 if self.kind == 'agenda' else 34) + max(18, self.fontMetrics().height()) + 8)
 
     def minimumSizeHint(self):
         return QSize(0, self.sizeHint().height())
@@ -138,18 +143,23 @@ class _ChoiceButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        _card(painter, rect, colors.panel, colors.accent if self.isChecked() else colors.control_edge, 5)
-        if self.isChecked():
-            painter.fillRect(QRectF(7, self.height() - 4, self.width() - 14, 2), QColor(colors.accent))
+        _card(painter, rect, colors.selection if self.isChecked() else colors.hover if self.underMouse() else colors.panel,
+              colors.accent if self.isChecked() else colors.control_edge, corner_radius(preferences, 4))
         if self.hasFocus() and self.property('keyboardFocus'):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(colors.focus), 1, Qt.PenStyle.DotLine))
             painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 3, 3)
-        sample = QRectF(8, 7, self.width() - 16, 43)
+        sample_height = 43 if self.kind == 'agenda' else 22
+        sample = QRectF(8, 7, self.width() - 16, sample_height)
         _sample(painter, sample, self.kind, self.value, preferences)
-        _label(painter, QRectF(7, 52, self.width() - 14, self.height() - 59), self.text(), colors.ink,
+        _label(painter, QRectF(7, sample_height + 11, self.width() - 28, self.height() - sample_height - 15), self.text(), colors.ink,
                self.font().pixelSize() if self.font().pixelSize() > 0 else 12, self.isChecked(),
                Qt.AlignmentFlag.AlignCenter)
+        if self.isChecked():
+            painter.setPen(QPen(QColor(colors.accent), 1.8))
+            x, y = self.width() - 14, self.height() - 15
+            painter.drawLine(x - 3, y, x, y + 3)
+            painter.drawLine(x, y + 3, x + 5, y - 4)
 
 
 class VisualChoice(QWidget):
@@ -208,7 +218,8 @@ class VisualChoice(QWidget):
         self._reflow()
 
     def _reflow(self):
-        columns = max(1, min(len(self.buttons), max(1, self.width() // 112)))
+        minimum = max(88, round(96 * self.preferences.font_scale / 100))
+        columns = max(1, min(len(self.buttons), max(1, self.width() // minimum)))
         if columns != self._columns:
             self._columns = columns
             for index, button in enumerate(self.buttons):
@@ -270,7 +281,8 @@ class ColorField(QWidget):
 
     def _update_swatch(self):
         edge = scheme_for(self.preferences).control_edge
-        self.button.setStyleSheet('background: ' + self._valid_color + '; border: 1px solid ' + edge + '; border-radius: 4px;')
+        self.button.setStyleSheet('background: ' + self._valid_color + '; border: 1px solid ' + edge +
+                                 '; border-radius: ' + str(corner_radius(self.preferences)) + 'px;')
 
     def value(self):
         if not self.field.hasAcceptableInput():
@@ -313,7 +325,7 @@ class AppearancePreview(QWidget):
         colors = scheme_for(preferences)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         outer = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
-        _card(painter, outer, colors.background, colors.control_edge, 5)
+        _card(painter, outer, colors.background, colors.control_edge, corner_radius(preferences, 5))
         sidebar = min(128, self.width() * .28)
         painter.fillRect(QRectF(1, 1, sidebar - 1, self.height() - 2), QColor(colors.sidebar))
         scale = preferences.font_scale / 100
@@ -353,40 +365,50 @@ class AppearancePreview(QWidget):
             painter.drawLine(left + axis, y, right, y)
         fill = event_colors('#587c67', colors)
         box = QRectF(left + axis + 4, 94, column - 8, 34)
-        _card(painter, box, fill.fill, fill.outline)
+        _card(painter, box, fill.fill, fill.outline, corner_radius(preferences, 3))
         _label(painter, box.adjusted(4, 0, -4, 0), 'Planning', fill.ink, 10 * scale, True)
         _label(painter, QRectF(left + axis + column + 5, 130, 2 * column - 10, 22), 'Saturday is today', colors.muted, 9)
 
 
 class AppearanceEditor(QWidget):
+    """Compact, named settings sections with one workspace preview."""
     changed = Signal()
 
     def __init__(self, preferences, parent=None):
         super().__init__(parent)
         self._context = preferences
         self._updating = True
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(12)
+        frame = QVBoxLayout(self)
+        frame.setContentsMargins(0, 0, 0, 0)
+        frame.setSpacing(14)
         self.preview = AppearancePreview(preferences)
-        outer.addWidget(self.preview)
-        self.sections = QTabWidget()
-        self.sections.setAccessibleName('Appearance groups')
-        outer.addWidget(self.sections)
-        colors, layout = self._page('Colors')
+        frame.addWidget(self.preview)
+        self.controls_scroll = QScrollArea()
+        self.controls_scroll.setObjectName('appearanceControls')
+        self.controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.controls_scroll.setWidgetResizable(True)
+        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls = QWidget()
+        controls.setObjectName('appearancePage')
+        outer = QVBoxLayout(controls)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(16)
+        self.controls_scroll.setWidget(controls)
+        frame.addWidget(self.controls_scroll, 1)
+        self.section_widgets = {}
+
+        layout = self._section(outer, 'Colors')
         self.appearance_mode = VisualChoice([
             ('Light', 'light', 'Light surfaces and dark text.'),
             ('Dark', 'dark', 'Dark surfaces and light text.')], 'mode', preferences)
         self.appearance_mode.setAccessibleName('Brightness')
-        self._heading(layout, 'Brightness')
-        layout.addWidget(self.appearance_mode)
+        self._choice(layout, 'Brightness', self.appearance_mode)
         self.color_scheme = VisualChoice([(scheme.label, value, 'A coordinated ' + scheme.label.lower() + ' palette.')
                                           for value, scheme in SCHEMES.items()] +
-                                         [('Custom', 'custom', 'Choose three colors; text and borders are derived for readability.')],
+                                         [('Custom', 'custom', 'Choose three colors; readable text and borders are derived automatically.')],
                                         'palette', preferences)
         self.color_scheme.setAccessibleName('Color palette')
-        self._heading(layout, 'Palette')
-        layout.addWidget(self.color_scheme)
+        self._choice(layout, 'Palette', self.color_scheme)
         self.custom_colors = QWidget()
         form = QFormLayout(self.custom_colors)
         form.setContentsMargins(0, 0, 0, 0)
@@ -396,29 +418,56 @@ class AppearanceEditor(QWidget):
         form.addRow('Accent', self.custom_accent)
         form.addRow('Surface tint', self.custom_surface)
         form.addRow('Weekend', self.custom_weekend)
-        note = QLabel('Surface tint creates light or dark surfaces. Text and borders adjust automatically for contrast.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        form.addRow(note)
+        self.custom_colors.setToolTip('Surface tint creates light or dark surfaces. Text and borders adjust for contrast.')
         layout.addWidget(self.custom_colors)
-        layout.addStretch()
-
-        calendar, layout = self._page('Calendar')
         self.weekend_style = VisualChoice([
-            ('Text color', 'text', 'Tint weekend labels; the current default.'),
-            ('Background', 'background', 'Shade weekend cells instead of changing text color.'),
-            ('No highlight', 'none', 'Use the same styling for every weekday.')], 'weekend', preferences)
+            ('Text color', 'text', 'Tint weekend labels.'),
+            ('Background', 'background', 'Shade weekend cells instead of tinting labels.'),
+            ('None', 'none', 'Use the same styling for every weekday.')], 'weekend', preferences)
         self.weekend_style.setAccessibleName('Weekend highlighting')
-        self._heading(layout, 'Weekends')
-        layout.addWidget(self.weekend_style)
-        self.agenda_style = VisualChoice([
-            ('Event cards', 'cards', 'Dates and times appear within each event card.'),
-            ('Day groups', 'grouped', 'Group cards under day headings.'),
-            ('Timeline', 'timeline', 'Use a clock column for timed events and full-width all-day cards.')], 'agenda', preferences)
-        self.agenda_style.setAccessibleName('Upcoming events layout')
-        self._heading(layout, 'Upcoming events')
-        layout.addWidget(self.agenda_style)
+        self._choice(layout, 'Weekend highlighting', self.weekend_style)
+
+        layout = self._section(outer, 'Interface')
+        self.control_style = VisualChoice([
+            ('Underlined', 'underlined', 'Underline the selected choice.'),
+            ('Filled', 'filled', 'Fill the selected choice within a continuous group.')], 'controls', preferences)
+        self.control_style.setAccessibleName('Button group style')
+        self._choice(layout, 'Button groups', self.control_style)
+        self.corner_style = VisualChoice([
+            ('Square', 'square', 'Straight corners on controls and event cards.'),
+            ('Subtle', 'subtle', 'Slightly rounded controls and cards; the current default.'),
+            ('Rounded', 'rounded', 'Softer corners on controls and event cards.')], 'corners', preferences)
+        self.corner_style.setAccessibleName('Corner shape')
+        self._choice(layout, 'Corners', self.corner_style)
+        self.font_scale = QSpinBox()
+        self.font_scale.setRange(80, 140)
+        self.font_scale.setAccessibleName('Text size percent')
+        self.font_scale.setSingleStep(10)
+        self.font_scale.setSuffix(' %')
+        self.font_scale.setValue(preferences.font_scale)
         form = QFormLayout()
+        form.addRow('Text size', self.font_scale)
+        layout.addLayout(form)
+
+        layout = self._section(outer, 'Sidebar')
+        self.agenda_style = VisualChoice([
+            ('Event cards', 'cards', 'Show dates and times inside each event card.'),
+            ('Day groups', 'grouped', 'Group cards under day headings.'),
+            ('Timeline', 'timeline', 'Put clocks beside timed events and use full-width all-day cards.')], 'agenda', preferences)
+        self.agenda_style.setAccessibleName('Upcoming events layout')
+        self._choice(layout, 'Upcoming events', self.agenda_style)
+        self.show_sidebar_title = QCheckBox('Show sidebar title')
+        self.show_sidebar_title.setChecked(preferences.show_sidebar_title)
+        self.sidebar_title = QLineEdit(preferences.sidebar_title)
+        self.sidebar_title.setAccessibleName('Sidebar title')
+        self.sidebar_title.setMaxLength(120)
+        self.sidebar_title.setPlaceholderText('debacal')
+        form = QFormLayout()
+        form.addRow(self.show_sidebar_title)
+        form.addRow('Title', self.sidebar_title)
+        layout.addLayout(form)
+
+        layout = self._section(outer, 'Calendar')
         self.week_numbers = QCheckBox('Show week numbers')
         self.week_numbers.setChecked(preferences.show_week_numbers)
         self.visible_start = QSpinBox()
@@ -432,49 +481,19 @@ class AppearanceEditor(QWidget):
         self.visible_end.setSuffix(':00')
         self.visible_end.setValue(preferences.visible_end_hour)
         hours = QHBoxLayout()
-        hours.addWidget(self.visible_start, 0)
-        hours.addWidget(QLabel('to'), 0)
-        hours.addWidget(self.visible_end, 0)
+        hours.addWidget(self.visible_start)
+        hours.addWidget(QLabel('to'))
+        hours.addWidget(self.visible_end)
         hours.addStretch(1)
+        form = QFormLayout()
         form.addRow(self.week_numbers)
         form.addRow('Visible hours', hours)
         layout.addLayout(form)
-        note = QLabel('The time grid also includes events outside these hours. Full day shows all 24 hours.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        layout.addWidget(note)
-        layout.addStretch()
-
-        page, layout = self._page('Layout')
-        self._heading(layout, 'Button groups')
-        self.control_style = VisualChoice([
-            ('Underlined', 'underlined', 'Flat groups with an underline on the selected choice.'),
-            ('Filled', 'filled', 'A filled choice within one continuous rounded group.')], 'controls', preferences)
-        self.control_style.setAccessibleName('Button group style')
-        layout.addWidget(self.control_style)
-        form = QFormLayout()
-        self.font_scale = QSpinBox()
-        self.font_scale.setRange(80, 140)
-        self.font_scale.setAccessibleName('Text size percent')
-        self.font_scale.setSingleStep(10)
-        self.font_scale.setSuffix(' %')
-        self.font_scale.setValue(preferences.font_scale)
-        self.show_sidebar_title = QCheckBox('Show sidebar title')
-        self.show_sidebar_title.setChecked(preferences.show_sidebar_title)
-        self.sidebar_title = QLineEdit(preferences.sidebar_title)
-        self.sidebar_title.setAccessibleName('Sidebar title')
-        self.sidebar_title.setMaxLength(120)
-        self.sidebar_title.setPlaceholderText('debacal')
-        text_size = QHBoxLayout()
-        text_size.addWidget(self.font_scale, 0)
-        text_size.addStretch(1)
-        form.addRow('Text size', text_size)
-        form.addRow(self.show_sidebar_title)
-        form.addRow('Sidebar title', self.sidebar_title)
-        layout.addLayout(form)
-        layout.addStretch()
+        self.visible_start.setToolTip('The grid also includes events outside these hours. Full day shows all 24 hours.')
+        self.visible_end.setToolTip(self.visible_start.toolTip())
         outer.addStretch()
-        self._choices = (self.appearance_mode, self.color_scheme, self.control_style, self.agenda_style, self.weekend_style)
+        self._choices = (self.appearance_mode, self.color_scheme, self.control_style, self.corner_style,
+                         self.agenda_style, self.weekend_style)
         for choice in self._choices:
             choice.currentIndexChanged.connect(self._update)
         for field in (self.font_scale, self.visible_start, self.visible_end):
@@ -486,20 +505,30 @@ class AppearanceEditor(QWidget):
             field.changed.connect(self._update)
         self.set_preferences(preferences)
 
-    def _page(self, title):
-        page = QWidget()
-        page.setObjectName('appearancePage')
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(10, 10, 10, 10)
+    def _section(self, outer, title):
+        if self.section_widgets:
+            divider = QFrame()
+            divider.setObjectName('sourceDivider')
+            divider.setFixedHeight(1)
+            outer.addWidget(divider)
+        widget = QWidget()
+        widget.setObjectName('appearanceSection')
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        self.sections.addTab(page, title)
-        return page, layout
+        label = QLabel(title)
+        label.setObjectName('sidebarSectionHeading')
+        layout.addWidget(label)
+        outer.addWidget(widget)
+        self.section_widgets[title] = widget
+        return layout
 
     @staticmethod
-    def _heading(layout, title):
-        label = QLabel(title)
-        label.setObjectName('section')
+    def _choice(layout, caption, field):
+        label = QLabel(caption)
+        label.setBuddy(field.buttons[0])
         layout.addWidget(label)
+        layout.addWidget(field)
 
     def values(self, *, preview=False):
         custom = self.color_scheme.currentData() == 'custom'
@@ -507,8 +536,9 @@ class AppearanceEditor(QWidget):
         return dict(color_scheme=self.color_scheme.currentData(), appearance_mode=self.appearance_mode.currentData(),
                     custom_accent=color(self.custom_accent), custom_surface=color(self.custom_surface),
                     custom_weekend=color(self.custom_weekend), control_style=self.control_style.currentData(),
-                    agenda_style=self.agenda_style.currentData(), weekend_style=self.weekend_style.currentData(),
-                    font_scale=self.font_scale.value(), show_week_numbers=self.week_numbers.isChecked(),
+                    corner_style=self.corner_style.currentData(), agenda_style=self.agenda_style.currentData(),
+                    weekend_style=self.weekend_style.currentData(), font_scale=self.font_scale.value(),
+                    show_week_numbers=self.week_numbers.isChecked(),
                     visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value(),
                     show_sidebar_title=self.show_sidebar_title.isChecked(),
                     sidebar_title=(self.sidebar_title.text().strip() or self._context.sidebar_title
@@ -519,29 +549,25 @@ class AppearanceEditor(QWidget):
         self._update()
 
     def focus_invalid_field(self):
-        """Reveal the relevant group when Apply cannot validate its values."""
         target = None
         if self.color_scheme.currentData() == 'custom':
             target = next((field.field for field in (self.custom_accent, self.custom_surface, self.custom_weekend)
                            if not field.field.hasAcceptableInput()), None)
-            if target is not None:
-                self.sections.setCurrentIndex(0)
         if target is None and self.visible_start.value() >= self.visible_end.value():
-            self.sections.setCurrentIndex(1)
             target = self.visible_end
         if target is None and self.show_sidebar_title.isChecked() and not self.sidebar_title.text().strip():
-            self.sections.setCurrentIndex(2)
             target = self.sidebar_title
         if target is not None:
             target.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.controls_scroll.ensureWidgetVisible(target)
         return target
 
     def set_preferences(self, preferences):
         self._updating = True
         for field in self._choices:
             field_name = {id(self.appearance_mode): 'appearance_mode', id(self.color_scheme): 'color_scheme',
-                          id(self.control_style): 'control_style', id(self.agenda_style): 'agenda_style',
-                          id(self.weekend_style): 'weekend_style'}[id(field)]
+                          id(self.control_style): 'control_style', id(self.corner_style): 'corner_style',
+                          id(self.agenda_style): 'agenda_style', id(self.weekend_style): 'weekend_style'}[id(field)]
             field.setCurrentIndex(field.findData(getattr(preferences, field_name)))
         for name in ('custom_accent', 'custom_surface', 'custom_weekend'):
             getattr(self, name).setColor(getattr(preferences, name))

@@ -5,7 +5,7 @@ from functools import lru_cache
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPen
 
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +19,7 @@ class EventColors:
 
 
 def paint_event_card(painter, card, colors, *, selected=False, focused=False,
-                     focus_color=None, scale=1, radius=4):
+                     focus_color=None, scale=1, radius=4, preferences=None):
     """Paint the calendar's source-colored selection language in an event list.
 
     Selected events use a stronger source edge and an inset vertical bar; their
@@ -30,6 +30,7 @@ def paint_event_card(painter, card, colors, *, selected=False, focused=False,
     edge = QColor(colors.selected_outline if selected else colors.outline)
     painter.setBrush(QColor(colors.fill))
     painter.setPen(QPen(edge, (2 if selected else 1) * scale))
+    radius = corner_radius(preferences, radius)
     painter.drawRoundedRect(card, radius * scale, radius * scale)
     if selected:
         painter.fillRect(QRectF(card.left() + 3 * scale, card.top() + 4 * scale,
@@ -39,7 +40,7 @@ def paint_event_card(painter, card, colors, *, selected=False, focused=False,
         painter.setPen(QPen(QColor(focus_color or colors.selected_outline),
                             2 * scale, Qt.PenStyle.DotLine))
         painter.drawRoundedRect(card.adjusted(3 * scale, 3 * scale, -3 * scale, -3 * scale),
-                                2 * scale, 2 * scale)
+                                corner_radius(preferences, 2) * scale, corner_radius(preferences, 2) * scale)
     painter.restore()
 
 

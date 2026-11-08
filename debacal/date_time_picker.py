@@ -19,7 +19,7 @@ from .date_time_fields import format_duration, validate_datetime
 from .event_style import event_colors
 from .mini_calendar import MiniCalendar
 from .preferences import Preferences
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 
 
 def range_duration(start, end):
@@ -325,7 +325,7 @@ class TimeRangeStrip(QWidget):
         band = self._band_for(start, end)
         painter.setPen(QPen(QColor(style.outline), 1.2))
         painter.setBrush(QColor(style.fill))
-        painter.drawRoundedRect(band, 3, 3)
+        painter.drawRoundedRect(band, corner_radius(self.preferences, 3), corner_radius(self.preferences, 3))
         if not self._draft:
             for handle in (self.start_handle(), self.end_handle()):
                 if not handle.isEmpty():

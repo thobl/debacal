@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 
 
 class SegmentedControl(QWidget):
@@ -50,7 +50,7 @@ class SegmentedControl(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if getattr(self.preferences, 'control_style', 'underlined') == 'filled':
             shape = QPainterPath()
-            shape.addRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5 * scale, 5 * scale)
+            shape.addRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), corner_radius(self, 5) * scale, corner_radius(self, 5) * scale)
             painter.fillPath(shape, QColor(scheme.panel))
             painter.save()
             painter.setClipPath(shape)
@@ -82,7 +82,7 @@ class SegmentedControl(QWidget):
             painter.setPen(QPen(QColor(scheme.focus), scale, Qt.PenStyle.DotLine))
             painter.drawRoundedRect(QRectF(focused.geometry()).adjusted(3 * scale, 3 * scale,
                                                                                    -3 * scale, -3 * scale),
-                                    2 * scale, 2 * scale)
+                                    corner_radius(self, 2) * scale, corner_radius(self, 2) * scale)
 
 
 class HeaderSeparator(QWidget):

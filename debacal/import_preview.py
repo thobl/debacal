@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from .calendar_widgets import MonthCanvas, display_scale, event_tooltip, text
 from .buttons import action_button
 from .event_style import event_colors
-from .theme import scheme_for
+from .theme import corner_radius, scheme_for
 from .models import Calendar
 from .preferences import Preferences
 from .preview_controls import PreviewControls
@@ -89,7 +89,7 @@ class _ImportMonth(MonthCanvas):
         painter.setPen(QPen(edge, 2 if selected else 1,
                             Qt.PenStyle.DashLine if item.candidate else Qt.PenStyle.SolidLine))
         painter.setBrush(QColor(style.fill))
-        painter.drawRoundedRect(rect, 3, 3)
+        painter.drawRoundedRect(rect, corner_radius(self.preferences, 3), corner_radius(self.preferences, 3))
         ink = QColor(style.ink)
         before, after = options.get('before'), options.get('after')
         if before:
@@ -125,7 +125,7 @@ class _ImportMonth(MonthCanvas):
             box = QRectF(cell.right() - size - 5 * scale, cell.top() + 4 * scale, size, size)
             painter.setPen(QPen(QColor(scheme.muted), 1))
             painter.setBrush(QColor(scheme.panel))
-            painter.drawRoundedRect(box, 2, 2)
+            painter.drawRoundedRect(box, corner_radius(self.preferences, 2), corner_radius(self.preferences, 2))
             painter.setPen(QPen(QColor(scheme.accent), max(1.2, 1.2 * scale)))
             if state == Qt.CheckState.Checked:
                 painter.drawLine(QPointF(box.left() + size * .18, box.top() + size * .51),

@@ -26,7 +26,7 @@ START = datetime(2026, 11, 2, 10, tzinfo=ZONE)
 NONE = Qt.KeyboardModifier.NoModifier
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
-CASES = [('single', Qt.Key.Key_F2), ('group', Qt.Key.Key_F3), ('future', Qt.Key.Key_F4)]
+CASES = [('single', Qt.Key.Key_F1), ('group', Qt.Key.Key_F2), ('future', Qt.Key.Key_F3)]
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def test_delete_key_uses_three_scopes(workspace, scope, mode_key):
 
 def test_held_modifiers_do_not_change_the_persistent_selection_mode(workspace):
     _, window, store, _, _, _ = workspace
-    key(window, Qt.Key.Key_F4)
+    key(window, Qt.Key.Key_F3)
     key(window, Qt.Key.Key_Delete, CTRL | SHIFT)
     assert len(all_events(store)) == 5 and window.selection.scope == 'future'
     key(window, Qt.Key.Key_Delete)
@@ -146,9 +146,9 @@ def test_copy_and_paste_keys_preserve_scope_with_fresh_identities(workspace, sco
 
 def test_changing_mode_after_copy_preserves_the_exact_captured_series(workspace):
     _, window, store, master, _, _ = workspace
-    key(window, Qt.Key.Key_F3)
-    key(window, Qt.Key.Key_C, CTRL)
     key(window, Qt.Key.Key_F2)
+    key(window, Qt.Key.Key_C, CTRL)
+    key(window, Qt.Key.Key_F1)
     window.paste_events(scope='single', target=datetime(2027, 1, 4, 10, tzinfo=ZONE))
     assert store.list_events() == [master]
     window.confirm_paste()
@@ -227,7 +227,7 @@ def test_mouse_resize_changes_duration_for_requested_scope(workspace, scope, mod
 def test_double_click_edits_existing_event_in_persistent_following_mode(workspace):
     _, window, _, master, selected, _ = workspace
     seen = []
-    key(window, Qt.Key.Key_F4)
+    key(window, Qt.Key.Key_F3)
     rect = next(rect for rect, event in window.canvas.rects() if event.id == selected.id)
     def inspect(dialog):
         seen.append((dialog.original.id, dialog.series.id, dialog.scope.currentData()))
@@ -240,7 +240,7 @@ def test_double_click_edits_existing_event_in_persistent_following_mode(workspac
 def test_configured_mode_shortcuts_and_persistence(workspace):
     app, window, store, _, _, windows = workspace
     def configure(dialog):
-        assert dialog.tabs.currentWidget() is dialog.shortcut_editor
+        assert dialog.pages.currentWidget().isAncestorOf(dialog.shortcut_editor)
         dialog.shortcut_fields['scope_single'].setKeySequence('F5')
         dialog.shortcut_fields['scope_all'].setKeySequence('F6')
         dialog.shortcut_fields['scope_following'].setKeySequence('F7')
@@ -248,7 +248,7 @@ def test_configured_mode_shortcuts_and_persistence(workspace):
         assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
         return dialog.result()
     with patch.object(PreferencesDialog, 'exec', configure):
-        window.show_shortcuts()
+        window.show_preferences(category='keyboard')
     assert window.bindings['scope_single'] == 'F5'
     assert window.bindings['scope_all'] == 'F6'
     assert window.bindings['scope_following'] == 'F7'

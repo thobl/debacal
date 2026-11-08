@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QTabWidget
 
 from debacal.appearance import stylesheet, widget_palette
 from debacal.appearance_preferences import VisualChoice
@@ -57,7 +57,9 @@ def test_visual_options_are_real_clickable_and_keyboard_operable_controls(deskto
     app, _ = desktop
     item = dialog(desktop)
     editor = item.appearance_editor
-    assert [editor.sections.tabText(i) for i in range(editor.sections.count())] == ['Colors', 'Calendar', 'Layout']
+    assert list(editor.section_widgets) == ['Colors', 'Interface', 'Sidebar', 'Calendar']
+    assert not editor.findChildren(QTabWidget)
+    assert editor.section_widgets['Colors'].isAncestorOf(item.weekend_style)
     assert isinstance(item.color_scheme, VisualChoice) and not isinstance(item.color_scheme, QComboBox)
     choose(item.color_scheme, 'cool')
     assert item.color_scheme.currentData() == editor.preview.preferences.color_scheme == 'cool'
@@ -113,7 +115,8 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
     ('appearance_mode', 'dark'), ('color_scheme', 'warm'), ('control_style', 'filled'),
     ('agenda_style', 'cards'), ('weekend_style', 'background'), ('weekend_style', 'none'),
     ('font_scale', 140), ('week_numbers', False), ('visible_start', 6), ('visible_end', 22),
-    ('show_sidebar_title', False), ('sidebar_title', 'My calendar'),
+    ('show_sidebar_title', False), ('sidebar_title', 'My calendar'), ('corner_style', 'square'),
+    ('corner_style', 'rounded'),
 ])
 def test_each_appearance_control_changes_the_live_sample(desktop, field, value):
     app, _ = desktop
@@ -152,21 +155,22 @@ def test_custom_colors_validate_before_apply_and_presets_keep_usable_values(desk
 
 
 @pytest.mark.parametrize('scale', [80, 140])
-def test_narrow_appearance_layout_reflows_cards_and_keeps_apply_reachable(desktop, scale):
+def test_narrow_appearance_layout_reflows_choices_and_keeps_preview_and_apply_reachable(desktop, scale):
     app, _ = desktop
     item = dialog(desktop, Preferences(font_scale=scale, color_scheme='custom'))
     item.resize(580, 440)
     settle(app)
     assert item.width() == 580 and item.height() == 440
     assert item.rect().contains(item.buttons.geometry())
-    for index in range(item.appearance_editor.sections.count()):
-        item.appearance_editor.sections.setCurrentIndex(index)
-        settle(app)
-        scroll = item.tabs.widget(1)
-        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+    editor = item.appearance_editor
+    preview_rect = editor.preview.geometry()
+    for section in editor.section_widgets.values():
+        scroll = editor.controls_scroll
+        scroll.ensureWidgetVisible(section)
         settle(app)
         assert not scroll.horizontalScrollBar().isVisible()
-        for choice in item.appearance_editor.sections.widget(index).findChildren(VisualChoice):
+        assert editor.preview.isVisible() and editor.preview.geometry() == preview_rect
+        for choice in section.findChildren(VisualChoice):
             assert all(button.width() > 40 for button in choice.buttons)
     item.restore_defaults()
     assert item.value() == Preferences()

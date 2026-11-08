@@ -104,7 +104,7 @@ def test_invalid_preferences_or_shortcuts_do_not_apply_or_close(desktop):
     dialog.shortcut_fields['next'].setKeySequence(QKeySequence('H'))
     click(dialog, QDialogButtonBox.StandardButton.Save)
     assert dialog.isVisible() and not applied
-    assert dialog.tabs.currentWidget() is dialog.shortcut_editor
+    assert dialog.page_heading.text() == 'Keyboard shortcuts'
     assert dialog.shortcut_editor.error.text()
     dialog.shortcut_fields['next'].setKeySequence(QKeySequence('Alt+L'))
     click(dialog, QDialogButtonBox.StandardButton.Apply)
@@ -196,9 +196,9 @@ def test_apply_large_text_keeps_category_controls_and_dialog_actions_reachable(w
         settle(app)
         assert dialog.isVisible()
         assert dialog.rect().contains(dialog.buttons.geometry())
-        for index in range(3):
-            dialog.tabs.setCurrentIndex(index)
-            page = dialog.tabs.widget(index)
+        for name in ('General', 'Appearance', 'Events'):
+            dialog.set_category(name)
+            page = dialog.appearance_editor.controls_scroll if name == 'Appearance' else dialog.pages.currentWidget()
             assert isinstance(page, QScrollArea)
             settle(app)
             scrollbar = page.verticalScrollBar()

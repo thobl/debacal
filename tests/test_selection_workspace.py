@@ -69,9 +69,9 @@ def point(window, day, hour):
                   round(canvas.time_top + (hour - canvas.start_hour) * canvas.hour_height))
 
 
-@pytest.mark.parametrize('scope,key,remaining', [('single', Qt.Key.Key_F2, 4),
-                                               ('group', Qt.Key.Key_F3, 0),
-                                               ('future', Qt.Key.Key_F4, 2)])
+@pytest.mark.parametrize('scope,key,remaining', [('single', Qt.Key.Key_F1, 4),
+                                               ('group', Qt.Key.Key_F2, 0),
+                                               ('future', Qt.Key.Key_F3, 2)])
 def test_mode_keys_highlight_exact_affected_events_and_delete_once(workspace, scope, key, remaining):
     app, window, store, insert = workspace
     master = sample('series', start=START.replace(day=2), recurrence_rule='FREQ=WEEKLY;COUNT=5')
