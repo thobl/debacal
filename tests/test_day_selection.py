@@ -157,19 +157,18 @@ def test_day_selection_signals_clear_event_and_update_all_surfaces(workspace, wi
     assert all(widget.selected_day == chosen for widget in (window.header, window.canvas, window.month))
 
 
-def test_mouse_day_selection_clears_pending_shortcut_and_allows_keyboard_paste(workspace):
+def test_mouse_day_selection_allows_keyboard_paste(workspace):
     window, store, app = workspace
     window.activateWindow()
     window.canvas.setFocus()
     app.processEvents()
-    window._shortcut_pending = ['Ctrl+K']
     chosen = date(2026, 11, 6)
     index = window.canvas.days.index(chosen)
     width = (window.header.width() - window.canvas.gutter) / len(window.canvas.days)
     point = QPoint(int(window.canvas.gutter + (index + 0.5) * width), 20)
     with patch.object(window, "read_event_clipboard", return_value=clipboard(event())):
         QTest.mouseClick(window.header, Qt.MouseButton.LeftButton, pos=point)
-        assert window.selected_day == chosen and not window._shortcut_pending
+        assert window.selected_day == chosen
         window.canvas.setFocus()
         QTest.keyClick(window.canvas, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
         assert store.list_events() == [] and window.pending_paste is not None

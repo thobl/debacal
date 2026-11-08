@@ -88,14 +88,14 @@ def test_ctrl_f_does_not_steal_focus_from_modal_editor(workspace):
     assert not window.search.hasFocus()
 
 
-def test_ctrl_f_as_second_stroke_respects_existing_calendar_shortcut(workspace):
+def test_retired_multistroke_shortcut_does_not_intercept_search(workspace):
     _, window, _, _ = workspace
     window.bindings['next'] = 'Ctrl+K, Ctrl+F'
     anchor = window.anchor
     QTest.keyClick(window.canvas, Qt.Key.Key_K, CTRL)
     QTest.keyClick(window.canvas, Qt.Key.Key_F, CTRL)
-    assert window.anchor == anchor + timedelta(days=7)
-    assert not window.search.hasFocus()
+    assert window.anchor == anchor
+    assert window.search.hasFocus()
 
 
 def test_old_search_default_migrates_but_custom_binding_is_preserved(workspace):
@@ -236,7 +236,7 @@ def test_all_day_search_selection_highlights_pinned_chip_while_grid_is_scrolled(
 
 
 @pytest.mark.parametrize('view', ['week', 'month'])
-def test_enter_commits_current_result_to_active_canvas_and_escape_exits(workspace, view):
+def test_enter_edits_current_result_and_escape_exits(workspace, view):
     _, window, _, _ = workspace
     events = [sample('first'), sample('second', day=40)]
     window.apply_events('Create', events)
@@ -245,16 +245,35 @@ def test_enter_commits_current_result_to_active_canvas_and_escape_exits(workspac
     QTest.keyClick(window.search, Qt.Key.Key_Down)
     QTest.keyClick(window.results, Qt.Key.Key_Down)
     assert window.selected_id == events[1].id
-    QTest.keyClick(window.results, Qt.Key.Key_Return)
+    with patch.object(window, 'edit_event') as edit:
+        QTest.keyClick(window.results, Qt.Key.Key_Return)
+    edit.assert_called_once_with()
     canvas = window.month if view == 'month' else window.canvas
-    assert canvas.hasFocus()
+    assert window.results.hasFocus()
     assert window.selected_id == events[1].id
     assert window.search.text() == 'Needle'
-    QTest.keyClick(canvas, Qt.Key.Key_Escape)
+    QTest.keyClick(window.results, Qt.Key.Key_Escape)
     assert not window.search.text() and window.results.agenda_mode
     assert window.results_heading.text() == 'Next events'
     assert canvas.hasFocus()
     assert window.selected_id == events[1].id
+
+
+def test_enter_from_results_obeys_edit_bindings_and_search_text_enter_only_reveals(workspace):
+    _, window, _, _ = workspace
+    event = sample('first')
+    window.apply_events('Create', [event])
+    search(window)
+    with patch.object(window, 'edit_event') as edit:
+        QTest.keyClick(window.search, Qt.Key.Key_Return)
+        assert not edit.called and window.canvas.hasFocus()
+        window.results.setFocus()
+        window.bindings['edit_event'] = 'E'
+        QTest.keyClick(window.results, Qt.Key.Key_Return)
+        assert not edit.called and window.canvas.hasFocus()
+        window.results.setFocus()
+        QTest.keyClick(window.results, Qt.Key.Key_E)
+        edit.assert_called_once_with()
 
 
 def test_master_result_selects_real_historical_occurrence_with_excluded_initial_start(workspace):

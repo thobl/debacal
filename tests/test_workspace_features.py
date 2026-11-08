@@ -16,7 +16,7 @@ from debacal.dialogs import CalendarDialog, EventDialog
 from debacal.ics import parse_ics
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
-from debacal.shortcuts import validate_bindings
+from debacal.shortcuts import normalize_bindings, validate_bindings
 from debacal.store import Store
 from debacal.ui import MainWindow
 
@@ -254,12 +254,12 @@ def test_disabled_redo_shortcut_stays_disabled_on_upgrade(desktop):
     (3, {'redo': 'Alt+R', 'redo_alternative': 'Ctrl+Shift+Z'}, 'Alt+R'),
     (3, {'redo': '', 'redo_alternative': ''}, ''),
     (3, {'redo': 'Ctrl+Y', 'history': 'Ctrl+Y'}, ''),
-    (3, {'redo': 'Ctrl+Y', 'history': 'Ctrl+Y, H'}, ''),
+    (3, {'redo': 'Ctrl+Y', 'history': 'Ctrl+Y, H'}, 'Ctrl+Y'),
     (4, {'redo': 'Ctrl+Shift+Z'}, 'Ctrl+Y'),
     (4, {'redo': 'Alt+R'}, 'Alt+R'),
     (4, {'redo': ''}, ''),
     (4, {'redo': 'Ctrl+Shift+Z', 'history': 'Ctrl+Y'}, ''),
-    (4, {'redo': 'Ctrl+Shift+Z', 'history': 'Ctrl+Y, H'}, ''),
+    (4, {'redo': 'Ctrl+Shift+Z', 'history': 'Ctrl+Y, H'}, 'Ctrl+Y'),
 ])
 def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(desktop, version, saved, expected):
     app, _, store = desktop
@@ -270,9 +270,9 @@ def test_redo_upgrade_consolidates_defaults_without_losing_custom_actions(deskto
         assert other.bindings['redo'] == expected
         assert 'redo_alternative' not in other.bindings
         assert 'redo_alternative' not in store.get_setting('keybindings')
-        assert store.get_setting('keybindings_version') == 6
+        assert store.get_setting('keybindings_version') == 7
         if 'history' in saved:
-            assert other.bindings['history'] == saved['history']
+            assert other.bindings['history'] == normalize_bindings({'history': saved['history']})['history']
         validate_bindings(other.bindings)
     finally:
         other.close()

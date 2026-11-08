@@ -6,7 +6,7 @@ from datetime import datetime, time, timedelta, timezone
 import math
 
 from PySide6.QtCore import QDate, QEvent, QPointF, QRectF, QSignalBlocker, Qt
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtGui import QColor, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCalendarWidget, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
@@ -16,10 +16,12 @@ from .appearance import stylesheet, widget_palette
 from .buttons import icon_button
 from .calendar_widgets import calendar_gutter, text
 from .date_time_fields import format_duration, validate_datetime
+from .dialog_base import install_dialog_keyboard
 from .event_style import event_colors
 from .mini_calendar import MiniCalendar
 from .preferences import Preferences
 from .theme import corner_radius, scheme_for
+from .shortcuts import shortcut_keys, shortcut_label, shortcut_sequences
 
 
 def range_duration(start, end):
@@ -114,13 +116,16 @@ class DateTimeRangePicker(QDialog):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
-        self.full_day_shortcut = QShortcut(QKeySequence(full_day_shortcut or ''), self)
+        self.full_day_shortcut = QShortcut(self)
+        self.full_day_shortcut.setKeys(shortcut_sequences(full_day_shortcut))
+        self._full_day_binding = full_day_shortcut
         self.full_day_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.full_day_shortcut.setEnabled(bool(full_day_shortcut and not all_day))
+        self.full_day_shortcut.setEnabled(bool(shortcut_keys(full_day_shortcut) and not all_day))
         self.full_day_shortcut.activated.connect(self.full_day_button.toggle)
         for field in self.findChildren(QLineEdit):
             field.installEventFilter(self)
         self._update_full_day_tooltip()
+        install_dialog_keyboard(self, self.accept, field_widgets=(self.strip, self.calendar))
         self.refresh()
 
     @property
@@ -147,7 +152,7 @@ class DateTimeRangePicker(QDialog):
 
     def _update_full_day_tooltip(self):
         caption = 'Fit event hours' if self.full_day else 'Show all 24 hours'
-        shortcut = self.full_day_shortcut.key().toString(QKeySequence.SequenceFormat.NativeText)
+        shortcut = shortcut_label(self._full_day_binding)
         self.full_day_button.setToolTip(caption + (' (' + shortcut + ')' if shortcut else ''))
         self.full_day_button.setAccessibleName(caption)
 
@@ -535,9 +540,6 @@ class TimeRangeStrip(QWidget):
                 self.picker.set_start(self.picker.draft_start + delta, preserve_duration=self.picker.same_day)
             else:
                 self.picker.set_end(self.picker.draft_end + delta)
-            event.accept()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.picker.accept()
             event.accept()
         else:
             super().keyPressEvent(event)

@@ -196,7 +196,7 @@ def test_apply_large_text_keeps_category_controls_and_dialog_actions_reachable(w
         settle(app)
         assert dialog.isVisible()
         assert dialog.rect().contains(dialog.buttons.geometry())
-        for name in ('General', 'Appearance', 'Events'):
+        for name in ('Calendar', 'Appearance'):
             dialog.set_category(name)
             page = dialog.appearance_editor.controls_scroll if name == 'Appearance' else dialog.pages.currentWidget()
             assert isinstance(page, QScrollArea)

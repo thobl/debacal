@@ -14,6 +14,7 @@ from .preferences import Preferences
 from .series_preview import SeriesPreview
 from .timeutil import local_zone, now
 from .theme import scheme_for
+from .dialog_base import install_dialog_keyboard
 
 
 class ConflictDialog(QDialog):
@@ -123,6 +124,7 @@ class ConflictDialog(QDialog):
         outer.addLayout(buttons)
         first = conflict.local or conflict.remote
         self.show_month(first.start.astimezone(local_zone()).date() if first else now().date())
+        install_dialog_keyboard(self, self.reject)
 
     def describe(self, event):
         if event is None:

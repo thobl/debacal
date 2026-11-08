@@ -9,7 +9,7 @@ import calendar as monthlib
 import math
 
 from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
-from PySide6.QtGui import QKeySequence, QCursor, QShortcut
+from PySide6.QtGui import QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QLineEdit, QMenu, QDialog, QFileDialog,
@@ -35,19 +35,20 @@ from .search_panel import MORE_ROLE, event_matches_query
 from .status_dialog import StatusDialog, StatusIssue
 from .calendar_choice_dialog import CalendarChoiceDialog
 from .credentials import CredentialStore
-from .shortcuts import migrate_selection_bindings
+from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspace_bindings,
+                        normalize_bindings, shortcut_label, shortcut_matches, shortcut_sequences)
 
 DEFAULT_BINDINGS = {
-    'new_event': 'N', 'edit_event': 'E', 'delete_event': 'Del',
-    'search': 'Ctrl+F', 'today': 'T', 'previous': 'H', 'next': 'L',
+    'new_event': 'N', 'edit_event': ['E', 'Return'], 'delete_event': 'Del',
+    'search': ['Ctrl+F', '/'], 'today': 'T', 'previous': 'PgUp', 'next': 'PgDown',
     'day_view': 'D', 'week_view': 'W', 'month_view': 'M', 'year_view': 'Y', 'full_day': 'F',
     'undo': 'Ctrl+Z', 'redo': 'Ctrl+Y',
     'history': 'Ctrl+H', 'sync': 'Ctrl+R',
-    'edit_single': '', 'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
+    'preferences': 'Ctrl+,', 'export_selection': 'Ctrl+Shift+E',
     'copy_event': 'Ctrl+C', 'paste_event': 'Ctrl+V',
     'select_left': 'Left', 'select_right': 'Right',
     'select_up': 'Up', 'select_down': 'Down',
-} | DEFAULT_MODE_BINDINGS
+} | DEFAULT_MODE_BINDINGS | DEFAULT_DIALOG_BINDINGS
 EVENT_MIME = 'application/x-debacal-events+json'
 
 
@@ -103,70 +104,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_selection_active = False
         self._search_row_ids = set()
         self._gesture_selection = None
-        self._shortcut_pending = []
-        self.shortcut_timer = QTimer(self)
-        self.shortcut_timer.setSingleShot(True)
-        self.shortcut_timer.timeout.connect(self._shortcut_pending.clear)
         saved_bindings = dict(store.get_setting('keybindings', {}))
-        if 'select_event' in saved_bindings:
-            saved_bindings.pop('select_event')
-            store.set_setting('keybindings', saved_bindings)
-        if saved_bindings.get('edit_single') == 'Shift+E':
-            saved_bindings['edit_single'] = ''
-        saved_bindings.pop('duplicate_event', None)
-        migrate_bindings = store.get_setting('keybindings_version', 0) < 2
-        if migrate_bindings:
-            for action, old_default in (('day_view', '1'), ('copy_event', 'C'), ('paste_event', 'V')):
-                if saved_bindings.get(action) == old_default:
-                    saved_bindings.pop(action)
-        if saved_bindings.get('search') == '/':
-            saved_bindings['search'] = 'Ctrl+F'
-        if migrate_bindings:
-            # New defaults yield to deliberately configured actions, including
-            # multi-stroke shortcuts that share their first key.
-            for action in ('day_view', 'copy_event', 'paste_event', 'full_day'):
-                if action in saved_bindings:
-                    continue
-                sequence = QKeySequence(DEFAULT_BINDINGS[action])
-                if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
-                                   or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
-                       for other, value in saved_bindings.items() if other != action):
-                    saved_bindings[action] = ''
-            store.set_setting('keybindings', saved_bindings)
-            store.set_setting('keybindings_version', 2)
-        if store.get_setting('keybindings_version', 0) < 3:
-            for action in ('year_view', 'export_selection'):
-                if action in saved_bindings:
-                    continue
-                sequence = QKeySequence(DEFAULT_BINDINGS[action])
-                if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
-                                   or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
-                       for other, value in saved_bindings.items() if other != action):
-                    saved_bindings[action] = ''
-            store.set_setting('keybindings', saved_bindings)
-            store.set_setting('keybindings_version', 3)
-        if store.get_setting('keybindings_version', 0) < 5:
-            alternative = saved_bindings.pop('redo_alternative', None)
-            if saved_bindings.get('redo') in (None, 'Ctrl+Y', 'Ctrl+Shift+Z'):
-                # Consolidate former defaults into one action. Retain a custom
-                # alternative when the primary action still used a default.
-                if alternative and alternative not in ('Ctrl+Y', 'Ctrl+Shift+Z'):
-                    saved_bindings['redo'] = alternative
-                else:
-                    saved_bindings.pop('redo', None)
-                    sequence = QKeySequence(DEFAULT_BINDINGS['redo'])
-                    if any(value and (sequence.matches(QKeySequence(value)) != QKeySequence.SequenceMatch.NoMatch
-                                       or QKeySequence(value).matches(sequence) != QKeySequence.SequenceMatch.NoMatch)
-                           for value in saved_bindings.values()):
-                        saved_bindings['redo'] = ''
-            store.set_setting('keybindings', saved_bindings)
-            store.set_setting('keybindings_version', 5)
         version = store.get_setting('keybindings_version', 0)
-        current_bindings = migrate_selection_bindings(saved_bindings, DEFAULT_BINDINGS, migrate_modes=version < 6)
-        if current_bindings != saved_bindings or version < 6:
-            store.set_setting('keybindings', current_bindings)
-            store.set_setting('keybindings_version', 6)
-        self.bindings = DEFAULT_BINDINGS | current_bindings
+        self.bindings = migrate_workspace_bindings(saved_bindings, DEFAULT_BINDINGS, version=version)
+        if self.bindings != saved_bindings or version < 7:
+            store.set_setting('keybindings', self.bindings)
+            store.set_setting('keybindings_version', 7)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-files')
         self.tasks = SimpleQueue()
         self._source_credential_saves = set()
@@ -334,7 +277,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def update_hints(self):
         def key(action):
-            return self.bindings.get(action) or '—'
+            return shortcut_label(self.bindings.get(action)) or '—'
         self.update_command_tooltips()
         self.search.setPlaceholderText('Search events   ' + key('search'))
         self.search.setToolTip('Search titles, places, and notes (' + key('search') + ')')
@@ -383,7 +326,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return False
         self.preferences = preferences
         self.preferences.save(self.store)
-        self.bindings = dict(bindings)
+        self.bindings = normalize_bindings(bindings)
         self.store.set_setting('keybindings', self.bindings)
         self.install_mode_shortcuts()
         self.setLocale(self.preferences.qt_locale())
@@ -485,8 +428,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.selected_id = None
             for widget in self.event_surfaces:
                 widget.selected_id = None
-            self._shortcut_pending.clear()
-            self.shortcut_timer.stop()
         if reveal:
             self.anchor = day
             self.refresh()
@@ -625,9 +566,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             shortcut.deleteLater()
         self.mode_shortcuts = []
         for name, mode in (('scope_single', 'single'), ('scope_all', 'group'), ('scope_following', 'future')):
-            binding = self.bindings.get(name, '')
-            if binding:
-                shortcut = QShortcut(QKeySequence(binding), self)
+            sequences = shortcut_sequences(self.bindings.get(name, ''))
+            if sequences:
+                shortcut = QShortcut(self)
+                shortcut.setKeys(sequences)
                 shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
                 shortcut.activated.connect(lambda value=mode: self.set_selection_mode(value))
                 self.mode_shortcuts.append(shortcut)
@@ -1160,8 +1102,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.fit_calendar()
 
     def focus_search(self):
-        self._shortcut_pending.clear()
-        self.shortcut_timer.stop()
         self.search_header.reveal()
         self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self.search.selectAll()
@@ -1441,7 +1381,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         pending = self.store.count_pending_changes()
         self.sync_btn.setEnabled(bool(self.engine) and not self._sync_running)
         self.sync_btn.setToolTip('Syncing in background…' if self._sync_running else
-                                 ('Sync calendars (' + self.bindings.get('sync', '') + ')' if self.engine else
+                                 ('Sync calendars (' + shortcut_label(self.bindings.get('sync', '')) + ')' if self.engine else
                                   ('Demo mode is offline. Open your calendars to connect a remote account.'
                                    if self.demo_mode else 'Synchronization is disabled for this workspace.')))
         issues = self.status_issues()
@@ -1681,8 +1621,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         focus = QApplication.focusWidget()
         text_focus = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox))
         for action, scope in (('scope_single', 'single'), ('scope_all', 'group'), ('scope_following', 'future')):
-            binding = QKeySequence(self.bindings.get(action, ''))
-            if binding.count() == 1 and QKeySequence(event.keyCombination()).matches(binding) == QKeySequence.SequenceMatch.ExactMatch:
+            if shortcut_matches(event, self.bindings.get(action, '')):
                 self.set_selection_mode(scope)
                 return True
         if self.pending_paste is not None:
@@ -1693,10 +1632,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.confirm_paste()
                 return True
         command_modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier
-        search_binding = QKeySequence(self.bindings.get('search', ''))
-        if ((not self._shortcut_pending or text_focus) and search_binding.count() == 1
-                and (event.modifiers() & command_modifiers or event.key() >= Qt.Key.Key_Escape)
-                and QKeySequence(event.keyCombination()).matches(search_binding) == QKeySequence.SequenceMatch.ExactMatch):
+        if ((event.modifiers() & command_modifiers or event.key() >= Qt.Key.Key_Escape)
+                and shortcut_matches(event, self.bindings.get('search', ''))):
             self.focus_search()
             return True
         searching = focus in (self.search, self.results)
@@ -1724,22 +1661,20 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     self.results.load_more(item)
                     self.sync_search_selection()
                     return True
-                self.open_search_result(item)
+                if (focus is self.results and self.results.event_id(item)
+                        and shortcut_matches(event, self.bindings.get('edit_event', ''))):
+                    self.edit_event()
+                else:
+                    self.open_search_result(item)
                 return True
             if focus is self.results and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
                 return super().eventFilter(obj, event)
         if text_focus:
-            self._shortcut_pending.clear()
             return super().eventFilter(obj, event)
         action = self.match_shortcut(event)
-        if (action is None and self.bindings.get('search') == 'Ctrl+F' and event.text() == '/'
-                and not event.modifiers() & command_modifiers):
-            action = 'search'
-        if action == 'pending':
-            return True
         actions = {
             'new_event': self.create_event, 'edit_event': self.edit_event,
-            'edit_single': lambda: self.edit_event(group=False), 'preferences': self.show_preferences,
+            'preferences': self.show_preferences,
             'delete_event': self.delete_event, 'search': self.focus_search,
             'copy_event': self.copy_event, 'paste_event': self.paste_events,
             'scope_single': lambda: self.set_selection_mode('single'),
@@ -1763,36 +1698,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def match_shortcut(self, event):
         if event.key() in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
             return None
-        variants = [event.keyCombination()]
-        char = event.text()
-        command_modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier
-        if (not event.modifiers() & command_modifiers and len(char) == 1
-                and char.isprintable() and not char.isalnum() and not char.isspace()):
-            printable = QKeySequence(char)
-            if not printable.isEmpty() and printable[0] != event.keyCombination():
-                variants.append(printable[0])
-        attempts = [self._shortcut_pending + [key] for key in variants]
-        if self._shortcut_pending:
-            attempts.extend([key] for key in variants)
-        for attempt in attempts:
-            if len(attempt) > 4:
-                continue
-            sequence = QKeySequence(*attempt)
-            partial = False
-            for action, binding in self.bindings.items():
-                if not binding:
-                    continue
-                match = sequence.matches(QKeySequence(binding))
-                if match == QKeySequence.SequenceMatch.ExactMatch:
-                    self._shortcut_pending.clear()
-                    self.shortcut_timer.stop()
-                    return action
-                partial |= match == QKeySequence.SequenceMatch.PartialMatch
-            if partial:
-                self._shortcut_pending = attempt
-                self.shortcut_timer.start(1200)
-                return 'pending'
-        self._shortcut_pending.clear()
+        # A deliberately assigned physical chord wins over a printable alias
+        # from a keyboard layout (for example Shift+7 producing '/').
+        for printable_alias in (False, True):
+            action = next((action for action, binding in self.bindings.items()
+                           if action not in DIALOG_ACTIONS and shortcut_matches(
+                               event, binding, printable_alias=printable_alias)), None)
+            if action is not None:
+                return action
         return None
 
     def closeEvent(self, event):
@@ -1801,7 +1714,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.poll_timer.stop()
         self.sync_timer.stop()
         self.clock_timer.stop()
-        self.shortcut_timer.stop()
         self.search_timer.stop()
         self._import_timer.stop()
         self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests

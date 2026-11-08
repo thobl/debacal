@@ -7,7 +7,7 @@ from datetime import datetime, time, timedelta
 from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QCheckBox, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
@@ -30,6 +30,7 @@ from .recurrence import ScheduleReplacement, event_zone, key_datetime, recurrenc
 from .series_preview import SeriesPreview
 from .theme import scheme_for
 from .timeutil import local_zone
+from .shortcuts import shortcut_keys, shortcut_label, shortcut_sequences
 
 
 REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
@@ -379,12 +380,15 @@ class EventDialog(FormDialog):
             [self.scope_bindings[action] for action in MODE_ACTIONS if self.scope_bindings.get(action)] if event else ())
         self.mode_shortcuts = {}
         for action, scope in MODE_ACTIONS.items():
-            shortcut = QShortcut(QKeySequence(self.scope_bindings.get(action, '')), self)
+            binding = self.scope_bindings.get(action, '')
+            shortcut = QShortcut(self)
+            shortcut.setKeys(shortcut_sequences(binding))
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.setEnabled(bool(event and self.scope_bindings.get(action)))
+            shortcut.setEnabled(bool(event and shortcut_keys(binding)))
             shortcut.activated.connect(lambda value=scope: self.scope.setCurrentData(value))
             self.mode_shortcuts[action] = shortcut
-            self.scope_buttons[scope].setToolTip(self.scope_buttons[scope].text() + ' · ' + self.scope_bindings.get(action, ''))
+            label = shortcut_label(binding)
+            self.scope_buttons[scope].setToolTip(self.scope_buttons[scope].text() + (' · ' + label if label else ''))
         self.title.setFocus()
         self.title.selectAll()
 
@@ -631,12 +635,12 @@ class EventDialog(FormDialog):
         while window.parentWidget() is not None:
             window = window.parentWidget().window()
         if hasattr(window, 'show_preferences'):
-            window.show_preferences(category='events')
+            window.show_preferences(category='calendar')
             self.preferences = window.preferences
             self._sync_presets()
         else:
             dialog = PreferencesDialog(self.preferences, self)
-            dialog.set_category('events')
+            dialog.set_category('calendar')
             dialog.applied.connect(lambda preferences, _bindings: self._set_duration_preferences(preferences))
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self._set_duration_preferences(dialog.result_preferences)

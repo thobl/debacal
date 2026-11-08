@@ -255,8 +255,8 @@ def test_only_explicit_mode_shortcuts_are_available_and_remappable(editors):
 
 
 @pytest.mark.parametrize(('other', 'message'), [('E', 'unique'), ('Ctrl+C', 'unique'),
-                                              ('F1', 'unique'), ('Ctrl+C, X', 'start')])
-def test_shortcut_editor_checks_duplicates_and_chord_prefixes(editors, other, message):
+                                              ('F1', 'unique')])
+def test_shortcut_editor_checks_duplicate_combinations(editors, other, message):
     _, _, widgets, _ = editors
     editor = KeyboardShortcutsEditor(BINDINGS | {'other': other}, BINDINGS | {'other': other})
     widgets.append(editor)

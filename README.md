@@ -157,7 +157,7 @@ reconnecting restores access to those local changes. Saved passwords are shared
 by calendars in the same account and remain in the secure keyring.
 
 * **Day / week / month / year:** switch with the toolbar or `D`, `W`, `M`, `Y`.
-  `H`/`L` move backward/forward by the current view's period; `T` returns to today.
+  `Page Up`/`Page Down` move backward/forward by the current view's period; `T` returns to today.
   The navigation buttons keep their position as month labels change.
   Headline and Today positions stay fixed across views. Month and week share
   day-column boundaries and weekday labels, including reserved scrollbar space;
@@ -167,7 +167,7 @@ by calendars in the same account and remain in the secure keyring.
   Click a month heading to open Month view, or a marker to select its event;
   Ctrl+click adds to the selection. Double-click a day to create an all-day event.
   Click a week number to open that week. Week numbers appear by default in
-  Month and Day/Week views too, and can be switched off in Appearance preferences.
+  Month and Day/Week views too, and can be switched off in Calendar preferences.
   Right-click a day to inspect its events or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
@@ -248,18 +248,27 @@ by calendars in the same account and remain in the secure keyring.
   retains their original calendars. Short source lists stay fully visible;
   long lists scroll. Large text in a short window can scroll the sidebar while
   sync status stays fixed.
-* **Preferences:** General groups date language (system, English, German), week
-  start, date format, and time format. Interface labels remain in English.
+* **Preferences:** Calendar groups date language (system, English, German), week
+  start, date/time formats, week numbers, visible hours, and event-duration buttons.
+  The time grid still expands for events outside the usual visible hours.
+  Interface labels remain in English.
   Language changes month and weekday names independently of date/time format
   and week start. System language follows Qt's preferred UI languages, while
   regional date/time defaults follow the OS formatting locale (`LC_TIME` on
   Linux, with `LC_ALL` taking precedence). Preferences shows the detected values.
-  Appearance controls text size, week numbers across calendar views, and the usual
-  visible hours; the time grid still expands for events outside those hours.
-  Events configures the duration buttons in the event editor.
+  Appearance controls colors, text size, button styles, corners, and sidebar layout.
+  Calendar sources shows account settings when an account is selected, including
+  discovery, passwords, and connecting calendars. Select an individual calendar
+  for its name/alias, color, address, and access details. Local calendars and
+  read-only subscriptions show only their relevant settings.
   Sync groups automatic sync intervals and conflict notifications. Keyboard
-  shortcuts groups related actions and lets you remap actions and selection-mode keys, with duplicate
-  and ambiguous sequences rejected. Settings survive restart.
+  shortcuts groups related actions and lets you assign several independent key
+  combinations to each action. Use **+** for an alternative; each field records
+  one combination. Multi-step key sequences are no longer supported; saved
+  multi-step assignments are disabled without taking over their first key.
+  Duplicate assignments within the same context are rejected. Dialog actions
+  have their own section, so Enter can edit an event in the calendar and accept
+  a form in a dialog. Settings survive restart.
   Apply saves changes and updates the workspace without closing Preferences.
   Save applies and closes; Cancel discards edits made since the last Apply.
 * **Event editor:** Tab/Shift+Tab move through the form; labels have Alt-key
@@ -274,6 +283,9 @@ by calendars in the same account and remain in the secure keyring.
   Duration edits and preset buttons adjust End. All-day fields show the first and
   last included dates. Repeat controls show synchronized count and final-date
   fields; choose Indefinite for an ongoing rule.
+  **Edit selection** uses `E` or `Enter` by default. Dialog accept, form-field
+  accept, and close (`Esc`) can all be remapped in Keyboard shortcuts; popup
+  choices and multiline text retain their own contextual keyboard behavior.
 
 ### Working with event series
 

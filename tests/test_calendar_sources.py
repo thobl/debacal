@@ -243,3 +243,125 @@ def test_sync_metadata_keeps_alias_and_changes_server_name_and_color(desktop):
     saved = store.get_calendar('work')
     assert saved.name == saved.name_alias == 'My team'
     assert saved.server_name == 'Server renamed' and saved.color == '#998877'
+
+
+def test_details_follow_source_type_without_irrelevant_disabled_fields(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    store.save_calendar(remote('readonly', read_only=True, server_color=''))
+    store.save_calendar(Calendar('subscription', 'Public holidays', '#667788', kind='ics',
+                                 url='https://example.test/holidays.ics'))
+    editor = create()
+
+    editor.sources.setCurrentItem(editor._items['local'])
+    assert editor.details.isVisible() and editor.alias.isEnabled()
+    assert editor.alias_label.text() == 'Name'
+    assert not editor.server_name.isVisible() and not editor.source_url.isVisible()
+    assert not editor.server_color_button.isVisible() and not editor.account_button.isVisible()
+    assert not editor.account_credentials.isVisible()
+    assert editor.calendar_access.text() == 'Editable on this device'
+
+    editor.sources.setCurrentItem(editor._items['subscription'])
+    assert editor.details.isVisible() and editor.color_button.isEnabled()
+    assert editor.source_url.isVisible() and editor.source_url.text().endswith('holidays.ics')
+    assert not editor.server_name.isVisible() and not editor.account_button.isVisible()
+    assert editor.calendar_access.text() == 'Read-only subscription'
+
+    editor.sources.setCurrentItem(editor._items['readonly'])
+    assert editor.alias.isEnabled() and editor.color_button.isEnabled()
+    assert editor.server_name.isVisible() and editor.account_button.isVisible()
+    assert not editor.server_color_button.isVisible()
+    assert not editor.account_credentials.isVisible()
+    assert editor.calendar_access.text() == 'Read-only on server'
+    editor.account_button.click()
+    assert editor.sources.currentItem() is editor._items['readonly'].parent()
+    assert editor.group_details.isVisible() and not editor.details.isVisible()
+    assert editor.account_credentials.isVisible() and editor.discover_button.isEnabled()
+    assert editor.account_username.text() == 'alice'
+    assert editor.account_url.text() == 'https://cloud.example'
+
+
+def test_group_details_have_only_relevant_information_and_actions(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    store.save_calendar(Calendar('subscription', 'Public holidays', '#667788', kind='ics',
+                                 url='https://example.test/holidays.ics'))
+    editor = create()
+    for identity, words in [('local', 'stored on this device'), ('subscription', 'read-only')]:
+        editor.sources.setCurrentItem(editor._items[identity].parent())
+        assert editor.group_details.isVisible() and not editor.details.isVisible()
+        assert words in editor.group_hint.text()
+        assert not editor.account_details.isVisible()
+        assert not editor.account_credentials.isVisible()
+        assert not editor.subscription_actions.isVisible()
+        assert editor.group_summary.text() == ('1 of 1 subscription enabled' if identity == 'subscription' else '1 of 1 calendar enabled')
+
+
+def test_account_connection_actions_are_drafts_and_selection_survives_apply(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    store.save_calendar(remote('personal', enabled=False))
+    editor = create()
+    account = editor._items['work'].parent()
+    editor.sources.setCurrentItem(account)
+    assert editor.group_summary.text() == '1 of 2 calendars connected'
+    editor.enable_all_button.click()
+    assert all(editor._drafts[identity].enabled for identity in ('work', 'personal'))
+    assert not store.get_calendar('personal').enabled
+    assert editor.group_summary.text() == '2 of 2 calendars connected'
+    assert not editor.enable_all_button.isEnabled()
+    editor.disable_all_button.click()
+    assert editor.group_summary.text() == '0 of 2 calendars connected'
+    assert store.get_calendar('work').enabled
+    assert editor.apply()
+    assert editor.sources.currentItem() is editor._groups[editor._selected_account]
+    assert editor.group_details.isVisible() and editor.account_credentials.isVisible()
+    assert not store.get_calendar('work').enabled and not store.get_calendar('personal').enabled
+
+
+def test_account_password_draft_is_shared_and_hidden_for_calendar_selections(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    store.save_calendar(remote('personal'))
+    store.save_calendar(remote('other', username='bob'))
+    editor = create()
+    editor.sources.setCurrentItem(editor._items['work'].parent())
+    editor.password.setText('synthetic-password')
+    editor.password.textEdited.emit('synthetic-password')
+    editor.remember_password.setChecked(False)
+    editor.sources.setCurrentItem(editor._items['personal'])
+    assert not editor.account_credentials.isVisible() and editor.password.text() == ''
+    editor.account_button.click()
+    assert editor.password.text() == 'synthetic-password'
+    assert not editor.remember_password.isChecked()
+    editor.sources.setCurrentItem(editor._items['other'].parent())
+    assert editor.password.text() == ''
+    editor.sources.setCurrentItem(editor._items['personal'].parent())
+    assert editor.password.text() == 'synthetic-password'
+
+
+def test_account_discovery_preserves_account_selection_and_connection_summary(desktop, monkeypatch):
+    app, store, create, _ = desktop
+    store.save_calendar(remote())
+    monkeypatch.setattr('debacal.calendar_sources.discover_calendars', lambda *_: [
+        DiscoveredCalendar('Work', remote().url, '#446677'),
+        DiscoveredCalendar('New', remote('new').url, '#112233'),
+    ])
+    editor = create()
+    editor.sources.setCurrentItem(editor._items['work'].parent())
+    editor.discover_button.click()
+    settle_discovery(app, editor)
+    assert editor.sources.currentItem() is editor._groups[editor._selected_account]
+    assert editor.group_summary.text() == '1 of 2 calendars connected'
+    assert editor.account_credentials.isVisible() and editor.discover_button.isEnabled()
+    assert 'Found 2 account calendars' in editor.message.text()
+
+
+def test_remote_disabled_workspace_omits_unavailable_account_controls(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    editor = create(allow_remote=False)
+    editor.sources.setCurrentItem(editor._items['work'].parent())
+    assert editor.account_details.isVisible()
+    assert not editor.account_credentials.isVisible()
+    assert 'unavailable' in editor.group_hint.text()

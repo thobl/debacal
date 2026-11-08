@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QHeaderView,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QHeaderView, QStackedWidget, QSizePolicy,
 )
 
 from .buttons import action_button
@@ -47,6 +47,12 @@ def source_label(calendar):
     return (parsed.netloc + deployment + (' · ' + calendar.username if calendar.username else ''))
 
 
+def account_address(calendar):
+    parsed = urlsplit(calendar.url)
+    deployment = parsed.path.split('/remote.php/', 1)[0] if '/remote.php/' in parsed.path else ''
+    return parsed.scheme + '://' + parsed.netloc + deployment
+
+
 class CalendarSourcesEditor(QWidget):
     """Keep source changes local until the containing Preferences applies them."""
     changed = Signal()
@@ -66,6 +72,7 @@ class CalendarSourcesEditor(QWidget):
         self._loading = False
         selected = store.get_default_calendar()
         self._selected = selected.id if selected else None
+        self._selected_account = None
         self._password_account = None
         self._passwords = {}
         self._applied_passwords = {}
@@ -78,10 +85,8 @@ class CalendarSourcesEditor(QWidget):
         outer.setSpacing(12)
         toolbar = QHBoxLayout()
         self.add_button = action_button('Add source…', self.add_source)
-        self.discover_button = action_button('Refresh account calendars', self.refresh_account)
         toolbar.addWidget(self.add_button)
         toolbar.addStretch()
-        toolbar.addWidget(self.discover_button)
         outer.addLayout(toolbar)
         self.sources = QTreeWidget()
         self.sources.setHeaderHidden(True)
@@ -96,22 +101,47 @@ class CalendarSourcesEditor(QWidget):
         self.sources.itemChanged.connect(self._enabled_changed)
         self.sources.currentItemChanged.connect(self._selection_changed)
         outer.addWidget(self.sources, 1)
+        self.detail_pages = QStackedWidget()
+        self.detail_pages.setAccessibleName('Selected calendar source settings')
+        outer.addWidget(self.detail_pages)
+        self.group_details = QWidget()
+        group = QVBoxLayout(self.group_details)
+        group.setContentsMargins(0, 0, 0, 0)
+        group.setSpacing(10)
+        self.group_heading = QLabel()
+        self.group_heading.setObjectName('sidebarSectionHeading')
+        group.addWidget(self.group_heading)
+        self.group_summary = self._information_label()
+        group.addWidget(self.group_summary)
+        self.account_details = QWidget()
+        account_form = self.account_form = QFormLayout(self.account_details)
+        account_form.setContentsMargins(0, 0, 0, 0)
+        self.account_url = self._information_label(selectable=True)
+        self.account_username = self._information_label(selectable=True)
+        account_form.addRow('Server', self.account_url)
+        account_form.addRow('User', self.account_username)
+        group.addWidget(self.account_details)
+        self.subscription_actions = QWidget()
+        subscriptions = QHBoxLayout(self.subscription_actions)
+        subscriptions.setContentsMargins(0, 0, 0, 0)
+        self.enable_all_button = action_button('Connect all', lambda: self.set_account_enabled(True))
+        self.disable_all_button = action_button('Disconnect all', lambda: self.set_account_enabled(False))
+        subscriptions.addWidget(self.enable_all_button)
+        subscriptions.addWidget(self.disable_all_button)
+        subscriptions.addStretch()
+        group.addWidget(self.subscription_actions)
+        self.detail_pages.addWidget(self.group_details)
         self.details = QWidget()
-        form = QFormLayout(self.details)
+        form = self.calendar_form = QFormLayout(self.details)
         form.setContentsMargins(0, 0, 0, 0)
         self.alias = QLineEdit()
         self.alias.setAccessibleName('Calendar name in Debacal')
         self.alias.textEdited.connect(self._name_changed)
-        self.server_name = QLabel()
-        self.server_name.setTextFormat(Qt.TextFormat.PlainText)
-        self.server_name.setProperty('muted', True)
-        self.server_name.setWordWrap(True)
-        self.source_url = QLabel()
-        self.source_url.setTextFormat(Qt.TextFormat.PlainText)
-        self.source_url.setWordWrap(True)
-        self.source_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.source_url.setProperty('muted', True)
-        form.addRow('Name in Debacal', self.alias)
+        self.server_name = self._information_label()
+        self.source_url = self._information_label(selectable=True)
+        self.calendar_access = self._information_label()
+        self.alias_label = QLabel('Name')
+        form.addRow(self.alias_label, self.alias)
         form.addRow('Source name', self.server_name)
         colors = QHBoxLayout()
         self.color_button = action_button('Choose color…', self.choose_color)
@@ -120,11 +150,18 @@ class CalendarSourcesEditor(QWidget):
         colors.addWidget(self.server_color_button)
         colors.addStretch()
         form.addRow('Color', colors)
-        form.addRow('Address', self.source_url)
-        outer.addWidget(self.details)
+        self.address_label = QLabel('Address')
+        form.addRow(self.address_label, self.source_url)
+        form.addRow('Access', self.calendar_access)
+        self.account_button = action_button('Account settings…', self.select_account)
+        self.account_button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        form.addRow('', self.account_button)
+        self.detail_pages.addWidget(self.details)
         self.account_credentials = QWidget()
-        account = QHBoxLayout(self.account_credentials)
-        account.setContentsMargins(0, 0, 0, 0)
+        credentials_layout = QVBoxLayout(self.account_credentials)
+        credentials_layout.setContentsMargins(0, 0, 0, 0)
+        credentials_layout.setSpacing(8)
+        account = QHBoxLayout()
         self.password = QLineEdit()
         self.password.setAccessibleName('Account password')
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -136,18 +173,34 @@ class CalendarSourcesEditor(QWidget):
         account.addWidget(QLabel('Password'))
         account.addWidget(self.password, 1)
         account.addWidget(self.remember_password)
-        outer.addWidget(self.account_credentials)
-        self.message = QLabel('Connected calendars appear in the main calendar list. Disabled calendars keep their local events and pending changes.')
+        credentials_layout.addLayout(account)
+        self.discover_button = action_button('Discover calendars', self.refresh_account)
+        credentials_layout.addWidget(self.discover_button, 0, Qt.AlignmentFlag.AlignLeft)
+        group.addWidget(self.account_credentials)
+        self.group_hint = self._information_label()
+        group.addWidget(self.group_hint)
+        self.message = QLabel()
         self.message.setWordWrap(True)
         self.message.setProperty('muted', True)
+        self.message.hide()
         outer.addWidget(self.message)
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.poll_discovery)
         self._rebuild()
 
+    @staticmethod
+    def _information_label(*, selectable=False):
+        label = QLabel()
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setProperty('muted', True)
+        label.setWordWrap(True)
+        if selectable:
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return label
+
     def _rebuild(self, selected=None):
-        selected = selected or self._selected
+        selected = self._selected if selected is None else selected
         self._loading = True
         try:
             self.sources.clear()
@@ -175,7 +228,8 @@ class CalendarSourcesEditor(QWidget):
                 self._items[calendar.id] = item
                 group.setExpanded(True)
             self.sources.resizeColumnToContents(1)
-            target = self._items.get(selected) or next(iter(self._items.values()), None)
+            target = (self._items.get(selected) if selected is not None else self._groups.get(self._selected_account))
+            target = target or next(iter(self._items.values()), None)
             self.sources.setCurrentItem(target)
         finally:
             self._loading = False
@@ -187,28 +241,81 @@ class CalendarSourcesEditor(QWidget):
         self._selected = item.data(0, CALENDAR_ROLE) if item is not None else None
         calendar = self._drafts.get(self._selected)
         account = item.data(0, ACCOUNT_ROLE) if item is not None else None
+        self._selected_account = account
         representative = next((value for value in self._drafts.values() if source_identity(value) == account), None)
         self._loading = True
         try:
-            self.details.setEnabled(calendar is not None)
+            self.detail_pages.setCurrentWidget(self.details if calendar else self.group_details)
+            caldav = bool(representative and representative.kind == 'caldav')
+            self.account_details.setVisible(caldav)
+            self.subscription_actions.setVisible(caldav)
+            self.account_credentials.setVisible(caldav and calendar is None and self.allow_remote)
+            self.discover_button.setEnabled(self.allow_remote and self._future is None)
+            self._password_account = account if caldav and calendar is None else None
+            if calendar is None:
+                self.group_heading.setText(source_label(representative) if representative else 'Calendar sources')
+                self.account_url.setText(account_address(representative) if caldav else '')
+                self.account_username.setText(representative.username if caldav else '')
+                self.account_form.setRowVisible(self.account_username, bool(caldav and representative.username))
+                if caldav:
+                    hint = ('Use the checkboxes above to connect calendars. Disconnecting keeps local events and queued changes.'
+                            if self.allow_remote else 'Account discovery and password changes are unavailable in this workspace.')
+                elif representative and representative.kind == 'ics':
+                    hint = 'Subscriptions are read-only and refresh from their source. Select a subscription to change its name or color.'
+                else:
+                    hint = 'These calendars are stored on this device. Select a calendar to change its name or color.'
+                self.group_hint.setText(hint)
+                self._update_connection_summary()
+            self.calendar_form.setRowVisible(self.server_name, bool(calendar and calendar.kind == 'caldav'))
+            self.calendar_form.setRowVisible(self.source_url, bool(calendar and calendar.kind != 'local'))
+            self.calendar_form.setRowVisible(self.account_button, bool(calendar and calendar.kind == 'caldav'))
+            self.alias_label.setText('Name in Debacal' if calendar and calendar.kind == 'caldav' else 'Name')
+            self.alias.setAccessibleName('Calendar name in Debacal' if calendar and calendar.kind == 'caldav' else 'Calendar name')
             self.alias.setText(calendar.name_alias if calendar and calendar.kind == 'caldav' else calendar.name if calendar else '')
             self.alias.setPlaceholderText((calendar.server_name or calendar.name) if calendar else '')
-            self.server_name.setText((calendar.server_name or calendar.name) if calendar and calendar.kind == 'caldav' else '—')
-            self.source_url.setText(calendar.url if calendar and calendar.url else 'Stored on this device')
+            self.server_name.setText((calendar.server_name or calendar.name) if calendar and calendar.kind == 'caldav' else '')
+            self.source_url.setText(calendar.url if calendar else '')
+            self.address_label.setText('Subscription' if calendar and calendar.kind == 'ics' else 'Calendar address')
             if calendar:
                 self.color_button.setIcon(calendar_color_icon(calendar.color, self.preferences))
                 self.color_button.setToolTip(calendar.color)
-            self.server_color_button.setEnabled(bool(calendar and calendar.kind == 'caldav' and calendar.server_color))
-            self.server_color_button.setVisible(bool(calendar and calendar.kind == 'caldav'))
-            caldav = bool(representative and representative.kind == 'caldav')
-            self.discover_button.setEnabled(caldav and self.allow_remote and self._future is None)
-            self.account_credentials.setVisible(caldav and self.allow_remote)
-            self._password_account = account if caldav else None
-            staged = self._passwords.get(account)
+                if calendar.kind == 'ics':
+                    access = 'Read-only subscription'
+                elif calendar.kind == 'caldav':
+                    access = 'Read-only on server' if calendar.read_only else 'Read and write on server'
+                else:
+                    access = 'Read-only on this device' if calendar.read_only else 'Editable on this device'
+                self.calendar_access.setText(access)
+            self.server_color_button.setVisible(bool(calendar and calendar.kind == 'caldav' and calendar.server_color))
+            self.account_button.setText('Account settings…')
+            self.account_button.setToolTip(source_label(calendar) if calendar and calendar.kind == 'caldav' else '')
+            staged = self._passwords.get(self._password_account)
             self.password.setText(staged[0] if staged else '')
             self.remember_password.setChecked(staged[1] if staged else True)
         finally:
             self._loading = False
+
+    def _update_connection_summary(self):
+        calendars = [calendar for calendar in self._drafts.values() if source_identity(calendar) == self._selected_account]
+        count = len(calendars)
+        connected = sum(calendar.enabled for calendar in calendars)
+        kind = calendars[0].kind if calendars else 'local'
+        noun = ('subscription' if count == 1 else 'subscriptions') if kind == 'ics' else ('calendar' if count == 1 else 'calendars')
+        state = 'connected' if kind == 'caldav' else 'enabled'
+        self.group_summary.setText(f'{connected} of {count} {noun} {state}')
+        self.enable_all_button.setEnabled(connected < count)
+        self.disable_all_button.setEnabled(connected > 0)
+
+    def select_account(self):
+        if self._selected_account in self._groups:
+            self.sources.setCurrentItem(self._groups[self._selected_account])
+
+    def set_account_enabled(self, enabled):
+        if not self._selected_account or not self._selected_account.startswith('caldav:'):
+            return
+        for calendar in tuple(self._drafts.values()):
+            if source_identity(calendar) == self._selected_account:
+                self._items[calendar.id].setCheckState(0, Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
 
     def _enabled_changed(self, item, column):
         if self._loading or column != 0:
@@ -216,6 +323,7 @@ class CalendarSourcesEditor(QWidget):
         identity = item.data(0, CALENDAR_ROLE)
         if identity in self._drafts:
             self._drafts[identity] = replace(self._drafts[identity], enabled=item.checkState(0) == Qt.CheckState.Checked)
+            self._update_connection_summary()
 
     def _name_changed(self, text):
         if self._loading or self._selected not in self._drafts:
@@ -337,6 +445,7 @@ class CalendarSourcesEditor(QWidget):
 
     def _set_message(self, text, *, error=False):
         self.message.setText(text)
+        self.message.setVisible(bool(text))
         self.message.setProperty('error', error)
         self.message.style().unpolish(self.message)
         self.message.style().polish(self.message)

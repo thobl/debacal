@@ -2,7 +2,7 @@
 import pytest
 
 from debacal.event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS, SELECTION_MODES
-from debacal.shortcuts import active_bindings, migrate_selection_bindings, validate_bindings
+from debacal.shortcuts import active_bindings, migrate_selection_bindings, normalize_bindings, validate_bindings
 
 
 def test_default_mode_keys_match_toolbar_selection_order():
@@ -24,7 +24,7 @@ def test_previous_default_bindings_upgrade_together(saved):
 
 @pytest.mark.parametrize(('saved', 'expected'), [
     ({'history': 'F1'}, {'scope_single': '', 'scope_all': 'F2', 'scope_following': 'F3'}),
-    ({'history': 'F1, H'}, {'scope_single': '', 'scope_all': 'F2', 'scope_following': 'F3'}),
+    ({'history': 'F1, H'}, {'scope_single': 'F1', 'scope_all': 'F2', 'scope_following': 'F3'}),
     ({'history': 'F2'}, {'scope_single': 'F1', 'scope_all': '', 'scope_following': 'F3'}),
     ({'history': 'F3'}, {'scope_single': 'F1', 'scope_all': 'F2', 'scope_following': ''}),
     ({'scope_all': 'F1'}, {'scope_single': '', 'scope_all': 'F1', 'scope_following': 'F3'}),
@@ -38,7 +38,7 @@ def test_upgrade_respects_custom_and_disabled_bindings(saved, expected):
     assert {key: result[key] for key in DEFAULT_MODE_BINDINGS} == expected
     for key, value in saved.items():
         if key not in DEFAULT_MODE_BINDINGS:
-            assert result[key] == value
+            assert result[key] == normalize_bindings({key: value})[key]
     validate_bindings(result)
     assert saved == original
 

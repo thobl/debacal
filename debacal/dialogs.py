@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
     QWidget, QColorDialog)
 
 from .models import Calendar
-from .dialog_base import FormDialog, hint
+from .dialog_base import FormDialog, hint, install_dialog_keyboard
 from .event_dialog import EventDialog
 
 
@@ -95,7 +95,6 @@ class CalendarDialog(FormDialog):
         self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         self.save_button.setText('Save')
         self.cancel_button.setText('Cancel')
-        self.save_button.setToolTip('Enter saves; Ctrl+Enter also saves from any field.')
         if calendar:
             self.kind.setEnabled(False)
             self.url.setReadOnly(True)
@@ -288,6 +287,7 @@ class HistoryDialog(QDialog):
         self.redo_btn.clicked.connect(lambda: self.perform(True))
         self.list.currentRowChanged.connect(self.selection)
         self.reload()
+        install_dialog_keyboard(self, self.accept)
 
     def reload(self):
         self.list.clear()

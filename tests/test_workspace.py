@@ -94,13 +94,13 @@ class WorkspaceRegressionTests(unittest.TestCase):
         self.assertEqual(len(self.store.history()), 1)
         self.assertIn("end must not be before", self.window.local_issues[-1].details)
 
-    def test_multichord_custom_shortcut_and_selection_arrows(self):
+    def test_retired_multichord_shortcut_is_ignored_and_selection_arrows_work(self):
         self.window.bindings["next"] = "Ctrl+K, Ctrl+L"
         anchor = self.window.anchor
         QTest.keyClick(self.window.canvas, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
         self.assertEqual(self.window.anchor, anchor)
         QTest.keyClick(self.window.canvas, Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
-        self.assertEqual(self.window.anchor, anchor + timedelta(days=7))
+        self.assertEqual(self.window.anchor, anchor)
         self.window.go_date(anchor)
         a, b = self.event("a"), self.event("b", hour=12)
         self.window.apply_events("Create", [a, b])

@@ -84,7 +84,7 @@ def test_loader_restores_valid_late_hour_pair_and_falls_back_for_invalid_setting
 
 def test_dialog_has_categories_and_updates_date_language_preview(desktop):
     widget = dialog(desktop, bindings=BINDINGS, default_bindings=BINDINGS)
-    assert [widget.categories.item(index).text() for index in range(widget.categories.count())] == ['General', 'Appearance', 'Events', 'Calendar sources', 'Sync', 'Keyboard shortcuts']
+    assert [widget.categories.item(index).text() for index in range(widget.categories.count())] == ['Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts']
     widget.locale.setCurrentIndex(widget.locale.findData('de_DE'))
     assert 'Mittwoch' in widget.preview.text() and 'Montag' in widget.preview.text()
     assert widget.week_start.itemText(widget.week_start.findData(0)) == 'Montag'
@@ -120,7 +120,7 @@ def test_invalid_hour_range_stays_open_and_locale_preview_remains_usable(desktop
     assert 'Mittwoch' in widget.preview.text()
     widget.save()
     assert widget.result() != QDialog.DialogCode.Accepted
-    assert widget.page_heading.text() == 'Appearance' and 'hours' in widget.error.text()
+    assert widget.page_heading.text() == 'Calendar' and 'hours' in widget.error.text()
     widget.visible_end.setValue(23)
     widget.save()
     assert widget.result_preferences.visible_start_hour == 20
@@ -141,11 +141,27 @@ def test_creation_calendar_is_selected_in_the_workspace_instead_of_preferences(d
     assert not hasattr(widget, 'default_calendar')
 
 
-def test_shared_shortcut_editor_accepts_empty_actions_and_rejects_prefixes(desktop):
+def test_shared_shortcut_editor_accepts_empty_actions_and_retires_sequences(desktop):
     widget = KeyboardShortcutsEditor({'first': 'Ctrl+K', 'second': 'Ctrl+K, Ctrl+L'})
     desktop[1].append(widget)
-    with pytest.raises(ValueError, match='start'):
-        widget.value()
+    with pytest.raises(ValueError, match='single'):
+        validate_bindings({'second': 'Ctrl+K, Ctrl+L'})
+    assert not widget.value()['second']
     widget.fields['second'].setKeySequence('')
     assert widget.value()['second'] == ''
     assert validate_bindings({'first': 'ctrl+k'}) == {'first': 'Ctrl+K'}
+
+
+def test_calendar_category_owns_functional_controls_and_selected_category_uses_shared_emphasis(desktop):
+    widget = dialog(desktop)
+    for field in (widget.locale, widget.week_start, widget.date_format, widget.time_format,
+                  widget.visible_start, widget.visible_end, widget.week_numbers, widget.duration_presets):
+        assert widget.calendar_page.isAncestorOf(field)
+        assert not widget.appearance_editor.isAncestorOf(field)
+    assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Interface', 'Sidebar'}
+    for name in ('Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts'):
+        assert widget.set_category(name)
+        for row in range(widget.categories.count()):
+            item = widget.categories.item(row)
+            assert item.font().bold() == item.font().underline() == (item.text() == name)
+    assert widget.set_category('events') and widget.page_heading.text() == 'Calendar'

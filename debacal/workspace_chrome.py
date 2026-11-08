@@ -10,6 +10,7 @@ from .compact_controls import ElidedLabel
 from .dialogs import hint
 from .icons import icon
 from .theme import scheme_for
+from .shortcuts import shortcut_label
 from .year_view import YearView
 from .workspace_header import SegmentedControl, WorkspaceHeader
 from .buttons import action_button
@@ -229,7 +230,7 @@ class WorkspaceChrome:
             if button.property('interfaceIconColor') != icon_color:
                 button.setIcon(icon(button.property('iconName'), icon_color))
                 button.setProperty('interfaceIconColor', icon_color)
-            shortcut = self.bindings.get(binding, '') if binding else ''
+            shortcut = shortcut_label(self.bindings.get(binding, '')) if binding else ''
             button.setToolTip(title + (f' ({shortcut})' if shortcut else ''))
             if button.property('iconOnly'):
                 compact = button.property('compactIcon')

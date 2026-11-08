@@ -1,5 +1,6 @@
 """Categorized display, synchronization, and keyboard preferences."""
 from datetime import date, datetime, timedelta
+from dataclasses import replace
 
 from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtWidgets import (
@@ -15,6 +16,7 @@ from .shortcuts import KeyboardShortcutsEditor
 from .theme import scheme_for
 from .date_time_fields import parse_duration, format_duration
 from .buttons import action_button
+from .dialog_base import install_dialog_keyboard
 
 
 class PreferencesDialog(QDialog):
@@ -73,7 +75,11 @@ class PreferencesDialog(QDialog):
         self.categories.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.pages.currentChanged.connect(self._page_changed)
 
-        _, general_layout, form = self.category('General')
+        self.calendar_page, calendar_layout, form = self.category('Calendar')
+        self._calendar_forms = [form]
+        formatting_heading = QLabel('Date and time formatting')
+        formatting_heading.setObjectName('sidebarSectionHeading')
+        calendar_layout.insertWidget(0, formatting_heading)
         self.locale = QComboBox()
         for name, value in [('System default', 'system'), ('English (United Kingdom)', 'en_GB'), ('Deutsch (Deutschland)', 'de_DE')]:
             self.locale.addItem(name, value)
@@ -109,24 +115,38 @@ class PreferencesDialog(QDialog):
         for name, value in [('System default', 'system'), ('24-hour · 14:05', '24h'), ('12-hour · 2:05 PM', '12h')]:
             self.time_format.addItem(name, value)
         self.time_format.setCurrentIndex(self.time_format.findData(preferences.time_format))
-        form.addRow('Start of week', self.week_start)
         form.addRow('Date format', self.date_format)
         form.addRow('Time format', self.time_format)
         self.preview = QLabel()
         self.preview.setWordWrap(True)
         self.preview.setProperty('muted', True)
-        general_layout.addWidget(self.preview)
-        general_layout.addStretch()
+        calendar_layout.addWidget(self.preview)
 
-        _, appearance_layout, _ = self.category('Appearance', scrollable=False)
-        self.appearance_editor = AppearanceEditor(preferences)
-        appearance_layout.addWidget(self.appearance_editor)
-        for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
-                     'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'week_numbers',
-                     'visible_start', 'visible_end', 'show_sidebar_title', 'sidebar_title', 'corner_style'):
-            setattr(self, name, getattr(self.appearance_editor, name))
+        form = self.calendar_section(calendar_layout, 'Week and visible hours')
+        form.addRow('Start of week', self.week_start)
+        self.week_numbers = QCheckBox('Show week numbers')
+        self.week_numbers.setChecked(preferences.show_week_numbers)
+        form.addRow(self.week_numbers)
+        self.visible_start = QSpinBox()
+        self.visible_start.setRange(0, 23)
+        self.visible_start.setAccessibleName('Start of visible hours')
+        self.visible_start.setSuffix(':00')
+        self.visible_start.setValue(preferences.visible_start_hour)
+        self.visible_end = QSpinBox()
+        self.visible_end.setRange(1, 24)
+        self.visible_end.setAccessibleName('End of visible hours')
+        self.visible_end.setSuffix(':00')
+        self.visible_end.setValue(preferences.visible_end_hour)
+        hours = QHBoxLayout()
+        hours.addWidget(self.visible_start)
+        hours.addWidget(QLabel('to'))
+        hours.addWidget(self.visible_end)
+        hours.addStretch(1)
+        form.addRow('Visible hours', hours)
+        self.visible_start.setToolTip('The grid also includes events outside these hours. Full day shows all 24 hours.')
+        self.visible_end.setToolTip(self.visible_start.toolTip())
 
-        self.events_page, events_layout, form = self.category('Events')
+        form = self.calendar_section(calendar_layout, 'Event durations')
         self.duration_presets = QLineEdit(', '.join(format_duration(timedelta(minutes=value))
                                                    for value in preferences.duration_presets_minutes))
         self.duration_presets.setAccessibleName('Duration buttons')
@@ -135,8 +155,16 @@ class PreferencesDialog(QDialog):
         note = QLabel('Separate the durations with commas. These buttons do not change the default length of a new event.')
         note.setWordWrap(True)
         note.setProperty('muted', True)
-        events_layout.addWidget(note)
-        events_layout.addStretch()
+        calendar_layout.addWidget(note)
+        calendar_layout.addStretch()
+
+        _, appearance_layout, _ = self.category('Appearance', scrollable=False)
+        self.appearance_editor = AppearanceEditor(preferences)
+        appearance_layout.addWidget(self.appearance_editor)
+        for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
+                     'control_style', 'agenda_style', 'weekend_style', 'font_scale',
+                     'show_sidebar_title', 'sidebar_title', 'corner_style'):
+            setattr(self, name, getattr(self.appearance_editor, name))
 
         _, source_layout, _ = self.category('Calendar sources')
         self.source_editor = None
@@ -194,6 +222,7 @@ class PreferencesDialog(QDialog):
         footer_layout.addWidget(self.error)
         buttons = self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
                                                   | QDialogButtonBox.StandardButton.Apply)
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         reset = QWidget()
@@ -208,10 +237,15 @@ class PreferencesDialog(QDialog):
         content.addWidget(footer)
         for field in (self.week_start, self.date_format, self.time_format):
             field.currentIndexChanged.connect(self.update_preview)
+        self.week_numbers.toggled.connect(self.update_preview)
+        self.visible_start.valueChanged.connect(self.update_preview)
+        self.visible_end.valueChanged.connect(self.update_preview)
         self.locale.currentIndexChanged.connect(self.locale_changed)
         self.categories.setCurrentRow(0)
         self._page_changed(self.pages.currentIndex())
+        self._align_calendar_labels()
         self.update_preview()
+        install_dialog_keyboard(self, self.save)
 
     def category(self, name, *, scrollable=True):
         page = QWidget()
@@ -234,6 +268,33 @@ class PreferencesDialog(QDialog):
         self.categories.item(self.categories.count() - 1).setToolTip(name)
         return page, layout, form
 
+    def calendar_section(self, layout, title):
+        separator = QFrame()
+        separator.setObjectName('sourceDivider')
+        separator.setFixedHeight(1)
+        layout.addSpacing(8)
+        layout.addWidget(separator)
+        heading = QLabel(title)
+        heading.setObjectName('sidebarSectionHeading')
+        layout.addWidget(heading)
+        form = QFormLayout()
+        layout.addLayout(form)
+        self._calendar_forms.append(form)
+        return form
+
+    def _align_calendar_labels(self):
+        if not hasattr(self, '_calendar_forms'):
+            return
+        labels = [form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
+                  for form in self._calendar_forms for row in range(form.rowCount())
+                  if form.itemAt(row, QFormLayout.ItemRole.LabelRole) is not None
+                  and form.itemAt(row, QFormLayout.ItemRole.FieldRole) is not None]
+        for label in labels:
+            label.ensurePolished()
+        width = max((label.fontMetrics().horizontalAdvance(label.text()) for label in labels), default=0)
+        for label in labels:
+            label.setFixedWidth(width + 4)
+
     def resizeEvent(self, event):
         if hasattr(self, 'sidebar'):
             self._resize_sidebar(event.size().width())
@@ -248,6 +309,12 @@ class PreferencesDialog(QDialog):
             return
         self.categories.setCurrentRow(index)
         self.page_heading.setText(self.categories.item(index).text())
+        for row in range(self.categories.count()):
+            item = self.categories.item(row)
+            font = item.font()
+            font.setBold(row == index)
+            font.setUnderline(row == index)
+            item.setFont(font)
 
     def _set_style(self, preferences):
         colors = scheme_for(preferences)
@@ -260,10 +327,12 @@ class PreferencesDialog(QDialog):
                 border-left: 3px solid {colors.accent}; font-weight: 600; }}
             QListWidget#preferencesCategories::item:hover:!selected {{ background: {colors.hover}; }}
         ''')
+        self._align_calendar_labels()
 
     def set_category(self, category):
         name = str(category).strip().casefold()
-        name = {'keyboard': 'keyboard shortcuts', 'sources': 'calendar sources'}.get(name, name)
+        name = {'keyboard': 'keyboard shortcuts', 'sources': 'calendar sources',
+                'general': 'calendar', 'events': 'calendar'}.get(name, name)
         for index in range(self.categories.count()):
             if self.categories.item(index).text().casefold() == name:
                 self.categories.setCurrentRow(index)
@@ -282,6 +351,8 @@ class PreferencesDialog(QDialog):
                            time_format=self.time_format.currentData(), conflict_notifications=self.conflict_notifications.currentData(),
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
                            locale_name=self.locale.currentData(), duration_presets_minutes=self.duration_values(),
+                           show_week_numbers=self.week_numbers.isChecked(),
+                           visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value(),
                            **self.appearance_editor.values())
 
     def locale_changed(self, *_):
@@ -297,6 +368,11 @@ class PreferencesDialog(QDialog):
         self.preview.setText(preferences.weekday_name(day, short=False) + ', ' + preferences.format_date(day) + ' · '
                              + preferences.format_time(datetime(2026, 11, 4, 14, 5)) + '\nWeek begins '
                              + preferences.weekday_name(preferences.first_weekday, short=False) + '.')
+        try:
+            preferences = replace(preferences, show_week_numbers=self.week_numbers.isChecked(),
+                                  visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value())
+        except ValueError:
+            pass  # Date formatting remains usable while a range is incomplete.
         self.appearance_editor.set_context(preferences)
 
     def restore_defaults(self):
@@ -305,9 +381,13 @@ class PreferencesDialog(QDialog):
         self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData('in_app'))
         self.auto_sync.setChecked(True)
         self.sync_interval.setValue(1)
+        self.week_numbers.setChecked(Preferences().show_week_numbers)
+        self.visible_start.setValue(Preferences().visible_start_hour)
+        self.visible_end.setValue(Preferences().visible_end_hour)
         self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value))
                                                for value in Preferences().duration_presets_minutes))
         self.appearance_editor.set_preferences(Preferences())
+        self.update_preview()
         self.shortcut_editor.restore_defaults()
         self.error.clear()
 
@@ -318,13 +398,19 @@ class PreferencesDialog(QDialog):
             try:
                 self.duration_values()
             except ValueError:
-                self.set_category('Events')
+                self.set_category('Calendar')
                 self.duration_presets.setFocus()
+                self.pages.currentWidget().ensureWidgetVisible(self.duration_presets)
             else:
-                self.set_category('Appearance')
-                target = self.appearance_editor.focus_invalid_field()
-                if target is not None:
-                    self.appearance_editor.controls_scroll.ensureWidgetVisible(target)
+                if self.visible_start.value() >= self.visible_end.value():
+                    self.set_category('Calendar')
+                    self.visible_end.setFocus()
+                    self.pages.currentWidget().ensureWidgetVisible(self.visible_end)
+                else:
+                    self.set_category('Appearance')
+                    target = self.appearance_editor.focus_invalid_field()
+                    if target is not None:
+                        self.appearance_editor.controls_scroll.ensureWidgetVisible(target)
             self.error.setText(str(error))
             self.error.show()
             return False
@@ -346,6 +432,7 @@ class PreferencesDialog(QDialog):
                 self.error.show()
                 return False
         self.result_preferences, self.result_bindings = preferences, bindings
+        self.dialog_keyboard.refresh_tooltips()
         self.error.clear()
         self.error.hide()
         self.shortcut_editor.error.clear()

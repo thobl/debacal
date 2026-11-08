@@ -28,20 +28,20 @@ def test_preset_values_survive_json_and_normalize_to_an_immutable_tuple():
     assert Preferences.from_dict({'duration_presets_minutes': [0]}) == Preferences()
 
 
-def test_events_preferences_apply_preserve_other_categories_and_validate():
+def test_calendar_duration_preferences_apply_preserve_other_categories_and_validate():
     app = QApplication.instance() or QApplication([])
     original = Preferences(color_scheme='warm', font_scale=120, auto_sync_enabled=False)
     dialog = PreferencesDialog(original)
     try:
         dialog.show()
         app.processEvents()
-        assert dialog.set_category('Events')
+        assert dialog.set_category('Calendar')
         dialog.duration_presets.setText('15min, 1h, 1h30min')
         assert dialog.apply()
         assert dialog.result_preferences == replace(original, duration_presets_minutes=(15, 60, 90))
         assert dialog.isVisible()
         dialog.duration_presets.setText('15min, 0')
-        assert not dialog.apply() and dialog.page_heading.text() == 'Events'
+        assert not dialog.apply() and dialog.page_heading.text() == 'Calendar'
         assert dialog.result_preferences.duration_presets_minutes == (15, 60, 90)
         dialog.restore_defaults()
         dialog.save()

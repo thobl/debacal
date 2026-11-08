@@ -467,38 +467,12 @@ class AppearanceEditor(QWidget):
         form.addRow('Title', self.sidebar_title)
         layout.addLayout(form)
 
-        layout = self._section(outer, 'Calendar')
-        self.week_numbers = QCheckBox('Show week numbers')
-        self.week_numbers.setChecked(preferences.show_week_numbers)
-        self.visible_start = QSpinBox()
-        self.visible_start.setRange(0, 23)
-        self.visible_start.setAccessibleName('Start of visible hours')
-        self.visible_start.setSuffix(':00')
-        self.visible_start.setValue(preferences.visible_start_hour)
-        self.visible_end = QSpinBox()
-        self.visible_end.setRange(1, 24)
-        self.visible_end.setAccessibleName('End of visible hours')
-        self.visible_end.setSuffix(':00')
-        self.visible_end.setValue(preferences.visible_end_hour)
-        hours = QHBoxLayout()
-        hours.addWidget(self.visible_start)
-        hours.addWidget(QLabel('to'))
-        hours.addWidget(self.visible_end)
-        hours.addStretch(1)
-        form = QFormLayout()
-        form.addRow(self.week_numbers)
-        form.addRow('Visible hours', hours)
-        layout.addLayout(form)
-        self.visible_start.setToolTip('The grid also includes events outside these hours. Full day shows all 24 hours.')
-        self.visible_end.setToolTip(self.visible_start.toolTip())
         outer.addStretch()
         self._choices = (self.appearance_mode, self.color_scheme, self.control_style, self.corner_style,
                          self.agenda_style, self.weekend_style)
         for choice in self._choices:
             choice.currentIndexChanged.connect(self._update)
-        for field in (self.font_scale, self.visible_start, self.visible_end):
-            field.valueChanged.connect(self._update)
-        self.week_numbers.toggled.connect(self._update)
+        self.font_scale.valueChanged.connect(self._update)
         self.show_sidebar_title.toggled.connect(self._update)
         self.sidebar_title.textChanged.connect(self._update)
         for field in (self.custom_accent, self.custom_surface, self.custom_weekend):
@@ -538,8 +512,6 @@ class AppearanceEditor(QWidget):
                     custom_weekend=color(self.custom_weekend), control_style=self.control_style.currentData(),
                     corner_style=self.corner_style.currentData(), agenda_style=self.agenda_style.currentData(),
                     weekend_style=self.weekend_style.currentData(), font_scale=self.font_scale.value(),
-                    show_week_numbers=self.week_numbers.isChecked(),
-                    visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value(),
                     show_sidebar_title=self.show_sidebar_title.isChecked(),
                     sidebar_title=(self.sidebar_title.text().strip() or self._context.sidebar_title
                                    if preview or not self.show_sidebar_title.isChecked() else self.sidebar_title.text().strip()))
@@ -553,8 +525,6 @@ class AppearanceEditor(QWidget):
         if self.color_scheme.currentData() == 'custom':
             target = next((field.field for field in (self.custom_accent, self.custom_surface, self.custom_weekend)
                            if not field.field.hasAcceptableInput()), None)
-        if target is None and self.visible_start.value() >= self.visible_end.value():
-            target = self.visible_end
         if target is None and self.show_sidebar_title.isChecked() and not self.sidebar_title.text().strip():
             target = self.sidebar_title
         if target is not None:
@@ -572,9 +542,6 @@ class AppearanceEditor(QWidget):
         for name in ('custom_accent', 'custom_surface', 'custom_weekend'):
             getattr(self, name).setColor(getattr(preferences, name))
         self.font_scale.setValue(preferences.font_scale)
-        self.week_numbers.setChecked(preferences.show_week_numbers)
-        self.visible_start.setValue(preferences.visible_start_hour)
-        self.visible_end.setValue(preferences.visible_end_hour)
         self.show_sidebar_title.setChecked(preferences.show_sidebar_title)
         self.sidebar_title.setText(preferences.sidebar_title)
         self._updating = False

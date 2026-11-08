@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget,
                               QListWidgetItem, QPushButton, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
+from .dialog_base import install_dialog_keyboard
+
 
 @dataclass(frozen=True, slots=True)
 class StatusIssue:
@@ -84,6 +86,7 @@ class StatusDialog(QDialog):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh)
         self.timer.start()
+        install_dialog_keyboard(self, self.accept)
 
     def refresh(self):
         values = self._issue_supplier()

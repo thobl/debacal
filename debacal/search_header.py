@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QHBoxLayout, QPushButton, QStackedWidget, QWidget
 
 from .icons import icon
 from .theme import scheme_for
+from .shortcuts import shortcut_label
 
 
 class SearchHeader(QStackedWidget):
@@ -44,6 +45,7 @@ class SearchHeader(QStackedWidget):
         self.sync_state()
 
     def update_preferences(self, preferences, shortcut=''):
+        shortcut = shortcut_label(shortcut)
         signature = preferences.font_scale, scheme_for(preferences), shortcut
         if signature == self._signature:
             return

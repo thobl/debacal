@@ -5,7 +5,7 @@ from string import Template
 from PySide6.QtGui import QColor, QPalette
 
 from .theme import corner_radius, scheme_for
-from .control_glyphs import control_glyphs
+from .control_glyphs import checkmark_glyph, control_glyphs
 
 
 _BASE_STYLE = Template("""
@@ -86,8 +86,10 @@ QCalendarWidget QToolButton { color: $accent; border: none; padding: 2px; }
 QCalendarWidget QToolButton[keyboardFocus="true"]:focus { border: 1px solid $focus; }
 QCalendarWidget QAbstractItemView { background: $background; alternate-background-color: $background; color: $ink; selection-background-color: $selection; selection-color: $ink; }
 QCheckBox { spacing: 8px; padding: 4px 0; }
-QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid $control_edge; border-radius: 3px; background: $panel; }
-QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
+QCheckBox::indicator, QAbstractItemView::indicator { width: 13px; height: 13px; border: 1px solid $control_edge; border-radius: 3px; background: $panel; }
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked { background: $accent; border-color: $accent; image: url("$checkmark"); }
+QCheckBox::indicator:disabled, QAbstractItemView::indicator:disabled { border-color: $line; background: $control_surface; }
+QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled { image: url("$checkmark_disabled"); }
 QCheckBox[keyboardFocus="true"]::indicator:focus { border-color: $focus; }
 QPushButton#calendarChoice, QPushButton#calendarChoice:checked { text-align: left; background: transparent; color: $ink; border: 1px solid transparent; padding: 5px 7px; }
 QPushButton#calendarChoice:checked { font-weight: 600; }
@@ -123,7 +125,8 @@ def stylesheet(font_scale=100, color_scheme='neutral'):
     up, down = control_glyphs(scheme.ink)
     disabled_up, disabled_down = control_glyphs(scheme.disabled)
     style = _BASE_STYLE.substitute(asdict(scheme) | {
-        'arrow_up': up, 'arrow_down': down, 'arrow_disabled_up': disabled_up, 'arrow_disabled_down': disabled_down})
+        'arrow_up': up, 'arrow_down': down, 'arrow_disabled_up': disabled_up, 'arrow_disabled_down': disabled_down,
+        'checkmark': checkmark_glyph(scheme.on_accent), 'checkmark_disabled': checkmark_glyph(scheme.disabled)})
     style = re.sub(r'(border(?:-[a-z]+)*-radius:) (\d+)px',
                    lambda match: match[1] + ' ' + str(corner_radius(color_scheme, int(match[2]))) + 'px', style)
     return re.sub(r"font-size: (\d+)px",

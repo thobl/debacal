@@ -75,7 +75,7 @@ def test_workspace_upgrades_default_selection_keys_and_removes_old_commands():
             window.canvas.setFocus()
             app.processEvents()
             assert not {'shortcuts', 'cycle_scope'} & window.bindings.keys()
-            assert store.get_setting('keybindings_version') == 6
+            assert store.get_setting('keybindings_version') == 7
             assert window.bindings['new_event'] == 'Ctrl+N'
             for key, scope in ((Qt.Key.Key_F3, 'future'), (Qt.Key.Key_F1, 'single'), (Qt.Key.Key_F2, 'group')):
                 QTest.keyClick(window.canvas, key)

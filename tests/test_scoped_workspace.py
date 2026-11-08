@@ -283,8 +283,8 @@ def test_old_default_bindings_migrate_without_overwriting_other_customizations(w
     assert other.bindings['paste_event'] == 'Ctrl+V'
     assert 'duplicate_event' not in other.bindings
     assert other.bindings['new_event'] == 'Ctrl+N'
-    assert other.bindings['edit_single'] == ''
-    assert other.bindings['search'] == 'Ctrl+F'
+    assert 'edit_single' not in other.bindings
+    assert other.bindings['search'] == ['Ctrl+F', '/']
 
 
 def test_readonly_moves_and_malformed_clipboard_leave_history_untouched(workspace):
