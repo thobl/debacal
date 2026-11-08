@@ -4,6 +4,11 @@ Debacal targets Linux desktops and requires Python 3.11 or newer. Releases
 provide an Arch build recipe, a Python wheel, a source archive, and SHA-256 sums.
 There is no PyPI or AUR publication yet.
 
+On Python 3.11 the dependency metadata excludes PySide6 6.12.0, whose
+[upstream reference-counting bug](https://qt-project.atlassian.net/browse/PYSIDE-3474)
+can abort ordinary GUI calls. Pip and uv select a compatible release
+automatically; Python 3.12 and newer keep their normal Qt version range.
+
 ## Arch Linux
 
 From a checkout, run `makepkg -si` in `packaging/arch`. Alternatively, download

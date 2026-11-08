@@ -161,7 +161,7 @@ X11 checks use an isolated display. Packaging checks build the wheel without
 network dependencies, install into a fresh temporary target, and verify its CLI
 and an offscreen demo launch/screenshot from outside the checkout.
 
-Full-suite result after release preparation: **2,990 tests and 169 subtests passed**. The run
+Baseline full-suite result during release preparation: **2,990 tests and 169 subtests passed**. The run
 uses disposable profiles and offscreen rendering, with sandbox escalation only
 for the local-socket integration tests. Python compilation and Git whitespace
 checks also passed.
@@ -214,6 +214,12 @@ export assertion now checks stable UIDs and event content instead of requiring
 an export-time DTSTAMP to remain unchanged across a clock-second boundary.
 The corrected tests were checked in UTC and Berlin. CI uses short tracebacks
 and stops after five failures to keep diagnostics manageable.
+The compatibility matrix also caught an actual runtime dependency defect:
+PySide6 6.12.0 over-releases singleton references on Python 3.11 and can abort
+ordinary GUI calls ([PYSIDE-3474](https://qt-project.atlassian.net/browse/PYSIDE-3474)).
+Conditional dependency metadata and the refreshed lockfile exclude that version
+on Python 3.11, while preserving the normal Qt range on newer Python. Small
+metadata regression tests protect this compatibility rule.
 Package contents, Python launcher, desktop entry, icon and license were checked,
 and the packaged application launched with a disposable demo profile.
 

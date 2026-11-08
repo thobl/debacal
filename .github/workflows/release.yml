@@ -95,30 +95,7 @@ jobs:
               printf '{}' > /tmp/debacal-release-receipt.json
             fi
           fi
-          : > /tmp/debacal-failed-checks.log
-          if [ "$RELEASE_RESULT" != success ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "failure") | .id' > /tmp/debacal-failed-jobs
-            while read -r job; do
-              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" >> /tmp/debacal-failed-checks.log || true
-            done < /tmp/debacal-failed-jobs
-          fi
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          path = Path('/tmp/debacal-release-receipt.json')
-          receipt = json.loads(path.read_text())
-          receipt.update(result=os.environ['RELEASE_RESULT'], checks=os.environ['CHECK_RESULT'],
-              reference=os.environ['GITHUB_REF'], commit=os.environ['GITHUB_SHA'],
-              workflow_url=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
-          logs = Path('/tmp/debacal-failed-checks.log').read_text(errors='replace')
-          for key, label in [('GITHUB_WORKSPACE', '<checkout>'), ('RUNNER_TEMP', '<runner-temp>'),
-                             ('RUNNER_TOOL_CACHE', '<tool-cache>')]:
-              if os.environ.get(key):
-                  logs = logs.replace(os.environ[key], label)
-          if logs:
-              receipt['failed_checks'] = logs[-100000:]
-          path.write_text(json.dumps(receipt, indent=2) + '\n')
-          PY
+          python3 scripts/collect_ci_receipt.py /tmp/debacal-release-receipt.json
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if git ls-remote --exit-code origin "refs/notes/$RECEIPT_REF" >/dev/null 2>&1; then
