@@ -226,6 +226,8 @@ class DayHeader(QWidget):
         self.setToolTip('Double-click to create an all-day event.')
 
     def set_preferences(self, preferences):
+        if preferences == self.preferences:
+            return
         self.preferences = preferences
         scale = display_scale(self)
         self.gutter = calendar_gutter(preferences)
@@ -677,6 +679,11 @@ class CalendarCanvas(QWidget):
         self.full_day = bool(full_day)
         if self.drag:
             return
+        key = (self._viewport_height, self.full_day, self.preferences, tuple(self.days),
+               self._data_version, self._preview_version, self.width(), self.gutter, self.time_top, local_zone())
+        geometry = self.start_hour, self.end_hour, self.hour_height, self.minimumHeight()
+        if key == getattr(self, '_fit_key', None) and geometry == self._fit_geometry:
+            return
         first, last = (0, 24) if full_day else (self.preferences.visible_start_hour, self.preferences.visible_end_hour)
         if not full_day:
             zone = local_zone()
@@ -703,9 +710,13 @@ class CalendarCanvas(QWidget):
         self.setMinimumHeight(math.ceil(self.time_top + hours * self.hour_height + 20))
         if previous != (first, last, self.hour_height):
             self.hits = self.rects()
+        self._fit_key = key
+        self._fit_geometry = self.start_hour, self.end_hour, self.hour_height, self.minimumHeight()
         self.update()
 
     def set_preferences(self, preferences):
+        if preferences == self.preferences:
+            return
         self.preferences = preferences
         self.invalidate_geometry()
         scale = display_scale(self)
@@ -1146,6 +1157,8 @@ class MonthCanvas(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def set_preferences(self, preferences):
+        if preferences == self.preferences:
+            return
         self.preferences = preferences
         self.invalidate_geometry()
         self.setMinimumHeight(math.ceil(440 * display_scale(self)))
@@ -1597,6 +1610,8 @@ class AllDayCanvas(MonthCanvas):
         return result
 
     def set_preferences(self, preferences):
+        if preferences == self.preferences:
+            return
         self.preferences = preferences
         self.invalidate_geometry()
         scale = display_scale(self)

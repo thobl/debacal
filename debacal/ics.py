@@ -5,11 +5,8 @@ are generated for display only, never as separate stored/synchronized events.
 """
 from __future__ import annotations
 
-import os
-from datetime import date, datetime, time, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, time, timedelta, timezone
 from typing import Iterable
-from zoneinfo import ZoneInfo
 
 try:
     from icalendar import Calendar as ICalendar
@@ -17,25 +14,12 @@ except ImportError:
     ICalendar = None
 
 from .models import Event
+from .timeutil import local_zone
 
 
 def local_timezone():
-    """Return an IANA zone where possible, rather than today's fixed UTC offset."""
-    candidates = [os.environ.get("TZ", "")]
-    try:
-        candidates.append(str(Path("/etc/localtime").resolve()).split("zoneinfo/", 1)[1])
-    except (OSError, IndexError):
-        pass
-    try:
-        candidates.append(Path("/etc/timezone").read_text().strip())
-    except OSError:
-        pass
-    for candidate in candidates:
-        try:
-            return ZoneInfo(candidate.lstrip(":"))
-        except (ValueError, KeyError):
-            continue
-    return datetime.now().astimezone().tzinfo
+    """Use the shared OS zone cache, retaining IANA daylight-saving rules."""
+    return local_zone()
 
 
 def _datetime(value, tz):

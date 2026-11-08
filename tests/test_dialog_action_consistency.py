@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
@@ -83,3 +83,22 @@ def test_temporary_picker_says_ok_and_closes_but_preferences_apply_stays_open(de
     app.processEvents()
     QTest.mouseClick(preferences.buttons.button(QDialogButtonBox.StandardButton.Apply), Qt.MouseButton.LeftButton)
     assert preferences.isVisible()
+
+
+@pytest.mark.parametrize('kind', ['event', 'import'])
+def test_editor_and_import_actions_fit_small_windows_with_large_text(desktop, kind):
+    app, widgets = desktop
+    preferences = Preferences(font_scale=140)
+    dialog = (EventDialog(CALENDARS, START, preferences=preferences) if kind == 'event' else
+              ImportDialog(CALENDARS, preferences=preferences))
+    widgets.append(dialog)
+    dialog.resize(800, 540)
+    dialog.show()
+    for _ in range(5):
+        app.processEvents()
+    assert dialog.width() <= 800 and dialog.height() <= 540
+    for button in dialog.buttons.buttons():
+        assert button.isVisible()
+        assert dialog.rect().contains(QRect(button.mapTo(dialog, QPoint()), button.size()))
+    if kind == 'import':
+        assert dialog.preview.scroll.verticalScrollBar().maximum() > 0

@@ -17,7 +17,7 @@ from .coincident_occurrences import apply_occurrence_counts, multiplicities
 from .patterns import (DEFAULT_LIMIT, compile_sequence, expand_sequence,
                        is_relative_sequence, reconstruct_sequence, sequence_tail)
 from .recurrence import (
-    RecurrenceError, base_schedule_starts, event_zone, expand_event,
+    RecurrenceError, base_schedule_starts, canonicalize_authored_primary, event_zone, expand_event,
     key_datetime, occurrence, recurrence_key, recurrence_set, schedule_fields,
     updated_series,
 )
@@ -39,6 +39,19 @@ def _checked(value):
     if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None):
         raise RecurrenceError('This occurrence falls in a daylight-saving clock change. Choose another time.')
     return value
+
+
+def _range_end(start, reference_start, reference_end, *, all_day=False):
+    """Move a prototype's range without losing repeated-hour endpoint choices."""
+    zone = start.tzinfo
+    original_start, original_end = ((reference_start, reference_end) if all_day else
+                                    (reference_start.astimezone(zone), reference_end.astimezone(zone)))
+    duration = original_end.replace(tzinfo=None) - original_start.replace(tzinfo=None)
+    if all_day or duration > timedelta(0):
+        end = (start.replace(tzinfo=None) + duration).replace(tzinfo=zone, fold=original_end.fold)
+        if end.timestamp() >= start.timestamp():
+            return end
+    return datetime.fromtimestamp(start.timestamp() + reference_end.timestamp() - reference_start.timestamp(), zone)
 
 
 def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> RegularSchedule | None:
@@ -502,10 +515,10 @@ class ScheduleDraft:
             expression = reconstruct_authoring(source).expression
             certified = replace(source, schedule_expression=expression,
                                 expression_anchor=source.start.date().isoformat(), schedule_syntax=2)
-            duration = ((source.end.replace(tzinfo=None) - source.start.replace(tzinfo=None)) if all_day
-                        else source.end.astimezone(anchor.tzinfo).replace(tzinfo=None)
-                             - source.start.astimezone(anchor.tzinfo).replace(tzinfo=None))
-            edited = replace(certified, start=anchor, end=anchor + duration)
+            projection_anchor = (datetime.combine(anchor.date(), time.min, event_zone(source))
+                                 if all_day else anchor)
+            edited = replace(certified, start=projection_anchor,
+                             end=_range_end(projection_anchor, source.start, source.end, all_day=all_day))
             projected = updated_series(certified, certified, edited)
             return {name: deepcopy(getattr(projected, name)) for name in _SCHEDULE_FIELDS}
         values = dict(recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, range_policy='',
@@ -517,7 +530,8 @@ class ScheduleDraft:
         if self._expression_mode or self.kind == 'custom' or self.overflow:
             prototype = source or prototype or Event('draft', 'draft', 'Draft', anchor,
                 end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
-            prototype = replace(prototype, start=anchor, end=end or anchor + (prototype.end - prototype.start),
+            prototype = replace(prototype, start=anchor,
+                                end=end or _range_end(anchor, prototype.start, prototype.end, all_day=all_day),
                                 all_day=all_day, timezone_id=getattr(anchor.tzinfo, 'key', ''))
             evaluated = expression_event(prototype, self.expression, authoring_zone=anchor.tzinfo)
             values.update({name: deepcopy(getattr(evaluated, name)) for name in (
@@ -532,7 +546,8 @@ class ScheduleDraft:
                 values[name] = deepcopy(getattr(source, name))
         prototype = source or Event('draft', 'draft', 'Draft', anchor,
             end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
-        candidate = replace(prototype, start=anchor, end=end or anchor + (prototype.end - prototype.start),
+        candidate = replace(prototype, start=anchor,
+                            end=end or _range_end(anchor, prototype.start, prototype.end, all_day=all_day),
                             all_day=all_day, **values)
         values['schedule_expression'] = reconstruct_authoring(candidate, authoring_zone=anchor.tzinfo,
                                                              prefer_literal=False).expression
@@ -549,11 +564,18 @@ class ScheduleDraft:
             # turn the source's midnight into an earlier/later calendar day.
             canonical_start = datetime.combine(canonical_start.date(), time.min, event_zone(master))
             canonical_end = datetime.combine(canonical_end.date(), time.min, event_zone(master))
-        if (canonical_start == master.start and canonical_end == master.end
-                and all_day == master.all_day):
+        zone = event_zone(master)
+        wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+        phase_edit = (not all_day and end is not None and wall(reference_start) == wall(master.start)
+            and ((wall(start) == wall(reference_start) and start.timestamp() != reference_start.timestamp())
+                 or (wall(end) == wall(reference_end) and end.timestamp() != reference_end.timestamp())))
+        if (canonical_start.timestamp() == master.start.timestamp()
+                and canonical_end.timestamp() == master.end.timestamp()
+                and all_day == master.all_day and not phase_edit):
             return master
         edited = replace(master, start=canonical_start, end=canonical_end, all_day=all_day)
-        return updated_series(master, master, edited)
+        projected = updated_series(master, master, edited)
+        return canonicalize_authored_primary(projected, primary_range=(start, end)) if phase_edit else projected
 
     def _range_from_reference(self, master, start, end, reference_start, reference_end, *, all_day=False):
         zone = self.author_anchor(start, all_day=all_day).tzinfo
@@ -563,12 +585,21 @@ class ScheduleDraft:
 
         shift = wall(start) - wall(reference_start)
         canonical_start = (wall(master.start) + shift).replace(tzinfo=zone, fold=master.start.fold)
-        duration = wall(master.end) - wall(master.start)
+        if master.start.timestamp() == reference_start.timestamp() and not all_day:
+            canonical_start = start.astimezone(zone)
+            if end is not None and master.end.timestamp() == reference_end.timestamp():
+                # This form controls the canonical primary itself. Both
+                # endpoint instants are authoritative, including fold-only
+                # changes that leave every written clock unchanged.
+                return canonical_start, end.astimezone(zone)
+        duration_start, duration_end = master.start, master.end
         if end is not None:
             chosen_duration = wall(end) - wall(start)
-            if chosen_duration != wall(reference_end) - wall(reference_start):
-                duration = chosen_duration
-        canonical_end = canonical_start + duration
+            if (chosen_duration != wall(reference_end) - wall(reference_start)
+                    or chosen_duration <= timedelta(0) and end.timestamp() - start.timestamp()
+                       != reference_end.timestamp() - reference_start.timestamp()):
+                duration_start, duration_end = start, end
+        canonical_end = _range_end(canonical_start, duration_start, duration_end, all_day=all_day)
         return canonical_start, canonical_end
 
     def primary_range(self, start, end, *, all_day=False):

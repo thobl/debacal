@@ -100,6 +100,27 @@ def test_preview_navigation_requests_only_visible_month_and_handles_empty_pages(
     assert preview.canvas.isEnabled() and preview.message.text() == 'No events in this month.'
 
 
+def test_small_preview_scrolls_to_navigation_and_keyboard_focus(preview):
+    app = QApplication.instance()
+    preview.set_preferences(replace(preview.preferences, font_scale=140))
+    preview.resize(420, 330)
+    app.processEvents()
+    source = event()
+    start = source.start.replace(day=30)
+    source = replace(source, start=start, end=start + timedelta(hours=1))
+    preview.set_events(MONTH, [source], CALENDAR)
+    preview.show_event(source)
+    app.processEvents()
+    scroll = preview.scroll.verticalScrollBar()
+    previous = scroll.value()
+    assert previous > 0
+    for _ in range(4):
+        QTest.keyClick(preview.canvas, Qt.Key.Key_Up)
+    assert preview.canvas._focus_day == date(2026, 11, 2)
+    assert scroll.value() < previous
+    assert preview.canvas.is_included(source)
+
+
 def test_readonly_tooltips_show_event_details_and_week_numbers_have_no_navigation_hint(preview):
     source = event()
     preview.set_events(MONTH, [source], CALENDAR)

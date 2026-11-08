@@ -18,6 +18,9 @@ from .models import Calendar, Event
 from .schedule_replacement import ScheduleReplacement
 
 
+_EVENT_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.ical_uid'),''),id) ELSE id END"
+
+
 class HistoryConflict(ValueError):
     """The operation's events have changed since it was performed."""
 
@@ -114,6 +117,7 @@ class Store:
                 if search_backfill:
                     self.set_setting("event_search_index_v1", True)
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_calendar_recurring_end ON events(calendar_id,recurring,end,start)")
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_calendar_uid ON events(calendar_id,({_EVENT_UID_SQL}))")
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_groups ON events(calendar_id,group_id,start,end,id) WHERE group_id IS NOT NULL")
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_candidates ON events(calendar_id,group_id) WHERE candidate=1")
             self.connection.execute("CREATE INDEX IF NOT EXISTS outbox_calendar ON outbox(calendar_id,id)")
@@ -366,6 +370,76 @@ class Store:
                 ))
         return result
 
+    def get_events_by_uid(self, calendar_id: str, uids: Iterable[str]) -> list[Event]:
+        """Find matching resource owners without decoding a whole calendar.
+
+        The expression index also covers older rows whose effective UID is the
+        event ID. Its guarded JSON expression allows unrelated malformed rows
+        to remain isolated rather than blocking index creation or lookups.
+        """
+        keys = list(dict.fromkeys(uids))
+        result = []
+        with self._lock:
+            for offset in range(0, len(keys), 500):
+                chunk = keys[offset:offset + 500]
+                placeholders = ','.join('?' for _ in chunk)
+                rows = self.connection.execute(
+                    f"SELECT data FROM events WHERE calendar_id=? AND ({_EVENT_UID_SQL}) IN ({placeholders})",
+                    [calendar_id, *chunk])
+                for row in rows:
+                    try:
+                        result.append(Event.from_dict(json.loads(row[0])))
+                    except (ValueError, TypeError, KeyError):
+                        continue
+        return result
+
+    def used_calendar_uids(self, calendar_id: str) -> set[str]:
+        """Project reserved UIDs without loading events or sync templates.
+
+        Deleted remote resources retain ownership until their deletion syncs.
+        Event rows use the indexed effective UID, including the model's ID
+        fallback for older missing/empty UID fields.
+        """
+        with self._lock:
+            result = {row[0] for row in self.connection.execute(
+                f'SELECT ({_EVENT_UID_SQL}) FROM events INDEXED BY events_calendar_uid WHERE calendar_id=?',
+                (calendar_id,))}
+            result.update(row[0] for row in self.connection.execute(
+                "SELECT CASE WHEN json_valid(data) THEN json_extract(data,'$.base_payload.event.ical_uid') END "
+                "FROM sync_metadata WHERE calendar_id=?", (calendar_id,)) if row[0])
+            return result
+
+    def import_report(self, report, *, calendar_id: str | None = None):
+        """Reconcile reviewed imports and write them under one ownership lock.
+
+        Background sync uses another SQLite connection. UID ownership and
+        local-ID collision checks must share the write transaction, otherwise
+        a resource arriving between the check and upsert could be overwritten.
+        Quarantined resources and accepted edits commit or roll back together.
+        """
+        from .ics_resources import reject_duplicate_identities
+        from .import_preparation import reidentify_imports
+
+        destinations = {event.calendar_id for event in report.events}
+        if calendar_id is not None and destinations - {calendar_id}:
+            raise ValueError('The imported events do not belong to the chosen calendar.')
+        if calendar_id is None:
+            if len(destinations) > 1:
+                raise ValueError('Choose one destination calendar for the import.')
+            calendar_id = next(iter(destinations), None)
+        if report.rejected and calendar_id is None:
+            raise ValueError('Choose a calendar for the rejected import resources.')
+
+        with self._transaction():
+            owners = self.get_events_by_uid(calendar_id, (event.ical_uid for event in report.events)) if calendar_id else []
+            accepted = reidentify_imports(report, existing_events=owners)
+            accepted = reject_duplicate_identities(accepted,
+                existing_events=self.get_events(event.id for event in accepted.events))
+            for resource in accepted.rejected:
+                self.set_quarantined_resource(calendar_id, resource.resource_id, resource.raw_ics, resource.reason)
+            self.apply(f'Import {len(accepted.events)} event(s)', accepted.events)
+        return accepted
+
     @staticmethod
     def _search_projection(value: Event | dict[str, Any]) -> str:
         if isinstance(value, Event):
@@ -407,6 +481,11 @@ class Store:
         """A persistent event-only revision, shared across Store connections."""
         with self._lock:
             return self.connection.execute("SELECT version FROM event_revisions WHERE id=1").fetchone()[0]
+
+    def event_ids(self) -> set[str]:
+        """Return stored resource identities without decoding event payloads."""
+        with self._lock:
+            return {row[0] for row in self.connection.execute("SELECT id FROM events")}
 
     def list_events(
         self, start: datetime | None = None, end: datetime | None = None,
@@ -734,7 +813,7 @@ class Store:
                              delete_ids=None):
         """Compile projections in memory; no write occurs until every root passes."""
         from datetime import timedelta
-        from .event_clipboard import _moved_times
+        from .event_clipboard import _moved_times, calendar_day_delta
         from .recurrence import event_zone, occurrence_id, updated_series, _valid_wall_time
         from .series_operations import clone_event, detach_event, partition_series, reidentify_series, updated_future
         from .selection import is_whole_root
@@ -743,14 +822,7 @@ class Store:
         used_uids = set()
         if calendar_id is not None:
             self._assert_writable([{"calendar_id": calendar_id}])
-            used_uids = {event.ical_uid for event in self.list_events(calendar_ids=[calendar_id])}
-            # A remotely stored resource pending deletion still owns its UID.
-            # Reusing it could make the sync bridge identify the new resource
-            # as the old deletion instead of an independent insertion.
-            for state in self.list_sync_state(calendar_id):
-                payload = (state.get("base_payload") or {}).get("event") or {}
-                if payload.get("ical_uid"):
-                    used_uids.add(payload["ical_uid"])
+            used_uids = self.used_calendar_uids(calendar_id)
 
         def transferred(value, *, keep_id=False):
             identifier = value.id if keep_id else str(uuid4())
@@ -773,16 +845,25 @@ class Store:
             source = root if root_scope == "single" or root_scope == "future" else master
             zone = event_zone(master)
             wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
-            shift = wall(edited.start) - wall(reference.start)
-            start, end = _moved_times(source, shift, zone)
-            if resized:
+            shift = (timedelta(days=calendar_day_delta(reference, edited.start))
+                     if (source.all_day and common_changes.get('all_day') is not False
+                         or reference.all_day and edited.all_day) else
+                     wall(edited.start) - wall(reference.start))
+            exact_target = (edited.start if source.id == reference.id
+                            and not common_changes.get('all_day', source.all_day) else None)
+            start, end = _moved_times(source, shift, zone, target=exact_target)
+            # A timed duration cannot describe the range of an unchanged
+            # all-day companion (or vice versa). An explicit type conversion
+            # does apply the new duration to every selected event.
+            resize_source = resized and (source.all_day == reference.all_day or 'all_day' in common_changes)
+            if resize_source:
                 duration = wall(edited.end) - wall(edited.start)
                 end = (start.replace(tzinfo=None) + duration).replace(tzinfo=zone, fold=edited.end.astimezone(zone).fold)
                 if duration <= timedelta(0):
                     end = datetime.fromtimestamp(start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
             if common_changes.get("all_day") is True:
                 from datetime import time
-                days = (edited.start.astimezone(zone).date() - reference.start.astimezone(zone).date()).days
+                days = calendar_day_delta(reference, edited.start)
                 start = datetime.combine(source.start.astimezone(zone).date() + timedelta(days=days), time.min, zone)
                 end = start + timedelta(days=max(1, (edited.end.astimezone(zone).date() - edited.start.astimezone(zone).date()).days))
             if not all(_valid_wall_time(value) for value in (start, end)):
@@ -825,7 +906,7 @@ class Store:
                                  if payload != master.recurrence_overrides.get(key)}
                 projected = self._preserve_mouse_exceptions(master, source, submission, projected,
                                                             authoritative_keys=explicit_keys)
-            if resized:
+            if resize_source:
                 span = wall(edited.end) - wall(edited.start)
                 def resized_end(value):
                     return ((wall(value) + span).replace(tzinfo=zone) if span > timedelta(0) else
@@ -851,21 +932,17 @@ class Store:
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
                        calendar_id=None, label="Move selected events", expected_masters=(), preserve_calendars=False):
         """Move one union atomically, or prepare fresh copies without writing."""
-        from .recurrence import event_zone
         with self._transaction():
             refs, roots = self._review_selection(refs, scope, reference, expected_masters)
             edited = replace(reference, start=start, end=end)
             if copy:
                 from .selection import capture_selection
-                selection = capture_selection(self, refs, scope)
-                zone = event_zone(selection.reference)
-                wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
-                target = (wall(selection.reference.start) + (wall(start) - wall(reference.start))).replace(tzinfo=zone)
+                selection = capture_selection(self, refs, scope, reference=reference)
                 calendar = (self.get_calendar(reference.calendar_id) if preserve_calendars else
                             self.get_calendar(calendar_id) if calendar_id else self.get_default_calendar())
                 if calendar is None or (not preserve_calendars and (calendar.read_only or calendar.kind == "ics")):
                     raise ValueError("Choose a writable calendar for the copied events.")
-                return selection.instantiate("group", target, calendar.id, preserve_calendars=preserve_calendars)
+                return selection.instantiate("group", start, calendar.id, preserve_calendars=preserve_calendars)
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
     def edit_selection(self, refs, scope, reference, edited, *, replace_schedule: bool | ScheduleReplacement = False,

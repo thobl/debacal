@@ -9,7 +9,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from .models import Event
-from .recurrence import event_zone, key_datetime, occurrence, occurrence_id, recurrence_key, recurrence_set, updated_series, _valid_wall_time
+from .recurrence import canonicalize_authored_primary, event_zone, key_datetime, occurrence, occurrence_id, recurrence_key, recurrence_set, updated_series, _valid_wall_time
 
 
 MAX_CLIPBOARD_BYTES = 10 * 1024 * 1024
@@ -30,17 +30,29 @@ def _semantic(event: Event) -> dict:
     return value
 
 
-def _moved_times(event: Event, shift: timedelta, zone) -> tuple[datetime, datetime]:
+def calendar_day_delta(reference: Event, target: datetime) -> int:
+    """Date movement in the target's display zone; all-day dates float."""
+    previous = (reference.start.date() if reference.all_day else
+                reference.start.astimezone(target.tzinfo).date())
+    return (target.date() - previous).days
+
+
+def _moved_times(event: Event, shift: timedelta, zone, *, target: datetime | None = None) -> tuple[datetime, datetime]:
     original_start, original_end = event.start.astimezone(zone), event.end.astimezone(zone)
     # datetime arithmetic resets fold to zero, even for a zero-day duplicate.
     # Preserve each endpoint's repeated-hour choice while moving its wall date.
     start = (original_start.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_start.fold)
     end = (original_end.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_end.fold)
+    if target is not None and start.timestamp() != target.timestamp():
+        # An explicit target can select the other copy of a repeated hour.
+        # Honor that instant and retain the source's elapsed duration.
+        start = target.astimezone(zone)
+        end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
     if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and event.end.timestamp() > event.start.timestamp()):
         end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
     for value in (start, end):
         if not _valid_wall_time(value):
-            raise ValueError(f'The copied local time {value:%d.%m.%Y %H:%M} falls in a daylight-saving clock change. Choose another paste time.')
+            raise ValueError(f'The local time {value:%d.%m.%Y %H:%M} falls in a daylight-saving clock change. Choose another time.')
     return start, end
 
 
@@ -178,22 +190,20 @@ class EventClipboard:
             destination = event.calendar_id if preserve_calendars else calendar_id
             zone = event_zone(event)
             wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
-            shift = (timedelta(days=(target.astimezone(zone).date() - self.reference.start.astimezone(zone).date()).days)
-                     if event.all_day else wall(target) - wall(self.reference.start))
-            start, end = _moved_times(event, shift, zone)
-            if not event.recurring and event.id == self.reference.id and not event.all_day:
-                actual_target = target.astimezone(zone)
-                if start.timestamp() != actual_target.timestamp():
-                    # An explicit target can select the other copy of the
-                    # repeated hour. Honor that instant and keep the copied
-                    # elapsed duration, rather than silently pasting an hour off.
-                    start = actual_target
-                    end = datetime.fromtimestamp(start.timestamp() + event.end.timestamp() - event.start.timestamp(), zone)
-                    if not all(_valid_wall_time(value) for value in (start, end)):
-                        raise ValueError('The copied time falls in a daylight-saving clock change. Choose another paste time.')
+            shift = (timedelta(days=calendar_day_delta(self.reference, target))
+                     if event.all_day or self.reference.all_day else wall(target) - wall(self.reference.start))
+            primary_reference = (event.id == self.reference.id or
+                self.reference.series_id == event.id
+                and self.reference.recurrence_id == recurrence_key(event.start, event.all_day)
+                and wall(self.reference.start) == wall(event.start))
+            exact_target = target if primary_reference and not event.all_day else None
+            start, end = _moved_times(event, shift, zone, target=exact_target)
             moved = replace(event, start=start, end=end)
             if event.recurring:
                 moved = updated_series(event, event, moved)
+                if primary_reference and (target.fold or self.reference.start.fold):
+                    _, selected_end = _moved_times(self.reference, shift, zone, target=target)
+                    moved = canonicalize_authored_primary(moved, primary_range=(target, selected_end))
             new_id = str(uuid4())
             cloned = reidentify_series(moved, new_id, new_id)
             group_id = group_ids.get(event.group_id)

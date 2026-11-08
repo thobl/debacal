@@ -22,6 +22,21 @@ def period(year=2026, month=10):
     return datetime(year, month, 1, tzinfo=BERLIN), datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=BERLIN)
 
 
+@pytest.mark.parametrize('zone', [timezone.utc, ZoneInfo('America/New_York')])
+@pytest.mark.parametrize('all_day', [False, True])
+def test_first_supported_calendar_day_expands_without_lookback_underflow(zone, all_day):
+    start = datetime(1, 1, 1, tzinfo=zone)
+    duration = timedelta(days=1) if all_day else timedelta(hours=1)
+    source = Event('first', 'local', 'First days', start, start + duration,
+                    all_day=all_day, recurrence_rule='FREQ=DAILY;COUNT=2')
+    with Store(':memory:') as store:
+        store.apply('Create', [source])
+        actual = store.query_occurrences(start, start + timedelta(days=3))
+        assert [item.start for item in actual] == [start, start + timedelta(days=1)]
+        assert all(item.end == item.start + duration for item in actual)
+        assert store.list_quarantined_resources() == []
+
+
 def test_one_master_stays_repeating_beyond_previous_import_window(tmp_path):
     with Store(tmp_path / "db") as store:
         store.apply("Create weekly series", [master(recurrence_rule="FREQ=WEEKLY")])

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from .calendar_widgets import MonthCanvas, display_scale, event_tooltip, text
 from .buttons import action_button
@@ -19,6 +19,7 @@ from .timeutil import local_zone, now
 class _ImportMonth(MonthCanvas):
     occurrence_toggled = Signal(object)
     date_toggled = Signal(object)
+    focus_date_changed = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -199,6 +200,7 @@ class _ImportMonth(MonthCanvas):
                     self._focus_day = target
                 self._focus_event = None
                 self._keyboard_focus = True
+                self.focus_date_changed.emit(self._focus_day)
                 self.update()
                 event.accept()
                 return
@@ -275,7 +277,13 @@ class ImportPreview(QWidget):
         self.canvas = _ImportMonth(self)
         self.canvas.occurrence_toggled.connect(self._toggle_occurrence)
         self.canvas.date_toggled.connect(self.date_toggled)
-        outer.addWidget(self.canvas, 1)
+        self.canvas.focus_date_changed.connect(self._reveal_date)
+        self.scroll = QScrollArea()
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setWidget(self.canvas)
+        outer.addWidget(self.scroll, 1)
         outer.addWidget(self.controls.occurrence_bar)
         self.message = QLabel()
         self.message.setProperty('muted', True)
@@ -330,8 +338,17 @@ class ImportPreview(QWidget):
         self.canvas.update()
         self.controls.set_position(event, *self._position[:2], unbounded=self._position[2])
         self._update_navigation()
+        if event is not None:
+            self._reveal_date(self._display_date(event))
         if event is not None and request_position:
             self.occurrence_focused.emit(event)
+
+    def _reveal_date(self, day):
+        if day is not None:
+            rect = self.canvas.day_rect(day)
+            if not rect.isEmpty():
+                self.scroll.ensureVisible(round(rect.center().x()), round(rect.center().y()),
+                                          0, round(rect.height() / 2 + 2))
 
     def _toggle_occurrence(self, event):
         self._position = (None, None, not self._navigation_bounded)

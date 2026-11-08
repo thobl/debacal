@@ -1,6 +1,6 @@
 """Shared weekend treatment for calendar views and date overviews."""
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import QDate, Qt, QRectF
 from PySide6.QtGui import QColor, QPen, QFont
 from PySide6.QtWidgets import QCalendarWidget
 
@@ -34,13 +34,16 @@ class CalendarDateGrid(QCalendarWidget):
 
     def paintCell(self, painter, rect, day):
         colors = scheme_for(self.preferences)
-        value = day.toPython()
+        # Qt paints spillover cells even beyond the selectable year range.
+        # Those QDates cannot be converted to Python dates at years 1/9999.
+        weekday = day.dayOfWeek() - 1
         scale = self.preferences.font_scale / 100
-        shade = weekend_fill(value, self.preferences, colors)
+        shade = weekend_fill(weekday, self.preferences, colors)
         painter.save()
         painter.fillRect(rect, QColor(shade or getattr(colors, self.surface_role)))
         selected = day == self.selectedDate()
-        today = value == now().date()
+        current = now().date()
+        today = day == QDate(current.year, current.month, current.day)
         if selected:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(colors.selection))
@@ -52,7 +55,7 @@ class CalendarDateGrid(QCalendarWidget):
                              rect.right() - round(5 * scale), rect.bottom() - round(2 * scale))
         ordinary = colors.ink if day.month() == self.monthShown() else colors.muted
         ink = (colors.disabled if day < self.minimumDate() or day > self.maximumDate() else
-               weekend_text(value, self.preferences, colors, ordinary))
+               weekend_text(weekday, self.preferences, colors, ordinary))
         painter.setPen(QColor(ink))
         font = QFont(painter.font())
         font.setBold(today)

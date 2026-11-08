@@ -86,6 +86,22 @@ def test_tinted_day_numbers_use_more_of_the_available_cell(overview):
     assert sizes['tints'] >= 1.2 * sizes['tracks']
 
 
+def test_repeated_day_context_menus_release_their_actions_and_callbacks(overview):
+    view = overview
+    view.set_data(2026, [appointment('one')], [Calendar('local', 'Personal', '#547797')])
+    point = view.day_rect(START.date()).center().toPoint()
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, view.mapToGlobal(point))
+    def make_menu(parent):
+        menu = QMenu(parent)
+        menu.exec = lambda *_args: None
+        return menu
+    with patch('debacal.year_view.QMenu', side_effect=make_menu):
+        for _ in range(3):
+            view.contextMenuEvent(event)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not view.findChildren(QMenu)
+
+
 def test_day_context_menu_distinguishes_identical_event_titles_by_source(overview):
     view = overview
     calendars = [Calendar('work', 'Work', '#547797'), Calendar('personal', 'Personal & family', '#b6815c')]

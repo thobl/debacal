@@ -174,6 +174,57 @@ def test_picker_apply_cancel_and_start_changes_preserve_duration(desktop):
     assert picker.result_end == START + timedelta(hours=3)
 
 
+def test_existing_point_events_can_be_moved_without_inventing_duration(desktop):
+    app, widgets = desktop
+    picker = DateTimeRangePicker(START, START, preferences=PREFERENCES)
+    widgets.append(picker)
+    picker.show()
+    settle(app)
+    assert len(picker.strip.clock_labels()) == 1
+    assert picker.strip.hover_hint(START) == ('09:00', '0min')
+    assert not picker.grab().isNull()
+    QTest.keyClick(picker.strip, Qt.Key.Key_Down)
+    assert picker.draft_start == picker.draft_end == START + timedelta(minutes=5)
+    assert picker.set_start(START + timedelta(days=2))
+    picker.accept()
+    assert picker.result() == QDialog.DialogCode.Accepted
+    assert picker.result_start == picker.result_end == START + timedelta(days=2)
+
+
+def test_normal_ranges_cannot_accidentally_become_points(desktop):
+    picker = make_picker(desktop)
+    assert not picker.set_range(START, START)
+    assert picker.duration == timedelta(hours=1)
+    assert picker.error.isVisible()
+
+
+@pytest.mark.parametrize('start_clock,end_clock', [((10, 1), (30, 1)), ((10, 1), (10, 1)), ((40, 0), (20, 1))])
+def test_moving_picker_ranges_preserves_repeated_hour_choices(desktop, start_clock, end_clock):
+    _, widgets = desktop
+    start = datetime(2026, 10, 25, 2, start_clock[0], tzinfo=ZONE, fold=start_clock[1])
+    end = datetime(2026, 10, 25, 2, end_clock[0], tzinfo=ZONE, fold=end_clock[1])
+    picker = DateTimeRangePicker(start, end, preferences=PREFERENCES)
+    widgets.append(picker)
+    target = start.replace(minute=start.minute + 5)
+    assert picker.set_start(target)
+    assert picker.draft_start.timestamp() == start.timestamp() + 300
+    assert picker.draft_end.timestamp() == end.timestamp() + 300
+    assert picker.draft_end.fold == end.fold
+    picker.accept()
+    assert picker.result() == QDialog.DialogCode.Accepted
+
+
+@pytest.mark.parametrize('start,end,endpoint,key', [
+    (datetime(1, 1, 1, tzinfo=timezone.utc), datetime(1, 1, 1, 1, tzinfo=timezone.utc), 'start', Qt.Key.Key_Up),
+    (datetime(9999, 12, 31, 22, tzinfo=timezone.utc), datetime(9999, 12, 31, 23, 59, tzinfo=timezone.utc), 'end', Qt.Key.Key_Down),
+])
+def test_keyboard_at_calendar_bounds_preserves_the_range_and_reports_the_error(desktop, start, end, endpoint, key):
+    picker = make_picker(desktop, start, end, endpoint=endpoint)
+    QTest.keyClick(picker.strip, key)
+    assert (picker.draft_start, picker.draft_end) == (start, end)
+    assert picker.error.isVisible() and picker.error.text()
+
+
 def test_earlier_end_moves_start_and_keeps_duration(desktop):
     picker = make_picker(desktop, endpoint='end')
     picker.choose_date(START.date() - timedelta(days=1))

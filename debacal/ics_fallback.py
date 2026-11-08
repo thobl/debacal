@@ -121,16 +121,21 @@ def event_lines(event):
 def folded(lines):
     output = []
     for line in lines:
-        part, size = "", 0
-        for char in line:
-            length = len(char.encode("utf8"))
-            if size + length > 75:
-                output.append(part)
-                part, size = " ", 1
-            part += char
-            size += length
-        output.append(part)
-    return ("\r\n".join(output) + "\r\n").encode()
+        raw = line.encode('utf-8')
+        if len(raw) <= 75:
+            output.append(raw)
+            continue
+        offset = 0
+        while offset < len(raw):
+            prefix = b' ' if offset else b''
+            end = min(offset + 75 - len(prefix), len(raw))
+            # Never split a UTF-8 code point. The continuation's leading space
+            # is part of the RFC 5545 limit of 75 octets per physical line.
+            while end < len(raw) and raw[end] & 0xc0 == 0x80:
+                end -= 1
+            output.append(prefix + raw[offset:end])
+            offset = end
+    return b'\r\n'.join(output) + b'\r\n'
 
 
 def export(events):

@@ -242,3 +242,36 @@ def test_explicit_repeated_hour_target_is_honored_with_elapsed_duration(target_f
     pasted = clipboard.instantiate("single", target, "destination")[0]
     assert pasted.start.timestamp() == target.timestamp()
     assert pasted.end.timestamp() - pasted.start.timestamp() == 3600
+
+
+@pytest.mark.parametrize('target_fold', [0, 1])
+def test_whole_recurring_primary_copy_honors_explicit_repeated_hour_target(target_fold):
+    start = datetime(2026, 10, 24, 2, 30, tzinfo=BERLIN)
+    source = series(start=start, end=start + timedelta(minutes=15), recurrence_rule='FREQ=WEEKLY;COUNT=3')
+    reference = occurrence(source, source.start)
+    clipboard = EventClipboard.capture([source], reference, 'group')
+    target = datetime(2026, 10, 25, 2, 30, tzinfo=BERLIN, fold=target_fold)
+    pasted, = clipboard.instantiate('group', target, 'destination')
+    assert pasted.recurring and pasted.id != source.id and pasted.ical_uid != source.ical_uid
+    actual = expand_events([pasted], *BOUNDS)
+    assert len(actual) == 3 and actual[0].start.timestamp() == target.timestamp()
+    assert actual[0].start.astimezone(BERLIN).fold == target_fold
+    assert actual[0].end.timestamp() - actual[0].start.timestamp() == 15 * 60
+    assert source.start.timestamp() == start.timestamp()
+
+
+@pytest.mark.parametrize('selected_index', [0, 1])
+def test_calendar_instruction_copy_reanchors_relative_to_primary_or_later_reference(selected_index):
+    from debacal.patterns import compile_sequence
+    text = '+0d 2*+1m!'
+    start = datetime(2026, 10, 31, 9, tzinfo=BERLIN)
+    source = series(start=start, end=start + timedelta(minutes=45),
+        schedule_expression=text, expression_anchor=start.date().isoformat(), schedule_syntax=2,
+        **compile_sequence(text, start).fields)
+    reference = expand_events([source], *BOUNDS)[selected_index]
+    clipboard = EventClipboard.capture([source], reference, 'group')
+    pasted, = clipboard.instantiate('group', reference.start - timedelta(days=1), 'destination')
+    assert pasted.schedule_expression == text
+    assert pasted.start == datetime(2026, 10, 30, 9, tzinfo=BERLIN)
+    assert [item.start.date().isoformat() for item in expand_events([pasted], *BOUNDS)] == [
+        '2026-10-30', '2026-11-30', '2026-12-30']

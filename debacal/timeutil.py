@@ -15,6 +15,10 @@ def _resolve_local_zone(setting):
         candidates.append(str(Path('/etc/localtime').resolve()).split('/zoneinfo/')[-1])
     except OSError:
         pass
+    try:
+        candidates.append(Path('/etc/timezone').read_text().strip())
+    except OSError:
+        pass
     for name in candidates:
         try:
             return ZoneInfo(name)

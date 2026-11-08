@@ -16,6 +16,7 @@ from .shortcuts import KeyboardShortcutsEditor
 from .theme import scheme_for
 from .date_time_fields import parse_duration, format_duration
 from .buttons import action_button
+from .compact_controls import ElidedLabel
 from .dialog_base import dialog_buttons, install_dialog_keyboard
 
 
@@ -44,12 +45,15 @@ class PreferencesDialog(QDialog):
         navigation = QVBoxLayout(self.sidebar)
         navigation.setContentsMargins(0, 0, 0, 0)
         navigation.setSpacing(0)
-        title = QLabel('Preferences')
+        title = self.navigation_title = ElidedLabel('Preferences')
         title.setObjectName('brand')
         title.setContentsMargins(18, 18, 18, 18)
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        title.setToolTip('Preferences')
         navigation.addWidget(title)
         self.categories = QListWidget()
         self.categories.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.categories.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.categories.setObjectName('preferencesCategories')
         self.categories.setAccessibleName('Preferences categories')
         navigation.addWidget(self.categories, 1)
@@ -288,7 +292,7 @@ class PreferencesDialog(QDialog):
 
     def _resize_sidebar(self, width=None):
         desired = round(190 * self.result_preferences.font_scale / 100)
-        self.sidebar.setFixedWidth(min(desired, max(146, (width or self.width()) // 4)))
+        self.sidebar.setFixedWidth(min(desired, max(146, (width or self.width()) // 3)))
 
     def _page_changed(self, index):
         if index < 0 or index >= self.categories.count():

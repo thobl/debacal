@@ -228,3 +228,27 @@ def test_dense_columns_skip_only_invisible_text_and_keep_every_event_hit(surface
     assert len(widget.hits) == len(events)
     assert not [call for call in drawing.call_args_list if str(call.args[2]).startswith('Synthetic')]
     assert all(rect.width() <= 12 for rect, _item in widget.hits)
+
+
+@pytest.mark.parametrize('kind', ['week', 'month', 'all-day'])
+def test_unchanged_preferences_keep_painted_geometry_and_hit_targets(surfaces, kind):
+    widget = surfaces(kind)
+    before = widget.grab().toImage()
+    hits = [(rect.getRect(), item.id) for rect, item in widget.hits]
+    with patch.object(widget, 'invalidate_geometry', side_effect=AssertionError('Unchanged settings retain geometry')):
+        widget.set_preferences(widget.preferences)
+        assert widget.grab().toImage() == before
+        assert [(rect.getRect(), item.id) for rect, item in widget.hits] == hits
+
+
+def test_repeated_viewport_fit_reuses_bounds_but_preview_still_expands_hours(surfaces):
+    widget = surfaces(events=[event()])
+    widget.fit_to_viewport(600)
+    before = widget.start_hour, widget.end_hour, widget.hour_height
+    with patch.object(widget, 'day_buckets', side_effect=AssertionError('Unchanged fit retains hour bounds')):
+        widget.fit_to_viewport(600)
+        assert (widget.start_hour, widget.end_hour, widget.hour_height) == before
+    late = replace(event(100), start=FIRST + timedelta(hours=23), end=FIRST + timedelta(days=1))
+    widget.set_preview([late])
+    widget.fit_to_viewport(600)
+    assert widget.end_hour == 24

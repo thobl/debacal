@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
+import hashlib
 from uuid import NAMESPACE_URL, uuid5
 
 from .ics import parse_ics_report
-from .ics_resources import ParseReport
+from .ics_resources import ParseReport, RejectedResource, ResourceIssue, reject_duplicate_identities
 from .import_sources import ImportSource, MAX_IMPORT_BYTES, MAX_PENDING_IMPORT_BYTES
 from .models import Event
 from .preferences import Preferences
@@ -56,7 +57,44 @@ def remap_calendar(report: ParseReport, calendar_id: str) -> ParseReport:
         }
         events.append(replace(event, id=identifier, calendar_id=calendar_id,
                               recurrence_overrides=overrides))
-    return ParseReport(tuple(events), report.issues, report.rejected)
+    return reject_duplicate_identities(ParseReport(tuple(events), report.issues, report.rejected))
+
+
+def reidentify_imports(report: ParseReport, *, existing_events=()) -> ParseReport:
+    """Update matching UIDs even when another client removed native metadata.
+
+    The destination calendar and standard UID own the persisted identity.
+    Detached occurrences follow that master; pending source authoring text is
+    retained only when it still describes the complete canonical schedule.
+    """
+    owners = {}
+    for event in existing_events:
+        owners.setdefault((event.calendar_id, event.ical_uid), set()).add(event.id)
+    events, issues, rejected = [], list(report.issues), list(report.rejected)
+    for event in report.events:
+        identifiers = owners.get((event.calendar_id, event.ical_uid), ())
+        if len(identifiers) > 1:
+            resource_id = hashlib.sha256(event.ical_uid.encode()).hexdigest()[:12]
+            reason = 'Multiple stored events share this calendar UID. Resolve their duplicate identities before importing an update.'
+            issues.append(ResourceIssue(resource_id, reason))
+            rejected.append(RejectedResource(event.ical_uid, event.raw_ics, resource_id, reason))
+            continue
+        if identifiers and event.id not in identifiers:
+            identifier, = identifiers
+            overrides = {
+                key: replace(Event.from_dict(payload), id=occurrence_id(identifier, key),
+                             series_id=identifier, recurrence_id=key).to_dict()
+                for key, payload in event.recurrence_overrides.items()
+            }
+            event = replace(event, id=identifier, recurrence_overrides=overrides)
+            if event.schedule_expression:
+                from .schedule_authoring import expression_matches, reconstruct_authoring
+                if not expression_matches(event, event.schedule_expression):
+                    view = reconstruct_authoring(event)
+                    event = replace(event, schedule_expression=view.expression,
+                                    expression_anchor=event.start.date().isoformat(), schedule_syntax=2)
+        events.append(event)
+    return ParseReport(tuple(events), tuple(issues), tuple(rejected))
 
 
 @dataclass(frozen=True, slots=True)

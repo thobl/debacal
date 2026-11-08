@@ -1,7 +1,7 @@
 """Exact-union selection operations, independent of Qt and real calendars."""
 
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -263,6 +263,90 @@ def test_copy_drag_uses_clicked_delta_prepares_fresh_exact_union_without_writes(
     assert len(clones) == 1 and clones[0].start == source.start + timedelta(days=2)
     assert clones[0].id != source.id and clones[0].ical_uid != source.ical_uid
     assert store.list_events() == [source] and len(store.history()) == 1
+
+
+@pytest.mark.parametrize('copy', [False, True])
+@pytest.mark.parametrize('hours', [2, -22])
+@pytest.mark.parametrize('all_day_zone', [ZONE, timezone.utc])
+def test_mixed_selection_moves_all_day_companions_by_dates_not_hours(store, copy, hours, all_day_zone):
+    start = START.replace(hour=23)
+    timed = event('timed', start=start, end=start + timedelta(hours=1))
+    midnight = start.replace(hour=0, tzinfo=all_day_zone)
+    all_day = event('all-day', start=midnight, end=midnight + timedelta(days=2), all_day=True,
+                    recurrence_rule='FREQ=WEEKLY;COUNT=3', timezone_id=getattr(all_day_zone, 'key', ''))
+    store.apply('Create', [timed, all_day])
+    target = timed.start + timedelta(hours=hours)
+    # Click the timed event even though the all-day series is the last selected.
+    result = store.move_selection([timed, all_day], 'group', timed, target,
+                                   target + timedelta(hours=1), copy=copy)
+    moved = next(value for value in result if value.title == all_day.title) if copy else store.get_event(all_day.id)
+    days = (target.date() - timed.start.date()).days
+    assert moved.all_day and moved.start == all_day.start + timedelta(days=days)
+    assert moved.end == all_day.end + timedelta(days=days)
+    assert moved.start.hour == moved.end.hour == 0
+    assert moved.recurrence_rule == all_day.recurrence_rule
+    if copy:
+        assert store.get_event(all_day.id) == all_day
+        assert len(store.history()) == 1
+    else:
+        store.undo(result)
+        assert store.get_event(all_day.id) == all_day
+
+
+@pytest.mark.parametrize('reference_all_day', [False, True])
+def test_mixed_selection_duration_edit_preserves_the_other_event_kind(store, reference_all_day):
+    timed = event('timed')
+    midnight = START.replace(hour=0)
+    all_day = event('all-day', start=midnight, end=midnight + timedelta(days=2), all_day=True)
+    store.apply('Create', [timed, all_day])
+    reference, companion = (all_day, timed) if reference_all_day else (timed, all_day)
+    extra = timedelta(days=1) if reference_all_day else timedelta(hours=1)
+    operation = store.edit_selection([timed, all_day], 'single', reference,
+                                     replace(reference, end=reference.end + extra))
+    assert store.get_event(reference.id).end == reference.end + extra
+    assert store.get_event(companion.id) == companion
+    restored = parse_ics(export_ics(store.list_events()), 'local')
+    assert len(restored) == 2
+    store.undo(operation)
+    assert store.get_event(reference.id) == reference
+
+
+@pytest.mark.parametrize('copy', [False, True])
+def test_all_day_reference_ignores_target_clock_for_timed_companions(store, copy):
+    timed = event('timed')
+    midnight = datetime.combine(START.date(), datetime.min.time(), timezone.utc)
+    all_day = event('day', start=midnight, end=midnight + timedelta(days=1), all_day=True, timezone_id='')
+    store.apply('Create', [timed, all_day])
+    target = (START + timedelta(days=1)).replace(hour=13)
+    result = store.move_selection([timed, all_day], 'single', all_day, target,
+                                   target + timedelta(days=1), copy=copy)
+    prepared = result if copy else store.list_events()
+    moved_timed = next(value for value in prepared if value.title == timed.title)
+    moved_day = next(value for value in prepared if value.title == all_day.title)
+    assert moved_timed.start == timed.start + timedelta(days=1)
+    assert moved_timed.end == timed.end + timedelta(days=1)
+    assert moved_day.start == all_day.start + timedelta(days=1)
+    assert moved_day.end == all_day.end + timedelta(days=1)
+
+
+@pytest.mark.parametrize('copy', [False, True])
+@pytest.mark.parametrize('target_fold', [0, 1])
+def test_selection_move_and_copy_honor_an_explicit_repeated_hour_target(store, copy, target_fold):
+    start = datetime(2026, 10, 24, 2, 30, tzinfo=ZONE)
+    source = event(start=start, end=start + timedelta(minutes=15))
+    store.apply('Create', [source])
+    target = datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=target_fold)
+    end = datetime.fromtimestamp(target.timestamp() + 15 * 60, ZONE)
+    result = store.move_selection([source], 'single', source, target, end, copy=copy)
+    moved = result[0] if copy else store.get_event(source.id)
+    assert moved.start.timestamp() == target.timestamp()
+    assert moved.end.timestamp() == end.timestamp()
+    assert moved.start.fold == target_fold
+    if copy:
+        assert store.get_event(source.id) == source
+    else:
+        store.undo(result)
+        assert store.get_event(source.id) == source
 
 
 def test_copy_read_only_source_to_default_writable_calendar_is_allowed(store):

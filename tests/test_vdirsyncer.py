@@ -28,6 +28,33 @@ def sample(title="Original", id="event"):
     return Event(id, "remote", title, start, start + timedelta(hours=1))
 
 
+def test_inventory_quarantines_copied_native_ids_across_files_and_keeps_healthy_items(tmp_path):
+    for uid in ('original', 'copy', 'healthy'):
+        item = replace(sample(id='healthy' if uid == 'healthy' else 'copied-id'), ical_uid=uid)
+        (tmp_path / (uid + '.ics')).write_bytes(export_ics([item]))
+    report = VdirsyncerBackend._mirror_report(tmp_path, 'remote')
+    assert set(report.items) == {'healthy'}
+    assert {item.uid for item in report.rejected} == {'original', 'copy'}
+    assert all('X-DEBACAL-ID' in item.reason for item in report.rejected)
+    assert all('BEGIN:VCALENDAR' in item.raw_ics for item in report.rejected)
+
+
+@pytest.mark.parametrize('duplicate', [False, True])
+def test_oversized_inventory_resources_are_read_with_a_bounded_limit(tmp_path, monkeypatch, duplicate):
+    from debacal import vdirsyncer_backend as bridge
+    size = 256
+    monkeypatch.setattr(bridge, 'MAX_IMPORT_BYTES', size)
+    path = tmp_path / 'huge.ics'
+    path.write_bytes(b'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:oversized\r\nDESCRIPTION:' + b'x' * 4096)
+    if duplicate:
+        (tmp_path / 'duplicate.ics').write_bytes(path.read_bytes())
+    report = VdirsyncerBackend._mirror_report(tmp_path, 'remote')
+    assert not report.items
+    assert all(item.uid == 'oversized' for item in report.rejected)
+    assert all(len(item.raw_ics.encode()) == size + 1 for item in report.rejected)
+    assert any('maximum size' in item.reason for item in report.rejected)
+
+
 class FakeCLI:
     def __init__(self):
         self.remote = {}
@@ -174,6 +201,59 @@ def setup(tmp_path):
 
 def sync(store, calendar, backend):
     return backend.sync(store, calendar, "session-secret")
+
+
+@pytest.mark.parametrize('arrival', ['bootstrap', 'during-upload'])
+def test_copied_native_id_cannot_replace_cached_uid_and_healthy_upload_continues(tmp_path, arrival):
+    store, calendar, cli, backend = setup(tmp_path)
+    try:
+        original = replace(sample(), ical_uid='original-uid')
+        cli.remote[original.ical_uid] = export_ics([original]).decode()
+        sync(store, calendar, backend)
+        cached = store.get_event(original.id)
+        copied = replace(original, ical_uid='copy-uid', title='Copied native identity')
+        copied_raw = export_ics([copied]).decode()
+        healthy = sample('Healthy local change', id='healthy')
+        store.apply('Create healthy event', [healthy])
+
+        def copy_on_server():
+            cli.remote.pop(original.ical_uid)
+            cli.remote[copied.ical_uid] = copied_raw
+
+        if arrival == 'bootstrap':
+            copy_on_server()
+        else:
+            cli.before_push = copy_on_server
+        result = sync(store, calendar, backend)
+        assert store.get_event(original.id) == cached
+        assert store.get_event(healthy.id) == healthy
+        assert not store.pending_changes()
+        assert cli.remote[copied.ical_uid] == copied_raw
+        assert healthy.ical_uid in cli.remote
+        assert any('X-DEBACAL-ID' in issue.reason for issue in result.issues)
+    finally:
+        store.close()
+
+
+def test_repaired_remote_resources_clear_stale_quarantine_errors(tmp_path):
+    store, calendar, cli, backend = setup(tmp_path)
+    try:
+        original = sample()
+        healthy = export_ics([original]).decode()
+        cli.remote[original.ical_uid] = healthy.replace('END:VEVENT', 'RRULE:FREQ=BOGUS\r\nEND:VEVENT')
+        result = sync(store, calendar, backend)
+        assert len(result.issues) == len(store.list_quarantined_resources(calendar.id)) == 1
+        directory = backend.calendar_path(calendar.id) / 'quarantine'
+        assert len(list(directory.glob('*.ics'))) == 1
+        store.set_quarantined_resource(calendar.id, 'import-review', 'Unrelated import source', 'Review imported file')
+        cli.remote[original.ical_uid] = healthy
+        result = sync(store, calendar, backend)
+        assert not result.issues
+        assert [item['resource_id'] for item in store.list_quarantined_resources(calendar.id)] == ['import-review']
+        assert not list(directory.glob('*.ics'))
+        assert store.get_event(original.id).title == original.title
+    finally:
+        store.close()
 
 
 def test_installed_module_runs_despite_a_broken_console_launcher(tmp_path, monkeypatch):

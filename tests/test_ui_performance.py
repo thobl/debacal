@@ -10,11 +10,12 @@ from zoneinfo import ZoneInfo
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from debacal.models import Calendar, Event
 from debacal.store import Store
 from debacal.ui import MainWindow
+from debacal.event_dialog import EventDialog
 
 
 START = datetime(2026, 11, 4, 9, tzinfo=ZoneInfo('Europe/Berlin'))
@@ -40,6 +41,7 @@ def desktop():
         try:
             yield app, window, store
         finally:
+            app.clipboard().clear()
             window.close()
             window.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -74,14 +76,53 @@ def test_view_and_visibility_caches_are_invalidated_by_event_changes(desktop):
         window.set_view('week')
         window.toggle_calendar('work', False)
         window.toggle_calendar('work', True)
-        assert queries.call_count == 2  # new month and hidden-calendar page
+        assert queries.call_count == 1  # New month; hiding filters its cached superset.
         window.set_view('month')
-        assert queries.call_count == 2
+        assert queries.call_count == 1
         original = store.get_event('event-1')
-        store.apply('Rename', [replace(original, title='Updated immediately')])
+        operation = store.apply('Rename', [replace(original, title='Updated immediately')])
+        window.refresh()
+        assert queries.call_count == 2
+        assert any(event.title == 'Updated immediately' for event in window.visible_events)
+        window.toggle_calendar('work', False)
+        assert queries.call_count == 2
+        assert all(event.calendar_id != 'work' for event in window.visible_events)
+        assert any(event.title == 'Updated immediately' for event in window.visible_events)
+        store.undo(operation)
         window.refresh()
         assert queries.call_count == 3
-        assert any(event.title == 'Updated immediately' for event in window.visible_events)
+        assert any(event.title == original.title for event in window.visible_events)
+        assert all(event.title != 'Updated immediately' for event in window.visible_events)
+        window.toggle_calendar('work', True)
+        assert queries.call_count == 4  # A cached subset cannot supply a wider selection.
+
+
+def test_visibility_reuses_superset_without_retaining_duplicate_filtered_pages(desktop):
+    _, window, store = desktop
+    window.set_view('month')
+    original = list(window.visible_events)
+    cached = dict(window._range_cache)
+    with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
+        window.toggle_calendar('work', False)
+        assert window.visible_events == [event for event in original if event.calendar_id != 'work']
+        assert dict(window._range_cache) == cached
+        window.toggle_calendar('local', False)
+        assert window.visible_events == []
+        assert dict(window._range_cache) == cached
+        window.toggle_calendar('local', True)
+        window.toggle_calendar('work', True)
+        assert window.visible_events == original
+        assert queries.call_count == 0
+
+
+def test_visibility_cache_does_not_reuse_a_different_date_window(desktop):
+    _, window, store = desktop
+    window.set_view('month')
+    with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
+        window.toggle_calendar('work', False)
+        window.navigate(1)
+        assert queries.call_count == 1
+        assert all(event.calendar_id == 'local' for event in window.visible_events)
 
 
 def test_remote_connection_changes_invalidate_cached_pages(tmp_path):
@@ -150,3 +191,67 @@ def test_future_highlights_resolve_each_series_once(desktop):
         result = affected_visible(store, [events[50]], 'future', events)
         assert len(result) == 150
         assert reads.call_count <= 2
+
+
+def test_move_and_edit_load_only_selected_resources(desktop):
+    _, window, store = desktop
+    source = store.get_event('event-1')
+    window.go_date(source.start.date())
+    window.select_event(source.id)
+
+    def edit(dialog):
+        dialog.title.setText('Edited without loading unrelated events')
+        dialog.save()
+        return QDialog.DialogCode.Accepted
+
+    with patch.object(store, 'list_events', side_effect=AssertionError('Do not decode the whole database')):
+        window.move_event(source.id, source.start + timedelta(hours=1), source.end + timedelta(hours=1))
+        assert store.get_event(source.id).start == source.start + timedelta(hours=1)
+        window.undo()
+        with patch.object(EventDialog, 'exec', edit):
+            window.edit_event(source.id)
+        assert store.get_event(source.id).title == 'Edited without loading unrelated events'
+    assert not window.local_issues
+
+
+def test_editor_snapshot_still_detects_group_members_added_during_dialog(desktop):
+    _, window, store = desktop
+    source = Event('group-source', 'local', 'Original', START, START + timedelta(hours=1), group_id='linked')
+    added = replace(source, id='group-added', title='Added while editing')
+    store.apply_remote([source])
+    window.refresh()
+    window.select_event(source.id)
+
+    def edit(dialog):
+        dialog.scope.setCurrentData('group')
+        store.apply_remote([added])
+        dialog.title.setText('Should require a fresh review')
+        dialog.save()
+        return QDialog.DialogCode.Accepted
+
+    with patch.object(EventDialog, 'exec', edit):
+        window.edit_event(source.id)
+    assert store.get_event(source.id).title == 'Original'
+    assert store.get_event(added.id) == added
+    assert any('changed while' in issue.details for issue in window.local_issues)
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_repeated_event_dialogs_are_released_after_accept_or_cancel(desktop, accepted):
+    app, window, _ = desktop
+    source = window.visible_events[0]
+
+    def finish(dialog):
+        if accepted:
+            dialog.title.setText('A completed dialog')
+            dialog.save()
+            return QDialog.DialogCode.Accepted
+        return QDialog.DialogCode.Rejected
+
+    with patch.object(EventDialog, 'exec', finish):
+        for _ in range(3):
+            window.create_event()
+            window.edit_event(source.id)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert not window.findChildren(EventDialog)

@@ -73,6 +73,13 @@ def test_broad_revision_notices_separate_connection_commits(tmp_path):
         assert store.revision() != previous
 
 
+def test_resource_identity_snapshot_never_decodes_event_payloads():
+    with Store(':memory:') as store:
+        store.apply_remote([event('first'), event('second', recurrence_rule='FREQ=DAILY')])
+        with patch('debacal.store.json.loads', side_effect=AssertionError('IDs do not need payloads')):
+            assert store.event_ids() == {'first', 'second'}
+
+
 def test_query_decodes_each_master_once_and_never_decodes_offscreen_ordinary_rows():
     with Store(":memory:") as store:
         ordinary = event("ordinary")

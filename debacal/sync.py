@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
+from .ics_resources import reject_duplicate_identities
 from .credentials import CredentialStore, CredentialError, account_key
 from .models import Calendar, Event
 from .store import HistoryConflict, Store
@@ -316,11 +317,14 @@ class SyncEngine:
         if len(data) > 10 * 1024 * 1024:
             raise ValueError("The subscription exceeds the 10 MiB import limit.")
         report = parse_ics_report(data, calendar.id)
+        previous = store.list_events(calendar_ids=[calendar.id])
+        original_ids = {event.id for event in report.events}
+        report = reject_duplicate_identities(report, existing_events=previous)
         events = report.events
         ids = {e.id for e in events}
-        previous = store.list_events(calendar_ids=[calendar.id])
+        rejected_ids = original_ids - ids
         rejected_uids = {resource.uid for resource in report.rejected}
-        protected = {event.id for event in previous if event.ical_uid in rejected_uids}
+        protected = {event.id for event in previous if event.ical_uid in rejected_uids or event.id in rejected_ids}
         delete_ids = {event.id for event in previous} - ids - protected if "" not in rejected_uids else set()
         store.apply_remote(upserts=events, delete_ids=delete_ids)
         rejected_ids = {resource.resource_id for resource in report.rejected}

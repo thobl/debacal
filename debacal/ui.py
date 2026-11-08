@@ -216,12 +216,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._search_row_ids.clear()
             self.report_error(str(exc))
         self.visible_events = self.filter_calendar_events(self.range_events)
+        visible_calendar_ids = {calendar.id for calendar in cals if calendar.visible and calendar.enabled}
         refs = [value for reference in self.selection.refs
-                if (value := self.store.get_occurrence(reference.id)) is not None]
+                if reference.calendar_id in visible_calendar_ids
+                and (value := self.store.get_occurrence(reference.id)) is not None
+                and value.calendar_id in visible_calendar_ids]
+        if len(refs) != len(self.selection.refs):
+            self._search_selection_active = False
+            self._search_row_ids.clear()
         self.selection.replace(refs)
         if not refs and self.selected_id:
             previous = self.event_by_id(self.selected_id)
-            if previous:
+            if previous and previous.calendar_id in visible_calendar_ids:
                 self.selection.select(previous)
         self.selected_id = self.selection.primary.id if self.selection.primary else None
         self.heading.setText(str(self.anchor.year) if self.view == 'year' else self.preferences.format_month(self.anchor))
@@ -279,12 +285,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def query_view_events(self, days, calendars, revision):
         identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
+        if not identifiers:
+            return []
         begin, end = at(days[0]), at(days[-1] + timedelta(days=1))
         key = revision, begin.timestamp(), end.timestamp(), identifiers
         events = self._range_cache.get(key)
         if events is not None:
             self._range_cache.move_to_end(key)
             return list(events)
+        selected = set(identifiers)
+        for cached_key, cached_events in reversed(self._range_cache.items()):
+            if cached_key[:3] == key[:3] and selected.issubset(cached_key[3]):
+                # The occurrence window and event revision are identical.
+                # Hiding sources only filters this complete page; retaining
+                # its superset avoids duplicate pages evicting useful data.
+                self._range_cache.move_to_end(cached_key)
+                return [event for event in cached_events if event.calendar_id in selected]
         events = self.store.query_occurrences(begin, end, identifiers)
         # Bound both page count and occurrence count: a dense calendar should
         # not retain arbitrarily many old pages or visibility combinations.
@@ -539,14 +555,17 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
                              default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
-        dialog.all_day.setChecked(all_day)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            if self.apply_events('Create ' + str(len(dialog.result_events)) + ' event(s)', dialog.result_events):
-                for event in dialog.result_events:
-                    calendar = self.store.get_calendar(event.calendar_id)
-                    if calendar and not calendar.visible:
-                        self.store.set_calendar_visible(calendar.id, True)
-                self.refresh(calendars=True)
+        try:
+            dialog.all_day.setChecked(all_day)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                if self.apply_events('Create ' + str(len(dialog.result_events)) + ' event(s)', dialog.result_events):
+                    for event in dialog.result_events:
+                        calendar = self.store.get_calendar(event.calendar_id)
+                        if calendar and not calendar.visible:
+                            self.store.set_calendar_visible(calendar.id, True)
+                    self.refresh(calendars=True)
+        finally:
+            dialog.deleteLater()
 
     def create_all_day_event(self, start=None, end=None):
         self.create_event(start, end, all_day=True)
@@ -678,8 +697,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         dialog_scope = ('group' if self._search_selection_active and self.selection.primary
                         and self.selection.primary.recurring and not self.selection.primary.series_id else scope)
         series = self.store.get_event(event.series_id) if event.series_id else None
-        expected = self.store.list_events()
+        dialog = None
         try:
+            # Scope can change while the editor is open. Snapshot its complete
+            # families to review those changes, without loading unrelated data.
+            families = selection_roots(self.store, refs, 'group')
+            expected = self.store.get_events(value.series_id or value.id for value in families)
+            previous_ids = self.store.event_ids()
             members = selection_roots(self.store, refs, scope)
             if any(not self.event_writable(member) for member in members):
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
@@ -705,7 +729,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.set_selection_mode(scope)
             edited = dialog.result_events[0]
             reference = dialog.edit_reference
-            previous_ids = {value.id for value in expected}
             expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited)
                                if not dialog.schedule_replacement else {})
             self.store.edit_selection(refs, scope, reference, edited,
@@ -718,12 +741,19 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                                             or getattr(dialog, 'calendar_change_requested', False)):
                 self.store.set_calendar_visible(destination.id, True)
             zone = local_zone()
-            shift = edited.start.astimezone(zone).replace(tzinfo=None) - reference.start.astimezone(zone).replace(tzinfo=None)
-            target = (event.start.astimezone(zone).replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=event.start.fold)
+            edited_start = edited.start if edited.all_day else edited.start.astimezone(zone)
+            reference_start = reference.start if reference.all_day else reference.start.astimezone(zone)
+            event_start = event.start if event.all_day else event.start.astimezone(zone)
+            shift = edited_start.replace(tzinfo=None) - reference_start.replace(tzinfo=None)
+            target = (event_start.replace(tzinfo=None) + shift).replace(tzinfo=edited_start.tzinfo, fold=edited_start.fold)
             target = expected_starts.get(event.id, target)
-            self.reselect_after_operation(refs, target, previous_ids, shift, expected_starts=expected_starts)
+            self.reselect_after_operation(refs, target, previous_ids, shift,
+                                         expected_starts=expected_starts, all_day=edited.all_day)
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
 
     def event_writable(self, event):
         calendar = self.store.get_calendar(event.calendar_id)
@@ -754,8 +784,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         """Follow an instruction's identity when calendar clipping is nonlinear."""
         from .recurrence import event_zone, key_datetime, recurrence_key, relative_reanchor_map
         zone = event_zone(master)
-        wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
-        shift = wall(target) - wall(reference.start)
+        wall = lambda value: (value.replace(tzinfo=None) if master.all_day else
+                              value.astimezone(zone).replace(tzinfo=None))
+        shift = (timedelta(days=(target.date() - reference.start.date()).days) if master.all_day else
+                 wall(target) - wall(reference.start))
         start = (wall(master.start) + shift).replace(tzinfo=zone, fold=master.start.fold)
         mapping = relative_reanchor_map(master, start)
         key = reference.recurrence_id or recurrence_key(reference.start, reference.all_day)
@@ -764,21 +796,26 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def reanchored_selection_starts(self, refs, scope, reference, edited):
         """Resolve selected logical slots before their source resources change."""
         from .recurrence import event_zone
+        from .event_clipboard import calendar_day_delta
         from .selection import is_whole_root
         from .series_operations import partition_series
-        result = {}
+        result = ({item.id: item.start + timedelta(days=calendar_day_delta(reference, edited.start))
+                   for item in refs if item.all_day or reference.all_day}
+                  if reference.all_day == edited.all_day else {})
         for root in selection_roots(self.store, refs, scope):
             root_scope = 'group' if is_whole_root(root) else scope
             master = self.store.get_event(root.series_id or root.id)
-            if root_scope == 'single' or master is None or master.all_day != edited.all_day:
+            if root_scope == 'single' or master is None or reference.all_day != edited.all_day:
                 continue
             if root_scope == 'future' and master.recurring:
                 _, master = partition_series(master, root)
             if master is None:
                 continue
             zone = event_zone(master)
-            wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
-            shift = wall(edited.start) - wall(reference.start)
+            wall = lambda value: (value.replace(tzinfo=None) if master.all_day else
+                                  value.astimezone(zone).replace(tzinfo=None))
+            shift = (timedelta(days=calendar_day_delta(reference, edited.start)) if master.all_day or reference.all_day else
+                     wall(edited.start) - wall(reference.start))
             for item in (*refs, reference):
                 if (item.series_id or item.id) != (root.series_id or root.id):
                     continue
@@ -786,17 +823,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 result[item.id] = self.reanchored_reference_start(master, item, target)
         return result
 
-    def reselect_after_operation(self, refs, target, previous_ids, shift=None, *, expected_starts=None):
+    def reselect_after_operation(self, refs, target, previous_ids, shift=None, *, expected_starts=None, all_day=None):
         self.selection.clear()
         self.selected_id = None
-        self.anchor = self.selected_day = target.astimezone(local_zone()).date()
+        all_day = refs[-1].all_day if all_day is None and refs else bool(all_day)
+        self.anchor = self.selected_day = target.date() if all_day else target.astimezone(local_zone()).date()
         self.refresh()
-        current_ids = {value.id for value in self.store.list_events()}
+        current_ids = self.store.event_ids()
         allowed = (current_ids - previous_ids) | {value.series_id or value.id for value in refs}
         choices = [value for value in self.visible_events if (value.series_id or value.id) in allowed]
         selected = []
         for reference in refs:
-            expected = reference.start.astimezone(local_zone())
+            expected = reference.start if reference.all_day else reference.start.astimezone(local_zone())
             if shift is not None:
                 expected = (expected.replace(tzinfo=None) + shift).replace(tzinfo=local_zone(), fold=expected.fold)
             else:
@@ -847,7 +885,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         refs = self.operation_references(event)
         scope = scope or self.operation_scope()
-        previous_ids = {value.id for value in self.store.list_events()}
+        previous_ids = self.store.event_ids()
         try:
             EventDialog.validate_time(start)
             EventDialog.validate_time(end)
@@ -855,11 +893,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             result = self.store.move_selection(refs, scope, event, start, end, copy=copy)
             self.clear_drag_preview()
             if copy:
-                self.persist_copies(result, expected_starts.get(event.id, start), 'Copy selected events')
+                self.persist_copies(result, expected_starts.get(event.id, start), 'Copy selected events', all_day=event.all_day)
             else:
                 shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
                 self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
-                                             expected_starts=expected_starts)
+                                             expected_starts=expected_starts, all_day=event.all_day)
         except (ValueError, KeyError, OverflowError) as exc:
             self.clear_drag_preview()
             self.report_error(str(exc))
@@ -952,7 +990,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def paste_target(self, selection):
         return initial_paste_target(selection, self.dates()[0], self.selected_day)
 
-    def persist_copies(self, events, target, label):
+    def persist_copies(self, events, target, label, *, all_day=None):
         if not events:
             return
         self.selection.clear()
@@ -964,12 +1002,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if calendar and not calendar.visible:
                 self.store.set_calendar_visible(calendar_id, True)
         if self.apply_events(label, events):
-            self.anchor = self.selected_day = (target.date() if events[0].all_day else target.astimezone(local_zone()).date())
+            all_day = events[0].all_day if all_day is None else all_day
+            self.anchor = self.selected_day = (target.date() if all_day else target.astimezone(local_zone()).date())
             self.refresh()
             ids = {event.id for event in events}
             choices = [event for event in self.visible_events if (event.series_id or event.id) in ids]
             if choices:
-                selected = min(choices, key=lambda event: abs(event.start.timestamp() - target.timestamp()))
+                same_kind = [event for event in choices if event.all_day == all_day]
+                selected = min(same_kind or choices, key=lambda event: abs(event.start.timestamp() - target.timestamp()))
                 by_resource = {}
                 for value in choices:
                     resource = value.series_id or value.id
@@ -1037,7 +1077,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error(pending.error, title='Cannot place pasted events')
             return
         calendar = self.store.get_calendar(pending.calendar_id)
-        if calendar is None or calendar.read_only or calendar.kind == 'ics':
+        if calendar is None or not calendar.enabled or calendar.read_only or calendar.kind == 'ics':
             self.report_error('The destination calendar is no longer writable.', title='Cannot paste events',
                               action_label='Edit calendar…', action=lambda: self.add_calendar(calendar) if calendar else self.add_calendar())
             return
@@ -1052,7 +1092,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if master is not None:
                 target = self.reanchored_reference_start(master, captured.reference, target)
         self.cancel_paste()
-        self.persist_copies(events, target, 'Paste selected events')
+        self.persist_copies(events, target, 'Paste selected events', all_day=captured.reference.all_day)
 
     def cancel_paste(self):
         self.pending_paste = None
@@ -1121,7 +1161,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error(str(exc))
 
     def show_history(self):
-        HistoryDialog(self.store, self.refresh, self).exec()
+        dialog = HistoryDialog(self.store, self.refresh, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def run_search(self, *_):
         if self._revealing_search_result:
@@ -1313,8 +1357,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def add_calendar(self, calendar=None):
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
             credentials=self.credentials)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            try:
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
                 password_set = False
                 credential_save = None
                 for calendar in dialog.result_calendars:
@@ -1335,8 +1379,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         engine = self.engine
                         credential_save.add_done_callback(lambda _: engine.sync_now())
                     self.sync_now()
-            except ValueError as exc:
-                self.report_error(str(exc))
+        except ValueError as exc:
+            self.report_error(str(exc))
+        finally:
+            dialog.deleteLater()
 
     def choose_calendar(self, writable=False):
         calendars = [c for c in self.store.list_calendars() if not writable or (c.kind != 'ics' and not c.read_only)]
@@ -1597,24 +1643,20 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 continue
             detail = ''
             try:
-                report = future.result()
+                report = self.store.import_report(future.result(), calendar_id=getattr(future, 'calendar_id', None))
                 events = report.events
-                for resource in report.rejected:
-                    calendar_id = events[0].calendar_id if events else getattr(future, 'calendar_id', None)
-                    if calendar_id:
-                        self.store.set_quarantined_resource(calendar_id, resource.resource_id, resource.raw_ics, resource.reason)
-                if self.apply_events('Import ' + str(len(events)) + ' event(s)', events):
-                    detail = f'Imported {len(events)} event resource(s).'
-                    if report.issues:
-                        detail += f' {len(report.issues)} import warning(s).'
-                        if report.rejected:
-                            detail += f' {len(report.rejected)} unsupported event resource(s) were skipped.'
-                        self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
-                    self._sync_messages.append(detail)
+                self.refresh()
+                detail = f'Imported {len(events)} event resource(s).'
+                if report.issues:
+                    detail += f' {len(report.issues)} import warning(s).'
                     if report.rejected:
-                        self.report_error(detail + '\n\n' + '\n'.join(
-                            f'{issue.resource_id}: {issue.reason}' for issue in report.issues), title='Some events could not be imported',
-                            action_label='Review synchronization details…', action=self.show_sync_status)
+                        detail += f' {len(report.rejected)} unsupported event resource(s) were skipped.'
+                    self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
+                self._sync_messages.append(detail)
+                if report.rejected:
+                    self.report_error(detail + '\n\n' + '\n'.join(
+                        f'{issue.resource_id}: {issue.reason}' for issue in report.issues), title='Some events could not be imported',
+                        action_label='Review synchronization details…', action=self.show_sync_status)
             except Exception as exc:
                 source = getattr(future, 'source_path', '')
                 label = getattr(future, 'source_label', Path(source).name if source else '')

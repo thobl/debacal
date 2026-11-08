@@ -1,10 +1,11 @@
 """Shared month and occurrence navigation for editor and import previews."""
 from PySide6.QtCore import QObject, QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QWidget
 
 from .icons import icon
 from .buttons import action_button, icon_button
+from .compact_controls import ElidedLabel
 from .preferences import Preferences
 from .theme import scheme_for
 from .timeutil import local_zone
@@ -44,10 +45,11 @@ class PreviewControls(QObject):
         self.previous_button = self._button('previous', 'Previous month', self.previous_month_requested)
         self.today_button = self._button('today', 'Today', self.today_requested)
         self.next_button = self._button('next', 'Next month', self.next_month_requested)
-        self.month_label = QLabel()
+        self.month_label = ElidedLabel()
         self.month_label.setObjectName('sidebarSectionHeading')
         self.month_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.month_label.setContentsMargins(8, 0, 0, 0)
+        self.month_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         months.addWidget(self.previous_button)
         months.addWidget(self.today_button)
         months.addWidget(self.next_button)
@@ -59,9 +61,10 @@ class PreviewControls(QObject):
         self.previous_occurrence_button = self._button('previous', 'Previous occurrence', self.previous_requested)
         self.next_occurrence_button = self._button('next', 'Next occurrence', self.next_requested)
         self.last_button = self._button('last', 'Last occurrence', self.last_requested)
-        self.position_label = QLabel()
+        self.position_label = ElidedLabel()
         self.position_label.setProperty('muted', True)
         self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.position_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         navigation.addWidget(self.first_button)
         navigation.addWidget(self.previous_occurrence_button)
         navigation.addWidget(self.position_label, 1)
@@ -91,6 +94,7 @@ class PreviewControls(QObject):
 
     def set_month(self, day):
         self.month_label.setText(self.preferences.format_month(day))
+        self.month_label.setToolTip(self.month_label.text())
 
     def set_position(self, event, index=None, total=None, *, unbounded=False, display_zone=None):
         if event is None:
@@ -105,4 +109,4 @@ class PreviewControls(QObject):
             denominator = '∞' if unbounded else str(total) if total is not None else '…'
             caption = (str(index) if index is not None else '…') + '/' + denominator + '  ·  ' + caption
         self.position_label.setText(caption)
-        self.position_label.setToolTip(event.title)
+        self.position_label.setToolTip(event.title + '\n' + caption)

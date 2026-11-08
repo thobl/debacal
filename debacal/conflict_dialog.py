@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import QDate, QLocale, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QScrollArea,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QFrame,
 )
 
+from .appearance import stylesheet, widget_palette
+from .buttons import action_button, icon_button
 from .preferences import Preferences
 from .series_preview import SeriesPreview
 from .timeutil import local_zone, now
@@ -24,18 +26,33 @@ class ConflictDialog(QDialog):
         self.preferences = preferences
         self.choice = None
         self.setWindowTitle('Resolve sync conflict')
-        self.resize(1080, 830)
-        outer = QVBoxLayout(self)
+        self.setLocale(preferences.qt_locale())
+        self.setPalette(widget_palette(preferences))
+        self.setStyleSheet(stylesheet(preferences.font_scale, preferences))
+        available = self.screen().availableGeometry()
+        self.resize(min(1080, max(580, available.width() - 48)), min(830, max(400, available.height() - 48)))
+        frame = QVBoxLayout(self)
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setWidgetResizable(True)
+        body = QWidget()
+        # QScrollArea turns on the content widget's background filling. Give
+        # that widget an explicit palette; otherwise Qt can retain its original
+        # light Window role while the stylesheet supplies dark-theme light text.
+        body.setPalette(widget_palette(preferences))
+        self.content_scroll.viewport().setPalette(widget_palette(preferences))
+        outer = QVBoxLayout(body)
+        self.content_scroll.setWidget(body)
+        frame.addWidget(self.content_scroll, 1)
         explanation = QLabel(conflict.reason + '\nCompare both versions, then choose which one to keep. '
                              'A changed server version will require a fresh review.')
         explanation.setWordWrap(True)
         outer.addWidget(explanation)
 
         navigation = QHBoxLayout()
-        self.previous_button = QPushButton('‹')
-        self.previous_button.setToolTip('Previous month on both calendars')
-        self.next_button = QPushButton('›')
-        self.next_button.setToolTip('Next month on both calendars')
+        self.previous_button = icon_button('previous', 'Previous month on both calendars',
+                                          preferences=preferences)
+        self.next_button = icon_button('next', 'Next month on both calendars', preferences=preferences)
         self.month_label = QLabel()
         self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.previous_button.clicked.connect(lambda: self.navigate_month(-1))
@@ -43,14 +60,14 @@ class ConflictDialog(QDialog):
         navigation.addWidget(self.previous_button)
         navigation.addWidget(self.month_label, 1)
         navigation.addWidget(self.next_button)
-        self.local_date_button = QPushButton('Show local date')
-        self.remote_date_button = QPushButton('Show server date')
+        self.local_date_button = action_button('Show local date')
+        self.remote_date_button = action_button('Show server date')
         for button, event in [(self.local_date_button, conflict.local),
                               (self.remote_date_button, conflict.remote)]:
             button.setEnabled(event is not None)
             if event is not None:
                 button.clicked.connect(lambda checked=False, item=event: self.show_month(
-                    item.start.astimezone(local_zone()).date()))
+                    self.display_date(item)))
             navigation.addWidget(button)
         outer.addLayout(navigation)
 
@@ -59,7 +76,7 @@ class ConflictDialog(QDialog):
         for label, event in [('Your local version', conflict.local), ('Server version', conflict.remote)]:
             column = QVBoxLayout()
             heading = QLabel(label)
-            heading.setStyleSheet('font-weight: 600; font-size: 15px;')
+            heading.setObjectName('sidebarSectionHeading')
             column.addWidget(heading)
             status = QLabel(event.title if event else 'Event deleted')
             status.setWordWrap(True)
@@ -107,9 +124,9 @@ class ConflictDialog(QDialog):
         outer.addWidget(self.comparison)
 
         buttons = QHBoxLayout()
-        self.local_button = QPushButton('Keep local' if conflict.local else 'Keep local deletion')
-        self.remote_button = QPushButton('Use server version' if conflict.remote else 'Keep server deletion')
-        self.later_button = QPushButton('Decide later')
+        self.local_button = action_button('Keep local' if conflict.local else 'Keep local deletion')
+        self.remote_button = action_button('Use server version' if conflict.remote else 'Keep server deletion')
+        self.later_button = action_button('Decide later')
         # A keyboard default must never silently resolve a conflict.
         for button in (self.local_button, self.remote_button):
             button.setAutoDefault(False)
@@ -121,17 +138,22 @@ class ConflictDialog(QDialog):
         buttons.addWidget(self.remote_button)
         buttons.addStretch()
         buttons.addWidget(self.later_button)
-        outer.addLayout(buttons)
+        frame.addLayout(buttons)
         first = conflict.local or conflict.remote
-        self.show_month(first.start.astimezone(local_zone()).date() if first else now().date())
+        self.show_month(self.display_date(first) if first else now().date())
         install_dialog_keyboard(self, self.reject)
+
+    @staticmethod
+    def display_date(event):
+        return event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
 
     def describe(self, event):
         if event is None:
             return {'State': 'Event deleted'}
         preferences = self.preferences
         def stamp(value):
-            value = value.astimezone(local_zone())
+            if not event.all_day:
+                value = value.astimezone(local_zone())
             return preferences.format_date(value.date(), weekday=True) + (
                 '' if event.all_day else ' ' + preferences.format_time(value))
         values = {'State': 'Event exists', 'Title': event.title, 'Start': stamp(event.start),
@@ -151,8 +173,7 @@ class ConflictDialog(QDialog):
         self.current_month = day.replace(day=1)
         for preview in self.previews:
             preview.show_month(day)
-        self.month_label.setText(QLocale.system().toString(
-            QDate(day.year, day.month, 1), 'MMMM yyyy'))
+        self.month_label.setText(self.preferences.format_month(day))
 
     def navigate_month(self, delta):
         year, month = divmod(self.current_month.year * 12 + self.current_month.month - 1 + delta, 12)

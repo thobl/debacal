@@ -173,6 +173,29 @@ def test_ics_subscription_refresh_and_failed_refresh_preserve_cache(tmp_path, mo
         store.close()
 
 
+def test_subscription_copied_id_cannot_overwrite_or_delete_a_cached_different_uid(tmp_path, monkeypatch):
+    import io
+    path = tmp_path / 'subscription.sqlite'
+    with Store(path) as store:
+        store.save_calendar(Calendar('feed', 'Feed', '#abcdef', kind='ics', url='https://calendar.test/events.ics'))
+        original = replace(event(), calendar_id='feed', id='stored-id', ical_uid='original-uid')
+        store.apply_remote([original])
+        copied = replace(original, ical_uid='copied-uid', title='Other client copied native metadata')
+        healthy = replace(original, id='healthy-id', ical_uid='healthy-uid', title='Healthy')
+        body = export_ics([copied, healthy])
+        monkeypatch.setattr('debacal.sync.urlopen', lambda *a, **k: io.BytesIO(body))
+        engine = SyncEngine(path)
+        try:
+            messages = synchronize(engine)
+            assert store.get_event(original.id) == original
+            assert store.get_event(healthy.id).title == 'Healthy'
+            assert {item.ical_uid for item in store.list_events()} == {'original-uid', 'healthy-uid'}
+            assert any(item.kind == 'issue' and 'X-DEBACAL-ID' in item.message for item in messages)
+            assert len(store.list_quarantined_resources('feed')) == 1
+        finally:
+            engine.close()
+
+
 def test_caldav_adapter_uses_conditional_http_headers(monkeypatch):
     import sys
     from types import SimpleNamespace

@@ -166,6 +166,37 @@ class PointViewTests(unittest.TestCase):
         self.assertEqual(dialog.result_events[0].start, event.start)
         self.assertEqual(dialog.result_events[0].end, event.end)
 
+    def test_point_event_picker_moves_the_instant_without_creating_duration(self):
+        event = point(hour=10)
+        dialog = EventDialog(self.calendars, event.start, event.end, event=event)
+        self.widgets.append(dialog)
+        dialog.show()
+        self.app.processEvents()
+        dialog.open_range_picker('start')
+        picker = dialog.range_picker
+        self.assertIsNotNone(picker, dialog.error.text())
+        self.assertTrue(picker.set_start(event.start + timedelta(days=1)))
+        picker.accept()
+        dialog.save()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted, dialog.error.text())
+        saved, = dialog.result_events
+        self.assertEqual(saved.start, event.start + timedelta(days=1))
+        self.assertEqual(saved.start, saved.end)
+
+    def test_midnight_point_all_day_toggle_uses_one_day_and_restores_the_point(self):
+        event = point()
+        dialog = EventDialog(self.calendars, event.start, event.end, event=event)
+        self.widgets.append(dialog)
+        dialog.all_day.setChecked(True)
+        all_day, = dialog.build_events()
+        self.assertTrue(all_day.all_day)
+        self.assertEqual(all_day.end - all_day.start, timedelta(days=1))
+        dialog.all_day.setChecked(False)
+        timed, = dialog.build_events()
+        self.assertFalse(timed.all_day)
+        self.assertEqual(timed.start, event.start)
+        self.assertEqual(timed.end, event.end)
+
     def test_workspace_day_view_and_arrow_selection_include_midnight_point(self):
         with Store(':memory:') as store:
             event = point()

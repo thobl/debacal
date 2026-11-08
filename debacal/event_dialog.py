@@ -20,7 +20,7 @@ from .buttons import action_button, icon_button
 from .calendar_choice import CalendarChoice
 from .choice_control import ChoiceControl
 from .date_time_fields import DateTimeField, format_duration, parse_duration, validate_datetime
-from .date_time_picker import DateTimeRangePicker, range_duration
+from .date_time_picker import DateTimeRangePicker, range_duration, relocate_range
 from .dialog_base import FormDialog, dialog_buttons
 from .event_schedule import ScheduleDraft, count_to_until, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
@@ -28,7 +28,7 @@ from .models import Event
 from .preferences import Preferences
 from .patterns import PatternError, relative_sequence_steps, sequence_tail
 from .range_policies import occupied_span, range_policy_options, shift_range_fits
-from .recurrence import (ScheduleReplacement, event_zone, key_datetime, normalize_recurrence_time,
+from .recurrence import (ScheduleReplacement, canonicalize_authored_primary, event_zone, key_datetime, normalize_recurrence_time,
                          occurrence_id, recurrence_key, recurrence_set, updated_series)
 from .series_preview import SeriesPreview
 from .theme import scheme_for
@@ -582,7 +582,9 @@ class EventDialog(FormDialog):
 
     def _set_range(self, start, end):
         duration = range_duration(start, end)
-        if duration < timedelta(0) or (not duration and not (self.original and self.original.start == self.original.end)):
+        if duration < timedelta(0) or (not duration and not (
+                self.original and not self.all_day.isChecked()
+                and self.original.start.timestamp() == self.original.end.timestamp())):
             raise ValueError('The end must be after the start.')
         was_loading = self._loading
         self._loading = True
@@ -628,7 +630,7 @@ class EventDialog(FormDialog):
             return
         def change():
             start = self.value(self.start)
-            self._set_range(start, start + self._duration)
+            self._set_range(*relocate_range(self._last_start, self._last_end, start))
             self._sync_ending()
             self._update_preview()
         self._report(change, self.start)
@@ -640,7 +642,7 @@ class EventDialog(FormDialog):
             end = self.value(self.end)
             start = self.value(self.start)
             if end.timestamp() <= start.timestamp():
-                start = end - self._duration
+                start = relocate_range(self._last_start, self._last_end, end, endpoint='end')[0]
             self._set_range(start, end)
             self._sync_ending()
             self._update_preview()
@@ -652,7 +654,7 @@ class EventDialog(FormDialog):
         def change():
             duration = parse_duration(self.duration.text(), all_day=self.all_day.isChecked())
             start = self.value(self.start)
-            self._set_range(start, start + duration)
+            self._set_range(start, (start + duration).replace(fold=self._last_end.fold))
             self._update_preview()
         self._report(change, self.duration)
 
@@ -663,15 +665,16 @@ class EventDialog(FormDialog):
             if enabled:
                 self._timed_range = self._last_start, self._last_end
                 first = self._last_start.date()
-                final = self._last_end.date() - (timedelta(days=1) if self._last_end.time() == time.min else timedelta())
+                final = max(first, self._last_end.date() - (
+                    timedelta(days=1) if self._last_end.time() == time.min else timedelta()))
                 start = datetime.combine(first, time.min, self._last_start.tzinfo)
                 end = datetime.combine(final + timedelta(days=1), time.min, self._last_start.tzinfo)
             else:
                 previous = self._timed_range
                 clock = previous[0].timetz() if previous else time(9, tzinfo=local_zone())
                 start = datetime.combine(self._last_start.date(), clock)
-                end = start + (range_duration(*previous) if previous else
-                               timedelta(minutes=self.preferences.default_event_duration_minutes))
+                end = (relocate_range(*previous, start)[1] if previous else
+                       start + timedelta(minutes=self.preferences.default_event_duration_minutes))
             self._set_range(start, end)
             self._sync_ending()
             self._update_preview()
@@ -1039,7 +1042,8 @@ class EventDialog(FormDialog):
 
     def build_events(self):
         start, end = self.value(self.start), self.value(self.end)
-        point = self.original and self.original.start == self.original.end and not self.all_day.isChecked()
+        point = (self.original and self.original.start.timestamp() == self.original.end.timestamp()
+                 and not self.all_day.isChecked())
         if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not point):
             self._validation_field = self.end
             raise ValueError('The end must be after the start.')
@@ -1090,6 +1094,8 @@ class EventDialog(FormDialog):
                     location=event.location, description=event.description,
                     candidate=event.candidate).to_dict()
             event = replace(event, recurrence_overrides=overrides)
+        if self.original is None:
+            event = canonicalize_authored_primary(event)
         if event.recurring:
             recurrence_set(event)
             if not single and (draft.kind == 'custom' or draft.expression):
@@ -1352,16 +1358,17 @@ class EventDialog(FormDialog):
     def _commit_pending_range(self):
         """Reconcile typed values even when Return saves before focus changes."""
         start, end = self.value(self.start), self.value(self.end)
-        start_changed = start != self._last_start
-        end_changed = end != self._last_end
+        start_changed = start.timestamp() != self._last_start.timestamp()
+        end_changed = end.timestamp() != self._last_end.timestamp()
         if start_changed and not end_changed:
-            end = start + self._duration
+            end = relocate_range(self._last_start, self._last_end, start)[1]
         elif end_changed and end.timestamp() <= start.timestamp():
-            start = end - self._duration
+            start = relocate_range(self._last_start, self._last_end, end, endpoint='end')[0]
         previous_duration = format_duration(self._duration, all_day=self.all_day.isChecked()) if self._duration else '0min'
         if self.duration.text().strip() != previous_duration:
             self._validation_field = self.duration
-            end = start + parse_duration(self.duration.text(), all_day=self.all_day.isChecked())
+            end = (start + parse_duration(self.duration.text(), all_day=self.all_day.isChecked())).replace(
+                fold=self._last_end.fold)
         self._set_range(start, end)
         self._sync_ending()
 

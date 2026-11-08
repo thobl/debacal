@@ -5,7 +5,7 @@ import pytest
 
 from debacal.ics import export_ics, parse_ics, parse_ics_report
 from debacal.ics_fallback import components, prop
-from debacal.ics_resources import parse_report
+from debacal.ics_resources import parse_report, reject_duplicate_identities
 from debacal.import_preparation import prepare_sources
 from debacal.import_sources import ImportSource
 from debacal.recurrence import expand_events
@@ -58,6 +58,54 @@ def test_missing_identifiers_stay_strict_by_default_for_remote_resources():
         parse_ics(data, 'remote')
     repaired = parse_ics_report(data, 'local', repair_missing_uids=True)
     assert len(repaired.events) == 1 and not repaired.rejected
+
+
+@pytest.mark.parametrize('use_full', [False, True])
+def test_copied_native_identity_is_quarantined_without_collapsing_distinct_uids(use_full):
+    metadata = 'X-DEBACAL-ID:copied-id\r\nX-DEBACAL-CALENDAR:local\r\n'
+    raw = document(event(uid='original', extra=metadata), event(uid='copy', extra=metadata),
+                   event(uid='healthy'))
+    report = parse_report(raw, 'local', use_full=use_full)
+    assert [item.ical_uid for item in report.events] == ['healthy']
+    assert {item.uid for item in report.rejected} == {'original', 'copy'}
+    assert len(report.issues) == 2
+    assert all('X-DEBACAL-ID' in item.reason for item in report.issues)
+    # A different destination derives separate identities from each UID.
+    elsewhere = parse_report(raw, 'elsewhere', use_full=use_full)
+    assert len(elsewhere.events) == 3 and not elsewhere.issues
+
+
+def test_import_remap_rechecks_native_identity_before_confirming_into_original_calendar():
+    metadata = 'X-DEBACAL-ID:copied-id\r\nX-DEBACAL-CALENDAR:local\r\n'
+    raw = document(event(uid='original', extra=metadata), event(uid='copy', extra=metadata),
+                   event(uid='healthy'))
+    prepared = prepare_sources([ImportSource.from_data(raw)])
+    assert prepared.event_count == 3
+    report = prepared.items[0].remap('local')
+    assert [item.ical_uid for item in report.events] == ['healthy']
+    assert {item.uid for item in report.rejected} == {'original', 'copy'}
+
+
+def test_existing_identity_belongs_to_its_uid_but_same_uid_updates_remain_valid():
+    metadata = 'X-DEBACAL-ID:original-id\r\nX-DEBACAL-CALENDAR:local\r\n'
+    original = parse_report(document(event(uid='original', extra=metadata)), 'local').events[0]
+    copied = parse_report(document(event(uid='copy', extra=metadata), event(uid='healthy')), 'local')
+    checked = reject_duplicate_identities(copied, existing_events=[original])
+    assert [item.ical_uid for item in checked.events] == ['healthy']
+    assert [item.uid for item in checked.rejected] == ['copy']
+    updated = parse_report(document(event(uid='original', extra=metadata, title='Updated')), 'local')
+    checked = reject_duplicate_identities(updated, existing_events=[original])
+    assert len(checked.events) == 1 and checked.events[0].title == 'Updated'
+    assert not checked.rejected
+
+
+def test_existing_identity_in_another_calendar_cannot_be_moved_by_import_metadata():
+    from dataclasses import replace
+    metadata = 'X-DEBACAL-ID:original-id\r\nX-DEBACAL-CALENDAR:local\r\n'
+    incoming = parse_report(document(event(uid='shared-uid', extra=metadata)), 'local')
+    existing = replace(incoming.events[0], calendar_id='another-calendar')
+    checked = reject_duplicate_identities(incoming, existing_events=[existing])
+    assert not checked.events and len(checked.rejected) == 1
 
 
 def test_repeated_imports_get_stable_distinct_ids_including_identical_events():

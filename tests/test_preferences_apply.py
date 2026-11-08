@@ -86,6 +86,22 @@ def test_apply_keeps_dialog_open_and_save_reuses_the_applied_value(desktop):
     assert len(applied) == 1
 
 
+def test_compact_preferences_sidebar_keeps_its_title_and_categories_readable(desktop):
+    app, widgets = desktop
+    dialog = PreferencesDialog(Preferences(font_scale=140))
+    widgets.append(dialog)
+    dialog.resize(800, 540)
+    dialog.show()
+    settle(app)
+    assert dialog.width() <= 800 and dialog.height() <= 540
+    title = dialog.navigation_title
+    assert title.fontMetrics().horizontalAdvance(title.text()) <= title.contentsRect().width()
+    assert not dialog.categories.horizontalScrollBar().isVisible()
+    for index in range(dialog.categories.count()):
+        item = dialog.categories.item(index)
+        assert item.toolTip() == item.text()
+
+
 def test_invalid_preferences_or_shortcuts_do_not_apply_or_close(desktop):
     app, widgets = desktop
     original = Preferences()

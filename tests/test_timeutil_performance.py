@@ -33,3 +33,16 @@ def test_system_zone_is_resolved_again_after_cache_window(monkeypatch):
     assert timeutil.local_zone().key == 'Europe/Berlin'
     assert timeutil.local_zone().key == 'Europe/Berlin'
     assert timeutil.local_zone().key == 'Europe/London'
+
+
+def test_calendar_codec_shares_the_same_cached_system_zone(monkeypatch):
+    from debacal.ics import local_timezone
+    monkeypatch.setattr(timeutil, '_zone_cache', None)
+    monkeypatch.setattr(timeutil, 'monotonic', lambda: 100)
+    resolutions = []
+    zone = ZoneInfo('Europe/Berlin')
+    monkeypatch.setattr(timeutil, '_resolve_local_zone', lambda setting: resolutions.append(setting) or zone)
+    for _ in range(100):
+        assert local_timezone() is zone
+        assert timeutil.local_zone() is zone
+    assert len(resolutions) == 1

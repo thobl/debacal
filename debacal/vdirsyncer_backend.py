@@ -23,7 +23,8 @@ import sys
 from typing import Any
 
 from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
-from .ics_resources import ResourceIssue, RejectedResource, _safe_reason
+from .ics_resources import ParseReport, ResourceIssue, RejectedResource, _safe_reason, reject_duplicate_identities
+from .import_sources import MAX_IMPORT_BYTES
 from .models import Calendar, Event
 from .store import HistoryConflict, Store
 
@@ -123,6 +124,12 @@ def raw_uid(data):
         if stack == ["VCALENDAR", "VEVENT"] and left.split(";")[0].upper() == "UID":
             return text(value)
     return ""
+
+
+def _read_mirror_resource(path):
+    with path.open('rb') as stream:
+        raw = stream.read(MAX_IMPORT_BYTES + 1)
+    return raw.decode('utf-8-sig', errors='replace'), len(raw) > MAX_IMPORT_BYTES
 
 
 class VdirsyncerBackend:
@@ -240,7 +247,16 @@ class VdirsyncerBackend:
         items, files, rejected, opaque_uids = {}, {}, [], set()
         unknown = False
         for file in sorted(path.glob("*.ics")):
-            data = file.read_bytes().decode("utf-8-sig", errors="replace")
+            data, oversized = _read_mirror_resource(file)
+            if oversized:
+                # Inspect a bounded prefix for identity, never load a whole
+                # oversized server resource merely to reject it afterward.
+                uid = raw_uid(data)
+                files.setdefault(uid, []).append(file)
+                unknown |= not uid
+                rejected.append(RejectedResource(uid, data, _digest(uid or file.name)[:12],
+                                                 'Oversized event resource; maximum size is 20 MB.'))
+                continue
             # Inventory via PROPFIND includes tasks and journals. Debacal does
             # not edit these resources; preserve their files unchanged instead
             # of filtering the server listing or treating them as malformed.
@@ -260,8 +276,6 @@ class VdirsyncerBackend:
             unknown |= not uid
             resource_id = _digest(uid or file.name)[:12]
             try:
-                if file.stat().st_size > 20_000_000:
-                    raise ValueError("Oversized event resource")
                 report = parse_ics_report(data, calendar_id)
                 if report.rejected:
                     rejected.extend(report.rejected)
@@ -279,11 +293,15 @@ class VdirsyncerBackend:
             if len(paths) > 1:
                 items.pop(uid, None)
                 for file in paths:
-                    rejected.append(RejectedResource(uid, file.read_text(errors="replace"), _digest(uid)[:12],
+                    rejected.append(RejectedResource(uid, _read_mirror_resource(file)[0], _digest(uid)[:12],
                                                      "Duplicate event UID requires review."))
         protected = {item.uid for item in rejected}
         for uid in protected:
             items.pop(uid, None)
+        identities = reject_duplicate_identities(ParseReport(tuple(event for event, _data in items.values())))
+        for collision in identities.rejected:
+            _event, data = items.pop(collision.uid)
+            rejected.append(replace(collision, raw_ics=data))
         return MirrorReport(items, {uid: tuple(paths) for uid, paths in files.items()}, tuple(rejected), unknown, frozenset(opaque_uids))
 
     @classmethod
@@ -309,6 +327,19 @@ class VdirsyncerBackend:
         overrides = {key: replace(Event.from_dict(payload), id=occurrence_id(event_id, key), series_id=event_id).to_dict()
                      for key, payload in event.recurrence_overrides.items()}
         return replace(event, id=event_id, recurrence_overrides=overrides)
+
+    @classmethod
+    def _identify_inventory(cls, items, id_by_uid, existing):
+        identified = {uid: (cls._identify(event, id_by_uid.get(uid, event.id)), data)
+                      for uid, (event, data) in items.items()}
+        report = reject_duplicate_identities(ParseReport(tuple(event for event, _data in identified.values())),
+                                            existing_events=existing)
+        rejected = tuple(replace(item, raw_ics=identified[item.uid][1]) for item in report.rejected)
+        rejected_ids = {identified[item.uid][0].id for item in rejected}
+        protected = {item.uid for item in rejected} | {event.ical_uid for event in existing if event.id in rejected_ids}
+        for item in rejected:
+            identified.pop(item.uid, None)
+        return identified, rejected, protected
 
     @staticmethod
     def _record(store, calendar_id, event, data):
@@ -412,6 +443,15 @@ class VdirsyncerBackend:
             self._quarantine(store, calendar.id, path, mirror_report.rejected)
             def finish(received, sent, conflicts):
                 unique = {item.resource_id: item for item in issues + self._conflict_issues}
+                # A complete successful inventory retries quarantined items.
+                # Once repaired (or removed remotely), they must stop looking
+                # like unresolved errors in the application and local mirror.
+                for file in (path / 'quarantine').glob('*.ics'):
+                    if file.stem not in unique:
+                        # Reviewed imports use the same database issue table;
+                        # only clear records owned by this backend's mirror.
+                        store.delete_quarantined_resource(calendar.id, file.stem)
+                        file.unlink(missing_ok=True)
                 return BridgeResult(received, sent, conflicts, tuple(unique.values()))
             snapshot = path / "snapshot"
             _private_directory(snapshot)
@@ -422,14 +462,17 @@ class VdirsyncerBackend:
             states = {s["event_id"]: s for s in store.list_sync_state(calendar.id)}
             manifest_path = path / "bridge.json"
             id_by_uid = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-            for event in store.list_events(calendar_ids=[calendar.id]):
+            existing = store.list_events(calendar_ids=[calendar.id])
+            for event in existing:
                 id_by_uid[event.ical_uid] = event.id
             for state in states.values():
                 event = self._state_event(state)
                 if event:
                     id_by_uid[event.ical_uid] = state["event_id"]
-            remote = {uid: (self._identify(event, id_by_uid.get(uid, event.id)), data)
-                      for uid, (event, data) in remote.items()}
+            remote, identity_issues, identity_protected = self._identify_inventory(remote, id_by_uid, existing)
+            protected_uids.update(identity_protected)
+            issues.extend(ResourceIssue(item.resource_id, item.reason) for item in identity_issues)
+            self._quarantine(store, calendar.id, path, identity_issues)
             changes = list(store.pending_changes(calendar.id))
             if calendar.read_only and changes:
                 raise ValueError("This calendar is read-only. Pending local changes cannot be uploaded; review its access settings.")
@@ -482,7 +525,8 @@ class VdirsyncerBackend:
                     reason = _safe_reason(exc)
                     issues.append(ResourceIssue(_digest(uid)[:12], reason))
                     raw = local.raw_ics if local else (change.get("payload") or {}).get("raw_ics", "")
-                    store.set_quarantined_resource(calendar.id, _digest(uid)[:12], raw, reason)
+                    self._quarantine(store, calendar.id, path,
+                                     (RejectedResource(uid, raw, _digest(uid)[:12], reason),))
                     staged.pop(uid, None)
             atomic_write(manifest_path, json.dumps(id_by_uid))
 
@@ -535,10 +579,13 @@ class VdirsyncerBackend:
             }))
             code, output = self._run(calendar, path, password, pull=False, force_delete=force_delete)
             final_report = self._mirror_report(working, calendar.id)
-            final = final_report.items
-            final_protected = {item.uid for item in final_report.rejected}
+            final, identity_issues, identity_protected = self._identify_inventory(
+                final_report.items, id_by_uid, store.list_events(calendar_ids=[calendar.id]))
+            final_protected = {item.uid for item in final_report.rejected} | identity_protected
             issues.extend(ResourceIssue(item.resource_id, item.reason) for item in final_report.rejected)
+            issues.extend(ResourceIssue(item.resource_id, item.reason) for item in identity_issues)
             self._quarantine(store, calendar.id, path, final_report.rejected)
+            self._quarantine(store, calendar.id, path, identity_issues)
             if code:
                 conflicts = self._conflicts(path, calendar.id, id_by_uid)
                 if conflicts:

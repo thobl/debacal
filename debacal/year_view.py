@@ -562,4 +562,7 @@ class YearView(QWidget):
             if total > len(values):
                 action = menu.addAction(f'{total - len(values):,} more · open the day to see all')
                 action.setEnabled(False)
-        menu.exec(event.globalPos())
+        try:
+            menu.exec(event.globalPos())
+        finally:
+            menu.deleteLater()

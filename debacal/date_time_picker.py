@@ -29,6 +29,24 @@ def range_duration(start, end):
     return wall if wall > timedelta(0) else end.astimezone(timezone.utc) - start.astimezone(timezone.utc)
 
 
+def relocate_range(start, end, target, *, endpoint='start'):
+    """Move a range while retaining duration and repeated-hour choices.
+
+    Ordinary ranges keep wall-clock duration and each endpoint's fold. Point
+    events and ranges running backwards through a repeated hour use elapsed
+    time, because their wall-clock duration is zero or negative.
+    """
+    wall = end.replace(tzinfo=None) - start.replace(tzinfo=None)
+    if wall <= timedelta(0):
+        seconds = end.timestamp() - start.timestamp()
+        if endpoint == 'start':
+            return target, datetime.fromtimestamp(target.timestamp() + seconds, target.tzinfo)
+        return datetime.fromtimestamp(target.timestamp() - seconds, target.tzinfo), target
+    if endpoint == 'start':
+        return target, (target + wall).replace(fold=end.fold)
+    return (target - wall).replace(fold=start.fold), target
+
+
 class DateTimeRangePicker(QDialog):
     """Edit a range in a draft, using inclusive dates for all-day display.
 
@@ -44,7 +62,11 @@ class DateTimeRangePicker(QDialog):
             raise ValueError('Choose the start or end picker.')
         validate_datetime(start)
         validate_datetime(end)
-        if end.timestamp() <= start.timestamp():
+        # Imported timed events may intentionally have no duration. Keep them
+        # editable without inventing an end, while ordinary range drafts still
+        # require a positive duration.
+        self._allow_point = not all_day and end.timestamp() == start.timestamp()
+        if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not self._allow_point):
             raise ValueError('The end must be after the start.')
         self.preferences = preferences or Preferences()
         self.endpoint, self.all_day = endpoint, bool(all_day)
@@ -181,7 +203,7 @@ class DateTimeRangePicker(QDialog):
         try:
             validate_datetime(start)
             validate_datetime(end)
-            if end.timestamp() <= start.timestamp():
+            if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not self._allow_point):
                 raise ValueError('The end must be after the start.')
             if self.all_day and (start.time() != time.min or end.time() != time.min):
                 raise ValueError('All-day events use whole calendar dates.')
@@ -198,18 +220,20 @@ class DateTimeRangePicker(QDialog):
         try:
             validate_datetime(value)
             value = value.replace(tzinfo=self.zone) if self.all_day else value.astimezone(self.zone)
-            end = value + self.duration if preserve_duration else self.draft_end
+            end = relocate_range(self.draft_start, self.draft_end, value)[1] if preserve_duration else self.draft_end
             return self.set_range(value, end)
         except (ValueError, OverflowError) as exc:
             self.error.setText(str(exc))
             self.error.show()
             return False
 
-    def end_pair(self, value, *, start=None, duration=None):
+    def end_pair(self, value, *, start=None, end=None):
         """Keep the duration and move Start when an earlier End is selected."""
         start = self.draft_start if start is None else start
-        duration = self.duration if duration is None else duration
-        return (value - duration if value.timestamp() <= start.timestamp() else start), value
+        end = self.draft_end if end is None else end
+        if value.timestamp() <= start.timestamp():
+            return relocate_range(start, end, value, endpoint='end')
+        return start, value
 
     def set_end(self, value):
         try:
@@ -366,12 +390,13 @@ class TimeRangeStrip(QWidget):
         start = self.picker.draft_start if start is None else start
         end = self.picker.draft_end if end is None else end
         if self.picker.endpoint == 'end':
-            return self.picker.end_pair(value, start=start, duration=range_duration(start, end))
-        return value, value + range_duration(start, end) if start.date() == end.date() else end
+            return self.picker.end_pair(value, start=start, end=end)
+        return relocate_range(start, end, value) if start.date() == end.date() else (value, end)
 
     def hover_hint(self, value):
         start, end = self.proposed_range(value)
-        return self.preferences.format_time(value), format_duration(range_duration(start, end))
+        duration = range_duration(start, end)
+        return self.preferences.format_time(value), format_duration(duration) if duration else '0min'
 
     def _band_for(self, start, end):
         top, bottom = sorted((self.y_for(start), self.y_for(end)))
@@ -403,7 +428,8 @@ class TimeRangeStrip(QWidget):
         """Keep both endpoint labels on the axis, separating close captions."""
         start, end = self.active_range if start is None else (start, end)
         entries = []
-        for value in (start, end):
+        endpoints = (start,) if start.timestamp() == end.timestamp() else (start, end)
+        for value in endpoints:
             minute = self._minute_for(value)
             if 0 <= minute <= 1440:
                 entries.append([value, max(9 * self.scale, min(self.height() - 9 * self.scale, self.y_for(value)))])
@@ -477,7 +503,8 @@ class TimeRangeStrip(QWidget):
         for y in (band.top(), band.bottom()):
             painter.drawLine(QPointF(bracket_x - 2 * scale, y), QPointF(bracket_x + 2 * scale, y))
         info_x = bracket_x + 6 * scale
-        duration = format_duration(range_duration(start, end))
+        duration = range_duration(start, end)
+        duration = format_duration(duration) if duration else '0min'
         # Long duration captions can wrap instead of reserving an empty column.
         info = QRectF(info_x, max(0, min(self.height() - 36 * scale, band.center().y() - 18 * scale)),
                       self.width() - info_x, 36 * scale)
@@ -495,7 +522,8 @@ class TimeRangeStrip(QWidget):
     def _valid_preview(self, draft):
         validate_datetime(draft[0])
         validate_datetime(draft[1])
-        if draft[1].timestamp() <= draft[0].timestamp():
+        if (draft[1].timestamp() < draft[0].timestamp()
+                or (draft[1].timestamp() == draft[0].timestamp() and not self.picker._allow_point)):
             raise ValueError('The end must be after the start.')
         return draft
 
@@ -518,7 +546,8 @@ class TimeRangeStrip(QWidget):
         else:
             handles = [(name, handle) for name, handle in (('start', self.start_handle()), ('end', self.end_handle()))
                        if not handle.isEmpty() and handle.contains(point)]
-            target = min(handles, key=lambda item: abs(point.y() - item[1].center().y()))[0] if handles else None
+            target = min(handles, key=lambda item: (abs(point.y() - item[1].center().y()),
+                                                    item[0] != self.picker.endpoint))[0] if handles else None
             kind = target
             if kind is None and self.band_rect().contains(point):
                 kind = 'move' if self.picker.same_day else self.picker.endpoint
@@ -577,7 +606,7 @@ class TimeRangeStrip(QWidget):
                                 self._snap(self._minute_for(original) + shift)))
             value = self.time_at(minute).replace(fold=original.fold)
             return (value, drag.end) if drag.kind == 'start' else self.picker.end_pair(
-                value, start=drag.start, duration=range_duration(drag.start, drag.end))
+                value, start=drag.start, end=drag.end)
         self._set_preview(calculate)
 
     def _pan_direction(self):
@@ -628,10 +657,14 @@ class TimeRangeStrip(QWidget):
         if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             amount = 1 if event.modifiers() & Qt.KeyboardModifier.AltModifier else 60 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else self.STEP
             delta = timedelta(minutes=amount * (-1 if event.key() == Qt.Key.Key_Up else 1))
-            if self.picker.endpoint == 'start':
-                self.picker.set_start(self.picker.draft_start + delta, preserve_duration=self.picker.same_day)
-            else:
-                self.picker.set_end(self.picker.draft_end + delta)
+            try:
+                if self.picker.endpoint == 'start':
+                    self.picker.set_start(self.picker.draft_start + delta, preserve_duration=self.picker.same_day)
+                else:
+                    self.picker.set_end(self.picker.draft_end + delta)
+            except (ValueError, OverflowError) as exc:
+                self.picker.error.setText(str(exc))
+                self.picker.error.show()
             event.accept()
         else:
             super().keyPressEvent(event)

@@ -40,6 +40,36 @@ class ParseReport:
     rejected: tuple[RejectedResource, ...] = ()
 
 
+def reject_duplicate_identities(report: ParseReport, *, existing_events=()) -> ParseReport:
+    """Quarantine resources claiming one local ID instead of overwriting a peer.
+
+    Other clients can copy native X-properties while assigning a fresh UID.
+    Those resources must not silently collapse when written to SQLite. Repeated
+    versions of the same UID remain valid and can use the last-source rule.
+    Existing events are only checked for ownership; they are never rejected or
+    mutated when incoming data claims their identity for another UID.
+    """
+    identities = {}
+    for event in report.events:
+        identities.setdefault(event.id, set()).add((event.calendar_id, event.ical_uid))
+    for event in existing_events:
+        if event.id in identities:
+            identities[event.id].add((event.calendar_id, event.ical_uid))
+    duplicates = {identifier for identifier, uids in identities.items() if len(uids) > 1}
+    if not duplicates:
+        return report
+    events, issues, rejected = [], list(report.issues), list(report.rejected)
+    reason = 'Different calendar resources share a Debacal identity. Remove duplicated X-DEBACAL-ID metadata from the source.'
+    for event in report.events:
+        if event.id not in duplicates:
+            events.append(event)
+            continue
+        resource_id = hashlib.sha256(event.ical_uid.encode()).hexdigest()[:12]
+        issues.append(ResourceIssue(resource_id, reason))
+        rejected.append(RejectedResource(event.ical_uid, event.raw_ics, resource_id, reason))
+    return ParseReport(tuple(events), tuple(issues), tuple(rejected))
+
+
 def _safe_reason(exc):
     from .recurrence import RecurrenceError
     message = str(exc).lower()
@@ -109,6 +139,18 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
             generated_uids.add(uid)
             block = _with_uid(block, uid)
         grouped.setdefault(uid or f"missing-uid-{index}", []).append(block)
+    decoded_groups = {}
+    if len(grouped) > 1:
+        try:
+            # Decode shared VTIMEZONE definitions once for the whole file.
+            # A malformed component must still use the isolated resource path,
+            # and repaired missing UIDs have no matching original component.
+            for component in _read(data, use_full):
+                uid = fallback.prop(component, 'UID')
+                if uid:
+                    decoded_groups.setdefault(uid, []).append(component)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            decoded_groups = {}
     events, issues, rejected = [], [], []
     for key, group in grouped.items():
         raw = fallback.folded(["BEGIN:VCALENDAR", *header,
@@ -118,7 +160,8 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
         try:
             if not uid:
                 raise ValueError("Event UID is missing.")
-            parsed = parse(raw, calendar_id, limit=limit, use_full=use_full)
+            parsed = parse(raw, calendar_id, limit=limit, use_full=use_full,
+                           _source=decoded_groups.get(uid))
             events.extend(parsed)
             if uid in generated_uids and parsed:
                 issues.append(ResourceIssue(resource_id, "Missing event UID; generated a stable identifier for import."))
@@ -126,7 +169,8 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
             reason = _safe_reason(exc)
             issues.append(ResourceIssue(resource_id, reason))
             rejected.append(RejectedResource(uid, raw, resource_id, reason))
-    return ParseReport(tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected))
+    return reject_duplicate_identities(ParseReport(
+        tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
 
 
 def _read(data, use_full=True):
@@ -281,7 +325,7 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=()):
 
 
 def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
-          read_only_recurring=False, use_full=True):
+          read_only_recurring=False, use_full=True, _source=None):
     """Import series without materializing any recurrence occurrences.
 
     Window parameters remain accepted for API compatibility, but do not truncate
@@ -290,7 +334,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
     from .ics import local_timezone
     from .recurrence import canonical_rule, occurrence_id, recurrence_set
     tz = local_timezone()
-    source = _read(data, use_full)
+    source = _read(data, use_full) if _source is None else _source
     generated_count = sum(range_codec.GENERATED in component for component in source)
     if len(source) - generated_count > limit or generated_count > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f"Import exceeds {limit:,} event components.")
@@ -501,12 +545,19 @@ def _named_start(event):
 def _known_lines(event, uid, recurrence_id=""):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
-    if _named_start(event):
+    if not recurrence_id and _named_start(event):
         zone = ZoneInfo(event.timezone_id)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
         lines.append(f"DTSTART;TZID={event.timezone_id}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
         if event.end.timestamp() > event.start.timestamp():
-            lines.append(f"DTEND;TZID={event.timezone_id}:{event.end.astimezone(zone):%Y%m%dT%H%M%S}")
+            local_end = event.end.astimezone(zone)
+            if local_end.fold and local_end.replace(fold=0).timestamp() != local_end.timestamp():
+                # A TZID clock alone denotes the first repeated-hour instant.
+                # Keep the selected endpoint unambiguous, including ranges
+                # whose written end clock precedes their written start clock.
+                lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
+            else:
+                lines.append(f"DTEND;TZID={event.timezone_id}:{local_end:%Y%m%dT%H%M%S}")
     lines.insert(0, "UID:" + fallback.escaped(uid))
     if event.schedule_expression and not recurrence_id:
         lines.append("X-DEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))

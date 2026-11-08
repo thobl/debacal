@@ -32,6 +32,60 @@ def instants(values):
     return [value.astimezone(timezone.utc) for value in values]
 
 
+@pytest.mark.parametrize('start_minute,end_minute,start_fold,end_fold', [
+    (10, 30, 1, 1), (10, 10, 1, 1), (50, 10, 0, 1),
+])
+def test_prototype_reanchor_preserves_short_point_and_fold_crossing_ranges(start_minute, end_minute, start_fold, end_fold):
+    start = datetime(2026, 10, 25, 2, start_minute, tzinfo=ZONE, fold=start_fold)
+    end = datetime(2026, 10, 25, 2, end_minute, tzinfo=ZONE, fold=end_fold)
+    source = master(start=start, end=end, recurrence_rule='')
+    draft = ScheduleDraft.from_event(source)
+    draft.bind_primary_reference(start, end)
+    target = start.replace(minute=start_minute + 5)
+    expected_end = datetime.fromtimestamp(target.timestamp() + end.timestamp() - start.timestamp(), ZONE)
+    canonical_start, canonical_end = draft.primary_range(target, expected_end)
+    assert canonical_start.timestamp() == target.timestamp()
+    assert canonical_end.timestamp() == expected_end.timestamp()
+    # fields() also projects a temporary source before returning schedule data.
+    # Its temporary endpoints must preserve the same valid ordering.
+    assert draft.fields(target, end=expected_end)['recurrence_rule'] == ''
+
+
+def test_all_day_prototype_duration_floats_across_display_zone_clock_changes():
+    start = datetime(2027, 3, 7, tzinfo=timezone.utc)
+    end = start + timedelta(days=3)
+    source = master(start=start, end=end, all_day=True, recurrence_rule='', timezone_id='')
+    display = ZoneInfo('America/New_York')
+    draft = ScheduleDraft.from_event(source, authoring_zone=display)
+    draft.bind_primary_reference(start, end)
+    target = datetime(2027, 3, 8, tzinfo=display)
+    target_end = target + timedelta(days=3)
+    canonical_start, canonical_end = draft.primary_range(target, target_end, all_day=True)
+    assert canonical_start.date() == target.date()
+    assert canonical_end.date() == target_end.date()
+    assert canonical_start.hour == canonical_end.hour == 0
+    assert draft.fields(target, end=target_end, all_day=True)['recurrence_rule'] == ''
+
+
+@pytest.mark.parametrize('source_fold', [0, 1])
+@pytest.mark.parametrize('minutes', [0, 15])
+def test_graphical_draft_can_switch_repeated_hour_instant_without_changing_wall_clock(source_fold, minutes):
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=source_fold)
+    end = datetime.fromtimestamp(start.timestamp() + minutes * 60, ZONE)
+    source = master(start=start, end=end, recurrence_rule='FREQ=DAILY;COUNT=3')
+    draft = ScheduleDraft.from_event(source, authoring_zone=ZONE)
+    draft.use_sequence(source)
+    target = start.replace(fold=1 - source_fold)
+    target_end = datetime.fromtimestamp(target.timestamp() + minutes * 60, ZONE)
+    actual_start, actual_end = draft.primary_range(target, target_end)
+    projected = replace(source, start=actual_start, end=actual_end, **draft.fields(target, end=target_end))
+    actual = expand_event(projected, start.replace(hour=0), start.replace(hour=0) + timedelta(days=4))
+    assert len(actual) == 3
+    assert actual[0].start.timestamp() == target.timestamp()
+    assert actual[0].end.timestamp() == target_end.timestamp()
+    assert actual[0].start.astimezone(ZONE).fold == target.fold
+
+
 def visible(event):
     return expand_event(event, START - timedelta(days=60), START + timedelta(days=100))
 

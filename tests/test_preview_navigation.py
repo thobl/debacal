@@ -403,3 +403,20 @@ def test_all_day_end_is_exclusive_and_overnight_labels_show_real_end(desktop):
         preview.grid.grab()
     captions = [call.args[2] for call in draw.call_args_list]
     assert '21:00 →' in captions and '→ 09:00' in captions
+
+
+@pytest.mark.parametrize('name', ['month_label', 'position_label'])
+def test_compact_preview_captions_elide_and_keep_the_full_tooltip(desktop, name):
+    app, make = desktop
+    preview = make([master(recurrence_rule='FREQ=WEEKLY;COUNT=12')])
+    preview.resize(200, 360)
+    settle(app)
+    label = getattr(preview, name)
+    full = label.text()
+    assert full in label.toolTip()
+    assert label.fontMetrics().horizontalAdvance(full) > label.contentsRect().width()
+    with patch('debacal.compact_controls.QPainter') as painter:
+        label.paintEvent(None)
+    rendered = painter.return_value.drawText.call_args.args[-1]
+    assert rendered.endswith('…') and rendered != full
+    assert label.text() == full

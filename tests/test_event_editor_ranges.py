@@ -13,7 +13,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
 from debacal.event_dialog import EventDialog
-from debacal.models import Calendar
+from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
 
 
@@ -62,6 +62,28 @@ def test_pending_duration_adjusts_end_without_changing_start(editor):
     editor.save()
     assert editor.result_events[0].start == START
     assert editor.result_events[0].end == START + timedelta(minutes=75)
+
+
+@pytest.mark.parametrize('change', ['start', 'duration'])
+def test_pending_range_in_repeated_hour_keeps_both_endpoint_folds(editor, change):
+    start = datetime(2026, 10, 25, 2, 10, tzinfo=ZONE, fold=1)
+    end = start.replace(minute=30)
+    event = Event('fold', 'local', 'Repeated hour', start, end)
+    dialog = EventDialog(editor.calendars, start, end, event=event, preferences=Preferences(date_format='european'))
+    try:
+        if change == 'start':
+            dialog.start.setText('25.10.2026 2:15')
+        else:
+            dialog.duration.setText('25min')
+        dialog.save()
+        assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
+        saved, = dialog.result_events
+        assert saved.start.timestamp() == start.timestamp() + (300 if change == 'start' else 0)
+        assert saved.end.timestamp() == end.timestamp() + 300
+        assert saved.start.fold == saved.end.fold == 1
+    finally:
+        dialog.close()
+        dialog.deleteLater()
 
 
 def test_all_day_fields_are_inclusive_and_storage_end_is_exclusive(editor):
