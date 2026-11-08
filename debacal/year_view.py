@@ -7,7 +7,7 @@ import calendar
 import math
 
 from PySide6.QtCore import Qt, QRectF, QSize, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
@@ -16,6 +16,7 @@ from .calendar_widgets import event_tooltip, paint_colors
 from .event_style import source_outline
 from .theme import corner_radius
 from .calendar_appearance import weekend_text, weekend_fill
+from .fonts import ui_font
 
 
 class YearView(QWidget):
@@ -321,10 +322,7 @@ class YearView(QWidget):
         return result
 
     def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter):
-        font = QFont('Sans Serif')
-        font.setPointSizeF(size * self.scale)
-        font.setBold(bold)
-        painter.setFont(font)
+        painter.setFont(ui_font(self.preferences, size, bold))
         painter.setPen(color if color is not None else paint_colors(self).ink)
         painter.drawText(rect, alignment, painter.fontMetrics().elidedText(value, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))))
 

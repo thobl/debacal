@@ -120,7 +120,7 @@ without it. Existing imported definitions are retained. UTC events export offlin
 ## Workflow
 
 **Preferences** uses a category sidebar beside its settings. Appearance groups
-compact choices into Colors, Interface, Sidebar, and Calendar, with one pinned
+compact choices into Colors, Font, Interface, and Sidebar, with one pinned
 live preview. Click a preview card to choose a style; the sample changes immediately,
 while Apply saves the choices to the workspace. Colors offers light/dark modes,
 Neutral/Warm/Cool presets, and a custom palette with three choices: accent,
@@ -137,11 +137,16 @@ day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their
 clock column. Muted day captions sit below the stronger Next events heading.
 Calendars and Next events share the same section-heading style.
-Selected events use the calendar's source-colored border and vertical bar in
-both the sidebar and calendar.
+Selected events use a stronger source-colored border in both the sidebar and
+calendar. Directly selected events also have a vertical bar; companions selected
+through a series mode have the border only. Month-view event text keeps its
+normal weight.
 Choose **Appearance → Interface → Button groups** for Underlined (default) or Filled
 choices. Both styles retain the same placement and toolbar separator.
-Interface also sets text size and Square, Subtle (default), or Rounded corners.
+Interface also sets Square, Subtle (default), or Rounded corners.
+Font sets the typeface and text size consistently for controls and painted
+calendar text. Scrolling over those fields scrolls the page without changing
+their values; type a size or use the field's arrow buttons/keyboard instead.
 Sidebar sets a custom title or hides it to save space. When hidden, its Preferences
 button moves to the sidebar footer while retaining its horizontal position.
 Colors offers weekend text color (the default), background shading, or no
@@ -170,6 +175,8 @@ by calendars in the same account and remain in the secure keyring.
   Month and Day/Week views too, and can be switched off in Calendar preferences.
   Right-click a day to inspect its events or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
+  [Calendar-presence design studies](design/2026-11-year-overview/index.html)
+  compare larger tracks, tiles, and tinted day cells before changing its indicators.
 * **Select events:** click an event; Ctrl+click adds or removes events from the
   selection. Highlights keep the calendar color, with a thicker border and bar.
   Escape clears the selection. Clicking empty space clears it too.
@@ -192,7 +199,10 @@ by calendars in the same account and remain in the secure keyring.
   the hover guide uses a readable color independent of calendars. Creation drags
   show their starting time and the selected creation calendar's color.
 * **Keyboard selection:** arrow keys move selection and scroll
-  only as far as needed to reveal an event. Selection modes are `F1` for one
+  only as far as needed to reveal an event. Left/right skip empty days, cross
+  view boundaries, and choose the closest starting time on the neighbouring
+  populated day. Hidden calendars and active search filters are respected.
+  Selection modes are `F1` for one
   occurrence, `F2` for all events in its series, and `F3` for this and following.
   The highlight shows the affected events; `E`, Delete, moving, resizing and
   copying use that same selection. The mode persists until changed.
@@ -249,13 +259,17 @@ by calendars in the same account and remain in the secure keyring.
   long lists scroll. Large text in a short window can scroll the sidebar while
   sync status stays fixed.
 * **Preferences:** Calendar groups date language (system, English, German), week
-  start, date/time formats, week numbers, visible hours, and event-duration buttons.
+  start, date/time formats, week numbers, visible hours, default event duration,
+  and event-duration buttons. The default applies to keyboard and double-click
+  timed creation; dragged ranges and existing events keep their chosen duration.
+  All-day creation starts with one whole day.
   The time grid still expands for events outside the usual visible hours.
   Interface labels remain in English.
   Language changes month and weekday names independently of date/time format
   and week start. System language follows Qt's preferred UI languages, while
   regional date/time defaults follow the OS formatting locale (`LC_TIME` on
-  Linux, with `LC_ALL` taking precedence). Preferences shows the detected values.
+  Linux, with `LC_ALL` taking precedence). The language tooltip lists the detected values.
+  Field explanations and formatting samples live in tooltips.
   Appearance controls colors, text size, button styles, corners, and sidebar layout.
   Calendar sources shows account settings when an account is selected, including
   discovery, passwords, and connecting calendars. Select an individual calendar

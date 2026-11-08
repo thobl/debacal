@@ -56,6 +56,8 @@ class Preferences:
     sidebar_title: str = 'debacal'
     duration_presets_minutes: tuple[int, ...] = (30, 45, 60)
     corner_style: str = 'subtle'
+    font_family: str = 'system'
+    default_event_duration_minutes: int = 60
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -78,6 +80,10 @@ class Preferences:
             raise ValueError('Choose the system, English, or German locale for dates.')
         if type(self.font_scale) is not int or not 80 <= self.font_scale <= 140:
             raise ValueError('Text size must be between 80 and 140 percent.')
+        if (not isinstance(self.font_family, str) or not self.font_family.strip()
+                or len(self.font_family) > 120 or any(value in self.font_family for value in ('\n', '\r', '\0'))):
+            raise ValueError('Choose a font family or the system default.')
+        object.__setattr__(self, 'font_family', self.font_family.strip())
         if type(self.show_week_numbers) is not bool:
             raise ValueError('Week numbers must be enabled or disabled.')
         if (type(self.visible_start_hour) is not int or type(self.visible_end_hour) is not int
@@ -109,6 +115,8 @@ class Preferences:
                 or len(set(presets)) != len(presets)):
             raise ValueError('Choose one to six different duration buttons between 1 minute and 7 days.')
         object.__setattr__(self, 'duration_presets_minutes', tuple(presets))
+        if type(self.default_event_duration_minutes) is not int or not 1 <= self.default_event_duration_minutes <= 10080:
+            raise ValueError('Default event duration must be between 1 minute and 7 days.')
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""

@@ -159,7 +159,7 @@ class EventDialog(FormDialog):
         self._reset_schedule = False
         self._repeat_reset = False
         self._draft = ScheduleDraft.from_event()
-        self._duration = timedelta(hours=1)
+        self._duration = timedelta(minutes=self.preferences.default_event_duration_minutes)
         self._last_start, self._last_end = start, end or start + self._duration
         self._timed_range = None
         self.result_events = []
@@ -480,7 +480,7 @@ class EventDialog(FormDialog):
         if reference:
             start, end = reference.start, reference.end
         elif end is None:
-            end = start + timedelta(hours=1)
+            end = start + timedelta(minutes=self.preferences.default_event_duration_minutes)
         all_day = bool(reference and reference.all_day)
         if not all_day:
             start, end = start.astimezone(local_zone()), end.astimezone(local_zone())
@@ -590,7 +590,8 @@ class EventDialog(FormDialog):
                 previous = self._timed_range
                 clock = previous[0].timetz() if previous else time(9, tzinfo=local_zone())
                 start = datetime.combine(self._last_start.date(), clock)
-                end = start + (range_duration(*previous) if previous else timedelta(hours=1))
+                end = start + (range_duration(*previous) if previous else
+                               timedelta(minutes=self.preferences.default_event_duration_minutes))
             self._set_range(start, end)
             self._sync_ending()
             self._update_preview()

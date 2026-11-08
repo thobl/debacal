@@ -51,3 +51,42 @@ def test_calendar_duration_preferences_apply_preserve_other_categories_and_valid
         dialog.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
+
+
+@pytest.mark.parametrize('value', [0, -1, 10081, 1.5, True, '60'])
+def test_invalid_default_event_duration_is_rejected(value):
+    with pytest.raises(ValueError, match='Default event duration'):
+        Preferences(default_event_duration_minutes=value)
+
+
+def test_default_duration_persists_independently_of_duration_buttons():
+    preferences = Preferences(default_event_duration_minutes=90, duration_presets_minutes=(20, 40))
+    with Store(':memory:') as store:
+        preferences.save(store)
+        assert Preferences.load(store) == preferences
+    assert Preferences.from_dict({'default_event_duration_minutes': 0}).default_event_duration_minutes == 60
+
+
+def test_default_duration_can_be_applied_without_changing_presets_and_invalid_edits_stay_open():
+    app = QApplication.instance() or QApplication([])
+    original = Preferences(duration_presets_minutes=(15, 45), color_scheme='warm')
+    dialog = PreferencesDialog(original)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.default_duration.setText('1h 30min')
+        assert dialog.apply()
+        assert dialog.result_preferences == replace(original, default_event_duration_minutes=90)
+        for invalid in ('0', '30s', '8d'):
+            dialog.default_duration.setText(invalid)
+            assert not dialog.apply()
+            assert dialog.page_heading.text() == 'Calendar'
+            assert dialog.default_duration.hasFocus()
+            assert dialog.result_preferences.default_event_duration_minutes == 90
+        dialog.restore_defaults()
+        assert dialog.default_duration_minutes() == 60
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()

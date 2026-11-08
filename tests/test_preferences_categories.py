@@ -86,7 +86,7 @@ def test_dialog_has_categories_and_updates_date_language_preview(desktop):
     widget = dialog(desktop, bindings=BINDINGS, default_bindings=BINDINGS)
     assert [widget.categories.item(index).text() for index in range(widget.categories.count())] == ['Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts']
     widget.locale.setCurrentIndex(widget.locale.findData('de_DE'))
-    assert 'Mittwoch' in widget.preview.text() and 'Montag' in widget.preview.text()
+    assert 'Mittwoch' in widget.date_format.toolTip() and 'Montag' in widget.date_format.toolTip()
     assert widget.week_start.itemText(widget.week_start.findData(0)) == 'Montag'
     assert widget.set_category('KEYBOARD') and widget.page_heading.text() == 'Keyboard shortcuts'
     assert widget.set_category('Appearance') and widget.page_heading.text() == 'Appearance'
@@ -117,7 +117,7 @@ def test_invalid_hour_range_stays_open_and_locale_preview_remains_usable(desktop
     widget.visible_start.setValue(20)
     widget.visible_end.setValue(18)
     widget.locale.setCurrentIndex(widget.locale.findData('de_DE'))
-    assert 'Mittwoch' in widget.preview.text()
+    assert 'Mittwoch' in widget.date_format.toolTip()
     widget.save()
     assert widget.result() != QDialog.DialogCode.Accepted
     assert widget.page_heading.text() == 'Calendar' and 'hours' in widget.error.text()
@@ -158,7 +158,7 @@ def test_calendar_category_owns_functional_controls_and_selected_category_uses_s
                   widget.visible_start, widget.visible_end, widget.week_numbers, widget.duration_presets):
         assert widget.calendar_page.isAncestorOf(field)
         assert not widget.appearance_editor.isAncestorOf(field)
-    assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Interface', 'Sidebar'}
+    assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Font', 'Interface', 'Sidebar'}
     for name in ('Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts'):
         assert widget.set_category(name)
         for row in range(widget.categories.count()):

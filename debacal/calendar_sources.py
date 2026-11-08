@@ -177,8 +177,6 @@ class CalendarSourcesEditor(QWidget):
         self.discover_button = action_button('Discover calendars', self.refresh_account)
         credentials_layout.addWidget(self.discover_button, 0, Qt.AlignmentFlag.AlignLeft)
         group.addWidget(self.account_credentials)
-        self.group_hint = self._information_label()
-        group.addWidget(self.group_hint)
         self.message = QLabel()
         self.message.setWordWrap(True)
         self.message.setProperty('muted', True)
@@ -264,7 +262,8 @@ class CalendarSourcesEditor(QWidget):
                     hint = 'Subscriptions are read-only and refresh from their source. Select a subscription to change its name or color.'
                 else:
                     hint = 'These calendars are stored on this device. Select a calendar to change its name or color.'
-                self.group_hint.setText(hint)
+                self.group_summary.setToolTip(hint)
+                self.group_details.setToolTip(hint)
                 self._update_connection_summary()
             self.calendar_form.setRowVisible(self.server_name, bool(calendar and calendar.kind == 'caldav'))
             self.calendar_form.setRowVisible(self.source_url, bool(calendar and calendar.kind != 'local'))

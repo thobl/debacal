@@ -18,12 +18,12 @@ class EventColors:
     muted: str
 
 
-def paint_event_card(painter, card, colors, *, selected=False, focused=False,
+def paint_event_card(painter, card, colors, *, selected=False, primary=None, focused=False,
                      focus_color=None, scale=1, radius=4, preferences=None):
     """Paint the calendar's source-colored selection language in an event list.
 
-    Selected events use a stronger source edge and an inset vertical bar; their
-    fill never changes. Keyboard focus needs an additional cue only when its
+    Affected events use a stronger source edge. Only explicit selections add
+    an inset vertical bar; their fill never changes. Keyboard focus needs an additional cue only when its
     current row is unselected, so moving focus to a selected card adds no ring.
     """
     painter.save()
@@ -32,10 +32,10 @@ def paint_event_card(painter, card, colors, *, selected=False, focused=False,
     painter.setPen(QPen(edge, (2 if selected else 1) * scale))
     radius = corner_radius(preferences, radius)
     painter.drawRoundedRect(card, radius * scale, radius * scale)
-    if selected:
+    if selected and (selected if primary is None else primary):
         painter.fillRect(QRectF(card.left() + 3 * scale, card.top() + 4 * scale,
                                 3 * scale, max(0, card.height() - 8 * scale)), edge)
-    elif focused:
+    elif not selected and focused:
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(QColor(focus_color or colors.selected_outline),
                             2 * scale, Qt.PenStyle.DotLine))

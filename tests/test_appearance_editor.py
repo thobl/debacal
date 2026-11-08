@@ -57,7 +57,9 @@ def test_visual_options_are_real_clickable_and_keyboard_operable_controls(deskto
     app, _ = desktop
     item = dialog(desktop)
     editor = item.appearance_editor
-    assert list(editor.section_widgets) == ['Colors', 'Interface', 'Sidebar']
+    assert list(editor.section_widgets) == ['Colors', 'Font', 'Interface', 'Sidebar']
+    assert editor.section_widgets['Font'].isAncestorOf(item.font_scale)
+    assert editor.section_widgets['Font'].isAncestorOf(item.font_family)
     assert not editor.findChildren(QTabWidget)
     assert editor.section_widgets['Colors'].isAncestorOf(item.weekend_style)
     assert isinstance(item.color_scheme, VisualChoice) and not isinstance(item.color_scheme, QComboBox)

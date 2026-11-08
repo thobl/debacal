@@ -106,6 +106,7 @@ class SearchPanel(QTreeWidget):
         self.setObjectName('searchResults')
         self.store, self.preferences = store, preferences
         self.agenda_mode = False
+        self.primary_selected_ids = None
         self.setHeaderHidden(True)
         self.setColumnCount(1)
         self.setRootIsDecorated(False)
@@ -282,6 +283,16 @@ class SearchPanel(QTreeWidget):
 
     def set_selection(self, identifiers):
         self.set_row_selection(identifiers)
+
+    def set_primary_selection(self, identifiers):
+        """Keep direct row selections distinct from series-scope highlights."""
+        values = None if identifiers is None else set(identifiers)
+        if values != self.primary_selected_ids:
+            self.primary_selected_ids = values
+            self.viewport().update()
+
+    def is_primary_selected(self, identity):
+        return self.primary_selected_ids is None or identity in self.primary_selected_ids
 
     def _all_rows(self):
         def walk(item):

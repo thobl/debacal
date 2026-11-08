@@ -188,7 +188,9 @@ class AgendaResultDelegate(SearchResultDelegate):
             painter.setPen(QColor(scheme.ink if selected else scheme.muted))
             painter.drawText(QRectF(body.left(), body.top(), rail - body.left() - 6 * scale, body.height()),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, row.clock)
-        paint_event_card(painter, card, colors, selected=selected, focused=focused,
+        identity = index.data(Qt.ItemDataRole.UserRole)
+        primary = selected and (not hasattr(widget, 'is_primary_selected') or widget.is_primary_selected(identity))
+        paint_event_card(painter, card, colors, selected=selected, primary=primary, focused=focused,
                          focus_color=scheme.focus, scale=scale, preferences=widget)
         title_font = QFont(normal)
         title_font.setBold(True)

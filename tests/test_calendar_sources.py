@@ -290,7 +290,7 @@ def test_group_details_have_only_relevant_information_and_actions(desktop):
     for identity, words in [('local', 'stored on this device'), ('subscription', 'read-only')]:
         editor.sources.setCurrentItem(editor._items[identity].parent())
         assert editor.group_details.isVisible() and not editor.details.isVisible()
-        assert words in editor.group_hint.text()
+        assert words in editor.group_summary.toolTip()
         assert not editor.account_details.isVisible()
         assert not editor.account_credentials.isVisible()
         assert not editor.subscription_actions.isVisible()
@@ -364,4 +364,4 @@ def test_remote_disabled_workspace_omits_unavailable_account_controls(desktop):
     editor.sources.setCurrentItem(editor._items['work'].parent())
     assert editor.account_details.isVisible()
     assert not editor.account_credentials.isVisible()
-    assert 'unavailable' in editor.group_hint.text()
+    assert 'unavailable' in editor.group_summary.toolTip()

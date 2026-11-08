@@ -37,6 +37,7 @@ from .calendar_choice_dialog import CalendarChoiceDialog
 from .credentials import CredentialStore
 from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspace_bindings,
                         normalize_bindings, shortcut_label, shortcut_matches, shortcut_sequences)
+from .event_navigation import adjacent_event_day, event_day
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': ['E', 'Return'], 'delete_event': 'Del',
@@ -96,6 +97,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._events_revision = None
         self._range_cache = OrderedDict()
         self._filter_masters = {}
+        self._navigation_sources = None
+        self._navigation_sources_key = None
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(80)
@@ -193,6 +196,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._events_revision = revision
             self._range_cache.clear()
             self._filter_masters.clear()
+            self._navigation_sources = None
+            self._navigation_sources_key = None
             self._search_index = None
             self.results.invalidate()
         cals = self.store.list_calendars()
@@ -501,6 +506,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             start = at(self.selected_day, 0 if all_day else min(now().hour + 1, 23))
         if all_day:
             end = end or start + timedelta(days=1)
+        elif end is None:
+            end = start + timedelta(minutes=self.preferences.default_event_duration_minutes)
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
                              default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
@@ -583,12 +590,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         for widget in self.event_surfaces:
             widget.selected_id = self.selected_id
             widget.set_selection(self.selected_ids)
+            if hasattr(widget, 'set_primary_selection'):
+                widget.set_primary_selection(self.selection.ids)
             widget.set_scope(self.operation_scope())
         self.sync_search_selection()
         self.update_scope_hint()
         self.export_selection_button.setEnabled(bool(self.selection.refs))
 
     def sync_search_selection(self):
+        self.results.set_primary_selection(self._search_row_ids if self._search_selection_active else self.selection.ids)
         if self.results.agenda_mode:
             try:
                 targets = [event for _, event in self.results.selection_targets()]
@@ -1581,9 +1591,35 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if not events:
             return
         if direction in ('left', 'right') and current:
-            target = current.start.astimezone(local_zone()) + timedelta(days=-1 if direction == 'left' else 1)
-            options = [e for e in events if e.start.astimezone(local_zone()).date() == target.date()]
-            event = min(options, key=lambda e: abs((e.start - target).total_seconds())) if options else current
+            step = -1 if direction == 'left' else 1
+            zone = local_zone()
+            current_day = event_day(current, zone)
+            options = [event for event in events if (event_day(event, zone) - current_day).days * step > 0]
+            if options:
+                day = min((event_day(event, zone) for event in options), key=lambda value: (value - current_day).days * step)
+                options = [event for event in options if event_day(event, zone) == day]
+            else:
+                calendars = tuple(calendar.id for calendar in self.store.list_calendars() if calendar.visible)
+                key = self.store.events_revision(), calendars
+                if key != self._navigation_sources_key:
+                    self._navigation_sources = self.store.list_events(calendar_ids=calendars)
+                    self._navigation_sources_key = key
+                query = self.search.text().strip() if self.filter_search.isChecked() else ''
+                matches = lambda value, master: not query or event_matches_query(value, query, master)
+                day = adjacent_event_day(self._navigation_sources, current_day, step, zone, matches)
+                if day is None:
+                    return
+                lower = at(day) - timedelta(days=2)
+                upper = at(day) + timedelta(days=3)
+                options = [event for event in self.filter_calendar_events(self.store.query_occurrences(lower, upper, calendars))
+                           if event_day(event, zone) == day]
+            if not options:
+                return
+            target = current.start.astimezone(zone).replace(year=day.year, month=day.month, day=day.day)
+            event = min(options, key=lambda value: (abs((value.start - target).total_seconds()), value.id))
+            if day not in self.dates():
+                self.anchor = day
+                self.refresh()
         else:
             ids = [e.id for e in events]
             index = ids.index(self.selected_id) if self.selected_id in ids else (-1 if direction == 'down' else 0)

@@ -6,10 +6,11 @@ from PySide6.QtGui import QColor, QPalette
 
 from .theme import corner_radius, scheme_for
 from .control_glyphs import checkmark_glyph, control_glyphs
+from .fonts import resolved_font_family
 
 
 _BASE_STYLE = Template("""
-QWidget { font-family: "Sans Serif"; font-size: 13px; color: $ink; }
+QWidget { font-family: "$font_family"; font-size: 13px; color: $ink; }
 QMainWindow, QDialog { background: $background; }
 QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter, QWidget#sidebarOverview { background: $sidebar; }
 QWidget#sidebarShell { border-right: 1px solid $line; }
@@ -125,6 +126,7 @@ def stylesheet(font_scale=100, color_scheme='neutral'):
     up, down = control_glyphs(scheme.ink)
     disabled_up, disabled_down = control_glyphs(scheme.disabled)
     style = _BASE_STYLE.substitute(asdict(scheme) | {
+        'font_family': resolved_font_family(color_scheme).replace('\\', '\\\\').replace('"', '\\"'),
         'arrow_up': up, 'arrow_down': down, 'arrow_disabled_up': disabled_up, 'arrow_disabled_down': disabled_down,
         'checkmark': checkmark_glyph(scheme.on_accent), 'checkmark_disabled': checkmark_glyph(scheme.disabled)})
     style = re.sub(r'(border(?:-[a-z]+)*-radius:) (\d+)px',

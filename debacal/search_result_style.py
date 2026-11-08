@@ -38,6 +38,8 @@ class SearchResultDelegate(QStyledItemDelegate):
         scale = self._scale(widget)
         colors = event_colors(index.data(self.color_role) or scheme.accent, scheme)
         selected = bool(styled.state & QStyle.StateFlag.State_Selected)
+        identity = index.data(Qt.ItemDataRole.UserRole)
+        primary = selected and (not hasattr(widget, 'is_primary_selected') or widget.is_primary_selected(identity))
         focused = bool(styled.state & QStyle.StateFlag.State_HasFocus
                        and widget and widget.hasFocus())
         fold = (disclosure_rect(option.rect, scale)
@@ -48,7 +50,7 @@ class SearchResultDelegate(QStyledItemDelegate):
 
         painter.save()
         painter.setClipRect(option.rect)
-        paint_event_card(painter, card, colors, selected=selected, focused=focused,
+        paint_event_card(painter, card, colors, selected=selected, primary=primary, focused=focused,
                          focus_color=scheme.focus, scale=scale, preferences=widget)
 
         left, width = card.left() + 8 * scale, max(0, card.width() - 16 * scale)

@@ -85,22 +85,14 @@ class PreferencesDialog(QDialog):
             self.locale.addItem(name, value)
         self.locale.setCurrentIndex(self.locale.findData(preferences.locale_name))
         form.addRow('Language for dates', self.locale)
-        note = QLabel('Changes month and weekday names. Date format, time format, and start of week are independent. '
-                      'Interface labels remain in English.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        form.addRow(note)
         language = _system_language_locale()
         language_name = QLocale.languageToString(language.language())
-        self.system_locale_note = QLabel('System language: ' + language_name + '. Regional date/time settings: '
-                                        + Preferences().format_date(date(2026, 11, 4)) + ' · '
-                                        + Preferences().format_time(datetime(2026, 11, 4, 14, 5)) + '.')
-        self.system_locale_note.setWordWrap(True)
-        self.system_locale_note.setProperty('muted', True)
-        self.system_locale_note.setToolTip('System language follows the operating system’s preferred UI languages. '
-                                          'On Linux, LANGUAGE/LC_MESSAGES/LANG determine language, while LC_TIME '
-                                          'determines regional dates and times; LC_ALL overrides locale categories.')
-        form.addRow(self.system_locale_note)
+        self.locale.setToolTip('Changes month and weekday names independently of date/time format and start of week. '
+                               'Interface labels remain in English.\nSystem language: ' + language_name
+                               + '. Regional defaults: ' + Preferences().format_date(date(2026, 11, 4)) + ' · '
+                               + Preferences().format_time(datetime(2026, 11, 4, 14, 5)) + '.\n'
+                               'On Linux, LANGUAGE/LC_MESSAGES/LANG determine language and LC_TIME determines '
+                               'regional dates and times; LC_ALL overrides locale categories.')
         self.week_start = QComboBox()
         self.week_start.addItem('System default', 'system')
         for day in range(7):
@@ -117,11 +109,6 @@ class PreferencesDialog(QDialog):
         self.time_format.setCurrentIndex(self.time_format.findData(preferences.time_format))
         form.addRow('Date format', self.date_format)
         form.addRow('Time format', self.time_format)
-        self.preview = QLabel()
-        self.preview.setWordWrap(True)
-        self.preview.setProperty('muted', True)
-        calendar_layout.addWidget(self.preview)
-
         form = self.calendar_section(calendar_layout, 'Week and visible hours')
         form.addRow('Start of week', self.week_start)
         self.week_numbers = QCheckBox('Show week numbers')
@@ -147,26 +134,31 @@ class PreferencesDialog(QDialog):
         self.visible_end.setToolTip(self.visible_start.toolTip())
 
         form = self.calendar_section(calendar_layout, 'Event durations')
+        self.default_duration = QLineEdit(format_duration(timedelta(minutes=preferences.default_event_duration_minutes)))
+        self.default_duration.setAccessibleName('Default event duration')
+        self.default_duration.setMaximumWidth(round(180 * preferences.font_scale / 100))
+        self.default_duration.setPlaceholderText('1h')
+        self.default_duration.setToolTip('Used for a new timed event when no end is chosen. Dragged ranges keep their '
+                                        'chosen duration; all-day events default to one day.')
+        form.addRow('Default duration', self.default_duration)
         self.duration_presets = QLineEdit(', '.join(format_duration(timedelta(minutes=value))
                                                    for value in preferences.duration_presets_minutes))
         self.duration_presets.setAccessibleName('Duration buttons')
         self.duration_presets.setPlaceholderText('30min, 45min, 1h')
+        self.duration_presets.setToolTip('Separate the duration buttons with commas, for example 30min, 45min, 1h. '
+                                        'Choosing a button while editing changes that event’s duration.')
         form.addRow('Duration buttons', self.duration_presets)
-        note = QLabel('Separate the durations with commas. These buttons do not change the default length of a new event.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        calendar_layout.addWidget(note)
         calendar_layout.addStretch()
 
         _, appearance_layout, _ = self.category('Appearance', scrollable=False)
         self.appearance_editor = AppearanceEditor(preferences)
         appearance_layout.addWidget(self.appearance_editor)
         for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
-                     'control_style', 'agenda_style', 'weekend_style', 'font_scale',
+                     'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'font_family',
                      'show_sidebar_title', 'sidebar_title', 'corner_style'):
             setattr(self, name, getattr(self.appearance_editor, name))
 
-        _, source_layout, _ = self.category('Calendar sources')
+        source_page, source_layout, _ = self.category('Calendar sources')
         self.source_editor = None
         store = store or getattr(parent, 'store', None)
         if store is not None:
@@ -178,10 +170,7 @@ class PreferencesDialog(QDialog):
             self.finished.connect(self.source_editor.finish)
             source_layout.addWidget(self.source_editor)
         else:
-            note = QLabel('Open Preferences from a calendar workspace to manage its sources.')
-            note.setWordWrap(True)
-            note.setProperty('muted', True)
-            source_layout.addWidget(note)
+            source_page.setToolTip('Calendar sources are managed from an open calendar workspace.')
             source_layout.addStretch()
 
         _, sync_layout, form = self.category('Sync')
@@ -200,10 +189,8 @@ class PreferencesDialog(QDialog):
         form.addRow('Automatic syncing', self.auto_sync)
         form.addRow('Sync every', self.sync_interval)
         form.addRow('Conflict alerts', self.conflict_notifications)
-        note = QLabel('Conflicts can always be reviewed in the app. Desktop alerts use your operating system’s notification settings.')
-        note.setWordWrap(True)
-        note.setProperty('muted', True)
-        sync_layout.addWidget(note)
+        self.conflict_notifications.setToolTip('Conflicts are always available in the app. Desktop alerts also follow '
+                                              'your operating system’s notification settings.')
         sync_layout.addStretch()
 
         self.shortcut_editor = KeyboardShortcutsEditor(bindings, default_bindings)
@@ -346,11 +333,19 @@ class PreferencesDialog(QDialog):
         minutes = tuple(int(value.total_seconds() // 60) for value in values)
         return Preferences(duration_presets_minutes=minutes).duration_presets_minutes
 
+    def default_duration_minutes(self):
+        value = parse_duration(self.default_duration.text())
+        if value % timedelta(minutes=1):
+            raise ValueError('Default event duration must use whole minutes.')
+        minutes = int(value.total_seconds() // 60)
+        return Preferences(default_event_duration_minutes=minutes).default_event_duration_minutes
+
     def value(self):
         return Preferences(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
                            time_format=self.time_format.currentData(), conflict_notifications=self.conflict_notifications.currentData(),
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
                            locale_name=self.locale.currentData(), duration_presets_minutes=self.duration_values(),
+                           default_event_duration_minutes=self.default_duration_minutes(),
                            show_week_numbers=self.week_numbers.isChecked(),
                            visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value(),
                            **self.appearance_editor.values())
@@ -365,9 +360,12 @@ class PreferencesDialog(QDialog):
         preferences = Preferences(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
                                   time_format=self.time_format.currentData(), locale_name=self.locale.currentData())
         day = date(2026, 11, 4)
-        self.preview.setText(preferences.weekday_name(day, short=False) + ', ' + preferences.format_date(day) + ' · '
-                             + preferences.format_time(datetime(2026, 11, 4, 14, 5)) + '\nWeek begins '
-                             + preferences.weekday_name(preferences.first_weekday, short=False) + '.')
+        sample = (preferences.weekday_name(day, short=False) + ', ' + preferences.format_date(day) + ' · '
+                  + preferences.format_time(datetime(2026, 11, 4, 14, 5)) + '\nWeek begins '
+                  + preferences.weekday_name(preferences.first_weekday, short=False) + '.')
+        self.date_format.setToolTip(sample)
+        self.time_format.setToolTip(sample)
+        self.week_start.setToolTip('Week begins ' + preferences.weekday_name(preferences.first_weekday, short=False) + '.')
         try:
             preferences = replace(preferences, show_week_numbers=self.week_numbers.isChecked(),
                                   visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value())
@@ -384,6 +382,7 @@ class PreferencesDialog(QDialog):
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(Preferences().visible_start_hour)
         self.visible_end.setValue(Preferences().visible_end_hour)
+        self.default_duration.setText(format_duration(timedelta(minutes=Preferences().default_event_duration_minutes)))
         self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value))
                                                for value in Preferences().duration_presets_minutes))
         self.appearance_editor.set_preferences(Preferences())
@@ -395,12 +394,20 @@ class PreferencesDialog(QDialog):
         try:
             preferences = self.value()
         except ValueError as error:
+            invalid_duration = None
             try:
-                self.duration_values()
+                self.default_duration_minutes()
             except ValueError:
+                invalid_duration = self.default_duration
+            if invalid_duration is None:
+                try:
+                    self.duration_values()
+                except ValueError:
+                    invalid_duration = self.duration_presets
+            if invalid_duration is not None:
                 self.set_category('Calendar')
-                self.duration_presets.setFocus()
-                self.pages.currentWidget().ensureWidgetVisible(self.duration_presets)
+                invalid_duration.setFocus()
+                self.pages.currentWidget().ensureWidgetVisible(invalid_duration)
             else:
                 if self.visible_start.value() >= self.visible_end.value():
                     self.set_category('Calendar')

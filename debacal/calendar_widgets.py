@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetricsF
+from PySide6.QtGui import QColor, QPainter, QPen, QFontMetricsF
 from PySide6.QtWidgets import QWidget, QMenu, QApplication
 
 from .layout import layout_events
@@ -19,6 +19,7 @@ from .timeutil import local_zone, now
 from .theme import corner_radius, scheme_for
 from .event_style import event_colors, source_outline
 from .calendar_appearance import weekend_text, weekend_fill
+from .fonts import ui_font
 
 # Default aliases remain available to standalone painter callers. Live surfaces
 # resolve their own preferences through paint_colors rather than mutating these.
@@ -40,8 +41,7 @@ WEEK_NUMBER_SIZE = 13
 def calendar_gutter(preferences):
     """One compact axis for every day column, including longer 12-hour times."""
     scale = preferences.font_scale / 100
-    font = QFont('Sans Serif')
-    font.setPointSizeF(AXIS_SIZE * scale)
+    font = ui_font(preferences, AXIS_SIZE)
     metrics = QFontMetricsF(font)
     width = max(metrics.horizontalAdvance(preferences.format_time(time(hour))) for hour in range(24))
     return math.ceil(max(44 * scale, width + 12 * scale))
@@ -59,11 +59,11 @@ def day_number_rect(left, width, scale):
     return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
 
 
-def week_number_rect(left, width, scale):
+def week_number_rect(left, width, scale, preferences=None):
     """Use a quieter week number while retaining the day-number baseline."""
     metrics = []
     for size in (DAY_NUMBER_SIZE, WEEK_NUMBER_SIZE):
-        font = QFont('Sans Serif')
+        font = ui_font(preferences)
         font.setPointSizeF(size * scale)
         font.setBold(True)
         metrics.append(QFontMetricsF(font))
@@ -163,7 +163,11 @@ def text(painter, rect, value, color=None, size=10, bold=False, align=None):
     if rect.width() <= 0 or rect.height() <= 0:
         return
     painter.setPen(color if color is not None else paint_colors(painter.device()).ink)
-    font = QFont('Sans Serif')
+    device = painter.device()
+    preferences = getattr(device, 'preferences', None)
+    if preferences is None:
+        preferences = getattr(getattr(device, 'preview', None), 'preferences', None)
+    font = ui_font(preferences)
     font.setPointSizeF(size * display_scale(painter.device()))
     font.setBold(bold)
     painter.setFont(font)
@@ -312,7 +316,7 @@ class DayHeader(QWidget):
         week = self.week_rect()
         if week is not None:
             paint_week_caption(p, self.gutter, scale, colors.muted)
-            text(p, week_number_rect(week.left(), week.width(), scale),
+            text(p, week_number_rect(week.left(), week.width(), scale, self.preferences),
                  str(self.preferences.week_number(self.days[0])), colors.accent, WEEK_NUMBER_SIZE, True,
                  Qt.AlignmentFlag.AlignCenter)
         for i, day in enumerate(self.days):
@@ -362,6 +366,7 @@ class CalendarCanvas(QWidget):
         self.days, self.events, self.calendars = [], [], {}
         self.selected_id = None
         self.selected_ids = set()
+        self.primary_selected_ids = None
         self.selected_day = None
         self.creation_calendar = None
         self.scope = 'single'
@@ -414,6 +419,18 @@ class CalendarCanvas(QWidget):
     def set_scope(self, scope):
         self.scope = scope if scope in ('single', 'group', 'future') else 'single'
         self.update()
+
+    def set_primary_selection(self, ids):
+        """Mark explicit selections separately from scope-expanded companions."""
+        values = None if ids is None else set(ids)
+        if values != self.primary_selected_ids:
+            self.primary_selected_ids = values
+            self.update()
+
+    def is_primary_selected(self, identity):
+        # Standalone callers supply only direct selected IDs. The workspace
+        # explicitly supplies primaries when it expands a series selection.
+        return self.primary_selected_ids is None or identity in self.primary_selected_ids
 
     set_creation_calendar = DayHeader.set_creation_calendar
     creation_color = DayHeader.creation_color
@@ -821,7 +838,7 @@ class CalendarCanvas(QWidget):
         p.setPen(QPen(edge, 2 if selected or preview else 1,
                       Qt.PenStyle.DashLine if preview or event.candidate else Qt.PenStyle.SolidLine))
         p.drawRoundedRect(rect, corner_radius(self, 5), corner_radius(self, 5))
-        if selected:
+        if selected and self.is_primary_selected(event.id):
             p.fillRect(QRectF(rect.left() + 3, rect.top() + 5, 3, max(3, rect.height() - 10)), edge)
         # QPainter draws no text in nonpositive label rectangles. Dense
         # overlap columns still keep their frames, but need no font/layout work.
@@ -1063,7 +1080,7 @@ class CalendarCanvas(QWidget):
         else:
             _, minute = self.position(point)
             start = at(day) + timedelta(minutes=minute)
-            self.create_requested.emit(start, start + timedelta(hours=1))
+            self.create_requested.emit(start, start + timedelta(minutes=self.preferences.default_event_duration_minutes))
         self.update()
 
     def contextMenuEvent(self, event):
@@ -1110,6 +1127,7 @@ class MonthCanvas(QWidget):
         self.events, self.calendars, self.hits = [], {}, []
         self.selected_id = None
         self.selected_ids = set()
+        self.primary_selected_ids = None
         self.selected_day = None
         self.creation_calendar = None
         self.scope = 'single'
@@ -1158,6 +1176,8 @@ class MonthCanvas(QWidget):
         self.update()
 
     set_selection = CalendarCanvas.set_selection
+    set_primary_selection = CalendarCanvas.set_primary_selection
+    is_primary_selected = CalendarCanvas.is_primary_selected
     set_scope = CalendarCanvas.set_scope
     set_creation_calendar = CalendarCanvas.set_creation_calendar
     creation_color = CalendarCanvas.creation_color
@@ -1209,7 +1229,8 @@ class MonthCanvas(QWidget):
                        if selected or preview or item.all_day else Qt.PenStyle.NoPen)
         painter.setBrush(QColor(style.fill))
         painter.drawRoundedRect(rect, corner_radius(self, 3), corner_radius(self, 3))
-        if selected:
+        primary = selected and self.is_primary_selected(item.id)
+        if primary:
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
         ink = QColor(style.ink)
         if before:
@@ -1217,12 +1238,12 @@ class MonthCanvas(QWidget):
         if after:
             text(painter, QRectF(rect.right() - 18, rect.top(), 12, rect.height()), '›', ink, 10, True)
         label = ('' if item.all_day else self.preferences.format_time(item.start.astimezone(local_zone())) + ' ') + item.title
-        label_rect = rect.adjusted(21 if before else 8 if selected else 5, 0, -21 if after else -3, 0)
+        label_rect = rect.adjusted(21 if before else 8, 0, -21 if after else -3, 0)
         if confirm is not None:
             label_rect.setRight(confirm.left() - 4 * display_scale(self))
         painter.save()
         painter.setClipRect(label_rect)
-        text(painter, label_rect, label, ink, 8, selected or preview)
+        text(painter, label_rect, label, ink, 8)
         painter.restore()
         self.paint_confirmation(painter, confirm, item)
 
@@ -1477,7 +1498,7 @@ class MonthCanvas(QWidget):
             self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
         else:
             start = at(day, 9)
-            self.create_requested.emit(start, start + timedelta(hours=1))
+            self.create_requested.emit(start, start + timedelta(minutes=self.preferences.default_event_duration_minutes))
 
     def mouseMoveEvent(self, event):
         point = event.position()
@@ -1667,7 +1688,7 @@ class AllDayCanvas(MonthCanvas):
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine))
         painter.setBrush(QColor(style.fill))
         painter.drawRoundedRect(rect, corner_radius(self, 4), corner_radius(self, 4))
-        if selected:
+        if selected and self.is_primary_selected(item.id):
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
         first, last = self.days[0], self.days[-1] + timedelta(days=1)
         before, after = item.start.date() < first, item.end.date() > last
