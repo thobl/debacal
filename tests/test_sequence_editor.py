@@ -58,7 +58,7 @@ def occurrences(store, master):
 def test_user_mixed_date_example_preserves_fixed_event_clock_and_duration(editor):
     store, create, _ = editor
     dialog = create()
-    literal = '13. +1 18. 2. 3.2. +2'
+    literal = '+0d 13. +1w 18. 2. 3.2. +2w'
     dialog.pattern.setText(literal)
     master = save(dialog)
     store.apply('Create sequence', [master])
@@ -77,7 +77,7 @@ def test_user_mixed_date_example_preserves_fixed_event_clock_and_duration(editor
 def test_time_only_sequence_keeps_multiple_daily_slots_and_edits_from_fixed_start(editor):
     store, create, _ = editor
     dialog = create()
-    literal = '10:00 11:00 9:00 10:00 11:00'
+    literal = '+0d 10:00 11:00 9:00 10:00 11:00'
     dialog.pattern.setText(literal)
     master = save(dialog)
     store.apply('Create daily choices', [master])
@@ -103,7 +103,7 @@ def test_time_only_sequence_keeps_multiple_daily_slots_and_edits_from_fixed_star
     edit.scope.setCurrentIndex(edit.scope.findData('group'))
     assert edit.value(edit.start) == START
     assert edit.title.text() == 'A sequence'
-    edit.pattern.setText('10:30 +1d 9:00')
+    edit.pattern.setText('+0d 10:30 +1d 9:00')
     changed = save(edit)
     assert edit.schedule_replacement
     store.edit_series(edit.edit_reference, changed, replace_schedule=True)
@@ -113,10 +113,10 @@ def test_time_only_sequence_keeps_multiple_daily_slots_and_edits_from_fixed_star
     assert store.get_event(master.id) == master
 
 
-def test_relative_hour_minute_sequence_saves_syncs_and_reopens_without_rewriting(editor):
+def test_explicit_clock_sequence_saves_syncs_and_reopens_without_rewriting(editor):
     store, create, _ = editor
     dialog = create()
-    literal = '+2h +30min +1d +45min'
+    literal = '+0d 11:00 11:30 +1d 12:15'
     dialog.pattern.setText(literal)
     expected = expand_sequence(literal, START)
     master = save(dialog)
@@ -133,10 +133,10 @@ def test_relative_hour_minute_sequence_saves_syncs_and_reopens_without_rewriting
 
 
 @pytest.mark.parametrize('start, text, expected_rule', [
-    (START, '4*+2', 'FREQ=WEEKLY;INTERVAL=2;COUNT=5'),
-    (START, '4*+2h', 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
-    (START, '4*+15min', 'FREQ=MINUTELY;INTERVAL=15;COUNT=5'),
-    (datetime(2027, 1, 1, 9, tzinfo=ZONE), '4*1.', 'FREQ=MONTHLY;INTERVAL=1;COUNT=5'),
+    (START, '+0d 4*+2w', 'FREQ=WEEKLY;INTERVAL=2;COUNT=5'),
+    (START, '+0d 11:00 13:00 15:00 17:00', 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
+    (START, '+0d 9:15 9:30 9:45 10:00', 'FREQ=MINUTELY;INTERVAL=15;COUNT=5'),
+    (datetime(2027, 1, 1, 9, tzinfo=ZONE), '+0d 4*1.', 'FREQ=MONTHLY;INTERVAL=1;COUNT=5'),
 ])
 def test_regular_authored_sequences_use_standard_rules_and_reopen_as_text(editor, start, text, expected_rule):
     store, create, _ = editor
@@ -163,7 +163,7 @@ def test_regular_authored_sequences_use_standard_rules_and_reopen_as_text(editor
 def test_actual_workspace_group_edit_uses_master_reference_from_later_occurrence(editor):
     store, create, widgets = editor
     dialog = create()
-    dialog.pattern.setText('10:00 +1d 9:00')
+    dialog.pattern.setText('+0d 10:00 +1d 9:00')
     master = save(dialog)
     store.apply('Create sequence', [master])
     before = occurrences(store, master)
@@ -189,7 +189,7 @@ def test_all_day_clocks_are_rejected_and_generated_duration_resolves_dst_gap(edi
     store, create, _ = editor
     dialog = create()
     dialog.all_day.setChecked(True)
-    dialog.pattern.setText('2*+1d')
+    dialog.pattern.setText('+0d 2*+1d')
     master = save(dialog)
     store.apply('Create all-day sequence', [master])
     assert len(occurrences(store, master)) == 3
@@ -199,7 +199,7 @@ def test_all_day_clocks_are_rejected_and_generated_duration_resolves_dst_gap(edi
     assert not dialog.result_events and 'timed event' in dialog.error.text()
     gap = create(datetime(2027, 3, 27, 1, 30, tzinfo=ZONE))
     gap.end.setDateTime(gap.start.dateTime().addSecs(3600))
-    gap.pattern.setText('+1d')  # A generated end follows standard timezone interpretation.
+    gap.pattern.setText('+0d +1d')  # A generated end follows standard timezone interpretation.
     gap.save()
     assert gap.result_events and not gap.error.text()
     store.apply('Create range crossing clock change', gap.result_events)
@@ -239,18 +239,17 @@ def test_stale_authoring_text_never_replaces_times_changed_by_another_client(edi
     assert [value.start for value in occurrences(store, master)] == [START, first, second, extra_day]
 
 
-def test_legacy_authored_count_rule_migrates_when_moved_without_losing_dates(editor):
+def test_imported_count_rule_moves_without_losing_dates(editor):
     store, create, _ = editor
     initial = datetime(2026, 11, 9, 9, tzinfo=ZONE)
-    master = Event('legacy-rule', 'local', 'Old regular custom series', initial, initial + timedelta(minutes=90),
-                   recurrence_rule='FREQ=WEEKLY;INTERVAL=2;COUNT=3', schedule_expression='3(Mo X)',
-                   expression_anchor='2026-11-04')
-    store.apply('Import old custom rule', [master])
+    master = Event('imported-rule', 'local', 'Imported regular series', initial, initial + timedelta(minutes=90),
+                   recurrence_rule='FREQ=WEEKLY;INTERVAL=2;COUNT=3')
+    store.apply('Import regular rule', [master])
     selected = occurrences(store, master)[1]
     dialog = create(event=selected, series=master, edit_scope='group')
     assert len(dialog.sequence_starts()) == 3
-    assert 'Mo' not in dialog.pattern.text()
-    assert dialog.build_events()[0].schedule_syntax == 1
+    assert dialog.pattern.text()
+    assert dialog.build_events()[0].schedule_syntax == master.schedule_syntax
     dialog.start.setDateTime(dialog.start.dateTime().addDays(1))
     changed = save(dialog)
     store.edit_series(dialog.edit_reference, changed, replace_schedule=dialog.schedule_replacement)
@@ -268,7 +267,7 @@ def test_changing_imported_utc_event_to_local_custom_rule_preserves_clock_across
     initial = datetime(2027, 3, 20, 8, tzinfo=ZoneInfo('UTC'))
     imported = Event('utc', 'local', 'Imported UTC event', initial, initial + timedelta(minutes=90))
     dialog = create(event=imported)
-    dialog.pattern.setText('3*+1')
+    dialog.pattern.setText('+0d 3*+1w')
     master = save(dialog)
     store.apply('Create local custom rule', [master])
     assert master.timezone_id == 'Europe/Berlin'

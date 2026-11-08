@@ -11,6 +11,7 @@ from debacal.event_schedule import (
 )
 from debacal.models import Event
 from debacal.patterns import expand_sequence
+from debacal.schedule_authoring import expression_matches
 from debacal.recurrence import (
     RecurrenceError, base_schedule_starts, expand_event, occurrence,
     occurrence_id, recurrence_key, schedule_fields, updated_series,
@@ -55,6 +56,17 @@ def test_month_and_leap_year_rules_skip_missing_dates_instead_of_clipping():
     assert until_to_count(leap, 'YEARLY', 1, date(2035, 12, 31)) == 2
 
 
+def test_switching_from_clamped_monthly_to_daily_clears_the_inapplicable_option():
+    draft = ScheduleDraft.from_event()
+    draft.set_regular('MONTHLY', count=6, clamp=True)
+    assert draft.clamp
+    draft.set_regular('DAILY', count=6, clamp=draft.clamp)
+    assert not draft.clamp
+    event = master(start=START.replace(day=30), end=START.replace(day=30) + timedelta(hours=1),
+                   **draft.fields(START.replace(day=30)))
+    assert len(visible(event)) == 6
+
+
 def test_large_common_counts_use_constant_work_and_supported_years_are_checked():
     with patch('debacal.regular_schedule.rrulestr', side_effect=AssertionError('should use date arithmetic')):
         end = count_to_until(START, 'DAILY', 1, 100000)
@@ -76,19 +88,20 @@ def test_regular_controls_keep_multi_weekdays_and_emit_date_until_for_all_day():
     assert timed.endswith('UNTIL=20261107T225959Z')
 
 
-def test_unsupported_constraints_remain_advanced_and_source_is_not_rewritten():
+def test_arbitrary_constraints_have_editable_text_and_source_is_not_rewritten():
     source = master(recurrence_rule='FREQ=MONTHLY;BYDAY=1WE;COUNT=8',
                     recurrence_dates=((START + timedelta(days=3)).isoformat(),),
                     excluded_dates=((START + timedelta(days=28)).isoformat(),))
     draft = ScheduleDraft.from_event(source)
-    assert draft.kind == 'advanced' and not draft.dirty
+    assert draft.kind == 'custom' and draft.expression and not draft.dirty
+    assert expression_matches(source, draft.expression)
     fields = draft.fields(source.start)
     for name in ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'timezone_id'):
         assert fields[name] == getattr(source, name)
 
 
 def test_authored_regular_literal_survives_classification_and_plain_edits():
-    literal = '  4*(+2)  '
+    literal = '  +0d 4*(+2w)  '
     starts = expand_sequence(literal, START)
     source = master(**schedule_fields(starts), schedule_expression=literal,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
@@ -97,13 +110,13 @@ def test_authored_regular_literal_survives_classification_and_plain_edits():
     assert draft.expression == literal and not draft.configuration_changed
     fields = draft.fields(source.start)
     assert fields['schedule_expression'] == literal and fields['recurrence_rule'] == source.recurrence_rule
-    draft.set_expression(' 3*+1d ', START)
-    assert draft.kind == 'DAILY' and draft.count == 4 and draft.expression == ' 3*+1d '
-    assert draft.fields(START)['schedule_expression'] == ' 3*+1d '
+    draft.set_expression(' +0d 3*+1d ', START)
+    assert draft.kind == 'DAILY' and draft.count == 4 and draft.expression == ' +0d 3*+1d '
+    assert draft.fields(START)['schedule_expression'] == ' +0d 3*+1d '
 
 
 def test_out_of_order_authored_dates_keep_their_literal_on_load():
-    literal = ' +2  1.1.2025 +1 '
+    literal = ' +0d +2w  1.1.2025 +1w '
     starts = expand_sequence(literal, START)
     source = master(**schedule_fields(starts), schedule_expression=literal,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
@@ -113,7 +126,7 @@ def test_out_of_order_authored_dates_keep_their_literal_on_load():
 
 
 def test_loaded_custom_primary_move_shifts_concrete_dates_and_rewrites_absolute_text_once():
-    literal = '10:30-13. +1'
+    literal = '+0d 10:30-13. +1w'
     starts = expand_sequence(literal, START)
     source = master(**schedule_fields(starts), schedule_expression=literal,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
@@ -133,7 +146,7 @@ def test_new_custom_authoring_uses_explicit_display_zone_and_keeps_untouched_tim
     utc_start = datetime(2026, 11, 4, 23, tzinfo=timezone.utc)
     source = master(start=utc_start, end=utc_start + timedelta(hours=1), recurrence_rule='')
     draft = ScheduleDraft.from_event(source, authoring_zone=ZONE)
-    draft.set_expression('+1d 15:00', utc_start)
+    draft.set_expression('+0d +1d 15:00', utc_start)
     values = draft.starts(utc_start)
     assert values[0].date() == date(2026, 11, 5) and values[0].hour == 0
     assert all(value.tzinfo == ZONE for value in values)
@@ -267,16 +280,17 @@ def test_replacement_projects_unchanged_exceptions_but_preserves_changed_ranges(
     assert recurrence_key(second) not in projected.recurrence_overrides
 
 
-def test_removing_last_precise_date_never_reloads_the_unchanged_blank_expression():
+def test_removing_last_precise_date_keeps_a_complete_definition():
     start = START.replace(second=30, microsecond=123456)
     extra = (start + timedelta(days=1)).replace(second=59, microsecond=234567)
     source = master(start=start, end=start + timedelta(minutes=45), recurrence_rule='',
                     recurrence_dates=(extra.isoformat(),))
     draft = ScheduleDraft.from_event(source)
-    assert draft.expression == ''
+    assert draft.expression and expression_matches(source, draft.expression)
     changed = draft.toggle_date(source, extra.date())
     assert draft.starts(start) == [start]
-    assert not changed.recurrence_dates
+    assert expression_matches(changed, changed.schedule_expression)
+    assert not any(item.start == extra for item in visible(changed))
     assert changed.start == start and changed.end == source.end
 
 
@@ -303,7 +317,8 @@ def test_calendar_toggle_uses_display_date_but_retains_authoring_clock_across_ds
     restored = draft.toggle_date(changed, date(2027, 3, 29), display_zone=timezone.utc)
     assert [value.start for value in expand_event(restored, primary, primary + timedelta(days=10))] == [primary]
     initial = draft.toggle_date(restored, date(2027, 3, 25), display_zone=timezone.utc)
-    assert [value.start for value in expand_event(initial, primary, primary + timedelta(days=10))] == [primary]
+    assert [value.start for value in expand_event(initial, primary, primary + timedelta(days=10))] == []
+    assert expression_matches(initial, initial.schedule_expression)
 
 
 @pytest.mark.parametrize('rule', ['FREQ=DAILY;COUNT=6', 'FREQ=DAILY'])
@@ -327,7 +342,7 @@ def test_edit_occurrence_keeps_its_nominal_identity_and_custom_duration(rule):
     assert not changed_again.excluded_dates and not changed_again.recurrence_dates
 
 
-def test_primary_move_migrates_legacy_authoring_metadata_without_changing_dates():
+def test_obsolete_annotation_is_ignored_and_canonical_dates_define_moves():
     source = master(recurrence_rule='FREQ=WEEKLY;INTERVAL=2;COUNT=3',
                     schedule_expression='3(We X)', expression_anchor='2026-11-04', schedule_syntax=1)
     draft = ScheduleDraft.from_event(source)
@@ -338,17 +353,23 @@ def test_primary_move_migrates_legacy_authoring_metadata_without_changing_dates(
     assert instants(expand_sequence(changed.schedule_expression, changed.start)) == instants(base_schedule_starts(changed))
 
 
-def test_pinned_primary_click_preserves_authored_literal_and_clean_state():
-    text = '  4*(+2)  '
+def test_reference_occurrence_can_be_removed_and_restored_without_losing_reference():
+    text = '  +0d 4*(+2w)  '
     source = master(**schedule_fields(expand_sequence(text, START)), schedule_expression=text,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
     draft = ScheduleDraft.from_event(source)
     changed = draft.toggle_date(source, source.start.date())
-    assert changed is source and draft.expression == text and not draft.configuration_changed
+    assert changed.start == source.start and draft.configuration_changed
+    assert recurrence_key(START) in changed.excluded_dates
+    assert expression_matches(changed, changed.schedule_expression)
+    assert all(item.start != START for item in visible(changed))
+    restored = draft.toggle_date(changed, START.date())
+    assert any(item.start == START for item in visible(restored))
+    assert expression_matches(restored, restored.schedule_expression)
 
 
 def test_custom_occurrence_range_updates_literal_and_receives_later_common_field_changes():
-    text = '  4*(+2)  '
+    text = '  +0d 4*(+2w)  '
     source = master(**schedule_fields(expand_sequence(text, START)), schedule_expression=text,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
     selected = visible(source)[1]

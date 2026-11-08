@@ -82,8 +82,8 @@ class Event:
     # by other calendar apps; this literal text makes custom patterns editable.
     schedule_expression: str = ""
     expression_anchor: str = ""
-    # Missing values in older JSON/ICS mean the original weekly/date syntax.
-    # Version 2 uses the sequential datetime authoring language.
+    # Version 1 marks unannotated or obsolete data; it has no interpreter.
+    # Version 2 uses the explicit-reference language or a schedule document.
     schedule_syntax: int = 1
 
     def __post_init__(self) -> None:
@@ -134,12 +134,12 @@ class Event:
 
     @property
     def recurring(self) -> bool:
-        # An authored schedule may currently contain only its first date. Keep
-        # that master on the same edit/occurrence path as a larger custom set.
+        # Exclusions alone can describe an empty schedule or an omitted anchor.
         # Projected occurrences already have their own identity and must never
         # be expanded again merely because they retain the author's text.
-        return not self.series_id and bool(self.recurrence_rule or self.recurrence_dates
-                                          or self.recurrence_overrides or self.schedule_expression)
+        return not self.series_id and bool(self.recurrence_rule or self.recurrence_dates or self.excluded_dates
+                                          or self.recurrence_overrides
+                                          or self.schedule_expression not in ('', '+0d'))
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

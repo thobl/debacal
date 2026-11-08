@@ -1,9 +1,10 @@
 """On-demand occurrence navigation, independent of the visible preview month."""
 from datetime import datetime, time, timedelta, timezone
+from dataclasses import replace
 from bisect import bisect_left, bisect_right
 from itertools import islice
 
-from .recurrence import canonical_rule, event_zone, expand_series, key_datetime, normalized_rule, occurrence, occurrence_id, recurrence_key, recurrence_set
+from .recurrence import canonical_rule, event_zone, expand_series, key_datetime, normalize_recurrence_stream, normalized_rule, occurrence, occurrence_id, recurrence_key, recurrence_set
 
 
 NAVIGATION_LIMIT = 10000
@@ -16,6 +17,8 @@ class PreviewNavigation:
         self._signature = None
         self._finite = None
         self._finite_records = None
+        self._first = None
+        self._first_checked = False
         self._positions = None
         self._positions_checked = False
         self._known_positions = {}
@@ -33,6 +36,8 @@ class PreviewNavigation:
                           for item in masters)
         self._finite = None
         self._finite_records = None
+        self._first = None
+        self._first_checked = False
         if signature != self._signature:
             self._positions = None
             self._positions_checked = False
@@ -125,6 +130,8 @@ class PreviewNavigation:
 
     def explicit_count(self):
         """Count RDATE-only schedules without constructing offscreen events."""
+        if self._first_checked and self._first is None:
+            return 0
         if any(master.recurrence_rule for master in self.masters):
             return None
         identifiers = set()
@@ -139,6 +146,32 @@ class PreviewNavigation:
                 if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) == value.replace(tzinfo=None):
                     identifiers.add((master.id, key))
         return len(identifiers)
+
+    def first(self):
+        """Return the first actual occurrence without materializing a series.
+
+        Detached ranges can precede DTSTART or move its occurrence later. They
+        are finite input data; their nominal keys must not also be considered
+        as unchanged occurrences when finding the earliest actual start.
+        """
+        if self._first_checked:
+            return self._first
+        candidates = list(self._plain.values())
+        for master in self._recurring:
+            excluded = set(master.excluded_dates)
+            candidates.extend(occurrence(master, key_datetime(key, master), key)
+                              for key in master.recurrence_overrides if key not in excluded)
+            nominal = replace(master, recurrence_overrides={},
+                              excluded_dates=tuple(excluded | set(master.recurrence_overrides)))
+            values = normalize_recurrence_stream(recurrence_set(nominal), all_day=master.all_day)
+            first = next(values, None)
+            if first is not None:
+                candidates.append(occurrence(master, first))
+        result = min(candidates, key=lambda item: (item.start.timestamp(), item.id), default=None)
+        self._first_checked, self._first = True, result
+        if result is not None:
+            self._known_positions[result.id] = 1
+        return result
 
     def finite_events(self):
         if self._finite is not None:

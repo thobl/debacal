@@ -13,7 +13,6 @@ from debacal.dialogs import CalendarDialog, EventDialog
 from debacal.ics import export_ics, parse_ics
 from debacal.models import Calendar, Event
 from debacal.patterns import expand_pattern, expand_sequence
-from debacal.legacy_patterns import expand_pattern as expand_legacy_pattern
 from debacal.store import Store
 from debacal.ui import MainWindow
 
@@ -35,7 +34,7 @@ def desktop():
 
 def test_custom_language_survives_storage_sync_and_editing_a_later_occurrence(desktop):
     store, windows = desktop
-    literal = '4*(+2)  +3 3*+2'
+    literal = '+0d 4*(+2w)  +3w 3*+2w'
     create = EventDialog(store.list_calendars(), START)
     windows.append(create)
     create.title.setText('Seminar')
@@ -58,12 +57,12 @@ def test_custom_language_survives_storage_sync_and_editing_a_later_occurrence(de
     assert edit.pattern.text() == literal
     assert edit.value(edit.start) == master.start
     assert edit.dates() == expand_pattern(literal, START.date())
-    edit.pattern.setText('2*(+2) +3 2*+2')
+    edit.pattern.setText('+0d 2*(+2w) +3w 2*+2w')
     edit.save()
     assert edit.result() == QDialog.DialogCode.Accepted, edit.error.text()
     store.edit_series(edit.edit_reference, edit.result_events[0], replace_schedule=edit.schedule_replacement)
     changed = store.get_event(master.id)
-    assert changed.schedule_expression == '2*(+2) +3 2*+2'
+    assert changed.schedule_expression == '+0d 2*(+2w) +3w 2*+2w'
     dates = [item.start.date() for item in store.query_occurrences(START, START + timedelta(days=400))]
     assert dates == expand_pattern(changed.schedule_expression, START.date())
     store.undo()
@@ -71,10 +70,10 @@ def test_custom_language_survives_storage_sync_and_editing_a_later_occurrence(de
 
 
 @pytest.mark.parametrize('authored', [False, True])
-def test_legacy_custom_dates_reopen_as_equivalent_new_language(desktop, authored):
+def test_unannotated_or_retired_text_uses_canonical_dates(desktop, authored):
     store, windows = desktop
     literal = '13(Mo X) 2X 4(Mo X)'
-    dates = expand_legacy_pattern(literal, START.date())
+    dates = [START.date() + timedelta(weeks=2 * index) for index in range(1, 18)]
     times = [START.replace(year=day.year, month=day.month, day=day.day) for day in dates]
     master = Event('legacy', 'local', 'Seminar', times[0], times[0] + timedelta(hours=1),
                    recurrence_dates=tuple(value.isoformat() for value in times[1:]),
@@ -85,12 +84,12 @@ def test_legacy_custom_dates_reopen_as_equivalent_new_language(desktop, authored
     dialog = EventDialog(store.list_calendars(), selected.start, selected.end, event=selected, series=master, edit_scope='group')
     windows.append(dialog)
     assert 'Mo' not in dialog.pattern.text()
-    assert '+2' in dialog.pattern.text()
+    assert '+2w' in dialog.pattern.text()
     assert dialog.dates() == dates
-    # Opening old data displays the current language without rewriting it.
+    # Obsolete text is not interpreted; current text comes from canonical dates.
     preserved = dialog.build_events()[0]
-    assert preserved.schedule_syntax == master.schedule_syntax
-    assert preserved.schedule_expression == master.schedule_expression
+    assert preserved.schedule_syntax == (2 if authored else 1)
+    assert preserved.schedule_expression == (dialog.pattern.text() if authored else '')
     # An explicit configuration edit adopts the current language on save.
     dialog.pattern.setText(' ' + dialog.pattern.text() + ' ')
     dialog.save()
@@ -126,7 +125,8 @@ def test_one_date_pattern_can_be_edited_and_moved_without_losing_its_language(de
     assert changed.start.date() == master.start.date() + timedelta(days=1)
     assert changed.end - changed.start == master.end - master.start
     assert 'Mo' not in changed.schedule_expression
-    assert changed.schedule_expression == changed.expression_anchor == ''
+    assert changed.schedule_expression == '+0d'
+    assert changed.expression_anchor == changed.start.date().isoformat()
     assert expand_pattern(changed.schedule_expression, changed.start.date()) == [changed.start.date()]
 
 

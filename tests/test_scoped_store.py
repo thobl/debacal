@@ -78,7 +78,7 @@ def test_following_move_keeps_infinite_rule_and_local_hour_across_dst(tmp_path):
         store.edit_future(selected, moved)
         tail = tail_of(store)
         assert "UNTIL=" in store.get_event(source.id).recurrence_rule
-        assert "BYDAY=WE" in tail.recurrence_rule
+        assert tail.start.weekday() == 2
         assert "COUNT=" not in tail.recurrence_rule and "UNTIL=" not in tail.recurrence_rule
         events = store.query_occurrences(*BOUNDS)
         assert events[0].start == source.start

@@ -23,9 +23,8 @@ def timetable(event):
             for value in expand_series(event, START - timedelta(days=30), START + timedelta(days=100))]
 
 
-@pytest.mark.parametrize("syntax", [1, 2], ids=["legacy", "sequential"])
 @pytest.mark.parametrize("kind", ["RRULE", "RDATE"])
-def test_explicit_authoring_removal_reaches_other_instance_without_resurrection(tmp_path, syntax, kind):
+def test_explicit_authoring_removal_reaches_other_instance_without_resurrection(tmp_path, kind):
     cli = FakeCLI()
     with Store(tmp_path / "a.sqlite") as a, Store(tmp_path / "b.sqlite") as b:
         cal_a = Calendar("machine-a", "Shared calendar", "#123456", kind="caldav",
@@ -35,13 +34,12 @@ def test_explicit_authoring_removal_reaches_other_instance_without_resurrection(
         b.save_calendar(cal_b)
         bridge_a = VdirsyncerBackend(a.path, runner=cli)
         bridge_b = VdirsyncerBackend(b.path, runner=cli)
-        expression = (("2*+1" if kind == "RRULE" else "+3d +5d") if syntax == 2 else
-                      ("1, 1" if kind == "RRULE" else "20.3.2027, 23.3.2027, 28.3.2027"))
+        expression = "+0d 2*+1w" if kind == "RRULE" else "+0d +3d +5d"
         source = Event("authored", cal_a.id, "Synthetic schedule", START, START + timedelta(hours=1),
                        recurrence_rule="FREQ=WEEKLY;COUNT=3" if kind == "RRULE" else "",
                        recurrence_dates=() if kind == "RRULE" else tuple(recurrence_key(START + timedelta(days=days)) for days in (3, 8)),
                        schedule_expression=expression,
-                       expression_anchor=START.date().isoformat(), schedule_syntax=syntax)
+                       expression_anchor=START.date().isoformat(), schedule_syntax=2)
         a.apply("Create", [source])
         assert bridge_a.sync(a, cal_a, "synthetic-session").sent == 1
         assert bridge_b.sync(b, cal_b, "synthetic-session").received == 1

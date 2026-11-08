@@ -54,7 +54,7 @@ def test_old_ics_authoring_metadata_without_version_remains_legacy(parse):
 @pytest.mark.parametrize("parse", [parse_ics, parse_fallback])
 def test_new_syntax_multiple_times_roundtrip_as_standard_rdates(parse):
     original = event(
-        schedule_syntax=2, schedule_expression="11:00 +1d", expression_anchor="2026-11-10",
+        schedule_syntax=2, schedule_expression="+0d 11:00 +1d", expression_anchor="2026-11-10",
         recurrence_dates=("2026-11-10T11:00:00+00:00", "2026-11-11T11:00:00+00:00"),
     )
     from debacal.patterns import expand_sequence
@@ -80,7 +80,7 @@ def test_patch_replaces_old_version_and_preserves_unknown_server_metadata():
            "X-REMOTE-UNKNOWN:leave this untouched\r\nX-DEBACAL-PATTERN:10.11.\\, 12.11.\r\n"
            "X-DEBACAL-PATTERN-ANCHOR:2026-11-10\r\nX-DEBACAL-PATTERN-VERSION:1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
     imported = parse_ics(raw, "local")[0]
-    edited = replace(imported, schedule_expression="11:00 +1d", schedule_syntax=2,
+    edited = replace(imported, schedule_expression="+0d 11:00 +1d", schedule_syntax=2,
                      recurrence_dates=("2026-11-10T11:00:00+00:00", "2026-11-11T11:00:00+00:00"))
     patched = patch_ics(raw, edited)
     assert b"UID:server-uid\r\n" in patched
@@ -115,7 +115,7 @@ def test_unknown_ics_syntax_version_is_isolated_and_retained_for_review():
 def test_version_two_metadata_survives_outbox_upload_and_fresh_remote_pull(tmp_path):
     from test_vdirsyncer import setup, sync
     store, calendar, cli, backend = setup(tmp_path)
-    authored = replace(event(schedule_syntax=2, schedule_expression="11:00 +1d", expression_anchor="2026-11-10",
+    authored = replace(event(schedule_syntax=2, schedule_expression="+0d 11:00 +1d", expression_anchor="2026-11-10",
                              recurrence_dates=("2026-11-10T11:00:00+00:00", "2026-11-11T11:00:00+00:00")),
                        calendar_id=calendar.id)
     store.apply("Create versioned custom schedule", [authored])
@@ -135,7 +135,7 @@ def test_version_two_irregular_rdates_preserve_authoring_zone_across_dst(parse):
     from debacal.patterns import expand_sequence
     zone = ZoneInfo("Europe/Berlin")
     start = datetime(2026, 10, 20, 9, tzinfo=zone)
-    expression = "+5d 11:00-2.11.2026."
+    expression = "+0d +5d 11:00-2.11.2026"
     expected = expand_sequence(expression, start)
     original = Event("dst-authored", "local", "DST authoring", start, start + timedelta(hours=1),
                      recurrence_dates=tuple(value.isoformat() for value in expected[1:]),

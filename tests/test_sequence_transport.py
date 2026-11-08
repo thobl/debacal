@@ -47,7 +47,7 @@ def assert_roundtrip(event):
 
 @pytest.mark.parametrize('operation', ['projection', 'drag', 'dialog', 'clipboard'])
 @pytest.mark.parametrize('expression', [
-    '  4*(+2) +3 3*+2  ', '4*+1m', '10:00 11:00 9:00 10:00 11:00',
+    '  +0d 4*(+2w) +3w 3*+2w  ', '+0d 4*+1m!', '+0d 10:00 11:00 9:00 10:00 11:00',
 ])
 def test_equivalent_authored_literal_survives_every_whole_series_transport(operation, expression):
     master = source(expression)
@@ -82,7 +82,7 @@ def test_equivalent_authored_literal_survives_every_whole_series_transport(opera
 
 @pytest.mark.parametrize('operation', ['drag', 'dialog', 'clipboard'])
 def test_moved_absolute_calendar_pattern_is_reconstructed_as_a_short_pattern(operation):
-    master = source('4*1.')
+    master = source('+0d 4*1.')
     selected = occurrences(master)[2]
     delta = timedelta(days=2)
     with Store(':memory:') as store:
@@ -141,39 +141,39 @@ def test_future_transport_after_indefinite_daily_fourth_occurrence_partitions_th
             assert starts(store.get_event(master.id)) == starts(head)
 
 
-def test_split_one_retained_occurrence_has_an_empty_definition_without_a_duplicate_anchor():
-    master = source('+1d +3d')
+def test_split_one_retained_occurrence_has_an_explicit_anchor_without_a_duplicate():
+    master = source('+0d +1d +3d')
     selected = occurrences(master)[1]
     before, _ = partition_series(master, selected)
     assert len(occurrences(before)) == 1
-    assert reconstruct_authoring(before).expression == ''
-    assert before.schedule_expression == ''
-    assert before.expression_anchor == ''
+    assert reconstruct_authoring(before).expression == '+0d'
+    assert before.schedule_expression == '+0d'
+    assert before.expression_anchor == before.start.date().isoformat()
 
 
 def test_relative_month_parts_keep_instruction_intent_after_splitting_and_reanchoring():
-    master = source('4*+1m', START.replace(year=2027, month=1, day=31))
+    master = source('+0d 4*+1m!', START.replace(year=2027, month=1, day=31))
     original = occurrences(master)
     before, after = partition_series(master, original[2])
-    assert before.schedule_expression == '+1m'
-    assert after.schedule_expression == '2*+1m'
+    assert before.schedule_expression == '+0d +1m!'
+    assert after.schedule_expression == '+0d 2*+1m!'
     assert starts(before) + starts(after) == starts(master)
     moved_head = updated_series(before, before,
         replace(before, start=before.start - timedelta(days=1), end=before.end - timedelta(days=1)))
     assert [(item.start.month, item.start.day) for item in occurrences(moved_head)] == [(1, 30), (2, 28)]
-    assert moved_head.schedule_expression == '+1m'
+    assert moved_head.schedule_expression == '+0d +1m!'
     assert_roundtrip(moved_head)
     moved_tail = updated_series(after, after,
         replace(after, start=after.start + timedelta(days=2), end=after.end + timedelta(days=2)))
-    assert [(item.start.month, item.start.day) for item in occurrences(moved_tail)] == [(3, 30), (4, 30), (5, 30)]
-    assert moved_tail.schedule_expression == '2*+1m'
+    assert [(item.start.month, item.start.day) for item in occurrences(moved_tail)] == [(4, 2), (5, 2), (6, 2)]
+    assert moved_tail.schedule_expression == '+0d 2*+1m!'
     assert_roundtrip(moved_tail)
 
 
 @pytest.mark.parametrize('operation', ['projection', 'drag', 'dialog', 'clipboard'])
 def test_calendar_relative_program_is_reevaluated_on_reanchor_instead_of_translating_cached_dates(operation):
     start = START.replace(year=2027, month=1, day=31)
-    master = source('  2*(+1m)  ', start)
+    master = source('  +0d 2*(+1m!)  ', start)
     with Store(':memory:') as store:
         store.apply('Create', [master])
         last = occurrences(master)[-1]
@@ -192,19 +192,19 @@ def test_calendar_relative_program_is_reevaluated_on_reanchor_instead_of_transla
         else:
             moved, = EventClipboard.capture([original], reference, 'group').instantiate('group', target, 'local')
         values = occurrences(moved)
-        assert [(item.start.month, item.start.day) for item in values] == [(1, 30), (2, 28), (3, 28)]
+        assert [(item.start.month, item.start.day) for item in values] == [(1, 30), (2, 28), (3, 30)]
         assert moved.schedule_expression == master.schedule_expression
         assert moved.expression_anchor == '2027-01-30'
         assert (values[-1].title, values[-1].description) == ('Special', 'Retained')
         assert values[-1].end - values[-1].start == timedelta(hours=3)
-        assert set(moved.recurrence_overrides) == {last.recurrence_id}
+        assert set(moved.recurrence_overrides) == {recurrence_key(values[-1].start)}
         assert_roundtrip(moved)
 
 
 @pytest.mark.parametrize('operation', ['drag', 'dialog', 'clipboard'])
-def test_nonlinear_relative_reanchor_with_ambiguous_moved_exception_identity_fails_atomically(operation):
+def test_nonlinear_relative_reanchor_preserves_moved_exception_content_by_instruction(operation):
     start = START.replace(year=2027, month=1, day=31)
-    master = source('2*+1m', start)
+    master = source('+0d 2*+1m!', start)
     canonical = replace(master, recurrence_rule='FREQ=MONTHLY;COUNT=3', recurrence_dates=())
     actual = expand_sequence(master.schedule_expression, start)
     nominal = expand_event(canonical, start - timedelta(days=1), start + timedelta(days=140))
@@ -216,21 +216,22 @@ def test_nonlinear_relative_reanchor_with_ambiguous_moved_exception_identity_fai
         store.apply('Create', [master])
         reference = occurrences(master)[0]
         target = reference.start - timedelta(days=1)
-        history, pending = store.history(), store.pending_changes()
-        with pytest.raises(ValueError, match='original identity'):
-            if operation == 'drag':
-                store.move_selection([reference], 'group', reference, target, target + timedelta(hours=1))
-            elif operation == 'dialog':
-                store.edit_selection([reference], 'group', master, replace(master, start=target, end=target + timedelta(hours=1)))
-            else:
-                EventClipboard.capture([master], reference, 'group').instantiate('group', target, 'local')
-        assert store.list_events() == [master]
-        assert store.history() == history and store.pending_changes() == pending
+        if operation == 'drag':
+            store.move_selection([reference], 'group', reference, target, target + timedelta(hours=1))
+            moved = store.get_event(master.id)
+        elif operation == 'dialog':
+            store.edit_selection([reference], 'group', master, replace(master, start=target, end=target + timedelta(hours=1)))
+            moved = store.get_event(master.id)
+        else:
+            moved, = EventClipboard.capture([master], reference, 'group').instantiate('group', target, 'local')
+        assert [(item.start.month, item.start.day) for item in occurrences(moved)] == [(1, 30), (2, 28), (3, 30)]
+        assert moved.schedule_expression == master.schedule_expression
+        assert_roundtrip(moved)
 
 
 @pytest.mark.parametrize('operation', ['drag', 'clipboard'])
 def test_single_edit_then_whole_transport_and_future_split_preserve_exception_identity_and_content(operation):
-    master = source('5*+1', START.replace(month=10, day=19))
+    master = source('+0d 5*+1w', START.replace(month=10, day=19))
     delta = timedelta(days=9, hours=1)
     with Store(':memory:') as store:
         store.apply('Create', [master])

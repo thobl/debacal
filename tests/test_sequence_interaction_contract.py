@@ -25,7 +25,7 @@ from debacal.ui import MainWindow
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 2, 10, tzinfo=ZONE)
-TEXT = '  2*(+1 +2d)  '
+TEXT = '  +0d 2*(+1w +2d)  '
 NONE = Qt.KeyboardModifier.NoModifier
 CTRL = Qt.KeyboardModifier.ControlModifier
 
@@ -130,7 +130,7 @@ def open_editor(desktop, master, *, selected=None, scope='group'):
 
 
 @pytest.mark.parametrize('surface,text', [('week', TEXT), ('month', TEXT), ('all_day', TEXT),
-                                         ('week', '  11:00 +1 12:00  '), ('month', '  11:00 +1 12:00  ')])
+                                         ('week', '  +0d 11:00 +1w 12:00  '), ('month', '  +0d 11:00 +1w 12:00  ')])
 @pytest.mark.parametrize('operation', ['drag', 'dialog', 'clipboard', 'copy-drag'])
 def test_rigid_translation_preserves_equivalent_definition_through_each_creation_path(desktop, surface, operation, text):
     _, window, store, _ = desktop
@@ -209,12 +209,12 @@ def test_daily_following_drag_split_reports_three_in_every_representation(deskto
 
 def test_translating_a_calendar_date_pattern_regenerates_a_pattern_instead_of_full_dates(desktop):
     _, window, store, _ = desktop
-    master = source('4*1.')
+    master = source('+0d 4*1.')
     selected = put(desktop, master)
     expected = [item.start + timedelta(days=1) for item in visible([master])]
     drag(desktop, selected)
     moved = store.get_event(master.id)
-    assert moved.schedule_expression == '4*2.'
+    assert moved.schedule_expression == '+0d 4*2.'
     assert expression_matches(moved, moved.schedule_expression)
     assert [item.start for item in visible([moved])] == expected
     window.undo()
@@ -371,7 +371,7 @@ def test_relative_month_program_reanchors_without_losing_its_logical_selection(d
     app, window, store, _ = desktop
     start = datetime(2027, 1, 31, 10, tzinfo=ZONE)
     prototype = Event('month-series', 'local', 'Month arithmetic', start, start + timedelta(hours=1),
-                      timezone_id=ZONE.key, schedule_expression='2*+1m',
+                      timezone_id=ZONE.key, schedule_expression='+0d 2*+1m!',
                       expression_anchor=start.date().isoformat(), schedule_syntax=2)
     master = expression_event(prototype, prototype.schedule_expression)
     store.apply('Create month program', [master])
@@ -383,7 +383,7 @@ def test_relative_month_program_reanchors_without_losing_its_logical_selection(d
     window.set_selection_mode('group')
     window.select_event(selected.id)
     settle(app)
-    expected = [start.replace(day=30), start.replace(month=2, day=28), start.replace(month=3, day=28)]
+    expected = [start.replace(day=30), start.replace(month=2, day=28), start.replace(month=3, day=30)]
     preview = []
     if operation in ('drag', 'copy-drag'):
         bounds = window.dates()
@@ -410,7 +410,7 @@ def test_relative_month_program_reanchors_without_losing_its_logical_selection(d
     assert not window.local_issues
     copying = operation in ('clipboard', 'copy-drag')
     changed = next(item for item in store.list_events() if item.id != master.id) if copying else store.get_event(master.id)
-    assert changed.schedule_expression == '2*+1m'
+    assert changed.schedule_expression == '+0d 2*+1m!'
     assert expression_matches(changed, changed.schedule_expression)
     assert [item.start for item in expand_events([changed], beginning, ending)] == expected
     assert window.selection.primary.start == expected[index]
@@ -429,7 +429,7 @@ def test_valid_relative_starts_with_a_generated_duration_end_in_a_dst_gap_can_be
     dialog.title.setText('A range across the clock change')
     dialog.schedule_mode.setCurrentData('repeat')
     dialog.repeat.setCurrentData('RDATE')
-    dialog.pattern.setText('2*+1d')
+    dialog.pattern.setText('+0d 2*+1d')
     first, last = start - timedelta(days=1), start + timedelta(days=5)
     preview = expand_events(dialog.preview.masters, first, last)
     assert len(preview) == 3
@@ -452,7 +452,7 @@ def test_clipped_month_reanchor_selects_the_same_instruction_instead_of_a_nearer
     start = datetime(2027, 1, 31, 10, tzinfo=ZONE)
     prototype = Event('month-series', 'local', 'Clipped month then two days', start,
                       start + timedelta(hours=1), timezone_id=ZONE.key,
-                      schedule_expression='+1m +2d', expression_anchor=start.date().isoformat(), schedule_syntax=2)
+                      schedule_expression='+0d +1m! +2d', expression_anchor=start.date().isoformat(), schedule_syntax=2)
     master = expression_event(prototype, prototype.schedule_expression)
     beginning, ending = start - timedelta(days=1), start + timedelta(days=100)
     store.apply('Create month program', [master])
@@ -480,14 +480,14 @@ def test_clipped_month_reanchor_selects_the_same_instruction_instead_of_a_nearer
     assert window.selected_day == start.replace(month=3, day=2).date()
     changed = store.get_event(window.selection.primary.series_id)
     assert changed.start == start.replace(day=30)
-    assert changed.schedule_expression == '+1m +2d'
+    assert changed.schedule_expression == '+0d +1m! +2d'
 
 
 def test_month_reanchor_keeps_two_exception_payloads_when_linear_dates_would_collide(desktop):
     app, window, store, _ = desktop
     start = datetime(2027, 1, 30, 10, tzinfo=ZONE)
     prototype = Event('month-series', 'local', 'Month arithmetic', start, start + timedelta(hours=1),
-                      timezone_id=ZONE.key, schedule_expression='+1m +1d',
+                      timezone_id=ZONE.key, schedule_expression='+0d +1m! +1d',
                       expression_anchor=start.date().isoformat(), schedule_syntax=2)
     master = expression_event(prototype, prototype.schedule_expression)
     store.apply('Create month program', [master])
@@ -505,7 +505,7 @@ def test_month_reanchor_keeps_two_exception_payloads_when_linear_dates_would_col
     assert not window.local_issues
     changed = store.get_event(master.id)
     assert changed.start == start.replace(day=31)
-    assert changed.schedule_expression == '+1m +1d'
+    assert changed.schedule_expression == '+0d +1m! +1d'
     actual = expand_events([changed], beginning, ending)
     assert [(item.start.month, item.start.day, item.title, item.end - item.start) for item in actual] == [
         (1, 31, 'Month arithmetic', timedelta(hours=1)),

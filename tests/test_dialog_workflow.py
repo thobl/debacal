@@ -158,7 +158,7 @@ def test_save_focuses_the_invalid_title_datetime_duration_or_sequence_field(desk
     sequence = create()
     sequence.schedule_mode.setCurrentData('repeat')
     sequence.repeat.setCurrentData('RDATE')
-    sequence.pattern.setText('3*(+2')
+    sequence.pattern.setText('3*(+2w')
     sequence.title.setFocus()
     sequence.save()
     assert sequence.pattern.hasFocus() and 'closing' in sequence.error.text()

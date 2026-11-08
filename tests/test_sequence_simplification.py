@@ -27,12 +27,12 @@ class SimplificationTests(unittest.TestCase):
     def test_regular_fortnightly_dates_use_a_repeat_after_the_fixed_event(self):
         values = [ANCHOR + timedelta(weeks=2 * index) for index in range(5)]
         expression = simplify_sequence(values)
-        self.assertEqual(expression, '4*+2')
+        self.assertEqual(expression, '+0d 4*+2w')
         self.assert_equivalent(values, expression)
 
     def test_hour_and_minute_spacing_uses_explicit_clocks(self):
-        for delta, expected in ((timedelta(hours=2), '11:00 13:00 15:00 17:00'),
-                                (timedelta(minutes=15), '9:15 9:30 9:45 10:00')):
+        for delta, expected in ((timedelta(hours=2), '+0d 11:00 13:00 15:00 17:00'),
+                                (timedelta(minutes=15), '+0d 9:15 9:30 9:45 10:00')):
             with self.subTest(expected=expected):
                 values = [ANCHOR + index * delta for index in range(5)]
                 expression = simplify_sequence(values)
@@ -40,9 +40,9 @@ class SimplificationTests(unittest.TestCase):
                 self.assert_equivalent(values, expression)
 
     def test_reconstructed_clocks_are_certified_across_midnight_and_dst(self):
-        cases = [(ANCHOR.replace(hour=23, minute=30), '4*+45min'),
-                 (datetime(2027, 3, 28, 1, 30, tzinfo=ZONE), '+2h +30min'),
-                 (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1), '2*+1h')]
+        cases = [(ANCHOR.replace(hour=23, minute=30), '+0d 0:15 1:00 1:45 2:30'),
+                 (datetime(2027, 3, 28, 1, 30, tzinfo=ZONE), '+0d 3:30 4:00'),
+                 (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1), '+0d 2:30 3:30')]
         for anchor, original in cases:
             with self.subTest(original=original):
                 values = expand_sequence(original, anchor)
@@ -53,14 +53,14 @@ class SimplificationTests(unittest.TestCase):
     def test_changing_one_same_day_clock_keeps_later_clocks_fixed(self):
         values = [ANCHOR, ANCHOR.replace(hour=10), ANCHOR.replace(hour=11), ANCHOR.replace(hour=14)]
         expression = reconstruct_sequence(values)
-        self.assertEqual(expression, '10:00 11:00 14:00')
+        self.assertEqual(expression, '+0d 10:00 11:00 14:00')
         changed = expand_sequence(expression.replace('10:00', '10:30'), ANCHOR)
         self.assertEqual([(value.hour, value.minute) for value in changed],
                          [(9, 0), (10, 30), (11, 0), (14, 0)])
 
     def test_unrepresentable_seconds_are_rejected_without_reintroducing_offsets(self):
         precise = ANCHOR.replace(second=17, microsecond=123)
-        values = expand_sequence('4*+2h', precise)
+        values = [precise + timedelta(hours=2 * index) for index in range(5)]
         with self.assertRaisesRegex(PatternError, 'sub-minute'):
             reconstruct_sequence(values)
         # Existing authored text remains readable with its full precision.
@@ -70,12 +70,12 @@ class SimplificationTests(unittest.TestCase):
         values = [datetime(2027, 1, 31, 9, tzinfo=ZONE),
                   *(datetime(2027, month, 1, 9, tzinfo=ZONE) for month in range(2, 6))]
         expression = simplify_sequence(values)
-        self.assertEqual(expression, '4*1.')
+        self.assertEqual(expression, '+0d 4*1.')
         self.assert_equivalent(values, expression)
 
     def test_month_and_year_steps_are_checked_for_calendar_clipping(self):
-        for initial, original in [(datetime(2027, 1, 31, 9, tzinfo=ZONE), '4*+1m'),
-                                  (datetime(2028, 2, 29, 9, tzinfo=ZONE), '4*+1y')]:
+        for initial, original in [(datetime(2027, 1, 31, 9, tzinfo=ZONE), '+0d 4*+1m'),
+                                  (datetime(2028, 2, 29, 9, tzinfo=ZONE), '+0d 4*+1y')]:
             with self.subTest(original=original):
                 values = expand_sequence(original, initial)
                 expression = simplify_sequence(values)
@@ -85,7 +85,7 @@ class SimplificationTests(unittest.TestCase):
     def test_year_is_omitted_only_when_the_partial_date_has_the_same_result(self):
         forward = [ANCHOR, datetime(2027, 2, 3, 9, tzinfo=ZONE)]
         expression = simplify_sequence(forward)
-        self.assertEqual(expression, '3.2')
+        self.assertEqual(expression, '+0d 3.2.')
         self.assertNotIn('2027', expression)
         self.assert_equivalent(forward, expression)
         backward = [ANCHOR, datetime(2025, 2, 3, 9, tzinfo=ZONE)]
@@ -102,7 +102,7 @@ class SimplificationTests(unittest.TestCase):
         self.assertEqual([value.hour for value in expand_sequence(expression, ANCHOR)], [9, 11, 11, 9])
 
     def test_longer_common_atoms_enable_a_repeated_block(self):
-        original = '3*(+1d +2d)'
+        original = '+0d 3*(+1d +2d)'
         values = expand_sequence(original, ANCHOR)
         expression = simplify_sequence(values)
         self.assertLessEqual(len(expression), len(original))
@@ -110,7 +110,7 @@ class SimplificationTests(unittest.TestCase):
         self.assert_equivalent(values, expression)
 
     def test_repeated_blocks_can_contain_compressed_atom_runs(self):
-        original = '3*(4*+1d +2)'
+        original = '+0d 3*(4*+1d +2w)'
         values = expand_sequence(original, ANCHOR)
         expression = simplify_sequence(values)
         self.assertLessEqual(len(expression), len(original))
@@ -120,17 +120,17 @@ class SimplificationTests(unittest.TestCase):
     def test_long_primitive_relative_block_is_discovered(self):
         rng = random.Random(37)
         body = ' '.join(f'+{rng.randint(1, 9)}d' for _ in range(37))
-        original = '2*(' + body + ')'
+        original = '+0d 2*(' + body + ')'
         values = expand_sequence(original, ANCHOR)
         expression = simplify_sequence(values)
         self.assertLessEqual(len(expression), len(original))
         self.assert_equivalent(values, expression)
 
     def test_dense_five_hundred_date_and_clock_sequences_remain_compact(self):
-        cases = [([ANCHOR + timedelta(days=index) for index in range(500)], '499*+1d'),
-                 ([ANCHOR + timedelta(weeks=2 * index) for index in range(500)], '499*+2'),
+        cases = [([ANCHOR + timedelta(days=index) for index in range(500)], '+0d 499*+1d'),
+                 ([ANCHOR + timedelta(weeks=2 * index) for index in range(500)], '+0d 499*+2w'),
                  ([ANCHOR + timedelta(days=index // 3, hours=index % 3) for index in range(500)],
-                  '10:00 166*(11:00 9:00 10:00)')]
+                  '+0d 10:00 166*(11:00 9:00 10:00)')]
         for values, known in cases:
             with self.subTest(known=known):
                 expression = simplify_sequence(values)
@@ -139,7 +139,7 @@ class SimplificationTests(unittest.TestCase):
 
     def test_large_sets_use_concise_dates_and_shared_runs_without_quadratic_search(self):
         values = [ANCHOR + timedelta(days=index) for index in range(900)]
-        self.assertEqual(simplify_sequence(values), '899*+1d')
+        self.assertEqual(simplify_sequence(values), '+0d 899*+1d')
         irregular = [ANCHOR]
         for index in range(550):
             irregular.append(irregular[-1] + timedelta(days=(index % 7) + 1))
@@ -157,7 +157,7 @@ class SimplificationTests(unittest.TestCase):
 
     def test_dst_and_original_seconds_are_preserved_exactly(self):
         initial = datetime(2027, 3, 20, 9, 0, 17, 123, tzinfo=ZONE)
-        values = expand_sequence('+1 14:00 +1d 2.4.', initial)
+        values = expand_sequence('+0d +1w 14:00 +1d 2.4.', initial)
         expression = simplify_sequence(values)
         self.assert_equivalent(values, expression)
         self.assertEqual(expand_sequence(expression, initial)[-1].second, 17)
@@ -174,15 +174,15 @@ class SimplificationTests(unittest.TestCase):
 
     def test_parser_and_simplifier_keep_distinct_instants_near_float_precision_limit(self):
         far = datetime(9999, 1, 1, 9, microsecond=1, tzinfo=timezone.utc)
-        values = expand_sequence('9:00-1.1.9999', far)
+        values = expand_sequence('+0d 9:00-1.1.9999', far)
         self.assertEqual(len(values), 2)
         self.assertEqual([value.microsecond for value in values], [1, 0])
         self.assert_equivalent(values, simplify_sequence(values))
 
     def test_single_precise_anchor_and_duplicate_inputs(self):
         precise = ANCHOR.replace(second=12, microsecond=345)
-        self.assertEqual(simplify_sequence([precise]), '')
-        self.assertEqual(simplify_sequence([precise, precise]), '')
+        self.assertEqual(simplify_sequence([precise]), '+0d')
+        self.assertEqual(simplify_sequence([precise, precise]), '+0d')
         values = [ANCHOR, ANCHOR + timedelta(weeks=1), ANCHOR + timedelta(weeks=1), ANCHOR + timedelta(weeks=2)]
         self.assert_equivalent(values, simplify_sequence(values))
 

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from debacal.event_dialog import EventDialog
 from debacal.ics import export_ics, parse_ics
 from debacal.models import Event
+from debacal.schedule_authoring import expression_matches
 from debacal.recurrence import (
     ScheduleReplacement, expand_event, occurrence, recurrence_key, updated_series,
 )
@@ -94,7 +95,7 @@ def test_deleted_regular_dates_are_remembered_separately_from_clean_indefinite_r
     assert 'FREQ=WEEKLY' in regular.recurrence_rule
     assert 'COUNT=' not in regular.recurrence_rule and 'UNTIL=' not in regular.recurrence_rule
     assert not regular.recurrence_dates and not regular.excluded_dates and not regular.recurrence_overrides
-    assert not regular.schedule_expression
+    assert regular.schedule_expression == 'every(1w)'
     assert not dialog.repeat_count.isEnabled() and not dialog.repeat_until.isEnabled()
     dialog.repeat.setCurrentData('RDATE')
     assert dialog.pattern.text() == text
@@ -137,7 +138,10 @@ def test_title_only_edit_preserves_imported_exceptions_until_a_pattern_is_chosen
     dialog = create(source)
     dialog.title.setText('Only the shared title changed')
     edited = dialog.build_events()[0]
-    assert schedule(edited) == schedule(source)
+    assert {name: getattr(edited, name) for name in SCHEDULE_FIELDS[:4]} == {
+        name: getattr(source, name) for name in SCHEDULE_FIELDS[:4]}
+    assert edited.schedule_expression == source.schedule_expression
+    assert expression_matches(edited, dialog.pattern.text())
     projected = dialog.preview.masters[0]
     assert ranges(projected) == ranges(source)
     dialog.repeat.setCurrentData('RDATE')

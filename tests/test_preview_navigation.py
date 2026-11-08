@@ -102,6 +102,63 @@ def test_unbounded_preview_expands_visible_month_only_and_disables_last(desktop)
         assert preview.position_label.text().startswith('2/∞')
 
 
+@pytest.mark.parametrize('rule', ['', 'FREQ=DAILY;COUNT=1'])
+def test_empty_schedule_never_selects_an_excluded_reference(desktop, rule):
+    _, make = desktop
+    source = master(recurrence_rule=rule, excluded_dates=(recurrence_key(START),))
+    preview = make([source])
+    assert preview.selected_event is None and preview.selected_id is None
+    assert preview.total_occurrences == 0 and preview.visible_events == []
+    assert not preview.previous_occurrence_button.isEnabled()
+    assert not preview.next_occurrence_button.isEnabled()
+    assert not preview.last_button.isEnabled()
+    preview.show_month((START + timedelta(days=80)).date())
+    preview.first_button.click()
+    assert preview.current_month == START.date().replace(day=1)
+    assert preview.selected_event is None and preview.total_occurrences == 0
+
+
+def test_excluded_reference_selects_first_actual_and_navigates_without_history_scan(desktop):
+    _, make = desktop
+    source = master(recurrence_rule='FREQ=DAILY', excluded_dates=(recurrence_key(START),))
+    with patch.object(PreviewNavigation, 'finite_events', side_effect=AssertionError('No history scan')):
+        preview = make([source])
+        assert preview.selected_event.start == START + timedelta(days=1)
+        assert preview.position_label.text().startswith('1/∞')
+        assert not preview.is_primary(preview.selected_event)
+        preview.next_occurrence_button.click()
+        assert preview.selected_event.start == START + timedelta(days=2)
+        preview.first_button.click()
+        assert preview.current_month == START.date().replace(day=1)
+        assert preview.selected_event.start != START
+
+
+@pytest.mark.parametrize('count,expected_offset', [(1, 40), (3, 1)])
+def test_moved_reference_selects_an_actual_range_not_its_former_start(desktop, count, expected_offset):
+    _, make = desktop
+    source = master(recurrence_rule=f'FREQ=DAILY;COUNT={count}')
+    original = occurrence(source, START)
+    moved = replace(original, start=START + timedelta(days=40), end=START + timedelta(days=40, minutes=45))
+    source = replace(source, recurrence_overrides={original.recurrence_id: moved.to_dict()})
+    preview = make([source])
+    assert preview.selected_event.start == START + timedelta(days=expected_offset)
+    assert preview._primary_occurrence() is None
+    assert preview.total_occurrences == count
+    preview.first_button.click()
+    assert preview.current_month == START.date().replace(day=1)
+    assert preview.selected_event.start != START
+
+
+def test_first_actual_navigation_includes_dates_before_an_excluded_reference():
+    earlier = START - timedelta(days=100)
+    source = master(recurrence_rule='FREQ=DAILY;COUNT=100000',
+                    recurrence_dates=(recurrence_key(earlier),), excluded_dates=(recurrence_key(START),))
+    navigation = PreviewNavigation([source])
+    with patch.object(navigation, 'finite_events', side_effect=AssertionError('No history scan')):
+        assert navigation.first().start == earlier
+        assert navigation.first().start == earlier
+
+
 def test_today_browses_current_month_without_moving_the_primary_or_selection(desktop):
     _, make = desktop
     source = master(recurrence_rule='FREQ=DAILY;COUNT=5')
@@ -192,13 +249,17 @@ def test_crowded_day_keeps_every_direct_remove_target_with_stable_columns(deskto
     chips = preview.grid.chip_rects(START.date())
     assert len(chips) == 21 and preview.grid.width() == width
     assert preview.scroll.verticalScrollBar().maximum() > 0
-    assert chips[0][2].isEmpty()
+    assert all(not remove.isEmpty() for _rect, _event, remove in chips)
     removed = QSignalSpy(preview.occurrence_remove_requested)
     target, event, remove = chips[-1]
     preview.scroll.ensureVisible(round(target.center().x()), round(target.center().y()), 0, 20)
     QTest.mouseClick(preview.grid, Qt.MouseButton.LeftButton, pos=remove.center().toPoint())
     assert removed.count() == 1 and removed.at(0)[0].id == event.id
     assert preview.selected_id == source.id
+    primary_rect, primary, primary_remove = chips[0]
+    preview.scroll.ensureVisible(round(primary_rect.center().x()), round(primary_rect.center().y()), 0, 20)
+    QTest.mouseClick(preview.grid, Qt.MouseButton.LeftButton, pos=primary_remove.center().toPoint())
+    assert removed.count() == 2 and removed.at(1)[0].id == primary.id
 
 
 def test_large_plain_count_last_does_not_iterate_history():
@@ -271,7 +332,7 @@ def test_primary_pin_distinguishes_another_exception_moved_onto_the_primary_star
     assert len(coincident) == 2
     assert [event.recurrence_id for event in coincident if preview.is_primary(event)] == [recurrence_key(START)]
     preview.enable_date_editing(True)
-    assert sum(not remove.isEmpty() for _rect, _event, remove in preview.grid.chip_rects(START.date())) == 1
+    assert sum(not remove.isEmpty() for _rect, _event, remove in preview.grid.chip_rects(START.date())) == 2
 
 
 def test_future_primary_pin_keeps_nominal_identity_when_another_exception_has_the_same_actual_start(desktop):

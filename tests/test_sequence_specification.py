@@ -50,7 +50,8 @@ def test_off_rule_weekday_primary_does_not_show_a_misleading_regular_count():
     assert START.weekday() == 2
     assert RegularSchedule.from_rule(event.recurrence_rule, START) is None
     draft = ScheduleDraft.from_event(event)
-    assert draft.kind == 'advanced'
+    assert draft.kind == 'custom'
+    assert draft.expression
     assert draft.fields(START)['recurrence_rule'] == event.recurrence_rule
 
 
@@ -96,7 +97,7 @@ def test_monthly_skipping_stays_a_standard_rule_through_custom_view_and_text_edi
     start = START.replace(year=2027, month=1, day=31)
     event = source('FREQ=MONTHLY;COUNT=5', start=start, end=start + timedelta(hours=1))
     view = reconstruct_authoring(event)
-    assert view.expression == 'every(1m, count=5)'
+    assert view.expression and recurrence_matches(event, expression_event(event, view.expression))
     draft = ScheduleDraft.from_event(event)
     draft.use_sequence(event)
     assert recurrence_matches(event, replace(event, **draft.fields(start)))
@@ -110,9 +111,10 @@ def test_monthly_skipping_stays_a_standard_rule_through_custom_view_and_text_edi
 
 
 @pytest.mark.parametrize('month,day,expression,kind', [
-    (1, 31, '+1m', 'custom'), (1, 29, '2*+1m', 'custom'),
-    (1, 15, '2*+1m', 'MONTHLY'), (3, 31, '2*+12m', 'YEARLY'),
-    (2, 29, '+1y', 'custom'),
+    (1, 31, '+0d +1m', 'MONTHLY'), (1, 29, '+0d 2*+1m', 'MONTHLY'),
+    (1, 15, '+0d 2*+1m', 'MONTHLY'), (3, 31, '+0d 2*+12m', 'MONTHLY'),
+    (2, 29, '+0d +1y', 'YEARLY'), (1, 31, '+0d 2*+1m!', 'MONTHLY'),
+    (2, 29, '+0d 2*+1y!', 'YEARLY'),
 ])
 def test_regular_classification_preserves_calendar_unit_intent(month, day, expression, kind):
     start = START.replace(year=2028, month=month, day=day)

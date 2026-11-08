@@ -366,7 +366,9 @@ def test_future_title_edit_preserves_each_independent_tail_count(store):
     edited = replace(primary, title="Remaining", recurrence_rule="FREQ=WEEKLY;COUNT=4")
     operation = store.edit_selection([bv[3], primary], "future", primary, edited)
     tails = [value for value in store.list_events() if value.id not in {a.id, b.id}]
-    assert {value.recurrence_rule for value in tails} == {"FREQ=WEEKLY;COUNT=4", "FREQ=WEEKLY;COUNT=5"}
+    rules = [dict(part.split('=', 1) for part in value.recurrence_rule.split(';')) for value in tails]
+    assert {rule['COUNT'] for rule in rules} == {'4', '5'}
+    assert all(rule['FREQ'] == 'WEEKLY' for rule in rules)
     assert all(value.title == "Remaining" for value in tails)
     store.undo(operation)
     assert {value.id: value for value in store.list_events()} == {a.id: a, b.id: b}
@@ -504,9 +506,9 @@ def test_ctrl_raw_parent_promotes_partial_family_then_toggles_it_off(store):
 
 
 def test_mixed_authored_parent_and_dated_single_edit_keeps_both_custom_definitions(store):
-    a = repeating("a", schedule_expression=" 5*(+1) ", expression_anchor=START.date().isoformat(), schedule_syntax=2)
+    a = repeating("a", schedule_expression=' +0d 5*(+1w) ', expression_anchor=START.date().isoformat(), schedule_syntax=2)
     b = repeating("b", start=START + timedelta(hours=3), end=START + timedelta(hours=4),
-                  schedule_expression="5*+1", expression_anchor=START.date().isoformat(), schedule_syntax=2)
+                  schedule_expression='+0d 5*+1w', expression_anchor=START.date().isoformat(), schedule_syntax=2)
     store.apply("Create", [a, b])
     original = store.query_occurrences(*BOUNDS)
     selected = occurrences(store, b.id)[2]

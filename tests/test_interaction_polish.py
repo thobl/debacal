@@ -277,7 +277,7 @@ def test_keyboard_more_loads_ten_dates_without_changing_selection(workspace):
 
 def test_mixed_search_bulk_title_edit_keeps_both_custom_definitions(workspace):
     app, window, store = workspace
-    a, b = [replace(sample(key, recurring=True, hour=hour), schedule_expression='4*+1d',
+    a, b = [replace(sample(key, recurring=True, hour=hour), schedule_expression='+0d 4*+1d',
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
             for key, hour in [('a', 9), ('b', 13)]]
     insert(window, store, a, b)

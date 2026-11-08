@@ -46,9 +46,10 @@ def assert_roundtrip(simplify, values):
     (datetime(2026, 11, 1, 9, tzinfo=UTC), "15:00 +1d"),
     (datetime(2026, 11, 1, 9, tzinfo=UTC), "15:00 9:00"),
     (datetime(2026, 11, 10, 9, tzinfo=UTC), "10.11.2025"),
-    (datetime(2026, 11, 10, 9, tzinfo=UTC), "3*+1"),
+    (datetime(2026, 11, 10, 9, tzinfo=UTC), "3*+1w"),
 ])
 def test_compact_known_forms_remain_exact_and_not_longer(simplify, anchor, known_short):
+    known_short = '+0d ' + known_short
     values = patterns.expand_sequence(known_short, anchor)
     expression = assert_roundtrip(simplify, values)
     # This is a semantic upper bound from an independently valid expression,
@@ -79,7 +80,7 @@ def test_randomized_representable_sets_roundtrip_with_readable_date_upper_bound(
                 steps.append(f"{day}.{month}.{randomizer.randint(2024, 2028)}")
             else:
                 steps.append(f"{randomizer.randint(8, 17)}:30-{day}.{month}.{randomizer.randint(2024, 2028)}")
-        known = " ".join(steps)
+        known = '+0d ' + " ".join(steps)
         values = patterns.expand_sequence(known, anchor)
         # Some timestamps come from external UTC ICS values; representation
         # changes must not change the selected instants or the fixed anchor.
@@ -92,7 +93,7 @@ def test_randomized_representable_sets_roundtrip_with_readable_date_upper_bound(
 
 def test_partial_equality_advances_but_explicit_year_can_return_to_an_earlier_date(simplify):
     anchor = datetime(2026, 1, 1, 9, tzinfo=UTC)
-    values = patterns.expand_sequence("1. 1.1.2026 2.", anchor)
+    values = patterns.expand_sequence("+0d 1. 1.1.2026 2.", anchor)
     expression = assert_roundtrip(simplify, values)
     assert instants(patterns.expand_sequence(expression, anchor)) == instants(values)
 
@@ -100,7 +101,7 @@ def test_partial_equality_advances_but_explicit_year_can_return_to_an_earlier_da
 def test_long_repeated_body_can_use_shared_atoms_that_are_not_locally_shortest(simplify):
     randomizer = random.Random(370037)
     body = " ".join(f"+{randomizer.randint(1, 9)}d" for _ in range(37))
-    known = "2*(" + body + ")"
+    known = "+0d 2*(" + body + ")"
     anchor = datetime(2026, 1, 1, 9, tzinfo=UTC)
     expression = assert_roundtrip(simplify, patterns.expand_sequence(known, anchor))
     assert len(expression) <= len(known), (known, expression)
@@ -108,7 +109,7 @@ def test_long_repeated_body_can_use_shared_atoms_that_are_not_locally_shortest(s
 
 def test_five_hundred_regular_multiple_clock_events_keep_the_short_block(simplify):
     anchor = datetime(2026, 1, 1, 9, tzinfo=UTC)
-    known = "166*(10:00 11:00 9:00) 10:00"
+    known = "+0d 166*(10:00 11:00 9:00) 10:00"
     values = patterns.expand_sequence(known, anchor)
     assert len(values) == 500
     started = perf_counter()
@@ -121,15 +122,15 @@ def test_dst_and_year_edges_preserve_instants(simplify):
     berlin = ZoneInfo("Europe/Berlin")
     new_york = ZoneInfo("America/New_York")
     cases = [
-        (datetime(2026, 3, 22, 9, tzinfo=berlin), "3*+1"),
-        (datetime(2026, 10, 18, 9, tzinfo=berlin), "3*+1"),
+        (datetime(2026, 3, 22, 9, tzinfo=berlin), "3*+1w"),
+        (datetime(2026, 10, 18, 9, tzinfo=berlin), "3*+1w"),
         (datetime(2026, 3, 8, 1, 30, tzinfo=new_york), "3:30 +1d"),
         (datetime(2026, 12, 31, 9, tzinfo=UTC), "2*1."),
         (datetime(9999, 12, 31, 9, tzinfo=UTC), "1.1.0001"),
         (datetime(1, 1, 1, 9, tzinfo=UTC), "31.12.9999"),
     ]
     for anchor, known in cases:
-        assert_roundtrip(simplify, patterns.expand_sequence(known, anchor))
+        assert_roundtrip(simplify, patterns.expand_sequence('+0d ' + known, anchor))
 
 
 def test_unrepresentable_fold_and_changed_subminute_clock_fail_without_rounding(simplify):
@@ -147,7 +148,7 @@ def test_unrepresentable_fold_and_changed_subminute_clock_fail_without_rounding(
     far_future = datetime(9999, 1, 1, 9, 0, 0, 1, tzinfo=UTC)
     with pytest.raises(patterns.PatternError):
         simplify([far_future, far_future.replace(microsecond=2)])
-    exact_past = patterns.expand_sequence("9:00-1.1.9999", far_future)
+    exact_past = patterns.expand_sequence("+0d 9:00-1.1.9999", far_future)
     assert len(exact_past) == 2
     assert_roundtrip(simplify, exact_past)
 
@@ -165,7 +166,7 @@ def test_five_hundred_weekly_events_simplify_within_interactive_budget(simplify)
     started = perf_counter()
     expression = assert_roundtrip(simplify, values)
     elapsed = perf_counter() - started
-    assert len(expression) <= len("499*+1")
+    assert len(expression) <= len("+0d 499*+1w")
     assert elapsed < 2.0, f"500 regular selections took {elapsed:.3f}s"
 
 

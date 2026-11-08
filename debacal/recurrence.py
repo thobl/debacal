@@ -21,6 +21,7 @@ from .schedule_replacement import ScheduleReplacement
 
 
 MAX_MINUTELY_COUNT = 10000
+MAX_REANCHOR_IDENTITIES = 10000
 
 
 class RecurrenceError(ValueError):
@@ -415,44 +416,169 @@ def shift_rule(rule: str, shift: timedelta, master: Event) -> str:
     return ";".join(f"{name}={value}" for name, value in parts.items())
 
 
+class _RelativeReanchorMap(dict):
+    """Resolve a tail's ordinal only when an operation needs that identity."""
+    def __init__(self, values, resolve):
+        super().__init__(values)
+        self._resolve = resolve
+
+    def __missing__(self, key):
+        value = self._resolve(key)
+        if value is None:
+            raise KeyError(key)
+        self[key] = value
+        return value
+
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
 def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | None:
     """Map an authored relative program's instruction identities to a new root.
 
-    Literal relative month/year arithmetic is reevaluated from the new root;
-    translating its cached timestamps would change its clipping semantics.
-    A moved detached exception can use the linear path only when that path
-    already produces the program's requested actual starts without rewriting.
+    Relative instructions are reevaluated from the independent anchor. The
+    instruction's actual source start identifies its logical occurrence, even
+    when that occurrence is a detached exception with another RECURRENCE-ID.
+    The resulting canonical schedule can then use the new starts as identities
+    while retaining each exception's content and duration.
     """
-    from .patterns import PatternError, expand_sequence, is_relative_sequence
+    from .patterns import (PatternError, compile_sequence, expand_sequence,
+                           is_relative_sequence, sequence_tail)
     from .schedule_authoring import authoring_anchor, expression_matches
     text = master.schedule_expression
-    if (master.schedule_syntax != 2 or not is_relative_sequence(text)
-            or not expression_matches(master, text)):
+    if master.schedule_syntax != 2:
+        return None
+    try:
+        tail = sequence_tail(text)
+    except PatternError:
+        return None
+    relative = (not tail.prefix or is_relative_sequence(tail.prefix)) if tail else is_relative_sequence(text)
+    if not relative or not expression_matches(master, text):
         return None
     previous = authoring_anchor(master)
     current = (datetime.combine(start.date(), time.min, previous.tzinfo) if master.all_day
                else start.astimezone(previous.tzinfo))
     try:
-        old = expand_sequence(text, previous)
-        new = expand_sequence(text, current)
+        if tail:
+            old_compiled = compile_sequence(text, previous, all_day=master.all_day)
+            from .patterns import shift_unbounded_expression
+            shifted, _ = shift_unbounded_expression(text, previous, current)
+            new_compiled = compile_sequence(shifted, current, all_day=master.all_day)
+            old, new = old_compiled.prefix_starts, new_compiled.prefix_starts
+        else:
+            old = expand_sequence(text, previous)
+            new = expand_sequence(text, current)
     except PatternError as error:
         raise RecurrenceError(str(error)) from error
-    shift = current.replace(tzinfo=None) - previous.replace(tzinfo=None)
-    moved_exceptions = any(
-        key not in master.excluded_dates
-        and recurrence_key(Event.from_dict(payload).start, master.all_day) != key
-        for key, payload in master.recurrence_overrides.items())
-    if moved_exceptions:
-        linear = all((before.replace(tzinfo=None) + shift).replace(tzinfo=previous.tzinfo).timestamp() == after.timestamp()
-                     for before, after in zip(old, new))
-        if not linear:
-            raise RecurrenceError(
-                'This relative program includes a moved occurrence whose original identity cannot be '
-                'reanchored safely. Move that occurrence back or edit the sequence explicitly first.'
-            )
+    old_keys = [recurrence_key(value, master.all_day) for value in old]
+    new_keys = [recurrence_key(value, master.all_day) for value in new]
+    if (len(old_keys) != len(new_keys) or len(set(old_keys)) != len(old_keys)
+            or len(set(new_keys)) != len(new_keys)):
+        # A set program whose coincident instructions change multiplicity has
+        # no one-to-one logical correspondence. Its canonical document remains
+        # movable through the ordinary timestamp projection instead.
         return None
-    return {recurrence_key(before, master.all_day): recurrence_key(after, master.all_day)
-            for before, after in zip(old, new)}
+    actual_mapping = dict(zip(old_keys, new_keys))
+    overrides = {key: recurrence_key(Event.from_dict(payload).start, master.all_day)
+                 for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates}
+    if tail:
+        new_tail = sequence_tail(shifted)
+
+        def linear_tail_identity(target):
+            days = tail.interval * (7 if tail.unit == 'w' else 1)
+            approximate = (target.date() - old_compiled.tail_start.date()).days // days
+            # Generated local clocks can normalize across midnight (including
+            # a skipped civil day). Verify nearby nominal periods by instant,
+            # rather than treating that normalized wall clock as the rule time.
+            for index in range(max(0, approximate - 2), approximate + 3):
+                if tail.count is not None and index >= tail.count:
+                    continue
+                nominal = old_compiled.tail_start + timedelta(days=index * days)
+                if tail.until is not None and nominal.date() > tail.until:
+                    continue
+                actual = nominal if master.all_day else normalize_recurrence_time(nominal)
+                if recurrence_key(actual, master.all_day) != recurrence_key(target, master.all_day):
+                    continue
+                moved = new_compiled.tail_start + timedelta(days=index * days)
+                if new_tail.until is not None and moved.date() > new_tail.until:
+                    return None
+                if not master.all_day:
+                    moved = normalize_recurrence_time(moved)
+                return recurrence_key(moved, master.all_day)
+            return None
+
+        def tail_stream(compiled, anchor):
+            bare = replace(master, start=anchor, end=anchor + (master.end - master.start),
+                           recurrence_rule=compiled.recurrence_rule,
+                           recurrence_dates=(), excluded_dates=(), recurrence_overrides={})
+            values = normalize_recurrence_stream(_recurrence_set(bare, include_dates=False),
+                                                all_day=master.all_day)
+            yield from (value for value in values if value.timestamp() >= compiled.tail_start.timestamp())
+        pairs = iter(zip(tail_stream(old_compiled, previous), tail_stream(new_compiled, current)))
+        scanned = 0
+
+        def resolve(key):
+            nonlocal scanned
+            actual = overrides.get(key, key)
+            if actual in actual_mapping:
+                return actual_mapping[actual]
+            target = key_datetime(actual, master)
+            if target.timestamp() < old_compiled.tail_start.timestamp():
+                return None
+            if tail.unit in ('d', 'w'):
+                return linear_tail_identity(target)
+            for before, after in pairs:
+                scanned += 1
+                if scanned > MAX_REANCHOR_IDENTITIES:
+                    raise RecurrenceRangeError('This relative move needs more than 10,000 recurrence identities. Choose a nearer occurrence.')
+                before_key = recurrence_key(before, master.all_day)
+                actual_mapping[before_key] = recurrence_key(after, master.all_day)
+                if before.timestamp() >= target.timestamp():
+                    return actual_mapping.get(actual)
+            return None
+    else:
+        def resolve(key):
+            return actual_mapping.get(overrides.get(key, key))
+
+    mapping = _RelativeReanchorMap(actual_mapping, resolve)
+    for key, payload in master.recurrence_overrides.items():
+        if key in master.excluded_dates:
+            continue
+        actual = recurrence_key(Event.from_dict(payload).start, master.all_day)
+        mapped = resolve(key)
+        if mapped is not None:
+            mapping[key] = mapped
+    return mapping
+
+
+def _annotate_schedule(event: Event, preferred: str | None = None) -> Event:
+    """Attach a complete expression without changing canonical identities.
+
+    The authoring layer retains a certified literal and otherwise chooses its
+    compact set language or lossless canonical document. An excluded anchor,
+    detached prototype, or coincident starts never require clearing the text.
+    """
+    from .schedule_authoring import authoring_anchor, reconstruct_authoring
+    expression = event.schedule_expression if preferred is None else preferred
+    if not event.recurring and not expression and not event.expression_anchor:
+        # A plain event needs no stored annotation. Its editor still has the
+        # total authoring view (+0d) when a sequence is requested.
+        return event
+    candidate = replace(event, schedule_expression=expression if event.schedule_syntax == 2 else '',
+                        schedule_syntax=2)
+    authored = reconstruct_authoring(candidate)
+    return replace(candidate, schedule_expression=authored.expression,
+                   expression_anchor=authoring_anchor(candidate).date().isoformat())
 
 
 def updated_series(master: Event, reference: Event, edited: Event,
@@ -544,13 +670,13 @@ def updated_series(master: Event, reference: Event, edited: Event,
                     recurrence_rule="", recurrence_dates=(), excluded_dates=(),
                     recurrence_overrides={}, raw_ics="", all_day=updated.all_day,
                     schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
-        return replace(updated, recurrence_overrides=overrides)
+        return _annotate_schedule(replace(updated, recurrence_overrides=overrides))
     if not edited.recurrence_rule and not edited.recurrence_dates and not edited.schedule_expression:
         single = replace(edited, id=master.id, calendar_id=master.calendar_id,
                          series_id="", recurrence_id="", recurrence_overrides={}, excluded_dates=(),
                          raw_ics=master.raw_ics, ical_uid=master.ical_uid,
                          schedule_expression="", expression_anchor="", schedule_syntax=1)
-        return single
+        return _annotate_schedule(single)
     shift = wall(edited.start) - wall(reference.start)
     duration_changed = not same_duration(edited, reference)
     duration_source = edited if duration_changed else master
@@ -563,15 +689,10 @@ def updated_series(master: Event, reference: Event, edited: Event,
     checked_wall(end)
 
     relative_keys = None
-    relative_program = False
     if (shift and edited.all_day == master.all_day and edited.schedule_syntax == 2
             and edited.schedule_expression == master.schedule_expression
             and rules_equivalent(edited.recurrence_rule, master.recurrence_rule, master)):
-        from .patterns import is_relative_sequence
-        from .schedule_authoring import expression_matches
-        relative_program = is_relative_sequence(master.schedule_expression) and expression_matches(master, master.schedule_expression)
-        if relative_program:
-            relative_keys = relative_reanchor_map(master, start)
+        relative_keys = relative_reanchor_map(master, start)
 
     def shift_key(key):
         if relative_keys is not None and key in relative_keys:
@@ -582,14 +703,20 @@ def updated_series(master: Event, reference: Event, edited: Event,
     dates = tuple(shift_key(key) for key in master.recurrence_dates) if edited.recurrence_dates == master.recurrence_dates else edited.recurrence_dates
     exclusions = tuple(shift_key(key) for key in master.excluded_dates) if edited.excluded_dates == master.excluded_dates else edited.excluded_dates
     rule = edited.recurrence_rule
+    projected_expression = None
     if relative_keys is not None:
-        fields = schedule_fields([key_datetime(key, master) for key in relative_keys.values()], all_day=edited.all_day)
+        from .patterns import compile_sequence, sequence_tail, shift_unbounded_expression
+        # DTSTART is an anchor, not an implicit occurrence. Compiling at that
+        # anchor also preserves its EXDATE when the program omits +0d.
+        text = master.schedule_expression
+        if sequence_tail(text):
+            text, _ = shift_unbounded_expression(text, master.start.astimezone(zone), start)
+            projected_expression = text
+        compiled = compile_sequence(text, start, all_day=edited.all_day)
+        fields = compiled.fields
         rule, dates = fields['recurrence_rule'], fields['recurrence_dates']
-        # Hidden old exclusions are harmless tombstones unless the new program
-        # explicitly reuses that timestamp as one of its active instructions.
-        exclusions = tuple(key for key in exclusions if key not in set(relative_keys.values()))
+        exclusions = fields.get('excluded_dates', ())
     shifted_authoring = None
-    stale_authoring = False
     if relative_keys is None and rules_equivalent(rule, master.recurrence_rule, master):
         if shift and master.schedule_syntax == 2 and edited.schedule_expression == master.schedule_expression:
             from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
@@ -597,15 +724,13 @@ def updated_series(master: Event, reference: Event, edited: Event,
             try:
                 tail = sequence_tail(master.schedule_expression)
             except PatternError:
-                tail, stale_authoring = None, True
+                tail = None
             if tail:
                 author_start = (datetime.combine(master.start.date(), time.min, zone) if master.all_day
                                 else master.start.astimezone(zone))
                 author_moved = (datetime.combine(start.date(), time.min, zone) if edited.all_day
                                 else start.astimezone(zone))
-                stale_authoring = not expression_matches(master, master.schedule_expression,
-                                                          authoring_zone=zone)
-                if not stale_authoring:
+                if expression_matches(master, master.schedule_expression, authoring_zone=zone):
                     shifted_authoring = shift_unbounded_expression(master.schedule_expression,
                         author_start, author_moved)
                     rule = compile_sequence(shifted_authoring[0], author_moved,
@@ -616,9 +741,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
     for key, payload in master.recurrence_overrides.items():
         moved_key = shift_key(key)
         value = Event.from_dict(payload)
-        if relative_keys is not None:
-            nominal_offset = wall(value.start) - wall(key_datetime(key, master))
-            override_start = checked_wall((wall(key_datetime(moved_key, master)) + nominal_offset).replace(tzinfo=zone))
+        if relative_keys is not None and key in relative_keys:
+            override_start = checked_wall(key_datetime(moved_key, master))
         else:
             override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone))
         override_duration = duration if duration_changed else wall(value.end) - wall(value.start)
@@ -643,52 +767,12 @@ def updated_series(master: Event, reference: Event, edited: Event,
                       schedule_expression=expression, expression_anchor=anchor,
                       schedule_syntax=edited.schedule_syntax,
                       raw_ics=rekey_recurrence_templates(master, shift_key))
-    if expression:
-        from .patterns import PatternError, sequence_tail, shift_schedule_expression, shift_unbounded_expression
-        from .schedule_authoring import expression_matches
-        try:
-            tail = sequence_tail(expression) if edited.schedule_syntax == 2 else None
-        except PatternError:
-            # A proprietary annotation left behind by another client must not
-            # prevent an otherwise valid standard-rule edit or move.
-            return replace(updated, schedule_expression='' if shift else expression,
-                           expression_anchor='' if shift else anchor)
-        if tail:
-            # A tail has no finite list to materialize. Its finite prefix can
-            # still be shifted and its standard recurrence stays interoperable.
-            if stale_authoring:
-                expression, anchor = '', ''
-            elif shift:
-                author_start = (datetime.combine(updated.start.date(), time.min, zone) if updated.all_day
-                                else updated.start.astimezone(zone))
-                already_projected = expression_matches(updated, expression, authoring_zone=zone)
-                if shifted_authoring is not None:
-                    expression, anchor = shifted_authoring
-                elif not already_projected:
-                    previous = author_start - (timedelta(days=shift.days) if updated.all_day else shift)
-                    expression, anchor = shift_unbounded_expression(expression, previous, author_start)
-        elif edited.schedule_syntax == 2:
-            # The v2 whole-series editor can convert legacy authoring text on
-            # open. That new literal must follow the same timestamp move even
-            # though it differs from the original stored expression.
-            from .schedule_authoring import displayed_starts
-            try:
-                expression, anchor = shift_schedule_expression(
-                    expression, anchor or master.start.astimezone(zone).date().isoformat(),
-                    shift, displayed_starts(updated), syntax=2)
-            except (RecurrenceError, PatternError):
-                # Optional authoring text must not block a valid standard move
-                # when actual starts cannot be represented by this language.
-                expression, anchor = '', ''
-        elif expression == master.schedule_expression and anchor == master.expression_anchor:
-            expression, anchor = shift_schedule_expression(
-                expression, anchor, shift, base_schedule_starts(updated), syntax=1)
-        updated = replace(updated, schedule_expression=expression, expression_anchor=anchor)
-    if relative_program:
-        from .schedule_authoring import expression_matches
-        if updated.schedule_expression != master.schedule_expression or not expression_matches(updated, master.schedule_expression):
-            raise RecurrenceError('This move cannot preserve the relative sequence and its occurrence identities. Edit the sequence explicitly first.')
-    return updated
+    # Relative instructions remain verbatim when their reevaluated schedule is
+    # certified. Absolute programs and canonical documents are reconstructed
+    # from the projected identities, never discarded as optional annotations.
+    preferred = (projected_expression if projected_expression is not None else
+                 shifted_authoring[0] if shifted_authoring is not None else expression)
+    return _annotate_schedule(updated, preferred)
 
 
 def _valid_wall_time(value: datetime) -> bool:

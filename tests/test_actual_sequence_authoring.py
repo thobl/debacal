@@ -116,7 +116,7 @@ def test_multiple_moved_overrides_before_and_after_primary_keep_distinct_identit
 
 
 def test_duration_only_graphical_edit_keeps_literal_and_whitespace_parsing_preserves_payload():
-    text = '  4*(+2)  '
+    text = '  +0d 4*(+2w)  '
     master = replace(expression_event(source(), text), schedule_expression=text,
                      expression_anchor=START.date().isoformat(), schedule_syntax=2)
     selected = instances(master)[1]
@@ -129,34 +129,33 @@ def test_duration_only_graphical_edit_keeps_literal_and_whitespace_parsing_prese
     assert displayed_starts(edited) == tuple([START, *[item.start for item in instances(edited) if item.start != START]])
 
 
-def test_duplicate_displayed_starts_stay_canonical_with_an_explanation():
+def test_duplicate_displayed_starts_stay_canonical_with_an_editable_document():
     master = source('FREQ=DAILY;COUNT=4')
     selected = instances(master)[1]
     draft = ScheduleDraft.from_event(master)
     # Moving onto the next independent occurrence must not collapse the pair.
     start = selected.start + timedelta(days=1)
     changed = draft.edit_occurrence(master, selected, start, start + timedelta(hours=2))
-    assert draft.kind == 'advanced' and 'same time' in draft.authoring_error
+    assert draft.kind == 'custom' and draft.expression.startswith('schedule{')
+    assert expression_matches(changed, draft.expression)
     assert len(instances(changed)) == 4
     assert changed.recurrence_overrides
-    before = deepcopy(draft.__dict__)
-    with pytest.raises(RecurrenceError, match='same time'):
-        draft.use_sequence(changed)
-    assert draft.__dict__ == before
+    draft.use_sequence(changed)
+    assert expression_matches(changed, draft.expression)
     reopened = ScheduleDraft.from_event(changed)
-    assert reopened.kind == 'advanced' and 'same time' in reopened.authoring_error
+    assert reopened.kind == 'custom' and expression_matches(changed, reopened.expression)
     assert reopened.fields(changed.start)['recurrence_overrides'] == changed.recurrence_overrides
 
 
 def test_irregular_dates_prefer_absolute_entries_and_patterns_stay_compact():
     values = [START, START + timedelta(days=8), START + timedelta(days=11)]
     text = reconstruct_sequence(values)
-    assert text == '12. 15.'
+    assert text == '+0d 12. 15.'
     assert expand_sequence(text, START) == values
     weekly = [START + timedelta(weeks=index) for index in range(8)]
-    assert reconstruct_sequence(weekly) == '7*+1'
-    motif = expand_sequence('4*(+8d +3d)', START)
-    assert reconstruct_sequence(motif) == '4*(+8d +3d)'
+    assert reconstruct_sequence(weekly) == '+0d 7*+1w'
+    motif = expand_sequence('+0d 4*(+8d +3d)', START)
+    assert reconstruct_sequence(motif) == '+0d 4*(+8d +3d)'
 
 
 def test_seeded_actual_time_edits_and_text_reentry_are_lossless():

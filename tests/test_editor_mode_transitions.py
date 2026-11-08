@@ -16,6 +16,7 @@ from debacal.ics import export_ics, parse_ics
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
 from debacal.recurrence import expand_event, occurrence
+from debacal.schedule_authoring import expression_matches
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -73,7 +74,7 @@ def test_frequency_switching_keeps_notes_position_and_sidebar_width(editor_facto
 
 def test_custom_regular_and_alternative_modes_save_the_visible_schedule(editor_factory):
     dialog = editor_factory()
-    dialog.pattern.setText('+1d +3d +2w')
+    dialog.pattern.setText('+0d +1d +3d +2w')
     assert dialog.repeat.currentData() == 'RDATE'
     original = starts(dialog.build_events()[0])
     for kind in ('DAILY', 'MONTHLY', 'WEEKLY'):
@@ -83,7 +84,7 @@ def test_custom_regular_and_alternative_modes_save_the_visible_schedule(editor_f
         assert dialog._draft.kind == kind
         event = dialog.build_events()[0]
         assert 'FREQ=' + kind in event.recurrence_rule
-        assert event.schedule_expression == ''
+        assert expression_matches(event, event.schedule_expression)
         dialog.repeat.setCurrentData('RDATE')
         assert starts(dialog.build_events()[0]) == original
         dialog.schedule_mode.setCurrentData('alternatives')
@@ -128,25 +129,25 @@ def test_imported_advanced_rules_are_preserved_without_a_rule_editor(editor_fact
                    recurrence_rule='FREQ=MONTHLY;BYDAY=-1FR;COUNT=4', timezone_id=ZONE.key)
     dialog = editor_factory(source)
     assert not hasattr(dialog, 'custom_rule') and not hasattr(dialog, 'rule_button')
-    assert dialog.custom_input.currentWidget() is dialog.advanced_page
+    assert dialog.pattern.text()
+    assert expression_matches(source, dialog.pattern.text())
     dialog.title.setText('Renamed')
     assert dialog.build_events()[0].recurrence_rule == source.recurrence_rule
     before = starts(dialog.build_events()[0])
-    dialog.convert_sequence_button.click()
     assert dialog._draft.kind == 'custom'
     assert starts(dialog.build_events()[0]) == before
     assert dialog.custom_input.currentIndex() == 0
 
 
-def test_unbounded_import_stays_valid_after_refused_sequence_conversion(editor_factory):
+def test_unbounded_import_has_an_editable_complete_definition(editor_factory):
     source = Event('monthly', 'local', 'Last Friday', START, START + timedelta(hours=1),
                    recurrence_rule='FREQ=MONTHLY;BYDAY=-1FR', timezone_id=ZONE.key)
     dialog = editor_factory(source)
-    dialog.convert_sequence_button.click()
-    assert dialog._draft.kind == 'advanced'
-    assert dialog.custom_input.currentWidget() is dialog.advanced_page
+    assert dialog._draft.kind == 'custom'
+    assert dialog.pattern.text().startswith('schedule{')
+    assert expression_matches(source, dialog.pattern.text())
     assert dialog.build_events()[0].recurrence_rule == source.recurrence_rule
-    assert dialog.error.text()
+    assert not dialog.error.text()
     dialog.repeat.setCurrentData('DAILY')
     dialog.no_end.setChecked(False)
     assert not dialog.error.text()
@@ -204,7 +205,7 @@ def test_frequency_icons_keep_names_accessible_and_limits_are_disabled_when_inde
 
 def test_indefinite_sequence_saves_and_remains_editable_after_trying_a_regular_pattern(editor_factory):
     dialog = editor_factory()
-    text = '+2d +3d every(1w)'
+    text = '+0d +2d +3d every(1w)'
     dialog.pattern.setText(text)
     custom = dialog.build_events()[0]
     assert custom.schedule_expression == text

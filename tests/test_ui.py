@@ -59,7 +59,7 @@ class DialogTests(unittest.TestCase):
     def test_pattern_preview_and_atomic_creation_undo(self):
         dialog = self.dialog()
         dialog.title.setText("Research seminar")
-        dialog.pattern.setText("4*(+2) +3 3*+2")
+        dialog.pattern.setText('+0d 4*(+2w) +3w 3*+2w')
         self.assertIsInstance(dialog.preview, SeriesPreview)
         self.assertEqual(dialog.repeat.currentData(), 'RDATE')
         self.assertEqual(len(dialog.preview.masters), 1)
@@ -91,7 +91,7 @@ class DialogTests(unittest.TestCase):
     def test_candidate_pattern_uses_the_same_recurring_master_model(self):
         dialog = self.dialog()
         dialog.title.setText('Possible seminar slots')
-        dialog.pattern.setText('4*(+2) +3 3*+2')
+        dialog.pattern.setText('+0d 4*(+2w) +3w 3*+2w')
         dialog.schedule_mode.setCurrentData('alternatives')
         self.assertTrue(dialog.preview.masters[0].candidate)
         dialog.save()
@@ -169,7 +169,7 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(len(dialog.preview.events_on(december_date)), 1)
         dialog.save()
         master = dialog.result_events[0]
-        self.assertEqual(len(master.recurrence_dates), 2)
+        self.assertEqual(len(dialog.sequence_starts()), 3)
         self.store.apply('Create custom seminar', [master])
         occurrences = self.store.query_occurrences(master.start, datetime(2027, 1, 1, tzinfo=ZONE))
         self.assertEqual([event.start.date() for event in occurrences],
@@ -178,7 +178,7 @@ class DialogTests(unittest.TestCase):
     def test_reopened_sequence_keeps_fixed_event_and_can_remove_additions(self):
         create = self.dialog()
         create.title.setText('Irregular seminar')
-        create.pattern.setText('11.11.2026, 2.12.2026')
+        create.pattern.setText('+0d 11.11.2026, 2.12.2026')
         create.save()
         master = create.result_events[0]
         self.store.apply('Create custom seminar', [master])
@@ -190,11 +190,11 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(len(edit.preview.events_on(date(2026, 11, 4))), 1)
         edit.show()
         self.app.processEvents()
-        # The primary occurrence can be edited using the shared picker, but it
-        # has no remove target. Cancelling leaves the source unchanged.
+        # The reference occurrence has the same edit/remove controls as others.
+        # Cancelling leaves the source unchanged.
         card, primary, remove = edit.preview.grid.chip_rects(date(2026, 11, 4))[0]
         self.assertTrue(edit.preview.is_primary(primary))
-        self.assertTrue(remove.isEmpty())
+        self.assertFalse(remove.isEmpty())
         QTest.mouseDClick(edit.preview.grid, Qt.MouseButton.LeftButton, pos=card.center().toPoint())
         self.assertIsInstance(edit.range_picker, DateTimeRangePicker)
         self.assertEqual(edit.range_picker.draft_start, master.start)
@@ -229,7 +229,7 @@ class DialogTests(unittest.TestCase):
     def test_invalid_pattern_cannot_be_saved(self):
         dialog = self.dialog()
         dialog.title.setText("Seminar")
-        dialog.pattern.setText("4*(+2")
+        dialog.pattern.setText("4*(+2w")
         self.assertIn("Missing closing", dialog.error.text())
         dialog.save()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
@@ -482,7 +482,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_confirm_candidate_is_one_undoable_action(self):
         dialog = EventDialog(self.store.list_calendars(), datetime(2026, 11, 4, 10, tzinfo=ZONE))
         dialog.title.setText("Find a meeting slot")
-        dialog.pattern.setText("2*+1d")
+        dialog.pattern.setText('+0d 2*+1d')
         dialog.schedule_mode.setCurrentData('alternatives')
         dialog.save()
         self.window.apply_events("Create meeting options", dialog.result_events)

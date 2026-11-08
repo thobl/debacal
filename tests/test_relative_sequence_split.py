@@ -12,8 +12,8 @@ ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2027, 1, 31, 9, tzinfo=ZONE)
 
 
-@pytest.mark.parametrize('text', ['4*+1m', '3*(+1m +2d)', '2*(+1y +2)',
-                                  '4*+1d', '2*(+1h +30min)'])
+@pytest.mark.parametrize('text', ['+0d 4*+1m', '+0d 3*(+1m +2d)', '+0d 2*(+1y +2w)',
+                                  '+0d 4*+1d', '+0d 2*(+1w +3d)'])
 def test_every_relative_instruction_boundary_partitions_the_complete_sequence(text):
     values = expand_sequence(text, START)
     for index, boundary in enumerate(values[1:], 1):
@@ -23,37 +23,38 @@ def test_every_relative_instruction_boundary_partitions_the_complete_sequence(te
 
 
 def test_monthly_split_and_subsequent_reanchor_keep_calendar_month_intent():
-    before, after = split_relative_sequence('4*+1m', START, START.replace(month=3, day=28))
-    assert (before, after) == ('+1m', '2*+1m')
-    reanchored = START.replace(month=3, day=30)
+    before, after = split_relative_sequence('+0d 4*+1m', START, START.replace(month=5))
+    assert (before, after) == ('+0d +1m', '+0d 2*+1m')
+    reanchored = START.replace(month=5, day=30)
     assert expand_sequence(after, reanchored) == [reanchored,
-        reanchored.replace(month=4), reanchored.replace(month=5)]
+        reanchored.replace(month=6), reanchored.replace(month=7)]
 
 
 def test_yearly_split_preserves_leap_day_arithmetic_when_reanchored():
     initial = START.replace(year=2028, month=2, day=29)
-    before, after = split_relative_sequence('4*+1y', initial, initial.replace(year=2030, day=28))
-    assert (before, after) == ('+1y', '2*+1y')
+    before, after = split_relative_sequence('+0d 4*+1y', initial, initial.replace(year=2036))
+    assert (before, after) == ('+0d +1y', '+0d 2*+1y')
     reanchored = initial.replace(year=2032)
     assert expand_sequence(after, reanchored) == [reanchored,
-        reanchored.replace(year=2033, day=28), reanchored.replace(year=2034, day=28)]
+        reanchored.replace(year=2036), reanchored.replace(year=2040)]
 
 
 def test_split_at_a_group_boundary_keeps_the_relative_motif():
-    values = expand_sequence('3*(+1m +2d)', START)
-    before, after = split_relative_sequence('3*(+1m +2d)', START, values[2])
-    assert before == '+1m' and after == '2*(+1m +2d)'
+    text = '+0d 3*(+1m +2d)'
+    values = expand_sequence(text, START)
+    before, after = split_relative_sequence(text, START, values[2])
+    assert before == '+0d +1m' and after == '+0d 2*(+1m +2d)'
 
 
 def test_split_before_prototype_has_no_head_and_keeps_literal_tail():
-    raw = '  4*(+1m) '
+    raw = '  +0d 4*(+1m) '
     assert split_relative_sequence(raw, START, START) == (None, raw)
 
 
 def test_last_occurrence_becomes_a_singleton_tail():
     text = '4*+1m'
     before, after = split_relative_sequence(text, START, expand_sequence(text, START)[-1])
-    assert before == '3*+1m' and after == ''
+    assert before == '3*+1m' and after == '+0d'
 
 
 def test_non_relative_programs_are_unsupported_and_unknown_boundaries_are_rejected():
@@ -67,13 +68,13 @@ def test_large_uniform_relative_program_splits_without_a_large_date_list():
     text = '800*+1d'
     boundary = START + timedelta(days=400)
     before, after = split_relative_sequence(text, START, boundary)
-    assert (before, after) == ('399*+1d', '400*+1d')
+    assert (before, after) == ('399*+1d', '+0d 400*+1d')
 
 
 def test_public_relative_steps_keep_expanded_units_for_calendar_intent_checks():
-    assert relative_sequence_steps('2*(+1m +2) +3w') == (
-        (1, 'm'), (2, 'w'), (1, 'm'), (2, 'w'), (3, 'w'))
-    assert relative_sequence_steps('+1h +30min') == ((1, 'h'), (30, 'min'))
+    assert relative_sequence_steps('2*(+1m +2w) +3w') == (
+        (1, 'm', False), (2, 'w', False), (1, 'm', False), (2, 'w', False), (3, 'w', False))
+    assert relative_sequence_steps('+1m! +3y!') == ((1, 'm', True), (3, 'y', True))
 
 
 def test_public_relative_steps_do_not_classify_other_or_invalid_programs():

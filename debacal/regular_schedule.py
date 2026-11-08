@@ -1,8 +1,6 @@
 """One standard recurrence model for editor controls and sequence authoring."""
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from calendar import monthrange
-from math import gcd
 
 from dateutil.rrule import rrulestr
 
@@ -20,7 +18,7 @@ def _aware(value):
     return value
 
 
-def _parts(kind, interval=1, weekdays=()):
+def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None):
     kind = str(kind).upper()
     if kind not in REGULAR_KINDS:
         raise RecurrenceError('Choose a daily, weekly, monthly or yearly recurrence.')
@@ -32,10 +30,18 @@ def _parts(kind, interval=1, weekdays=()):
     result = f'FREQ={kind};INTERVAL={interval}'
     if kind == 'WEEKLY' and days:
         result += ';BYDAY=' + ','.join(_DAY_NAMES[day] for day in days)
+    if clamp:
+        if kind not in ('MONTHLY', 'YEARLY'):
+            raise RecurrenceError('Clamping is available only for monthly and yearly recurrences.')
+        _aware(start)
+        result += ';BYMONTHDAY=' + ','.join(str(day) for day in range(min(28, start.day), start.day + 1))
+        result += ';BYSETPOS=-1'
+        if kind == 'YEARLY':
+            result += ';BYMONTH=' + str(start.month)
     return result
 
 
-def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=()) -> date:
+def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=(), *, clamp=False) -> date:
     """Inclusive last date of a COUNT rule, including DTSTART when it matches.
 
     Dateutil's calendar arithmetic deliberately skips nonexistent month days:
@@ -45,7 +51,7 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
     if type(count) is not int or not 1 <= count <= MAX_REPEAT_COUNT:
         raise RecurrenceError(f'Choose between 1 and {MAX_REPEAT_COUNT:,} occurrences.')
     try:
-        rule = _parts(kind, interval, weekdays)
+        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start)
         if str(kind).upper() == 'DAILY':
             return start.date() + timedelta(days=interval * (count - 1))
         if str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
@@ -65,7 +71,7 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
 
 
 def until_to_count(start: datetime, kind: str, interval: int, until: date, weekdays=(),
-                   *, limit: int = MAX_REPEAT_COUNT) -> int:
+                   *, limit: int = MAX_REPEAT_COUNT, clamp=False) -> int:
     """Count rule occurrences through an inclusive calendar date, with a cap."""
     _aware(start)
     if isinstance(until, datetime) or not isinstance(until, date):
@@ -76,7 +82,7 @@ def until_to_count(start: datetime, kind: str, interval: int, until: date, weekd
         raise RecurrenceError('Invalid recurrence count limit.')
     count = 0
     try:
-        rule = _parts(kind, interval, weekdays)
+        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start)
         if str(kind).upper() == 'DAILY':
             count = (until - start.date()).days // interval + 1
         elif str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
@@ -107,10 +113,11 @@ class RegularSchedule:
     until: date | None = None
     weekdays: tuple[int, ...] = ()
     ending: str = 'count'
+    clamp: bool = False
 
     def rule(self, start: datetime, *, all_day=False) -> str:
         _aware(start)
-        result = _parts(self.kind, self.interval, self.weekdays)
+        result = _parts(self.kind, self.interval, self.weekdays, clamp=self.clamp, start=start)
         if self.ending == 'never' or (self.count is None and self.until is None):
             return result
         if self.ending == 'until':
@@ -135,11 +142,19 @@ class RegularSchedule:
             allowed = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'}
             if kind == 'WEEKLY':
                 allowed.add('BYDAY')
+            clamp = False
+            if kind in ('MONTHLY', 'YEARLY') and parts.get('BYSETPOS') == '-1':
+                expected = dict(part.split('=', 1) for part in _parts(kind, clamp=True, start=start).split(';'))
+                clamp_keys = {'BYMONTHDAY', 'BYSETPOS'} | ({'BYMONTH'} if kind == 'YEARLY' else set())
+                if any(parts.get(key) != expected[key] for key in clamp_keys):
+                    return None
+                allowed |= clamp_keys
+                clamp = True
             if kind not in REGULAR_KINDS or parts.keys() - allowed or parts.get('WKST', 'MO') != 'MO':
                 return None
             days = tuple(_DAY_NAMES.index(day) for day in parts.get('BYDAY', '').split(',') if day)
             interval = int(parts.get('INTERVAL', 1))
-            _parts(kind, interval, days)
+            _parts(kind, interval, days, clamp=clamp, start=start)
             if days and start.weekday() not in days:
                 # DTSTART is still a set member in the calendar model. A rule
                 # beginning on a different weekday has an extra prototype and
@@ -149,8 +164,8 @@ class RegularSchedule:
                 return None
             if 'COUNT' in parts:
                 count = int(parts['COUNT'])
-                until = count_to_until(start, kind, interval, count, days)
-                return cls(kind, interval, count, until, days, 'count')
+                until = count_to_until(start, kind, interval, count, days, clamp=clamp)
+                return cls(kind, interval, count, until, days, 'count', clamp)
             if 'UNTIL' in parts:
                 value = parts['UNTIL']
                 if len(value) == 8:
@@ -166,18 +181,18 @@ class RegularSchedule:
                     candidate = datetime.combine(until, start.timetz()).replace(microsecond=0)
                     if candidate.timestamp() > stamp.timestamp():
                         until -= timedelta(days=1)
-                count = until_to_count(start, kind, interval, until, days)
-                last = count_to_until(start, kind, interval, count, days)
-                return cls(kind, interval, count, last, days, 'until')
-            return cls(kind, interval, None, None, days, 'never')
+                count = until_to_count(start, kind, interval, until, days, clamp=clamp)
+                last = count_to_until(start, kind, interval, count, days, clamp=clamp)
+                return cls(kind, interval, count, last, days, 'until', clamp)
+            return cls(kind, interval, None, None, days, 'never', clamp)
         except (ValueError, OverflowError, TypeError):
             return None
 
 
 def retain_relative_intent(expression, start, regular):
-    """Do not classify a clipped month program from a short point sample.
+    """Retain calendar instruction intent when choosing regular controls.
 
-    Two dates can happen to look like a 28-day rule while expressing +1m.
+    Two dates can happen to look like a day rule while expressing +1m.
     Regular controls may extend a program only when their repeated unit is
     equivalent, including every month in its calendar cycle.
     """
@@ -187,25 +202,28 @@ def retain_relative_intent(expression, start, regular):
     steps = relative_sequence_steps(expression)
     if steps is None:
         return regular
-    normalized = tuple((amount * 7, 'd') if unit == 'w' else (amount, unit)
-                       for amount, unit in steps)
+    # Initial zero offsets explicitly include the reference; they add no
+    # repeated interval. Interior zero offsets can reset a clamp preference.
+    while steps and steps[0][0] == 0:
+        steps = steps[1:]
+    if not steps or any(amount == 0 for amount, _unit, _clamp in steps):
+        return None
+    normalized = tuple((amount * 7, 'd', clamp) if unit == 'w' else (amount, unit, clamp)
+                       for amount, unit, clamp in steps)
     if len(set(normalized)) != 1:
         return None
-    amount, unit = normalized[0]
+    amount, unit, clamp = normalized[0]
+    if clamp != regular.clamp:
+        return None
     if unit == 'd':
         period = regular.interval * (7 if regular.kind == 'WEEKLY' else 1)
         return regular if regular.kind in ('DAILY', 'WEEKLY') and period == amount else None
     if unit == 'm':
-        months = {(start.month - 1 + index * amount) % 12 + 1 for index in range(12 // gcd(amount, 12))}
-        if any(start.day > monthrange(2001, month)[1] for month in months):
-            return None
         period = regular.interval * (12 if regular.kind == 'YEARLY' else 1)
         return regular if regular.kind in ('MONTHLY', 'YEARLY') and period == amount else None
     if unit == 'y':
-        if (start.month, start.day) == (2, 29):
-            return None
         if regular.kind == 'MONTHLY' and regular.interval % 12:
             return None
         period = regular.interval // 12 if regular.kind == 'MONTHLY' and regular.interval % 12 == 0 else regular.interval
         return regular if regular.kind in ('MONTHLY', 'YEARLY') and period == amount else None
-    return None  # Legacy clock-offset programs remain in Custom.
+    return None

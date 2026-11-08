@@ -381,119 +381,61 @@ removing custom additions, exclusions, and individual range changes. Returning
 to Custom restores that editor scope's previous custom draft, including its
 text and individual ranges. Changes become permanent only when saved.
 
-Click a preview date to add or remove an occurrence. Regular date selections
-automatically use the corresponding standard recurrence; irregular selections
-use a compact custom sequence. Unbounded or large rules retain their RRULE and
-use standard additions and exclusions. The pinned primary event is edited with
-Start and End. **Add occurrence** opens the same range picker, initially using
-the primary time and duration, so an extra occurrence can have a different time
-or duration. Occurrence navigation offers First, Previous, Next, and Last; Last
-is unavailable for an endless series. Month arrows browse without changing the
-primary event; the month heading sits immediately after these buttons.
+Click a preview date to add or remove an occurrence, or edit an occurrence's
+time with the range picker. **Start**, **End**, and **Duration** define the
+reference range. The reference need not itself occur: removing its occurrence
+is allowed. **Add occurrence** starts with the reference time and duration.
+First/Previous/Next/Last navigate the preview; Last is disabled for endless rules.
 
-Custom instructions add occurrences after the primary event, so its date need
-not be repeated in the sequence. Its duration applies unless an individual
-occurrence has its own range.
+Every schedule has an editable definition. For compact sequences, instructions
+are separated by spaces or commas and evaluated from a cursor at the reference:
 
-Instructions are separated by spaces or commas. Each runs from the result of the
-previous instruction:
-
-* `+2` adds two weeks. Units can be explicit: `+3d`, `+2w`, `+1m`, `+1y` for
-  days, weeks, calendar months, and calendar years. Relative date steps keep the
-  preceding event's clock. Month/year shifts clip invalid days: 31 January plus
-  one month becomes 28 February in a non-leap year.
-* `13.` chooses the next day 13; `3.2.` (also `3.2`) chooses the next 3 February. Omitted
-  month/year values roll forward until the matching instant is strictly later
-  than the cursor. A day 31 skips months without that day; 29 February skips
-  non-leap years. Date-only instructions use the initial event's clock.
-* `14:30-13.` adds the next day 13 at 14:30. `14:30` alone chooses that clock on
-  the same day if still ahead, otherwise the next day. Clocks use 24-hour `HH:MM`.
-* A full date such as `3.2.2027.` is exact, even if earlier than the cursor or
-  initial event. The next relative instruction runs from that exact date.
-* `4*+2` repeats a step four times; `2*(+1w +2d)` repeats a group. Groups may nest.
-  Repeat counts add occurrences after the initial event. `+0` is invalid.
-* A final `every(2w)` continues every two weeks indefinitely from the preceding
-  event; `every(1d)`, `every(1m)`, and `every(1y)` use days, months, and years.
-  Omitting the unit means weeks. Used alone, it repeats the primary event.
-  These tails follow standard calendar recurrence: monthly/yearly patterns skip
-  missing dates, so an endless monthly event on the 31st skips February.
-  A finite prefix can precede the tail, such as `+2 +3 every(1w)`. The tail's
-  interval must align with the primary event's recurrence cycle; an incompatible
-  prefix such as `+3 every(2w)` is rejected with an explanation.
-* Bound a regular tail with `every(1d, count=3)` or
-  `every(1d, until=13.11.2026)`. Count includes the tail cursor; without a prefix,
-  it includes the primary event. Until includes the given local calendar date.
-  The two bounds are mutually exclusive. Large bounded rules remain standard
-  RRULEs instead of lists of dates.
+* `+0d` includes the reference explicitly; `none` denotes an empty schedule.
+* `+2w`, `+3d`, `+1m`, `+1y` advance weeks, days, months, years. Units are
+  mandatory. Month/year steps skip missing dates, following standard RRULE.
+* `+1m!` or `+1y!` clamps missing dates while retaining the preferred day.
+  From 31 October, repeated `+1m!` gives 30 November, 31 December, 31 January,
+  28 February, 31 March. **Clamp** is offered when it can affect the schedule.
+* `13.` chooses the next day 13; `3.2.` chooses the next 3 February.
+  `3.2.2027` is exact, even before the cursor. Partial month dates end in a dot;
+  dates including a year do not. Date-only entries use the reference clock.
+* `14:30-13.` chooses the next day 13 at 14:30. `14:30` alone chooses that
+  clock later today, otherwise tomorrow. Clocks are explicit; h/min offsets
+  and unitless relative steps are not accepted.
+* `4*+2w` repeats a step; `2*(+1w +2d)` repeats a group. Nothing implicitly
+  includes the reference: `+0d 4*+2w` has five occurrences.
+* A terminal `every(2w)` includes its current cursor and continues indefinitely.
+  `every(1m!, count=13)` clamps for thirteen occurrences including the cursor.
+  `every(1d, until=13.11.2026)` includes dates through that local day. Count
+  and until bounds are mutually exclusive; earlier prefix dates are separate.
 
 ```text
-13. +1 18. 2. 3.2. +2
-4*(+2) +3 3*+2
-14:00-13. +1 18.
-10:00 11:30 14:00-13.
++0d 13. +1w 18. 2. 3.2. +2w
++0d 4*(+2w) +3w 3*+2w
++0d 10:00 11:00 9:00 10:00 11:00
++0d +3w every(1w)
 ```
 
-Starting at **7 November 2026, 09:00**, the first example adds 13 November,
-20 November, 18 December, 2 January, 3 February, and 17 February: seven events
-including the initial one. Duplicate instants appear once, while each instruction
-still updates the cursor. Finite expansion is bounded to 500 events including the fixed
-event; repeat budgets are checked before execution. Indefinite tails remain
-standard RRULEs with finite additions/exclusions, rather than generated copies.
-Nonexistent local times during
-a daylight-saving clock change are rejected. During a repeated hour, absolute
-dates retain the initial event's choice, while relative and time-only steps
-retain the previous event's choice.
+The last example skips the second and third weekly occurrences while keeping
+the reference. Regular tails and representable finite patterns compile to
+standard RRULEs, including clamping with BYMONTHDAY/BYSETPOS. Irregular sets
+use standard RDATE/EXDATE and detached exceptions.
 
-Automatically reconstructed sequences use explicit clocks for time changes,
-rather than minute/hour offsets. Changing an occurrence's time in the preview
-updates its clock in the sequence. Already-saved expressions containing `h` or
-`min` offsets remain readable and keep their original meaning. Valid saved text
-keeps its formatting when a series is opened or its title changes.
+Valid matching text keeps its spelling and cursor position. Moving a whole
+relative series reevaluates its instructions at the new reference, retaining
+its calendar intent. Graphical edits regenerate exact concise text: omit years
+when clear, use clocks for changed times, prefer dates for irregular gaps,
+compress repeated strides and groups. Invalid pending input cannot save an
+older valid schedule instead. Saves, splits and undo/redo retain text and
+canonical schedules together.
 
-The text remains editable when reopening a saved custom series. Title edits
-preserve it. Moving an entirely relative definition re-evaluates its instructions
-at the new primary and keeps the text, including month/year clipping. Moving
-explicitly dated events keeps equivalent text or reconstructs concise dates;
-full-year dates have no trailing dot. Older syntax is never
-silently interpreted as the new language: opening it reconstructs an equivalent
-sequence from its stored standard dates. Editing that schedule or moving its
-primary date records the new version; ordinary title edits retain the original
-metadata. Clicking preview dates adds or
-removes dates and reconstructs a compact equivalent sequence. It compares short
-day/month dates, relative steps, clock changes and repeated groups, omitting a
-year whenever the shorter form selects exactly the same date. Irregular dates
-prefer individual date instructions over unrelated relative day offsets. Regular
-gaps and repeated blocks still use compact relative steps and multipliers. Calendar
-clicks remain available after simplification. Hand-entered text keeps its
-formatting until a calendar click changes the selection. Live validation keeps
-the text cursor, selection, and undo history intact; invalid pending text cannot
-save an older schedule in its place.
-
-Graphical edits to an ongoing daily, weekly, monthly, or yearly series generate
-a finite prefix followed by `every(...)`, including its added and removed dates.
-For example, skipping the second and third occurrences of an endless weekly
-series produces `+3 every(1w)`. The original event remains, followed by another
-three weeks later and weekly events thereafter. Per-occurrence ranges and
-content remain standard detached exceptions. Unchanged displayed starts retain
-their original recurrence IDs and exception details through text edits.
-
-Text conversions share one checked authoring model across the editor, series
-moves, and following-event splits. A generated expression must reproduce the
-complete set of displayed starts, including additions, exclusions, and moved exceptions.
-The underlying calendar recurrence and exception identities remain intact.
-Unsupported rules or oversized prefixes retain their canonical calendar data; conversion
-fails without partially changing the draft or substituting another frequency.
-
-Saving creates one undoable operation. Regular schedules use standard RRULE;
-uniform hour/minute sequences use finite `HOURLY`/`MINUTELY` rules with a count.
-Irregular schedules use standard RDATE, retaining their structure in other calendar
-clients. The **Schedule** controls support daily, weekly, monthly and yearly
-schedules with interval/count/end-date controls. Custom uses the sequence
-language; there is no raw RRULE editor. Imported advanced rules remain intact
-during ordinary edits. Finite imported patterns can be converted with **Edit as
-sequence**; simple unbounded patterns use `every(...)`. The preview can add or remove dates without flattening an
-unbounded rule. The recurrence controls share one height so Notes stays in place
-when switching patterns.
+Compact notation describes sets of starts. If identities or rule details need
+more information, the editable `schedule{…}` form directly records the canonical
+rule, additions, exclusions and nominal-ID-to-range moves. It keeps distinct
+events even when they start together, represents excluded or moved references,
+and handles large or infinite schedules without enumeration. There is always
+a sequence string; there is no separate uneditable advanced-recurrence state.
+See the [full syntax, normal form and correctness contract](docs/SEQUENCES.md).
 
 Custom sequence definitions also synchronize between Debacal instances. The ICS
 master stores the exact expression, language version and anchor in

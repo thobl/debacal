@@ -128,7 +128,7 @@ def test_custom_range_addition_is_restored_after_trying_a_clean_regular_pattern(
 @pytest.mark.parametrize('scope', ['group', 'future'])
 def test_picker_edits_keep_occurrence_identity_and_duration_when_saving_scope(author, scope):
     create, store = author
-    text = '  5*+1d  '
+    text = '  +0d 5*+1d  '
     source = Event('source', 'local', 'A series', START, START + timedelta(minutes=45),
                    **schedule_fields(expand_sequence(text, START)), schedule_expression=text,
                    expression_anchor=START.date().isoformat(), schedule_syntax=2, timezone_id=ZONE.key)
@@ -157,7 +157,7 @@ def test_picker_edits_keep_occurrence_identity_and_duration_when_saving_scope(au
 
 
 @pytest.mark.parametrize('setting', ['count', 'until'])
-def test_future_regular_controls_use_nominal_anchor_for_moved_primary(author, setting):
+def test_future_moved_reference_starts_custom_and_explicit_regular_reset_uses_chosen_start(author, setting):
     create, store = author
     source = Event('source', 'local', 'A series', START, START + timedelta(minutes=45),
                    recurrence_rule='FREQ=DAILY;COUNT=5', timezone_id=ZONE.key)
@@ -169,17 +169,21 @@ def test_future_regular_controls_use_nominal_anchor_for_moved_primary(author, se
     source = store.get_event(source.id)
     selected = next(value for value in visible(source) if value.start == moved_start)
     dialog = create(source, selected, 'future')
-    assert dialog.repeat.currentData() == 'DAILY'
+    assert dialog.repeat.currentData() == 'RDATE'
     assert dialog._draft.schedule_anchor(moved_start) == START + timedelta(days=2)
-    assert dialog.repeat_until.value().date() == (START + timedelta(days=4)).date()
+    # Actual starts have no daily regularity: the first nominal occurrence was
+    # moved ten days away. Explicitly choosing a regular pattern resets those
+    # custom changes around the currently shown start, as for other sequences.
+    dialog.repeat.setCurrentData('DAILY')
     if setting == 'count':
         dialog.repeat_count.setValue(4)
     else:
-        dialog.repeat_until.set_value(START + timedelta(days=5))
+        dialog.repeat_until.set_value(moved_start + timedelta(days=3))
     assert not dialog.error.text()
     edited = save(dialog)
-    assert edited.start == START + timedelta(days=2)
+    assert edited.start == moved_start
     store.edit_future(selected, edited, replace_schedule=dialog.schedule_replacement)
     values = store.query_occurrences(START - timedelta(days=1), START + timedelta(days=100))
-    assert {value.start for value in values} == {START + timedelta(days=value) for value in (0, 1, 3, 4, 5)} | {moved_start}
+    assert {value.start for value in values} == {START, START + timedelta(days=1)} | {
+        moved_start + timedelta(days=index) for index in range(4)}
     assert next(value for value in values if value.start == moved_start).end - moved_start == timedelta(hours=3)

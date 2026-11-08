@@ -16,7 +16,7 @@ from dateutil.rrule import rrulestr
 
 from .models import Event
 from .recurrence import (
-    RecurrenceError, ScheduleReplacement, base_schedule_starts, canonical_rule, event_zone,
+    RecurrenceError, ScheduleReplacement, canonical_rule, event_zone,
     key_datetime, occurrence_id, recurrence_key, recurrence_set,
     rules_equivalent, updated_series, _valid_wall_time,
 )
@@ -70,30 +70,21 @@ def _has_visible_occurrence(master):
     return False
 
 
-def _refresh_authoring(part, source, *, preferred_expression=None):
-    """Retain an editable annotation only when it describes this partition."""
-    part = replace(part, schedule_expression='', expression_anchor='', schedule_syntax=1)
-    if not source.schedule_expression:
-        return part
-    try:
-        from .patterns import PatternError
-        from .schedule_authoring import authoring_anchor, expression_matches, reconstruct_authoring, simplified_rule
-        # Use the same certified conversion as the editor. In particular, a
-        # split tail's expression must include all retained additions/removals.
-        normalized = replace(part, recurrence_rule=simplified_rule(part))
-        anchor = authoring_anchor(normalized)
-        if preferred_expression is not None:
-            if not expression_matches(normalized, preferred_expression):
-                raise RecurrenceError('The relative sequence cannot be split safely at this occurrence. Edit its definition explicitly first.')
-            expression = preferred_expression
-        else:
-            expression = reconstruct_authoring(normalized).expression
-    except (RecurrenceError, PatternError, ValueError, OverflowError):
-        if preferred_expression is not None:
-            raise
-        return part  # Standard rules/dates remain authoritative and intact.
+def _refresh_authoring(part, *, preferred_expression=None):
+    """Give every partition a certified, complete editable expression."""
+    from .schedule_authoring import authoring_anchor, expression_matches, reconstruct_authoring, simplified_rule
+    normalized = replace(part, recurrence_rule=simplified_rule(part),
+                         schedule_expression='', expression_anchor='', schedule_syntax=2)
+    anchor = authoring_anchor(normalized)
+    if preferred_expression is not None and expression_matches(normalized, preferred_expression):
+        expression = preferred_expression
+    else:
+        # A clipped month suffix or complex imported rule may need a canonical
+        # document. It is still fully representable; losing a short relative
+        # spelling is not a reason to reject the requested split.
+        expression = reconstruct_authoring(normalized).expression
     return replace(normalized, schedule_expression=expression,
-                   expression_anchor=anchor.date().isoformat() if expression else '', schedule_syntax=2)
+                   expression_anchor=anchor.date().isoformat(), schedule_syntax=2)
 
 
 def partition_series(master: Event, reference: Event) -> tuple[Event | None, Event | None]:
@@ -117,6 +108,10 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         pivot_key = recurrence_key(pivot, master.all_day)
     else:
         raise RecurrenceError('Choose an occurrence from this series.')
+    if not master.recurring:
+        # Following/all scopes on an ordinary event are the same operation.
+        # A read-only snapshot must not synthesize authoring metadata.
+        return None, master
     if pivot_key in master.excluded_dates:
         raise RecurrenceError('This occurrence is excluded from the series. Refresh before editing it.')
     cutoff = _instant(pivot)
@@ -127,8 +122,11 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         if expression_matches(master, master.schedule_expression):
             try:
                 relative_parts = split_relative_sequence(master.schedule_expression, authoring_anchor(master), pivot)
-            except PatternError as error:
-                raise RecurrenceError(str(error)) from error
+            except PatternError:
+                # A suffix can retain dates while losing a preferred calendar
+                # day encoded by the original anchor. Its canonical document
+                # remains exact even when no sliced relative spelling exists.
+                relative_parts = None
     parts = _rule_parts(master) if master.recurrence_rule else {}
     consumed, first_future, future_sample = 0, None, []
     if parts:
@@ -210,7 +208,7 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
             if [_instant(value) for value in actual] != [_instant(value) for value in future_sample]:
                 raise RecurrenceError('This rule changes phase when split. Edit the whole series or use an explicit finite schedule.')
         preferred = relative_parts[1 if after else 0] if relative_parts is not None else None
-        return _refresh_authoring(part, master, preferred_expression=preferred)
+        return _refresh_authoring(part, preferred_expression=preferred)
 
     return build(False), build(True)
 

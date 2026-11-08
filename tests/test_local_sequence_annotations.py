@@ -14,7 +14,7 @@ from debacal.store import HistoryConflict, Store
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 2, 10, tzinfo=ZONE)
-TEXT = '  5*+1d  '
+TEXT = '  +0d 5*+1d  '
 
 
 @pytest.fixture
@@ -35,14 +35,41 @@ def occurrences(event):
     return expand_event(event, START - timedelta(days=10), START + timedelta(days=100))
 
 
-def assert_current_annotation(store, master):
+def assert_current_annotation(store, master, *, roundtrip=True):
     assert expression_matches(master, master.schedule_expression)
     queued, = store.pending_changes(master.calendar_id)
     assert queued['payload']['schedule_expression'] == master.schedule_expression
+    if not roundtrip:
+        return
     reread, = parse_ics(export_ics([master]), master.calendar_id)
     assert expression_matches(reread, reread.schedule_expression)
     assert [(item.start, item.end) for item in occurrences(reread)] == [
         (item.start, item.end) for item in occurrences(master)]
+
+
+@pytest.mark.parametrize('change', ['duration', 'timezone'])
+def test_document_detached_range_changes_refresh_metadata_history_and_outbox(store, change):
+    master = source()
+    store.apply('Create series', [master])
+    values = occurrences(master)
+    selected = values[1]
+    store.edit_occurrence(selected, replace(selected, start=values[2].start, end=values[2].end))
+    before = store.get_event(master.id)
+    assert before.schedule_expression.startswith('schedule{')
+    detached = store.get_occurrence(selected.id)
+    edited = (replace(detached, end=detached.end + timedelta(minutes=45)) if change == 'duration'
+              else replace(detached, timezone_id='Africa/Lagos'))
+    history = store.edit_occurrence(detached, edited)
+    changed = store.get_event(master.id)
+    assert changed.schedule_expression != before.schedule_expression
+    assert not expression_matches(changed, before.schedule_expression)
+    assert_current_annotation(store, changed, roundtrip=change == 'duration')
+    store.undo(history)
+    assert store.get_event(master.id) == before
+    assert_current_annotation(store, before, roundtrip=change == 'duration')
+    store.redo(history)
+    assert store.get_event(master.id) == changed
+    assert_current_annotation(store, changed, roundtrip=change == 'duration')
 
 
 @pytest.mark.parametrize('operation', ['edit_occurrence', 'move_selection'])
@@ -112,43 +139,42 @@ def test_remote_annotation_and_title_only_edit_are_preserved_until_a_local_sched
     assert_current_annotation(store, updated)
 
 
-def test_duplicate_actual_starts_clear_only_optional_annotation_and_remain_undoable(store):
+def test_duplicate_actual_starts_have_a_lossless_document_and_remain_undoable(store):
     master = source()
     store.apply('Create series', [master])
     selected, neighbor = occurrences(master)[1:3]
     history = store.edit_occurrence(selected, replace(selected, start=neighbor.start, end=neighbor.end))
     changed = store.get_event(master.id)
-    assert changed.schedule_expression == changed.expression_anchor == ''
+    assert changed.schedule_expression.startswith('schedule{')
+    assert expression_matches(changed, changed.schedule_expression)
+    assert changed.expression_anchor == master.start.date().isoformat()
     assert len(occurrences(changed)) == 6
     assert sum(item.start == neighbor.start for item in occurrences(changed)) == 2
     assert set(changed.recurrence_overrides) == {selected.recurrence_id}
-    assert b'X-DEBACAL-PATTERN:' not in export_ics([changed])
+    assert_current_annotation(store, changed)
     store.undo(history)
     assert store.get_event(master.id) == master
     store.redo(history)
     assert store.get_event(master.id) == changed
 
 
-def test_unannotated_regular_and_legacy_text_are_not_silently_rewritten(store):
-    regular = replace(source('every(1d)'), schedule_expression='', expression_anchor='')
-    legacy = replace(source(), id='legacy', ical_uid='legacy', schedule_syntax=1,
-                     schedule_expression='Old date-only authoring text')
-    store.apply('Create sources', [regular, legacy])
-    for master in (regular, legacy):
-        selected = occurrences(master)[2]
-        store.delete_occurrence(selected)
-        changed = store.get_event(master.id)
-        assert changed.schedule_expression == master.schedule_expression
-        assert changed.schedule_syntax == master.schedule_syntax
+def test_unannotated_regular_rule_keeps_canonical_fields(store):
+    master = replace(source('every(1d)'), schedule_expression='', expression_anchor='')
+    store.apply('Create source', [master])
+    selected = occurrences(master)[2]
+    store.delete_occurrence(selected)
+    changed = store.get_event(master.id)
+    assert changed.recurrence_rule == master.recurrence_rule
+    assert selected.recurrence_id in changed.excluded_dates
 
 
-def test_singleton_empty_text_is_valid_and_preserved(store):
-    master = source('+1d')
+def test_singleton_explicit_membership_is_valid_and_preserved(store):
+    master = source('+0d +1d')
     store.apply('Create two occurrences', [master])
     store.delete_occurrence(occurrences(master)[1])
     changed = store.get_event(master.id)
-    assert changed.schedule_expression == ''
-    assert expression_matches(changed, '')
+    assert changed.schedule_expression == '+0d'
+    assert expression_matches(changed, '+0d')
     assert len(occurrences(changed)) == 1
 
 

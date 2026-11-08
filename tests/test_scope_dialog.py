@@ -97,7 +97,7 @@ def test_future_custom_schedule_fields_and_preview_match_store_split(editors):
     _, store, _, create = editors
     dates = [START + timedelta(days=day) for day in (0, 2, 5, 9)]
     master = replace(sample(), recurrence_rule='', recurrence_dates=tuple(recurrence_key(value) for value in dates[1:]),
-                     schedule_expression='+2d +3d +4d', expression_anchor=START.date().isoformat(), schedule_syntax=2)
+                     schedule_expression='+0d +2d +3d +4d', expression_anchor=START.date().isoformat(), schedule_syntax=2)
     store.apply('Create', [master])
     selected = occurrences(master)[1]
     dialog = create(master, selected, edit_scope='future')
@@ -142,14 +142,14 @@ def test_future_off_rule_rdate_is_pinned_and_uses_primary_picker_after_a_move(ed
     assert dialog.preview.selected_event.start == selected.start
     dialog.edit_occurrence(pinned[0])
     picker = dialog.range_picker
-    assert picker.endpoint == 'start' and picker.windowTitle() != 'Edit occurrence'
+    assert picker.endpoint == 'start' and picker.windowTitle() == 'Edit occurrence'
     moved_start = selected.start + timedelta(hours=2)
     picker.set_start(moved_start)
     picker.accept()
-    assert dialog.value(dialog.start) == moved_start
+    assert dialog.value(dialog.start) == selected.start
     projected = occurrences(dialog.preview.masters[0])
-    pinned = [value for value in projected if dialog.preview.is_primary(value)]
-    assert len(pinned) == 1 and pinned[0].start == moved_start
+    changed = [value for value in projected if value.recurrence_id == selected.recurrence_id]
+    assert len(changed) == 1 and changed[0].start == moved_start
 
 
 def test_future_moved_detached_occurrence_uses_nominal_cutoff_and_actual_fields(editors):

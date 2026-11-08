@@ -90,7 +90,7 @@ def test_repeated_mouse_clicks_compress_regular_gaps_and_stay_editable(editors, 
     expression = dialog.pattern.text()
     assert '*' in expression
     if step == timedelta(weeks=2):
-        assert expression == '4*+2'
+        assert expression == '+0d 4*+2w'
     assert instants(expand_sequence(expression, START)) == instants([START + index * step for index in range(5)])
     master = save(dialog)
     assert master.recurrence_rule
@@ -109,22 +109,23 @@ def test_cross_year_clicks_omit_year_when_the_next_prefix_is_unambiguous(editors
     assert dialog.preview.current_month == date(2027, 1, 1)
 
 
-def test_before_anchor_click_keeps_initial_first_and_uses_exact_year(editors):
+def test_before_reference_click_preserves_reference_and_uses_exact_year(editors):
     _, create, click = editors
     dialog = create()
     click(dialog, date(2026, 10, 3))
     assert '2026' in dialog.pattern.text()
     click(dialog, date(2026, 11, 18))
     starts = dialog.sequence_starts()
-    assert starts[0] == START
+    assert dialog.value(dialog.start) == START
     assert instants(starts) == instants([START, datetime(2026, 10, 3, 9, tzinfo=ZONE), datetime(2026, 11, 18, 9, tzinfo=ZONE)])
 
 
 def test_relative_text_typing_is_never_rewritten_and_mouse_clicks_still_work(editors):
     _, create, click = editors
     dialog = create()
-    literal = '  2*(+2)  +3   '
+    literal = '  +0d 2*(+2w)  +3w   '
     dialog.pattern.setFocus()
+    dialog.pattern.selectAll()
     QTest.keyClicks(dialog.pattern, literal)
     assert dialog.pattern.text() == literal
     assert dialog.preview.date_editing
@@ -160,7 +161,7 @@ def test_reopen_compressed_series_click_remove_and_undo_keep_exact_duration(edit
 def test_adding_and_removing_other_days_preserves_multiple_times_per_day(editors):
     _, create, click = editors
     dialog = create()
-    dialog.pattern.setText('10:00 11:00 +1d 9:00')
+    dialog.pattern.setText('+0d 10:00 11:00 +1d 9:00')
     before = dialog.sequence_starts()
     click(dialog, date(2026, 11, 7))
     assert instants(dialog.sequence_starts()) == instants([*before, datetime(2026, 11, 7, 9, tzinfo=ZONE)])
@@ -192,15 +193,15 @@ def test_removing_last_unrepresentable_imported_addition_does_not_restore_old_ca
     master = Event('precise', 'local', 'Precise source', initial, initial + timedelta(minutes=90), recurrence_dates=(extra.isoformat(),))
     store.apply('Import', [master])
     edit = create(event=actual(store, master)[0], series=master, edit_scope='group')
-    assert edit.pattern.text() == ''
+    assert edit.pattern.text().startswith('schedule{')
     click(edit, extra.date())
-    assert edit.pattern.text() == ''
+    assert edit.pattern.text() == '+0d'
     assert edit.sequence_starts() == [initial]
     assert edit.schedule_replacement
     store.edit_series(edit.edit_reference, save(edit), replace_schedule=edit.schedule_replacement)
     chosen = store.get_event(master.id)
     assert chosen.start == initial and chosen.end == initial + timedelta(minutes=90)
-    assert chosen.recurrence_dates == ()
+    assert [event.start for event in actual(store, chosen)] == [initial]
     store.undo()
     assert store.get_event(master.id) == master
 
@@ -208,7 +209,7 @@ def test_removing_last_unrepresentable_imported_addition_does_not_restore_old_ca
 def test_unrelated_click_preserves_exclusions_and_clicking_skipped_day_restores_it(editors):
     store, create, click = editors
     dialog = create()
-    dialog.pattern.setText('3*+1')
+    dialog.pattern.setText('+0d 3*+1w')
     master = save(dialog)
     store.apply('Create', [master])
     instances = actual(store, master)

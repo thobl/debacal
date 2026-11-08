@@ -22,15 +22,15 @@ from debacal.models import Calendar
 from debacal.patterns import expand_sequence
 from debacal.recurrence import base_schedule_starts, expand_series, recurrence_key
 from debacal.store import Store
-from debacal.schedule_authoring import displayed_starts
+from debacal.schedule_authoring import displayed_starts, expression_matches
 from debacal.vdirsyncer_backend import VdirsyncerBackend, semantic
 from test_vdirsyncer import FakeCLI
 
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2027, 3, 20, 9, tzinfo=ZONE)
-REGULAR = '  4*(+2)  '
-IRREGULAR = '+5d 11:00-2.4.2027 +3d'
+REGULAR = '  +0d 4*(+2w)  '
+IRREGULAR = '+0d +5d 11:00-2.4.2027 +3d'
 METADATA = {'X-DEBACAL-PATTERN', 'X-DEBACAL-PATTERN-VERSION', 'X-DEBACAL-PATTERN-ANCHOR'}
 
 
@@ -151,7 +151,7 @@ def test_custom_configuration_roundtrips_bidirectionally_across_installations(wo
 
         reopened = editor(b, renamed)
         assert reopened.pattern.text() == literal
-        edited_literal = '3*+3' if literal == REGULAR else '10:00 +2d 15:30-5.4.2027'
+        edited_literal = '+0d 3*+3w' if literal == REGULAR else '+0d 10:00 +2d 15:30-5.4.2027'
         reopened.pattern.setText(edited_literal)
         b.store.edit_series(reopened.edit_reference, save(reopened), replace_schedule=reopened.schedule_replacement)
         changed = b.resource(original.ical_uid)
@@ -172,13 +172,13 @@ def test_custom_configuration_roundtrips_bidirectionally_across_installations(wo
 @pytest.mark.parametrize('display_zone', [ZONE, ZoneInfo('UTC')], ids=['same-zone', 'other-zone'])
 def test_text_only_configuration_change_is_published_without_changing_standard_dates(workspaces, display_zone):
     a, b, cli, editor = workspaces
-    original = create(a, editor, '4*+2')
+    original = create(a, editor, '+0d 4*+2w')
     a.sync()
     b.sync()
     imported = b.resource(original.ical_uid)
     with patch('debacal.event_dialog.local_zone', return_value=display_zone):
         dialog = editor(b, imported)
-        literal = '  4*(+2)  '
+        literal = '  +0d 4*(+2w)  '
         dialog.pattern.setText(literal)
         b.store.edit_series(dialog.edit_reference, save(dialog), replace_schedule=dialog.schedule_replacement)
     formatted = b.resource(original.ical_uid)
@@ -197,7 +197,7 @@ def test_text_only_configuration_change_is_published_without_changing_standard_d
 def test_other_machine_previous_display_date_preserves_original_fixed_anchor(workspaces):
     a, b, _, editor = workspaces
     initial = START.replace(hour=0, minute=30)
-    literal = '1:00 +2d 2:30'
+    literal = '+0d 1:00 +2d 2:30'
     original = create(a, editor, literal, start=initial)
     a.sync()
     b.sync()
@@ -221,7 +221,7 @@ def test_other_machine_previous_display_date_preserves_original_fixed_anchor(wor
 
 def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_resources(workspaces):
     a, b, cli, editor = workspaces
-    original = create(a, editor, '4*+2', candidate=True)
+    original = create(a, editor, '+0d 4*+2w', candidate=True)
     values = expand_series(original, START, START + timedelta(days=200))
     moved = replace(values[1], title='Synthetic moved exception',
                     start=values[1].start + timedelta(hours=2), end=values[1].end + timedelta(hours=2))
@@ -236,7 +236,7 @@ def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_res
     assert imported.excluded_dates == original.excluded_dates
     assert set(imported.recurrence_overrides) == set(original.recurrence_overrides)
     opened = editor(b, imported)
-    assert instants(expand_sequence(opened.pattern.text(), imported.start)) == instants(displayed_starts(imported))
+    assert expression_matches(imported, opened.pattern.text())
 
     selected = next(value for value in expand_series(imported, START, START + timedelta(days=200))
                     if value.start == values[2].start)
@@ -263,7 +263,7 @@ def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_res
         assert received.candidate
         reopened = editor(a, received)
         assert reopened.pattern.text() == expected.schedule_expression
-        assert instants(expand_sequence(reopened.pattern.text(), received.start)) == instants(displayed_starts(received))
+        assert expression_matches(received, reopened.pattern.text())
 
 
 @pytest.mark.parametrize('stripped', [METADATA, {'X-DEBACAL-PATTERN'}, {'X-DEBACAL-PATTERN-VERSION'},

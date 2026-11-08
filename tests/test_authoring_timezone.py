@@ -26,7 +26,7 @@ START = datetime(2027, 3, 20, 9, tzinfo=BERLIN)
 BOUNDS = datetime(2025, 1, 1, tzinfo=UTC), datetime(2030, 1, 1, tzinfo=UTC)
 
 
-def authored(text='10:00 +1d', anchor=START, *, all_day=False):
+def authored(text='+0d 10:00 +1d', anchor=START, *, all_day=False):
     starts = expand_sequence(text, anchor)
     return Event('source', 'local', 'Authored series', anchor,
                  anchor + (timedelta(days=1) if all_day else timedelta(minutes=90)),
@@ -87,7 +87,7 @@ def save(dialog):
     return dialog.result_events[0]
 
 
-@pytest.mark.parametrize('text', ['  4*(+2)  ', '10:00 +1d', '+5d 11:00-2.4.2027 +3d'])
+@pytest.mark.parametrize('text', ['  +0d 4*(+2w)  ', '+0d 10:00 +1d', '+0d +5d 11:00-2.4.2027 +3d'])
 def test_title_only_edit_keeps_literal_timezone_anchor_and_dst_instants(editors, text):
     store, create, _ = editors
     master = parse_ics(export_ics([authored(text)]), 'local')[0]
@@ -112,7 +112,7 @@ def test_retyping_configuration_uses_original_clock_and_preserves_duration(edito
     master = authored()
     store.apply('Import', [master])
     dialog = create(master)
-    literal = '11:00 +2d 9:00'
+    literal = '+0d 11:00 +2d 9:00'
     dialog.pattern.setText(literal)
     expected = expand_sequence(literal, START)
     assert instants(dialog.sequence_starts()) == instants(expected)
@@ -131,22 +131,23 @@ def test_retyping_configuration_uses_original_clock_and_preserves_duration(edito
 def test_previous_display_day_anchor_and_clicks_keep_source_clock(editors):
     store, create, click = editors
     initial = datetime(2026, 11, 7, 0, 30, tzinfo=BERLIN)
-    master = authored('1:30 +1d', initial)
+    master = authored('+0d 1:30 +1d', initial)
     store.apply('Import', [master])
     dialog = create(master)
     assert dialog.start.date().toPython() == date(2026, 11, 6)
     assert dialog.pattern.text() == master.schedule_expression
     assert dialog.preview.anchor_dates == {date(2026, 11, 6)}
     click(dialog, date(2026, 11, 6))
-    assert instants(dialog.sequence_starts()) == instants(base_schedule_starts(master))
-    assert dialog.pattern.text() == master.schedule_expression
+    retained = [value for value in base_schedule_starts(master) if value != initial]
+    assert instants(dialog.sequence_starts()) == instants(retained)
+    assert dialog.pattern.text() != master.schedule_expression
     # The original 00:30 authoring clock appears on the preceding UTC date.
     click(dialog, date(2026, 11, 10))
     added = datetime(2026, 11, 11, 0, 30, tzinfo=BERLIN)
-    expected = [*base_schedule_starts(master), added]
+    expected = [*retained, added]
     assert instants(dialog.sequence_starts()) == instants(expected)
     assert len(dialog.preview.events_on(date(2026, 11, 10))) == 1
-    # Removing a displayed day removes its matching slots, keeping the anchor.
+    # The reference remains fixed even when its occurrence is excluded.
     click(dialog, date(2026, 11, 7))
     expected = [value for value in expected if value.astimezone(UTC).date() != date(2026, 11, 7)]
     assert instants(dialog.sequence_starts()) == instants(expected)
@@ -161,7 +162,7 @@ def test_previous_display_day_anchor_and_clicks_keep_source_clock(editors):
 def test_calendar_click_accounts_for_dst_date_offset_and_before_anchor_dates(editors):
     _, create, click = editors
     initial = datetime(2027, 3, 25, 1, 30, tzinfo=BERLIN)
-    master = authored('+1d', initial)
+    master = authored('+0d +1d', initial)
     dialog = create(master)
     click(dialog, date(2027, 3, 29))
     # Summer time moves 01:30 Berlin to the previous UTC day.
@@ -171,14 +172,14 @@ def test_calendar_click_accounts_for_dst_date_offset_and_before_anchor_dates(edi
     click(dialog, date(2026, 12, 10))
     previous = datetime(2026, 12, 10, 1, 30, tzinfo=BERLIN)
     assert previous.astimezone(UTC) in instants(dialog.sequence_starts())
-    assert dialog.sequence_starts()[0] == initial
+    assert initial in dialog.sequence_starts()
     assert instants(expand_sequence(dialog.pattern.text(), initial)) == instants(dialog.sequence_starts())
 
 
 def test_calendar_click_rejects_nonexistent_original_clock_without_rewriting_text(editors):
     _, create, click = editors
     initial = datetime(2027, 3, 25, 2, 30, tzinfo=BERLIN)
-    master = authored('+1d', initial)
+    master = authored('+0d +1d', initial)
     dialog = create(master)
     before = dialog.pattern.text()
     click(dialog, date(2027, 3, 28))
@@ -190,7 +191,7 @@ def test_calendar_click_rejects_nonexistent_original_clock_without_rewriting_tex
 def test_extra_occurrence_pickers_use_displayed_day_and_clock(editors):
     _, create, _ = editors
     initial = datetime(2026, 11, 7, 0, 30, tzinfo=BERLIN)
-    master = authored('1:30 +1d', initial)
+    master = authored('+0d 1:30 +1d', initial)
     values = occurrences(master)
     dialog = create(master)
     dialog._preview_selected(values[0])
@@ -210,32 +211,32 @@ def test_extra_occurrence_pickers_use_displayed_day_and_clock(editors):
 
 def test_scope_drafts_keep_origin_zone_and_each_literal(editors):
     _, create, _ = editors
-    master = authored('  4*+2  ')
+    master = authored('  +0d 4*+2w  ')
     selected = occurrences(master)[2]
     dialog = create(master, selected=selected, scope='single')
     assert not dialog.pattern.isEnabled()
     dialog.scope.setCurrentIndex(dialog.scope.findData('group'))
-    dialog.pattern.setText('10:00 +2d')
-    expected = instants(expand_sequence('10:00 +2d', START))
+    dialog.pattern.setText('+0d 10:00 +2d')
+    expected = instants(expand_sequence('+0d 10:00 +2d', START))
     dialog.scope.setCurrentIndex(dialog.scope.findData('future'))
     assert dialog.sequence_zone() == BERLIN
     future_text = dialog.pattern.text()
-    dialog.pattern.setText('11:00 +3d')
+    dialog.pattern.setText('+0d 11:00 +3d')
     dialog.scope.setCurrentIndex(dialog.scope.findData('group'))
     assert dialog.sequence_zone() == BERLIN
-    assert dialog.pattern.text() == '10:00 +2d'
+    assert dialog.pattern.text() == '+0d 10:00 +2d'
     assert instants(dialog.sequence_starts()) == expected
     dialog.scope.setCurrentIndex(dialog.scope.findData('single'))
     assert dialog.pattern.text() == master.schedule_expression
     dialog.scope.setCurrentIndex(dialog.scope.findData('future'))
     assert dialog.sequence_zone() == BERLIN
-    assert dialog.pattern.text() == '11:00 +3d' and dialog.pattern.text() != future_text
+    assert dialog.pattern.text() == '+0d 11:00 +3d' and dialog.pattern.text() != future_text
 
 
 def test_all_day_imported_dates_do_not_follow_timezone_date_conversion(editors):
     _, create, click = editors
     initial = datetime(2026, 11, 7, tzinfo=BERLIN)
-    source = authored('2*+1d', initial, all_day=True)
+    source = authored('+0d 2*+1d', initial, all_day=True)
     with patch('debacal.ics.local_timezone', return_value=UTC):
         master = parse_ics(export_ics([source]), 'local')[0]
     dialog = create(master)
@@ -252,7 +253,7 @@ def test_all_day_imported_dates_do_not_follow_timezone_date_conversion(editors):
 def test_all_day_foreign_zone_controls_and_scope_drafts_keep_calendar_dates(editors):
     _, create, _ = editors
     initial = datetime(2026, 11, 7, tzinfo=BERLIN)
-    master = authored('2*+1d', initial, all_day=True)
+    master = authored('+0d 2*+1d', initial, all_day=True)
     selected = occurrences(master)[1]
     dialog = create(master, selected=selected)
     assert dialog.start.date().toPython() == initial.date()
@@ -272,7 +273,7 @@ def test_new_custom_and_imported_unannotated_dates_use_local_display_zone(editor
     master = replace(authored(), schedule_expression='', expression_anchor='', schedule_syntax=1)
     for source in (None, master):
         dialog = create(source)
-        dialog.pattern.setText('10:00 +1d')
+        dialog.pattern.setText('+0d 10:00 +1d')
         assert dialog.sequence_zone() == UTC
         assert dialog.sequence_starts()[1].hour == 10
         assert dialog.sequence_starts()[1].tzinfo == UTC
@@ -280,12 +281,12 @@ def test_new_custom_and_imported_unannotated_dates_use_local_display_zone(editor
 
 def test_saved_500_event_bound_and_retyped_overflow_still_apply(editors):
     _, create, _ = editors
-    master = authored('499*+1d')
+    master = authored('+0d 499*+1d')
     dialog = create(master)
-    assert dialog.pattern.text() == '499*+1d'
+    assert dialog.pattern.text() == '+0d 499*+1d'
     assert len(dialog.sequence_starts()) == 500
     assert dialog.build_events()[0].timezone_id == BERLIN.key
-    dialog.pattern.setText('500*+1d')
+    dialog.pattern.setText('+0d 500*+1d')
     dialog.save()
     assert not dialog.result_events
     assert 'limit of 500' in dialog.error.text()

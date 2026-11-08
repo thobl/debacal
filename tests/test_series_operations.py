@@ -215,8 +215,8 @@ class SeriesPartitionTests(unittest.TestCase):
         self.assert_partition(source, before, after)
 
     def test_finite_custom_text_is_rebuilt_for_each_partition(self):
-        starts = expand_sequence('12*+2 +4 3*+2', START)
-        source = master(**schedule_fields(starts), schedule_expression='12*+2 +4 3*+2',
+        starts = expand_sequence('+0d 12*+2w +4w 3*+2w', START)
+        source = master(**schedule_fields(starts), schedule_expression='+0d 12*+2w +4w 3*+2w',
                         expression_anchor=START.date().isoformat(), schedule_syntax=2)
         before, after = partition_series(source, instances(source)[7])
         for part in (before, after):

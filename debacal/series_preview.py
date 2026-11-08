@@ -113,7 +113,7 @@ class SeriesPreview(QWidget):
         self._primary = event
         self.anchor_dates = {_start(event).date()} if event else set()
         if followed_primary:
-            self._selected = self._primary_occurrence()
+            self._selected = self._default_selection()
         self._following_primary = followed_primary
         self._update_navigation()
         self.grid.update()
@@ -140,9 +140,9 @@ class SeriesPreview(QWidget):
                 current = next((item for item in self.visible_events
                                 if item.start.timestamp() == previous.start.timestamp()
                                 and item.calendar_id == previous.calendar_id), None)
-            self._selected = current or self._primary_occurrence()
+            self._selected = current or self._default_selection()
         else:
-            self._selected = self._primary_occurrence()
+            self._selected = self._default_selection()
         self._following_primary = followed_primary
         self._update_navigation()
 
@@ -200,10 +200,25 @@ class SeriesPreview(QWidget):
             return current
         for master in self.masters:
             key = self._primary_key(master) if master.recurring else ''
+            if key in master.excluded_dates:
+                continue
             candidate = occurrence(master, key_datetime(key, master), key) if key else master
             if self.is_primary(candidate):
                 return candidate
-        return occurrence(self._primary, self._primary.start) if self._primary.recurring else self._primary
+        return None
+
+    def _default_selection(self):
+        primary = self._primary_occurrence()
+        if primary is not None:
+            return primary
+        try:
+            first = self._navigation.first()
+            if first is None:
+                self.total_occurrences = 0
+            return first
+        except (ValueError, OverflowError) as error:
+            self._navigation_failure = str(error)
+            return None
 
     def navigate_month(self, delta):
         index = self.current_month.year * 12 + self.current_month.month - 1 + delta
@@ -256,7 +271,7 @@ class SeriesPreview(QWidget):
             self.last_button.setEnabled(False)
 
     def navigate_occurrence(self, direction):
-        reference = self._selected or self._primary_occurrence()
+        reference = self._selected or self._default_selection()
         if reference is not None:
             try:
                 self._activate(self._navigation.adjacent(reference, direction))
@@ -318,10 +333,10 @@ class SeriesPreview(QWidget):
             self.next_occurrence_button.setEnabled(False)
             self.controls.set_position(None)
             return
-        self.last_button.setEnabled(ready and self._navigation.bounded and not self._navigation_failure)
+        self.last_button.setEnabled(ready and selected is not None and self._navigation.bounded and not self._navigation_failure)
         self.last_button.setToolTip(self._navigation_failure or ('Last occurrence' if self._navigation.bounded else 'This series has no last occurrence.'))
-        self.previous_occurrence_button.setEnabled(ready)
-        self.next_occurrence_button.setEnabled(ready)
+        self.previous_occurrence_button.setEnabled(ready and selected is not None)
+        self.next_occurrence_button.setEnabled(ready and selected is not None)
         index, total = self._navigation.position(selected) if selected else (None, self.total_occurrences)
         if total is not None:
             self.total_occurrences = total
@@ -413,7 +428,7 @@ class _PreviewGrid(QWidget):
         for index, item in enumerate(self.preview.events_on(day)):
             rect = QRectF(cell.left() + 3 * scale, cell.top() + 21 * scale + index * 16 * scale,
                           cell.width() - 6 * scale, 14 * scale)
-            remove = QRectF(rect.right() - 13 * scale, rect.top(), 13 * scale, rect.height()) if self.preview.date_editing and not self.preview.is_primary(item) else QRectF()
+            remove = QRectF(rect.right() - 13 * scale, rect.top(), 13 * scale, rect.height()) if self.preview.date_editing else QRectF()
             values.append((rect, item, remove))
         return values
 
@@ -564,7 +579,7 @@ class _PreviewGrid(QWidget):
             elif self.preview.date_editing:
                 self.preview.date_toggled.emit(self.focus_day)
         elif event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.focus_entry:
-            if self.preview.date_editing and not self.preview.is_primary(self.focus_entry):
+            if self.preview.date_editing:
                 self.preview.occurrence_remove_requested.emit(self.focus_entry)
         else:
             super().keyPressEvent(event)

@@ -877,6 +877,7 @@ class Store:
         reference, allowing a mixed-calendar selection to be gathered together.
         """
         from .series_operations import partition_series
+        from .recurrence import rules_equivalent
         from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, reference, expected_masters)
@@ -894,6 +895,11 @@ class Store:
             names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "recurrence_overrides",
                      "schedule_expression", "expression_anchor", "schedule_syntax")
             schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
+            if rules_equivalent(edited.recurrence_rule, base.recurrence_rule, base):
+                # Splits and ICS round trips may spell default BYDAY/INTERVAL
+                # clauses explicitly. A title-only edit must not apply one
+                # family's remaining COUNT to every independent selected tail.
+                schedule.pop('recurrence_rule', None)
             if scope == "single" and reference.series_id:
                 # A dated Single form never configures recurrence. Clearing its
                 # inherited annotation must not clear another selected family.
@@ -1099,9 +1105,9 @@ class Store:
         """Keep locally authored annotations truthful before history/outbox writes.
 
         Remote updates deliberately bypass this path.
-        Content-only edits preserve its original annotation, including legacy
-        notation and formatting. A local schedule edit refreshes a stale v2
-        annotation or clears it when the actual starts cannot be represented.
+        Content-only edits preserve its original annotation and formatting.
+        A local schedule edit refreshes a stale annotation with a complete
+        compact program or an identity-preserving schedule document.
         """
         def authored(value):
             return bool(value and value.get("schedule_syntax") == 2
@@ -1115,25 +1121,19 @@ class Store:
                 return None
             fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "recurrence_rule",
                                                         "recurrence_dates", "excluded_dates"))
-            overrides = {key: (payload.get("start"), payload.get("all_day", False))
+            overrides = {key: (payload.get("start"), payload.get("end"),
+                               payload.get("all_day", False), payload.get("timezone_id", ""))
                          for key, payload in value.get("recurrence_overrides", {}).items()}
             return fields, overrides
 
         if schedule(current) == schedule(previous):
             return event
-        from .patterns import PatternError
-        from .recurrence import RecurrenceError
         from .schedule_authoring import expression_matches, reconstruct_authoring
         if expression_matches(event, event.schedule_expression):
             return event
-        try:
-            view = reconstruct_authoring(event)
-            return replace(event, schedule_expression=view.expression,
-                           expression_anchor=event.start.date().isoformat())
-        except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
-            # This is optional metadata: duplicate actual starts, a moved or
-            # excluded prototype, and advanced rules keep canonical ICS data.
-            return replace(event, schedule_expression="", expression_anchor="")
+        view = reconstruct_authoring(event)
+        return replace(event, schedule_expression=view.expression,
+                       expression_anchor=event.start.date().isoformat())
 
     def apply(self, label: str, upserts: Iterable[Event] = (), delete_ids: Iterable[str] = ()) -> int | None:
         upserts, delete_ids = list(upserts), list(delete_ids)

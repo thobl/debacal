@@ -1,9 +1,9 @@
-"""Lossless conversion between canonical recurrence sets and authoring text.
+"""Total conversion between canonical schedules and editable authoring text.
 
-The text describes the starts the user actually sees. Detached occurrence
-ranges/content remain standard exceptions with their original RECURRENCE-ID;
-a derived recurrence set provides the authoring view without changing storage.
-No conversion is adopted unless its complete recurrence set has been certified.
+Short programs describe actual starts, retaining standard detached identities
+and their content separately. A scheduling document names canonical fields
+directly whenever a set of starts cannot retain the necessary information.
+No conversion is adopted unless its complete scheduling state is certified.
 """
 from __future__ import annotations
 
@@ -11,12 +11,14 @@ from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 
 from .models import Event
-from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
+from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence,
                        expression_for_regular, reconstruct_sequence)
 from .recurrence import (RecurrenceError, event_zone, key_datetime, normalized_rule,
                          normalize_recurrence_stream,
-                         recurrence_key, recurrence_set, schedule_fields)
+                         recurrence_key, recurrence_set)
 from .regular_schedule import RegularSchedule
+from .sequence_document import (document_event, document_expression, document_matches,
+                                is_sequence_document)
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,7 @@ class SequenceAuthoring:
     expression: str
     starts: tuple[datetime, ...] | None
     unbounded: bool
+    structured: bool = False
 
 
 def authoring_anchor(event, authoring_zone=None):
@@ -75,10 +78,12 @@ def _same_zone(first, second):
 
 def expression_event(event, expression, *, authoring_zone=None):
     """Evaluate text without inheriting hidden dates, exclusions or overrides."""
+    if is_sequence_document(expression):
+        return document_event(event, expression)
     prototype = authoring_event(event, authoring_zone)
     anchor = prototype.start
     compiled = compile_sequence(expression, anchor, all_day=event.all_day)
-    fields = compiled.fields if compiled else schedule_fields(expand_sequence(expression, anchor), all_day=event.all_day)
+    fields = compiled.fields
     return replace(prototype, recurrence_rule=fields['recurrence_rule'],
                    recurrence_dates=fields['recurrence_dates'], excluded_dates=fields.get('excluded_dates', ()),
                    recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''))
@@ -87,6 +92,16 @@ def expression_event(event, expression, *, authoring_zone=None):
 def _unbounded(event):
     parts = normalized_rule(event.recurrence_rule, event)
     return bool(parts and not {'COUNT', 'UNTIL'} & parts.keys())
+
+
+def _document_unbounded(event):
+    """Classify even a malformed imported rule without blocking its document."""
+    try:
+        return _unbounded(event)
+    except (RecurrenceError, ValueError, TypeError, OverflowError):
+        fields = {part.partition('=')[0].strip().upper()
+                  for part in event.recurrence_rule.split(';')}
+        return bool(event.recurrence_rule and not {'COUNT', 'UNTIL'} & fields)
 
 
 def _finite_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
@@ -101,9 +116,11 @@ def _finite_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     values = sorted({recurrence_key(value, event.all_day): value for value in values}.values(),
                     key=lambda value: value.timestamp())
     primary = recurrence_key(anchor, event.all_day)
-    if primary not in {recurrence_key(value, event.all_day) for value in values}:
-        raise RecurrenceError('The primary event is excluded. This schedule cannot be represented by a sequence that keeps the primary event.')
-    return (anchor, *[value for value in values if recurrence_key(value, event.all_day) != primary])
+    # The reference controls interpretation, but need not itself be an event.
+    # Keep it first when present; excluded/moved references need no invented
+    # occurrence merely to make the editor's date field meaningful.
+    return tuple([value for value in values if recurrence_key(value, event.all_day) == primary]
+                 + [value for value in values if recurrence_key(value, event.all_day) != primary])
 
 
 def _contains(event, key, rules=None):
@@ -117,8 +134,8 @@ def displayed_schedule(event):
 
     This is exclusively an authoring/proof view. Persisting it would replace
     detached exceptions with unrelated RDATEs and lose their identities/content.
-    Duplicate starts cannot be expressed by the sequence language, so reject
-    those explicitly rather than silently collapsing different occurrences.
+    Duplicate starts require the canonical scheduling document, so reject an
+    identity-free projection instead of silently collapsing occurrences.
     """
     if not event.recurrence_overrides:
         return event
@@ -152,6 +169,26 @@ def displayed_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     if _unbounded(event):
         raise RecurrenceError('An unbounded recurrence cannot be expanded into a finite custom sequence.')
     return _finite_starts(displayed_schedule(event), authoring_zone=authoring_zone, limit=limit)
+
+
+def canonical_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
+    """Finite actual starts retaining coincident detached identities.
+
+    This is a visual/validation projection, not a compact-language proof view.
+    It therefore keeps duplicates and mixed all-day exception ranges intact.
+    """
+    if _unbounded(event):
+        raise RecurrenceError('An unbounded recurrence cannot be expanded into a finite custom sequence.')
+    detached = set(event.recurrence_overrides)
+    base = replace(event, recurrence_overrides={}, excluded_dates=tuple(set(event.excluded_dates) | detached))
+    values = list(_finite_starts(base, authoring_zone=authoring_zone, limit=limit))
+    for key, payload in event.recurrence_overrides.items():
+        if key not in event.excluded_dates:
+            item = Event.from_dict(payload)
+            values.append(item.start.astimezone(authoring_zone or event_zone(event)))
+            if len(values) > limit:
+                raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences.')
+    return tuple(sorted(values, key=lambda value: value.timestamp()))
 
 
 def retain_displayed_overrides(candidate, source, *, shift=None):
@@ -230,7 +267,7 @@ def recurrence_matches(first, second):
         if all(value is not None and value.count is not None for value in regulars):
             def signature(regular):
                 days = regular.weekdays or ((first.start.weekday(),) if regular.kind == 'WEEKLY' else ())
-                return regular.kind, regular.interval, regular.count, days
+                return regular.kind, regular.interval, regular.count, days, regular.clamp
             same_rule = signature(regulars[0]) == signature(regulars[1])
     if not same_rule:
         if first_unbounded:
@@ -253,6 +290,8 @@ def expression_matches(event, expression, *, authoring_zone=None):
     Use ``recurrence_matches`` for nominal RRULE/RDATE/EXDATE comparisons.
     Durations/content are preserved separately, never inferred from this text.
     """
+    if is_sequence_document(expression):
+        return document_matches(event, expression)
     try:
         candidate = expression_event(event, expression, authoring_zone=authoring_zone)
         return recurrence_matches(displayed_schedule(event), candidate)
@@ -268,7 +307,8 @@ def _tail_expression(event, *, authoring_zone=None):
     frequency = parts.get('FREQ')
     interval = int(parts.get('INTERVAL', '1'))
     try:
-        tail = expression_for_regular(frequency, interval)
+        regular = RegularSchedule.from_rule(event.recurrence_rule, anchor, all_day=event.all_day)
+        tail = expression_for_regular(frequency, interval, clamp=regular.clamp if regular else False)
     except PatternError as error:
         raise RecurrenceError(str(error)) from error
     if expression_matches(event, tail, authoring_zone=anchor.tzinfo):
@@ -281,8 +321,6 @@ def _tail_expression(event, *, authoring_zone=None):
             or ('BYDAY' in parts and parts['BYDAY'] not in ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'))):
         raise RecurrenceError('This imported recurrence uses additional weekdays or constraints. Its rule is preserved.')
     primary = recurrence_key(anchor, event.all_day)
-    if not _contains(event, primary):
-        raise RecurrenceError('The primary event is excluded. This schedule cannot be represented by a sequence that keeps the primary event.')
     bare = replace(event, recurrence_dates=(), excluded_dates=(), recurrence_overrides={})
     base_rules, actual_rules = recurrence_set(bare), recurrence_set(event)
     meaningful_keys = {key for key in (*event.recurrence_dates, *event.excluded_dates)
@@ -302,7 +340,7 @@ def _tail_expression(event, *, authoring_zone=None):
             # DTSTART may be an off-rule prototype; certify against the rule
             # rather than treating its unconditional set membership as a tail.
             try:
-                trial = compile_sequence((reconstruct_sequence([anchor, candidate], prefer_dates=False) + ' ' + tail).strip(), anchor, all_day=event.all_day)
+                trial = compile_sequence((reconstruct_sequence([candidate], anchor=anchor, prefer_dates=False) + ' ' + tail).strip(), anchor, all_day=event.all_day)
             except PatternError:
                 continue
             if simplified_rule(replace(authoring_event(event, anchor.tzinfo), recurrence_rule=trial.recurrence_rule)) == simplified_rule(event):
@@ -318,20 +356,21 @@ def _tail_expression(event, *, authoring_zone=None):
         values.append(local)
         if len(values) > DEFAULT_LIMIT:
             raise RecurrenceError(f'The edited prefix exceeds {DEFAULT_LIMIT:,} authoring occurrences. Its standard recurrence is preserved.')
-    ordered = [anchor, *[value for value in values if recurrence_key(value, event.all_day) != primary]]
+    ordered = ([value for value in values if recurrence_key(value, event.all_day) == primary]
+               + [value for value in values if recurrence_key(value, event.all_day) != primary])
     # A prefix may name dates before the prototype. The last instruction must
     # still put the cursor at the first unaffected tail member.
     # A jump into an ongoing regular tail describes that tail's phase, rather
     # than an arbitrary list of dates, so retain compact offset instructions.
-    prefix = reconstruct_sequence(ordered, prefer_dates=False)
+    prefix = reconstruct_sequence(ordered, anchor=anchor, prefer_dates=False)
     result = (prefix + ' ' + tail).strip()
     if not expression_matches(event, result, authoring_zone=anchor.tzinfo):
         raise RecurrenceError('This recurrence cannot be represented by a complete custom sequence. Its rule is preserved.')
     return result
 
 
-def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
-    """Return an immutable, certified view before any editor state changes."""
+def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
+    """Try a certified short program; callers retain a total document fallback."""
     displayed = displayed_schedule(event)
     unbounded = _unbounded(displayed)
     if (prefer_literal and event.schedule_syntax == 2 and event.schedule_expression
@@ -344,9 +383,11 @@ def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
                 from .patterns import sequence_tail
                 # A certified bounded tail stays symbolic beyond the finite
                 # visual authoring budget, just like its standard RRULE.
-                if sequence_tail(event.schedule_expression) is None:
+                if (not is_sequence_document(event.schedule_expression)
+                        and sequence_tail(event.schedule_expression) is None):
                     raise
-        return SequenceAuthoring(event.schedule_expression, values, unbounded)
+        return SequenceAuthoring(event.schedule_expression, values, unbounded,
+                                 is_sequence_document(event.schedule_expression))
     if unbounded:
         expression = _tail_expression(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(expression, None, True)
@@ -359,24 +400,49 @@ def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
                                             all_day=displayed.all_day)
         if regular is None or regular.count is None:
             raise
-        expression = expression_for_regular(regular.kind, regular.interval, count=regular.count)
+        expression = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp)
         if not expression_matches(event, expression, authoring_zone=authoring_zone):
             raise
         return SequenceAuthoring(expression, None, False)
-    expression = reconstruct_sequence(values)
+    expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone))
     regular = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
                                         all_day=displayed.all_day)
     if regular is not None and regular.count is not None and regular.count > 1:
-        bounded = expression_for_regular(regular.kind, regular.interval, count=regular.count)
+        bounded = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp)
         evaluated = expression_event(event, expression, authoring_zone=authoring_zone)
         inferred = RegularSchedule.from_rule(evaluated.recurrence_rule, authoring_anchor(evaluated),
                                              all_day=evaluated.all_day)
-        # A standard monthly/yearly pattern can skip dates that finite +m/+y
-        # arithmetic clips. Keep that calendar intent rather than flattening
-        # it into RDATEs or reclassifying a short sample as a daily stride.
-        if ((inferred is None or (inferred.kind, inferred.interval) != (regular.kind, regular.interval))
+        # Keep monthly/yearly calendar intent, including explicit clamping,
+        # rather than reclassifying a short sample as a daily stride.
+        if ((inferred is None or (inferred.kind, inferred.interval, inferred.clamp)
+                != (regular.kind, regular.interval, regular.clamp))
                 and expression_matches(event, bounded, authoring_zone=authoring_zone)):
             expression = bounded
     if not expression_matches(event, expression, authoring_zone=authoring_zone):
         raise RecurrenceError('This schedule cannot be represented losslessly by a custom sequence.')
     return SequenceAuthoring(expression, values, False)
+
+
+def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
+    """Return a lossless expression for every canonical scheduling state.
+
+    Short programs are adopted only after exact recurrence-set proof. Whenever
+    an imported rule or distinct detached identities are outside that language,
+    the finite canonical fields provide a direct, editable scheduling document.
+    No occurrence sampling, work budget or missing reference can remove the
+    user's ability to read and edit the series definition.
+    """
+    if (prefer_literal and event.schedule_syntax == 2
+            and is_sequence_document(event.schedule_expression)
+            and document_matches(event, event.schedule_expression)):
+        return SequenceAuthoring(event.schedule_expression, None, _document_unbounded(event), True)
+    try:
+        return _compact_authoring(event, authoring_zone=authoring_zone, prefer_literal=prefer_literal)
+    except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
+        expression = document_expression(event)
+        # Serialized scheduling fields are their own constructive inverse. The
+        # check catches implementation mistakes rather than rejecting a class
+        # of calendar or asking the user to discard standard event identities.
+        if not document_matches(event, expression):
+            raise RecurrenceError('The scheduling document could not preserve its canonical fields.')
+        return SequenceAuthoring(expression, None, _document_unbounded(event), True)

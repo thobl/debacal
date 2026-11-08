@@ -12,12 +12,12 @@ from debacal.models import Calendar, Event
 from debacal.patterns import expand_sequence, serialize_sequence
 from debacal.recurrence import RecurrenceError, base_schedule_starts, expand_event, recurrence_set, schedule_fields
 from debacal.store import Store
-from debacal.schedule_authoring import displayed_starts
+from debacal.schedule_authoring import displayed_starts, expression_matches
 
 
 ZONE = ZoneInfo('Europe/Berlin')
 ANCHOR = datetime(2026, 11, 4, 10, tzinfo=ZONE)
-LITERAL = '  3*+2    +3 2*(+2)  '
+LITERAL = '  +0d 3*+2w    +3w 2*(+2w)  '
 
 
 def custom_event(expression=LITERAL, *, candidate=False, calendar_id='local', anchor=ANCHOR):
@@ -27,13 +27,6 @@ def custom_event(expression=LITERAL, *, candidate=False, calendar_id='local', an
                  expression_anchor=anchor.date().isoformat(), schedule_syntax=2, candidate=candidate)
 
 
-def legacy_event(expression='3(Mo X)'):
-    from debacal.legacy_patterns import expand_pattern
-    days = expand_pattern(expression, ANCHOR.date())
-    starts = [datetime.combine(day, ANCHOR.timetz()) for day in days]
-    return Event('legacy', 'local', 'Old seminar', starts[0], starts[0] + timedelta(hours=1),
-                 recurrence_dates=tuple(value.isoformat() for value in starts[1:]),
-                 schedule_expression=expression, expression_anchor=ANCHOR.date().isoformat(), schedule_syntax=1)
 
 
 def instants(values):
@@ -42,10 +35,7 @@ def instants(values):
 
 class ExpressionTests(unittest.TestCase):
     def assert_authoring_matches(self, event):
-        functional = displayed_starts(event)
-        authored = expand_sequence(event.schedule_expression, event.start)
-        self.assertEqual(authored[0], event.start)
-        self.assertEqual(instants(authored), instants(functional))
+        self.assertTrue(expression_matches(event, event.schedule_expression))
 
     def test_literal_anchor_and_version_survive_restart_history_and_outbox(self):
         with TemporaryDirectory() as directory:
@@ -81,7 +71,7 @@ class ExpressionTests(unittest.TestCase):
 
     def test_time_only_and_absolute_steps_rewrite_without_losing_different_times(self):
         with Store(':memory:') as store:
-            master = custom_event('14:30 08:15-8.11.2026 12:05-15.11.2026')
+            master = custom_event('+0d 14:30 08:15-8.11.2026 12:05-15.11.2026')
             original = base_schedule_starts(master)
             store.apply('Create', [master])
             store.edit_series(master, replace(master, start=master.start + timedelta(days=1, hours=2),
@@ -95,7 +85,7 @@ class ExpressionTests(unittest.TestCase):
 
     def test_explicit_earlier_dates_never_replace_fixed_initial_anchor(self):
         with Store(':memory:') as store:
-            master = custom_event('08:30-1.10.2026 +1d 12:00')
+            master = custom_event('+0d 08:30-1.10.2026 +1d 12:00')
             self.assertEqual(master.start, ANCHOR)
             self.assertEqual(master.recurrence_rule, '')
             store.apply('Create', [master])
@@ -106,13 +96,13 @@ class ExpressionTests(unittest.TestCase):
 
     def test_count_rule_custom_series_preserves_all_authoring_steps_when_moved(self):
         with Store(':memory:') as store:
-            master = custom_event('  4*+2  ')
+            master = custom_event('  +0d 4*+2w  ')
             self.assertIn('FREQ=WEEKLY', master.recurrence_rule)
             self.assertEqual(master.recurrence_dates, ())
             store.apply('Create', [master])
             store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
             updated = store.get_event(master.id)
-            self.assertEqual(updated.schedule_expression, '  4*+2  ')
+            self.assertEqual(updated.schedule_expression, '  +0d 4*+2w  ')
             self.assertEqual(len(base_schedule_starts(updated)), 5)
             self.assert_authoring_matches(updated)
 
@@ -120,10 +110,10 @@ class ExpressionTests(unittest.TestCase):
         with Store(':memory:') as store:
             master = custom_event()
             store.apply('Create', [master])
-            replacement = custom_event('+1d +2d', anchor=ANCHOR + timedelta(days=5))
+            replacement = custom_event('+0d +1d +2d', anchor=ANCHOR + timedelta(days=5))
             store.edit_series(master, replacement, replace_schedule=True)
             updated = store.get_event(master.id)
-            self.assertEqual(updated.schedule_expression, '+1d +2d')
+            self.assertEqual(updated.schedule_expression, '+0d +1d +2d')
             self.assertEqual(updated.start, replacement.start)
             self.assertEqual(updated.schedule_syntax, 2)
             self.assert_authoring_matches(updated)
@@ -155,32 +145,7 @@ class ExpressionTests(unittest.TestCase):
             self.assertFalse(ordinary.recurring)
             self.assertEqual((ordinary.schedule_expression, ordinary.expression_anchor, ordinary.schedule_syntax), ('', '', 1))
 
-    def test_legacy_relative_day_move_uses_legacy_language_until_explicit_conversion(self):
-        from debacal.legacy_patterns import expand_pattern
-        with Store(':memory:') as store:
-            master = legacy_event()
-            store.apply('Create legacy', [master])
-            store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
-            updated = store.get_event(master.id)
-            self.assertEqual(updated.schedule_syntax, 1)
-            self.assertEqual(updated.schedule_expression, '3(Tu X)')
-            self.assertEqual(expand_pattern(updated.schedule_expression, date.fromisoformat(updated.expression_anchor)),
-                             [value.date() for value in base_schedule_starts(updated)])
 
-    def test_converted_legacy_literal_follows_same_move_without_truncation(self):
-        with Store(':memory:') as store:
-            master = legacy_event()
-            store.apply('Create legacy', [master])
-            text = serialize_sequence(base_schedule_starts(master))
-            edited = replace(master, start=master.start + timedelta(days=1, hours=2), end=master.end + timedelta(days=1, hours=2),
-                             schedule_expression=text, schedule_syntax=2, expression_anchor=master.start.date().isoformat())
-            store.edit_series(master, edited)
-            updated = store.get_event(master.id)
-            self.assertEqual(updated.schedule_syntax, 2)
-            self.assertEqual(len(base_schedule_starts(updated)), 3)
-            self.assert_authoring_matches(updated)
-            store.undo()
-            self.assertEqual(store.get_event(master.id), master)
 
     def test_one_date_authored_series_and_old_index_migration(self):
         with TemporaryDirectory() as directory:
@@ -202,7 +167,7 @@ class ExpressionTests(unittest.TestCase):
 
     def test_exclusions_and_detached_overrides_keep_identity_while_text_describes_actual_starts(self):
         with Store(':memory:') as store:
-            master = custom_event('+2 +2 +3')
+            master = custom_event('+0d +2w +2w +3w')
             store.apply('Create', [master])
             original = store.query_occurrences(master.start, master.start + timedelta(days=80))
             store.delete_occurrence(original[1])
@@ -217,7 +182,7 @@ class ExpressionTests(unittest.TestCase):
 
     def test_month_clamp_move_reevaluates_relative_program_from_the_new_primary(self):
         with Store(':memory:') as store:
-            master = custom_event('3*+1m', anchor=datetime(2027, 1, 31, 10, tzinfo=ZONE))
+            master = custom_event('+0d 3*+1m!', anchor=datetime(2027, 1, 31, 10, tzinfo=ZONE))
             store.apply('Create', [master])
             store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
             updated = store.get_event(master.id)
@@ -229,8 +194,8 @@ class ExpressionTests(unittest.TestCase):
 
 class ScheduleSynthesisTests(unittest.TestCase):
     def test_regular_sequences_synthesize_exact_standard_count_rules(self):
-        for expression, frequency in [('4*+1d', 'DAILY'), ('4*+2', 'WEEKLY'), ('4*+1m', 'MONTHLY'),
-                                      ('3*+1y', 'YEARLY'), ('4*+2h', 'HOURLY'), ('4*+15min', 'MINUTELY')]:
+        for expression, frequency in [('+0d 4*+1d', 'DAILY'), ('+0d 4*+2w', 'WEEKLY'), ('+0d 4*+1m', 'MONTHLY'),
+                                      ('+0d 3*+1y', 'YEARLY')]:
             with self.subTest(expression=expression):
                 starts = expand_sequence(expression, ANCHOR)
                 fields = schedule_fields(starts)
@@ -240,10 +205,10 @@ class ScheduleSynthesisTests(unittest.TestCase):
 
     def test_relative_clock_rules_have_exact_finite_counts_and_expand_through_midnight(self):
         anchor = ANCHOR.replace(hour=23, minute=30)
-        for expression, expected in [('4*+2h', 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
-                                     ('4*+45min', 'FREQ=MINUTELY;INTERVAL=45;COUNT=5')]:
-            with self.subTest(expression=expression):
-                starts = expand_sequence(expression, anchor)
+        for minutes, expected in [(120, 'FREQ=HOURLY;INTERVAL=2;COUNT=5'),
+                                  (45, 'FREQ=MINUTELY;INTERVAL=45;COUNT=5')]:
+            with self.subTest(minutes=minutes):
+                starts = [anchor + index * timedelta(minutes=minutes) for index in range(5)]
                 fields = schedule_fields(starts)
                 self.assertEqual(fields, {'recurrence_rule': expected, 'recurrence_dates': ()})
                 event = Event('rule', 'local', 'Rule', anchor, anchor + timedelta(minutes=15), **fields)
@@ -252,11 +217,11 @@ class ScheduleSynthesisTests(unittest.TestCase):
 
     def test_clock_rule_synthesis_certifies_dst_and_preserves_ambiguous_folds(self):
         spring = datetime(2027, 3, 28, 1, 30, tzinfo=ZONE)
-        for anchor, expression, frequency in [(spring, '3*+2h', 'HOURLY'),
-                                               (spring, '3*+90min', 'MINUTELY'),
-                                               (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE), '3*+1h', 'HOURLY')]:
-            with self.subTest(expression=expression, anchor=anchor):
-                starts = expand_sequence(expression, anchor)
+        for anchor, minutes, frequency in [(spring, 120, 'HOURLY'),
+                                            (spring, 90, 'MINUTELY'),
+                                            (datetime(2026, 10, 25, 1, 30, tzinfo=ZONE), 60, 'HOURLY')]:
+            with self.subTest(minutes=minutes, anchor=anchor):
+                starts = [anchor + index * timedelta(minutes=minutes) for index in range(4)]
                 fields = schedule_fields(starts)
                 self.assertIn('FREQ=' + frequency, fields['recurrence_rule'])
                 event = Event('dst', 'local', 'DST', anchor, anchor + timedelta(minutes=10), **fields)
@@ -264,17 +229,18 @@ class ScheduleSynthesisTests(unittest.TestCase):
                 expanded = expand_event(event, anchor - timedelta(hours=1), starts[-1] + timedelta(hours=1))
                 self.assertEqual(instants(value.start for value in expanded), instants(starts))
         first = datetime(2026, 10, 25, 1, 30, tzinfo=ZONE, fold=1)
-        starts = expand_sequence('3*+1h', first)
+        starts = [(first + index * timedelta(hours=1)).replace(fold=first.fold) for index in range(4)]
         fields = schedule_fields(starts)
         self.assertFalse(fields['recurrence_rule'])
         event = Event('fold', 'local', 'Fold', first, first + timedelta(minutes=10), **fields)
         self.assertEqual(instants(base_schedule_starts(event)), instants(starts))
 
     def test_clock_rules_do_not_replace_calendar_units_or_round_imported_precision(self):
-        for expression, frequency in [('3*+24h', 'DAILY'), ('3*+168h', 'WEEKLY')]:
-            self.assertIn('FREQ=' + frequency, schedule_fields(expand_sequence(expression, ANCHOR))['recurrence_rule'])
+        for hours, frequency in [(24, 'DAILY'), (168, 'WEEKLY')]:
+            starts = [ANCHOR + index * timedelta(hours=hours) for index in range(4)]
+            self.assertIn('FREQ=' + frequency, schedule_fields(starts)['recurrence_rule'])
         precise = ANCHOR.replace(microsecond=123)
-        starts = expand_sequence('4*+15min', precise)
+        starts = [precise + index * timedelta(minutes=15) for index in range(5)]
         fields = schedule_fields(starts)
         self.assertFalse(fields['recurrence_rule'])
         event = Event('precise', 'local', 'Precise', precise, precise + timedelta(minutes=10), **fields)
@@ -287,7 +253,7 @@ class ScheduleSynthesisTests(unittest.TestCase):
                 recurrence_set(Event('dense', 'local', 'Dense', ANCHOR, ANCHOR + timedelta(minutes=10), recurrence_rule=rule))
 
     def test_irregular_different_times_and_earlier_dates_use_exact_rdates(self):
-        for expression in ['14:30 +2d 09:00', '08:30-1.10.2026 +1d', '+1 +2 +3']:
+        for expression in ['+0d 14:30 +2d 09:00', '+0d 08:30-1.10.2026 +1d', '+0d +1w +2w +3w']:
             starts = expand_sequence(expression, ANCHOR)
             fields = schedule_fields(starts)
             self.assertEqual(fields['recurrence_rule'], '')
@@ -309,11 +275,10 @@ class ScheduleSynthesisTests(unittest.TestCase):
         except ImportError:
             self.skipTest('Independent optional recurrence library is unavailable')
         from debacal.ics import export_ics, parse_ics
-        cases = [(LITERAL, ANCHOR), ('4*+2', ANCHOR), ('4*+1m', ANCHOR),
-                 ('4*+2h', ANCHOR), ('4*+15min', ANCHOR), ('+2h +30min +1d +45min', ANCHOR),
-                 ('14:30 08:15-8.11.2026 12:05-15.11.2026', ANCHOR),
-                 ('08:30-1.10.2026 +1d 12:00', ANCHOR),
-                 ('3*+1m', datetime(2027, 1, 31, 10, tzinfo=ZONE))]
+        cases = [(LITERAL, ANCHOR), ('+0d 4*+2w', ANCHOR), ('+0d 4*+1m', ANCHOR),
+                 ('+0d 14:30 08:15-8.11.2026 12:05-15.11.2026', ANCHOR),
+                 ('+0d 08:30-1.10.2026 +1d 12:00', ANCHOR),
+                 ('+0d 3*+1m!', datetime(2027, 1, 31, 10, tzinfo=ZONE))]
         for expression, anchor in cases:
             with self.subTest(expression=expression):
                 event = custom_event(expression, anchor=anchor)
