@@ -211,6 +211,13 @@ RRULE/RDATE/EXDATE and detached exceptions remain the functional schedule other
 clients understand. Reconstructed text describes the displayed occurrence starts,
 including changed times, while retained occurrences keep their original
 RECURRENCE-ID and exception details.
+Local changes refresh derived custom text before recording history or queuing an
+upload; a single-occurrence move or deletion does not leave obsolete X-PATTERN
+dates waiting for the editor to be reopened. Unsupported text is cleared while
+the canonical schedule and exceptions remain intact. Bounded `every(...)` forms
+compile to standard COUNT or UNTIL rules; clients without this syntax can still
+use those calendar properties. The [sequence specification](SEQUENCES.md)
+defines their semantics and the equivalence checks.
 If another client changes those dates without updating the proprietary text,
 the editor reconstructs an equivalent definition for finite schedules of up to
 500 occurrences and supported unbounded rules with finite exceptions. Other

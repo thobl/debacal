@@ -546,7 +546,14 @@ class Store:
     def _reviewed_master(self, reference: Event) -> Event:
         master = self.get_event(reference.series_id or reference.id)
         current = self.get_occurrence(reference.id)
-        if master is None or current is None or self._semantic_event(current.to_dict()) != self._semantic_event(reference.to_dict()):
+        def content(event):
+            if reference.series_id:
+                # A sibling edit can refresh the master's derived authoring
+                # annotation without changing this dated occurrence. Resource
+                # snapshots still compare it for whole-series stale guards.
+                event = replace(event, schedule_expression="", expression_anchor="", schedule_syntax=1)
+            return self._semantic_event(event.to_dict())
+        if master is None or current is None or content(current) != content(reference):
             raise HistoryConflict("This event changed while it was being edited. Open it again before saving.")
         return master
 
@@ -622,7 +629,7 @@ class Store:
         the new duration to the regular event and all detached exceptions.
         Explicit occurrence ranges from a dialog keep their submitted ends.
         """
-        from .recurrence import event_zone, key_datetime, recurrence_key
+        from .recurrence import event_zone, key_datetime, recurrence_key, relative_reanchor_map
         zone = event_zone(master)
         wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
         shift = wall(edited.start) - wall(reference.start)
@@ -639,10 +646,22 @@ class Store:
                 return (wall(start) + duration).replace(tzinfo=zone)
             return datetime.fromtimestamp(start.timestamp() + source.end.timestamp() - source.start.timestamp(), zone)
 
+        base = master
+        if (reference.series_id and projected.schedule_expression != master.schedule_expression
+                and wall(projected.start) != wall(master.start) + shift):
+            from .series_operations import partition_series
+            _, tail = partition_series(master, reference)
+            if tail is not None:
+                base = tail
+        key_map = (relative_reanchor_map(base, projected.start)
+                   if projected.schedule_syntax == base.schedule_syntax == 2
+                   and projected.all_day == base.all_day
+                   and projected.schedule_expression == base.schedule_expression else None)
         duration_source = edited if resized else master
         overrides = dict(projected.recurrence_overrides)
         for key, payload in master.recurrence_overrides.items():
-            moved_key = recurrence_key((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone), projected.all_day)
+            moved_key = (key_map[key] if key_map is not None and key in key_map else
+                         recurrence_key((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone), projected.all_day))
             if moved_key not in overrides:
                 continue  # A following edit leaves the earlier exceptions alone.
             original = Event.from_dict(payload)
@@ -1074,6 +1093,48 @@ class Store:
             if enqueue:
                 self._enqueue(event_id, previous, value)
 
+    @staticmethod
+    def _reconcile_local_authoring(event: Event, previous: dict[str, Any] | None,
+                                   current: dict[str, Any]) -> Event:
+        """Keep locally authored annotations truthful before history/outbox writes.
+
+        Remote updates deliberately bypass this path.
+        Content-only edits preserve its original annotation, including legacy
+        notation and formatting. A local schedule edit refreshes a stale v2
+        annotation or clears it when the actual starts cannot be represented.
+        """
+        def authored(value):
+            return bool(value and value.get("schedule_syntax") == 2
+                        and (value.get("schedule_expression") or value.get("expression_anchor")))
+
+        if event.schedule_syntax != 2 or not (authored(current) or authored(previous)):
+            return event
+
+        def schedule(value):
+            if value is None:
+                return None
+            fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "recurrence_rule",
+                                                        "recurrence_dates", "excluded_dates"))
+            overrides = {key: (payload.get("start"), payload.get("all_day", False))
+                         for key, payload in value.get("recurrence_overrides", {}).items()}
+            return fields, overrides
+
+        if schedule(current) == schedule(previous):
+            return event
+        from .patterns import PatternError
+        from .recurrence import RecurrenceError
+        from .schedule_authoring import expression_matches, reconstruct_authoring
+        if expression_matches(event, event.schedule_expression):
+            return event
+        try:
+            view = reconstruct_authoring(event)
+            return replace(event, schedule_expression=view.expression,
+                           expression_anchor=event.start.date().isoformat())
+        except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
+            # This is optional metadata: duplicate actual starts, a moved or
+            # excluded prototype, and advanced rules keep canonical ICS data.
+            return replace(event, schedule_expression="", expression_anchor="")
+
     def apply(self, label: str, upserts: Iterable[Event] = (), delete_ids: Iterable[str] = ()) -> int | None:
         upserts, delete_ids = list(upserts), list(delete_ids)
         ids = [event.id for event in upserts] + delete_ids
@@ -1086,6 +1147,10 @@ class Store:
             after = {event.id: event.to_dict() for event in upserts} | {event_id: None for event_id in delete_ids}
             self._assert_writable(before.values())
             self._assert_writable(after.values())
+            for event in upserts:
+                reconciled = self._reconcile_local_authoring(event, before[event.id], after[event.id])
+                if reconciled is not event:
+                    after[event.id] = reconciled.to_dict()
             # Ignore absent deletions and unchanged updates.
             changed = [key for key in ids if before[key] != after[key]]
             if not changed:

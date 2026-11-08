@@ -361,6 +361,9 @@ exception content; moving also preserves their different durations.
 
 ### Irregular groups and candidate slots
 
+The [sequence specification](docs/SEQUENCES.md) defines syntax, normalization,
+move/split behavior, correctness checks, and the operation test coverage.
+
 The event editor separates primary-event controls from a full-height month
 preview. Inline **Start**, **End**, and **Duration** fields define the primary event.
 When editing, compact scope buttons in the heading use the main view's icons and
@@ -414,6 +417,11 @@ previous instruction:
   A finite prefix can precede the tail, such as `+2 +3 every(1w)`. The tail's
   interval must align with the primary event's recurrence cycle; an incompatible
   prefix such as `+3 every(2w)` is rejected with an explanation.
+* Bound a regular tail with `every(1d, count=3)` or
+  `every(1d, until=13.11.2026)`. Count includes the tail cursor; without a prefix,
+  it includes the primary event. Until includes the given local calendar date.
+  The two bounds are mutually exclusive. Large bounded rules remain standard
+  RRULEs instead of lists of dates.
 
 ```text
 13. +1 18. 2. 3.2. +2
@@ -440,8 +448,10 @@ updates its clock in the sequence. Already-saved expressions containing `h` or
 keeps its formatting when a series is opened or its title changes.
 
 The text remains editable when reopening a saved custom series. Title edits
-preserve it; moving a series keeps relative text when equivalent and rewrites
-absolute instructions to reflect the actual new instants. Older syntax is never
+preserve it. Moving an entirely relative definition re-evaluates its instructions
+at the new primary and keeps the text, including month/year clipping. Moving
+explicitly dated events keeps equivalent text or reconstructs concise dates;
+full-year dates have no trailing dot. Older syntax is never
 silently interpreted as the new language: opening it reconstructs an equivalent
 sequence from its stored standard dates. Editing that schedule or moving its
 primary date records the new version; ordinary title edits retain the original

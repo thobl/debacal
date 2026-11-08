@@ -176,7 +176,7 @@ def test_click_uses_current_stored_times_instead_of_stale_other_client_authoring
     master = Event('external', 'local', 'External edit', START, START + timedelta(minutes=90),
                    recurrence_dates=(first.isoformat(), second.isoformat()), schedule_syntax=2,
                    schedule_expression='11:00 11:00-5.11.2026', expression_anchor=START.date().isoformat())
-    store.apply('Import', [master])
+    store.apply_remote([master])
     edit = create(event=actual(store, master)[1], series=master, edit_scope='group')
     assert instants(edit.sequence_starts()) == instants([START, first, second])
     click(edit, date(2026, 11, 6))

@@ -678,6 +678,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             edited = dialog.result_events[0]
             reference = dialog.edit_reference
             previous_ids = {value.id for value in expected}
+            expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited)
+                               if not dialog.schedule_replacement else {})
             self.store.edit_selection(refs, scope, reference, edited,
                                       replace_schedule=dialog.schedule_replacement,
                                       calendar_id=(dialog.calendar.currentData()
@@ -690,7 +692,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             zone = local_zone()
             shift = edited.start.astimezone(zone).replace(tzinfo=None) - reference.start.astimezone(zone).replace(tzinfo=None)
             target = (event.start.astimezone(zone).replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=event.start.fold)
-            self.reselect_after_operation(refs, target, previous_ids, shift)
+            target = expected_starts.get(event.id, target)
+            self.reselect_after_operation(refs, target, previous_ids, shift, expected_starts=expected_starts)
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
 
@@ -716,7 +719,44 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return self.selection.refs
         return (event,)
 
-    def reselect_after_operation(self, refs, target, previous_ids, shift=None):
+    @staticmethod
+    def reanchored_reference_start(master, reference, target):
+        """Follow an instruction's identity when calendar clipping is nonlinear."""
+        from .recurrence import event_zone, key_datetime, recurrence_key, relative_reanchor_map
+        zone = event_zone(master)
+        wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+        shift = wall(target) - wall(reference.start)
+        start = (wall(master.start) + shift).replace(tzinfo=zone, fold=master.start.fold)
+        mapping = relative_reanchor_map(master, start)
+        key = reference.recurrence_id or recurrence_key(reference.start, reference.all_day)
+        return key_datetime(mapping[key], master) if mapping is not None and key in mapping else target
+
+    def reanchored_selection_starts(self, refs, scope, reference, edited):
+        """Resolve selected logical slots before their source resources change."""
+        from .recurrence import event_zone
+        from .selection import is_whole_root
+        from .series_operations import partition_series
+        result = {}
+        for root in selection_roots(self.store, refs, scope):
+            root_scope = 'group' if is_whole_root(root) else scope
+            master = self.store.get_event(root.series_id or root.id)
+            if root_scope == 'single' or master is None or master.all_day != edited.all_day:
+                continue
+            if root_scope == 'future' and master.recurring:
+                _, master = partition_series(master, root)
+            if master is None:
+                continue
+            zone = event_zone(master)
+            wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+            shift = wall(edited.start) - wall(reference.start)
+            for item in (*refs, reference):
+                if (item.series_id or item.id) != (root.series_id or root.id):
+                    continue
+                target = (wall(item.start) + shift).replace(tzinfo=zone, fold=item.start.astimezone(zone).fold)
+                result[item.id] = self.reanchored_reference_start(master, item, target)
+        return result
+
+    def reselect_after_operation(self, refs, target, previous_ids, shift=None, *, expected_starts=None):
         self.selection.clear()
         self.selected_id = None
         self.anchor = self.selected_day = target.astimezone(local_zone()).date()
@@ -731,6 +771,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 expected = (expected.replace(tzinfo=None) + shift).replace(tzinfo=local_zone(), fold=expected.fold)
             else:
                 expected = target
+            expected = (expected_starts or {}).get(reference.id, expected)
             available = [value for value in choices if value.id not in {item.id for item in selected}]
             if available:
                 same_resource = [value for value in available if (value.series_id or value.id) == (reference.series_id or reference.id)]
@@ -780,13 +821,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         try:
             EventDialog.validate_time(start)
             EventDialog.validate_time(end)
+            expected_starts = self.reanchored_selection_starts(refs, scope, event, replace(event, start=start, end=end))
             result = self.store.move_selection(refs, scope, event, start, end, copy=copy)
             self.clear_drag_preview()
             if copy:
-                self.persist_copies(result, start, 'Copy selected events')
+                self.persist_copies(result, expected_starts.get(event.id, start), 'Copy selected events')
             else:
                 shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
-                self.reselect_after_operation(refs, start, previous_ids, shift)
+                self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
+                                             expected_starts=expected_starts)
         except (ValueError, KeyError, OverflowError) as exc:
             self.clear_drag_preview()
             self.report_error(str(exc))
@@ -969,6 +1012,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                               action_label='Edit calendar…', action=lambda: self.add_calendar(calendar) if calendar else self.add_calendar())
             return
         events, target = pending.events, pending.target
+        captured = pending.clipboard
+        master = next((item for item in captured.masters
+                       if item.id == (captured.reference.series_id or captured.reference.id)), None)
+        if master is not None and (captured.exact_selection or pending.scope != 'single'):
+            if not captured.exact_selection and pending.scope == 'future' and master.recurring:
+                from .series_operations import partition_series
+                _, master = partition_series(master, captured.reference)
+            if master is not None:
+                target = self.reanchored_reference_start(master, captured.reference, target)
         self.cancel_paste()
         self.persist_copies(events, target, 'Paste selected events')
 

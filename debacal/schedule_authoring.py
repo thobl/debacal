@@ -14,7 +14,9 @@ from .models import Event
 from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
                        expression_for_regular, reconstruct_sequence)
 from .recurrence import (RecurrenceError, event_zone, key_datetime, normalized_rule,
+                         normalize_recurrence_stream,
                          recurrence_key, recurrence_set, schedule_fields)
+from .regular_schedule import RegularSchedule
 
 
 @dataclass(frozen=True)
@@ -90,14 +92,14 @@ def _unbounded(event):
 def _finite_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     anchor = authoring_anchor(event, authoring_zone)
     values = []
-    for value in recurrence_set(event):
-        if not _valid_wall(value):
-            continue
+    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day):
         value = (datetime.combine(value.date(), time.min, anchor.tzinfo) if event.all_day
                  else value.astimezone(anchor.tzinfo))
         values.append(value)
         if len(values) > limit:
             raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences. Its standard recurrence is preserved.')
+    values = sorted({recurrence_key(value, event.all_day): value for value in values}.values(),
+                    key=lambda value: value.timestamp())
     primary = recurrence_key(anchor, event.all_day)
     if primary not in {recurrence_key(value, event.all_day) for value in values}:
         raise RecurrenceError('The primary event is excluded. This schedule cannot be represented by a sequence that keeps the primary event.')
@@ -107,7 +109,7 @@ def _finite_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
 def _contains(event, key, rules=None):
     value = key_datetime(key, event)
     previous = (rules if rules is not None else recurrence_set(event)).before(value, inc=True)
-    return previous is not None and _valid_wall(previous) and recurrence_key(previous, event.all_day) == recurrence_key(value, event.all_day)
+    return previous is not None and recurrence_key(previous, event.all_day) == recurrence_key(value, event.all_day)
 
 
 def displayed_schedule(event):
@@ -215,13 +217,26 @@ def recurrence_matches(first, second):
     first_unbounded, second_unbounded = _unbounded(first), _unbounded(second)
     if first_unbounded != second_unbounded:
         return False
-    if not first_unbounded:
+    same_zone = first.all_day or _same_zone(event_zone(first), event_zone(second))
+    if first_unbounded and not same_zone:
+        return False
+    same_rule = same_zone and simplified_rule(first) == simplified_rule(second)
+    if same_zone and not same_rule and not first_unbounded:
+        # The controls, text and exact split boundary use one regular model.
+        # Equal phases with the same finite rule count are equivalent even
+        # when one uses COUNT and the other an exact inclusive UNTIL.
+        regulars = [RegularSchedule.from_rule(value.recurrence_rule, authoring_anchor(value),
+                                             all_day=value.all_day) for value in (first, second)]
+        if all(value is not None and value.count is not None for value in regulars):
+            def signature(regular):
+                days = regular.weekdays or ((first.start.weekday(),) if regular.kind == 'WEEKLY' else ())
+                return regular.kind, regular.interval, regular.count, days
+            same_rule = signature(regulars[0]) == signature(regulars[1])
+    if not same_rule:
+        if first_unbounded:
+            return False
         return ({recurrence_key(value, first.all_day) for value in _finite_starts(first)} ==
                 {recurrence_key(value, second.all_day) for value in _finite_starts(second)})
-    if not first.all_day and not _same_zone(event_zone(first), event_zone(second)):
-        return False
-    if simplified_rule(first) != simplified_rule(second):
-        return False
     def normalized_keys(event, name):
         return {recurrence_key(key_datetime(key, event), event.all_day) for key in getattr(event, name)}
     keys = ((normalized_keys(first, 'recurrence_dates') ^ normalized_keys(second, 'recurrence_dates'))
@@ -277,11 +292,9 @@ def _tail_expression(event, *, authoring_zone=None):
     cursor = None
     # Only visit the finite prefix up to the last exception and one untouched
     # tail member. This never attempts to enumerate an ongoing recurrence.
-    for index, value in enumerate(recurrence_set(bare)):
+    for index, value in enumerate(normalize_recurrence_stream(recurrence_set(bare), all_day=event.all_day)):
         if index > DEFAULT_LIMIT:
             raise RecurrenceError(f'The edited prefix exceeds {DEFAULT_LIMIT:,} authoring occurrences. Its standard recurrence is preserved.')
-        if not _valid_wall(value):
-            continue
         # With no exceptions, DTSTART can already be the tail cursor.
         if (not special and value.timestamp() >= cutoff.timestamp()) or value.timestamp() > cutoff.timestamp():
             candidate = (datetime.combine(value.date(), time.min, anchor.tzinfo) if event.all_day
@@ -298,9 +311,7 @@ def _tail_expression(event, *, authoring_zone=None):
     if cursor is None:
         raise RecurrenceError('This ongoing recurrence cannot retain its phase in a custom sequence. Its rule is preserved.')
     values = []
-    for value in recurrence_set(event):
-        if not _valid_wall(value):
-            continue
+    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day):
         local = datetime.combine(value.date(), time.min, anchor.tzinfo) if event.all_day else value.astimezone(anchor.tzinfo)
         if local.timestamp() > cursor.timestamp():
             break
@@ -325,13 +336,47 @@ def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
     unbounded = _unbounded(displayed)
     if (prefer_literal and event.schedule_syntax == 2 and event.schedule_expression
             and expression_matches(event, event.schedule_expression, authoring_zone=authoring_zone)):
-        values = None if unbounded else _finite_starts(displayed, authoring_zone=authoring_zone)
+        values = None
+        if not unbounded:
+            try:
+                values = _finite_starts(displayed, authoring_zone=authoring_zone)
+            except RecurrenceError:
+                from .patterns import sequence_tail
+                # A certified bounded tail stays symbolic beyond the finite
+                # visual authoring budget, just like its standard RRULE.
+                if sequence_tail(event.schedule_expression) is None:
+                    raise
         return SequenceAuthoring(event.schedule_expression, values, unbounded)
     if unbounded:
         expression = _tail_expression(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(expression, None, True)
-    values = _finite_starts(displayed, authoring_zone=authoring_zone)
+    try:
+        values = _finite_starts(displayed, authoring_zone=authoring_zone)
+    except RecurrenceError:
+        # Large simple rules need not turn into thousands of date tokens.
+        # Certify their regular text symbolically against the canonical rule.
+        regular = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
+                                            all_day=displayed.all_day)
+        if regular is None or regular.count is None:
+            raise
+        expression = expression_for_regular(regular.kind, regular.interval, count=regular.count)
+        if not expression_matches(event, expression, authoring_zone=authoring_zone):
+            raise
+        return SequenceAuthoring(expression, None, False)
     expression = reconstruct_sequence(values)
+    regular = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
+                                        all_day=displayed.all_day)
+    if regular is not None and regular.count is not None and regular.count > 1:
+        bounded = expression_for_regular(regular.kind, regular.interval, count=regular.count)
+        evaluated = expression_event(event, expression, authoring_zone=authoring_zone)
+        inferred = RegularSchedule.from_rule(evaluated.recurrence_rule, authoring_anchor(evaluated),
+                                             all_day=evaluated.all_day)
+        # A standard monthly/yearly pattern can skip dates that finite +m/+y
+        # arithmetic clips. Keep that calendar intent rather than flattening
+        # it into RDATEs or reclassifying a short sample as a daily stride.
+        if ((inferred is None or (inferred.kind, inferred.interval) != (regular.kind, regular.interval))
+                and expression_matches(event, bounded, authoring_zone=authoring_zone)):
+            expression = bounded
     if not expression_matches(event, expression, authoring_zone=authoring_zone):
         raise RecurrenceError('This schedule cannot be represented losslessly by a custom sequence.')
     return SequenceAuthoring(expression, values, False)

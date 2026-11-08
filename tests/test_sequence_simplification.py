@@ -137,6 +137,17 @@ class SimplificationTests(unittest.TestCase):
                 self.assertLessEqual(len(expression), len(known))
                 self.assert_equivalent(values, expression)
 
+    def test_large_sets_use_concise_dates_and_shared_runs_without_quadratic_search(self):
+        values = [ANCHOR + timedelta(days=index) for index in range(900)]
+        self.assertEqual(simplify_sequence(values), '899*+1d')
+        irregular = [ANCHOR]
+        for index in range(550):
+            irregular.append(irregular[-1] + timedelta(days=(index % 7) + 1))
+        expression = simplify_sequence(irregular)
+        self.assertNotRegex(expression, r'\d\.\d{1,2}\.\d{4}')
+        actual = expand_sequence(expression, ANCHOR, limit=1000)
+        self.assertEqual(actual, irregular)
+
     def test_different_times_same_day_and_earlier_dates_preserve_instruction_order(self):
         values = [ANCHOR, ANCHOR.replace(hour=15), datetime(2025, 12, 31, 14, 30, tzinfo=ZONE),
                   datetime(2026, 1, 2, 9, tzinfo=ZONE)]
@@ -178,7 +189,8 @@ class SimplificationTests(unittest.TestCase):
     def test_reconstruction_delegates_but_full_serializer_is_unchanged(self):
         values = [ANCHOR + timedelta(weeks=2 * index) for index in range(5)]
         self.assertEqual(reconstruct_sequence(values), simplify_sequence(values))
-        self.assertIn('2026.', serialize_sequence(values))
+        self.assertIn('2026', serialize_sequence(values))
+        self.assertNotIn('2026.', serialize_sequence(values))
         self.assert_equivalent(values, serialize_sequence(values))
 
     def test_irregular_results_are_deterministic_and_verified(self):

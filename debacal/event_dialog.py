@@ -26,7 +26,8 @@ from .event_schedule import ScheduleDraft, count_to_until, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 from .models import Event
 from .preferences import Preferences
-from .recurrence import ScheduleReplacement, event_zone, key_datetime, recurrence_key, recurrence_set, updated_series
+from .recurrence import (ScheduleReplacement, event_zone, key_datetime, normalize_recurrence_time,
+                         recurrence_key, recurrence_set, updated_series)
 from .series_preview import SeriesPreview
 from .theme import scheme_for
 from .timeutil import local_zone
@@ -365,7 +366,8 @@ class EventDialog(FormDialog):
         self.pattern = QLineEdit()
         self.pattern.setAccessibleName('Sequence')
         self.pattern.setPlaceholderText('4*(+2) +3 3*+2')
-        self.pattern.setToolTip('Steps after the primary event, e.g. +2w or 13. Continue indefinitely with a final every(1w).')
+        self.pattern.setToolTip('Steps after the primary event: +2w, 13., every(1w), '
+                               'every(1d, count=5), or every(1d, until=13.11.2026).')
         self.custom_input = QStackedWidget()
         sequence_page = QWidget()
         sequence_layout = QVBoxLayout(sequence_page)
@@ -945,7 +947,8 @@ class EventDialog(FormDialog):
                 duration = range_duration(event.start, event.end)
                 for value in draft.validation_starts(start, all_day=self.all_day.isChecked()):
                     validate_datetime(value)
-                    validate_datetime(value + duration)
+                    validate_datetime(normalize_recurrence_time(value + duration)
+                                      if not event.all_day else value + duration)
         return [event]
 
     def _project_preview(self, event):

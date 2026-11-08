@@ -14,27 +14,22 @@ from dateutil.rrule import rrulestr
 
 from .models import Event
 from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
-                       reconstruct_sequence, sequence_tail, shift_schedule_expression)
+                       is_relative_sequence, reconstruct_sequence, sequence_tail, shift_schedule_expression)
 from .recurrence import (
     RecurrenceError, base_schedule_starts, event_zone, expand_event,
     key_datetime, occurrence, recurrence_key, recurrence_set, schedule_fields,
     updated_series,
 )
+from .regular_schedule import (
+    MAX_REPEAT_COUNT, REGULAR_KINDS, RegularSchedule, _aware, _parts,
+    count_to_until, retain_relative_intent, until_to_count,
+)
 from .schedule_authoring import (displayed_starts, expression_event, expression_matches,
                                  reconstruct_authoring, retain_displayed_overrides)
 
 
-REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
-MAX_REPEAT_COUNT = 100000
-_DAY_NAMES = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
 _SCHEDULE_FIELDS = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides',
                     'schedule_expression', 'expression_anchor', 'schedule_syntax', 'timezone_id')
-
-
-def _aware(value):
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
-        raise RecurrenceError('The recurrence needs a timezone-aware start.')
-    return value
 
 
 def _checked(value):
@@ -42,147 +37,6 @@ def _checked(value):
     if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None):
         raise RecurrenceError('This occurrence falls in a daylight-saving clock change. Choose another time.')
     return value
-
-
-def _parts(kind, interval=1, weekdays=()):
-    kind = str(kind).upper()
-    if kind not in REGULAR_KINDS:
-        raise RecurrenceError('Choose a daily, weekly, monthly or yearly recurrence.')
-    if type(interval) is not int or not 1 <= interval <= 999:
-        raise RecurrenceError('The recurrence interval must be between 1 and 999.')
-    days = tuple(sorted(set(weekdays)))
-    if any(type(day) is not int or not 0 <= day <= 6 for day in days):
-        raise RecurrenceError('Choose weekdays from Monday through Sunday.')
-    result = f'FREQ={kind};INTERVAL={interval}'
-    if kind == 'WEEKLY' and days:
-        result += ';BYDAY=' + ','.join(_DAY_NAMES[day] for day in days)
-    return result
-
-
-def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=()) -> date:
-    """Inclusive last date of a COUNT rule, including DTSTART when it matches.
-
-    Dateutil's calendar arithmetic deliberately skips nonexistent month days:
-    a monthly event on the 31st does not turn into a February event.
-    """
-    _aware(start)
-    if type(count) is not int or not 1 <= count <= MAX_REPEAT_COUNT:
-        raise RecurrenceError(f'Choose between 1 and {MAX_REPEAT_COUNT:,} occurrences.')
-    try:
-        rule = _parts(kind, interval, weekdays)
-        if str(kind).upper() == 'DAILY':
-            return start.date() + timedelta(days=interval * (count - 1))
-        if str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
-            return start.date() + timedelta(days=7 * interval * (count - 1))
-        values = rrulestr(rule + f';COUNT={count}', dtstart=start)
-        last = None
-        generated = 0
-        for generated, last in enumerate(values, 1):
-            pass
-        if last is None or generated < count:
-            raise RecurrenceError('No recurrence fits within the supported calendar years.')
-        return last.date()
-    except (OverflowError, ValueError, TypeError) as exc:
-        if isinstance(exc, RecurrenceError):
-            raise
-        raise RecurrenceError('The recurrence extends beyond the supported calendar years.') from exc
-
-
-def until_to_count(start: datetime, kind: str, interval: int, until: date, weekdays=(),
-                   *, limit: int = MAX_REPEAT_COUNT) -> int:
-    """Count rule occurrences through an inclusive calendar date, with a cap."""
-    _aware(start)
-    if isinstance(until, datetime) or not isinstance(until, date):
-        raise RecurrenceError('Choose a valid final recurrence date.')
-    if until < start.date():
-        raise RecurrenceError('The final recurrence date must not precede the start.')
-    if type(limit) is not int or not 1 <= limit <= MAX_REPEAT_COUNT:
-        raise RecurrenceError('Invalid recurrence count limit.')
-    count = 0
-    try:
-        rule = _parts(kind, interval, weekdays)
-        if str(kind).upper() == 'DAILY':
-            count = (until - start.date()).days // interval + 1
-        elif str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
-            count = (until - start.date()).days // (7 * interval) + 1
-        else:
-            for value in rrulestr(rule, dtstart=start):
-                if value.date() > until:
-                    break
-                count += 1
-                if count > limit:
-                    raise RecurrenceError(f'This schedule exceeds {limit:,} occurrences.')
-        if count > limit:
-            raise RecurrenceError(f'This schedule exceeds {limit:,} occurrences.')
-    except (OverflowError, ValueError, TypeError) as exc:
-        if isinstance(exc, RecurrenceError):
-            raise
-        raise RecurrenceError('The recurrence extends beyond the supported calendar years.') from exc
-    if count == 0:
-        raise RecurrenceError('No recurrence occurs on or before the chosen final date.')
-    return count
-
-
-@dataclass(frozen=True, slots=True)
-class RegularSchedule:
-    kind: str = 'WEEKLY'
-    interval: int = 1
-    count: int | None = 6
-    until: date | None = None
-    weekdays: tuple[int, ...] = ()
-    ending: str = 'count'
-
-    def rule(self, start: datetime, *, all_day=False) -> str:
-        _aware(start)
-        result = _parts(self.kind, self.interval, self.weekdays)
-        if self.ending == 'never' or (self.count is None and self.until is None):
-            return result
-        if self.ending == 'until':
-            if self.until is None or self.until < start.date():
-                raise RecurrenceError('The final recurrence date must not precede the start.')
-            if all_day:
-                return result + ';UNTIL=' + self.until.strftime('%Y%m%d')
-            boundary = datetime.combine(self.until, time.max, start.tzinfo).astimezone(timezone.utc)
-            return result + ';UNTIL=' + boundary.strftime('%Y%m%dT%H%M%SZ')
-        if self.ending != 'count':
-            raise RecurrenceError('Choose a count, final date or unbounded recurrence.')
-        if type(self.count) is not int or not 1 <= self.count <= MAX_REPEAT_COUNT:
-            raise RecurrenceError(f'Choose between 1 and {MAX_REPEAT_COUNT:,} occurrences.')
-        return result + f';COUNT={self.count}'
-
-    @classmethod
-    def from_rule(cls, rule: str, start: datetime, *, all_day=False):
-        """Return regular controls only when they can retain all rule clauses."""
-        try:
-            parts = dict(part.strip().upper().split('=', 1) for part in rule.removeprefix('RRULE:').split(';'))
-            kind = parts.get('FREQ')
-            allowed = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'}
-            if kind == 'WEEKLY':
-                allowed.add('BYDAY')
-            if kind not in REGULAR_KINDS or parts.keys() - allowed or parts.get('WKST', 'MO') != 'MO':
-                return None
-            days = tuple(_DAY_NAMES.index(day) for day in parts.get('BYDAY', '').split(',') if day)
-            interval = int(parts.get('INTERVAL', 1))
-            _parts(kind, interval, days)
-            if 'COUNT' in parts and 'UNTIL' in parts:
-                return None
-            if 'COUNT' in parts:
-                count = int(parts['COUNT'])
-                until = count_to_until(start, kind, interval, count, days)
-                return cls(kind, interval, count, until, days, 'count')
-            if 'UNTIL' in parts:
-                value = parts['UNTIL']
-                if len(value) == 8:
-                    until = datetime.strptime(value, '%Y%m%d').date()
-                else:
-                    stamp = datetime.strptime(value.rstrip('Z'), '%Y%m%dT%H%M%S')
-                    stamp = stamp.replace(tzinfo=timezone.utc if value.endswith('Z') else start.tzinfo)
-                    until = stamp.astimezone(start.tzinfo).date()
-                count = until_to_count(start, kind, interval, until, days)
-                return cls(kind, interval, count, until, days, 'until')
-            return cls(kind, interval, None, None, days, 'never')
-        except (ValueError, OverflowError, TypeError):
-            return None
 
 
 def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> RegularSchedule | None:
@@ -200,9 +54,9 @@ def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> Reg
 class ScheduleDraft:
     """Small mutable authoring draft with explicit schedule-changing methods.
 
-    Source values are copied exactly for ordinary edits. A loaded expression
-    shifts its existing concrete dates when the primary moves; newly typed text
-    instead evaluates from the newly chosen primary timestamp.
+    Source values are copied exactly for ordinary edits. Relative programs
+    reevaluate from a moved primary; explicit date sets retain their translated
+    dates. Newly typed text always evaluates from the chosen primary timestamp.
     """
     source: Event | None = None
     authoring_zone: object = None
@@ -277,6 +131,7 @@ class ScheduleDraft:
         evaluated = expression_event(master, view.expression, authoring_zone=anchor.tzinfo)
         regular = (RegularSchedule.from_rule(evaluated.recurrence_rule, anchor, all_day=master.all_day)
                    if not evaluated.recurrence_dates and not evaluated.excluded_dates else None)
+        regular = retain_relative_intent(view.expression, anchor, regular)
         if regular is not None and not force_custom:
             self._take_regular(regular)
         return regular
@@ -338,10 +193,19 @@ class ScheduleDraft:
         view = reconstruct_authoring(master, authoring_zone=self.authoring_zone)
         staged = replace(self)
         staged._take_authoring(view, master, force_custom=True)
-        if view.starts is not None and not master.recurrence_overrides:
-            zone = staged.author_anchor(master.start, all_day=master.all_day).tzinfo
-            master = replace(master, **schedule_fields(view.starts, all_day=master.all_day),
-                             timezone_id=getattr(zone, 'key', ''))
+        # Explicit conversion adopts the certified program while keeping its
+        # actual starts and exception identities. A simple calendar recurrence
+        # uses bounded every(), so monthly skipping stays a standard rule;
+        # unsupported finite BYxxx rules become an editable exact date set.
+        program_zone = event_zone(master) if master.all_day else self.authoring_zone
+        evaluated = expression_event(master, view.expression, authoring_zone=program_zone)
+        evaluated = retain_displayed_overrides(evaluated, master)
+        master = replace(master, start=evaluated.start, end=evaluated.end,
+                         recurrence_rule=evaluated.recurrence_rule,
+                         recurrence_dates=evaluated.recurrence_dates,
+                         excluded_dates=tuple(sorted(set(master.excluded_dates) | set(evaluated.excluded_dates))),
+                         recurrence_overrides=evaluated.recurrence_overrides,
+                         timezone_id=evaluated.timezone_id)
         staged._store_graphical(master, reference_start=reference_start, reference_end=reference_end)
         self.__dict__.update(staged.__dict__)
 
@@ -361,6 +225,7 @@ class ScheduleDraft:
                        if detect and not compiled.recurrence_dates and not compiled.excluded_dates else None)
         else:
             regular = detect_regular_schedule(values, all_day=all_day) if detect else None
+        regular = retain_relative_intent(text, anchor, regular)
         staged.kind = 'custom'
         if regular:
             staged._take_regular(regular)
@@ -435,6 +300,8 @@ class ScheduleDraft:
             return list(displayed_starts(effective, authoring_zone=self.authoring_zone, limit=limit))
         anchor = self.author_anchor(self._source_range(start, all_day=all_day)[0], all_day=all_day)
         if self.source is not None and not self.configuration_changed and self._loaded_expression_mode:
+            if is_relative_sequence(self.expression):
+                return expand_sequence(self.expression, anchor, limit=limit)
             values = self._materialized if self._materialized is not None else base_schedule_starts(self.source, limit=limit)
             values = [value.replace(tzinfo=anchor.tzinfo) if all_day else value.astimezone(anchor.tzinfo) for value in values]
             previous = self.source.start.replace(tzinfo=anchor.tzinfo) if all_day else self.source.start.astimezone(anchor.tzinfo)
@@ -596,9 +463,11 @@ class ScheduleDraft:
             view = reconstruct_authoring(master, authoring_zone=self.authoring_zone)
             staged._take_authoring(view, master)
             if view.starts is not None and not master.recurrence_overrides:
-                zone = staged.author_anchor(master.start, all_day=master.all_day).tzinfo
-                master = replace(master, **schedule_fields(view.starts, all_day=master.all_day),
-                                 timezone_id=getattr(zone, 'key', ''))
+                evaluated = expression_event(master, view.expression, authoring_zone=self.authoring_zone)
+                master = replace(master, recurrence_rule=evaluated.recurrence_rule,
+                                 recurrence_dates=evaluated.recurrence_dates,
+                                 excluded_dates=tuple(sorted(set(master.excluded_dates) | set(evaluated.excluded_dates))),
+                                 timezone_id=evaluated.timezone_id)
             staged._store_graphical(master, reference_start=reference_start, reference_end=reference_end)
         except (RecurrenceError, PatternError, ValueError, OverflowError) as error:
             staged.kind, staged.expression, staged._expression_mode = 'advanced', '', False

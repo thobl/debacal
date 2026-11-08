@@ -215,15 +215,15 @@ class ExpressionTests(unittest.TestCase):
             self.assertEqual(len(base_schedule_starts(updated)), 4)
             self.assert_authoring_matches(updated)
 
-    def test_month_clamp_move_rewrites_only_when_literal_would_change_later_instants(self):
+    def test_month_clamp_move_reevaluates_relative_program_from_the_new_primary(self):
         with Store(':memory:') as store:
             master = custom_event('3*+1m', anchor=datetime(2027, 1, 31, 10, tzinfo=ZONE))
-            before = base_schedule_starts(master)
             store.apply('Create', [master])
             store.edit_series(master, replace(master, start=master.start + timedelta(days=1), end=master.end + timedelta(days=1)))
             updated = store.get_event(master.id)
-            self.assertNotEqual(updated.schedule_expression, master.schedule_expression)
-            self.assertEqual(instants(base_schedule_starts(updated)), instants([value + timedelta(days=1) for value in before]))
+            self.assertEqual(updated.schedule_expression, master.schedule_expression)
+            self.assertEqual(instants(base_schedule_starts(updated)),
+                             instants(expand_sequence(master.schedule_expression, updated.start)))
             self.assert_authoring_matches(updated)
 
 

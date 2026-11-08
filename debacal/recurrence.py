@@ -35,6 +35,82 @@ def event_zone(event: Event):
     return ZoneInfo(event.timezone_id) if event.timezone_id else event.start.tzinfo
 
 
+def normalize_recurrence_time(value: datetime) -> datetime:
+    """Resolve a generated RRULE clock through its represented instant.
+
+    RFC 5545 erratum 4271 applies the pre-gap UTC offset to nonexistent rule
+    times. Dateutil supplies that offset; a UTC round trip exposes the real
+    local clock while retaining its instant and recurrence identity. Explicit
+    user input is validated separately and must never be repaired this way.
+    """
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise RecurrenceError('The recurrence needs a timezone-aware start.')
+    try:
+        return value.astimezone(timezone.utc).astimezone(value.tzinfo)
+    except (ValueError, OverflowError) as error:
+        raise RecurrenceError('The recurrence extends beyond the supported calendar years.') from error
+
+
+def normalize_recurrence_stream(values, *, all_day=False):
+    """Normalize and sort only the local window affected by a clock gap.
+
+    Nominal 02:45 can normalize later than a following valid 03:00. Buffer
+    through the last displaced wall clock before yielding that small window;
+    ordinary recurrence history remains a lazy, constant-memory stream.
+    """
+    if all_day:
+        yield from values
+        return
+    displaced, boundary = [], None
+    for nominal in values:
+        # Close the previous local window before examining a later gap. An
+        # annual rule can land inside a gap every year; extending the old
+        # boundary first would otherwise retain its entire unbounded history.
+        if boundary is not None and nominal.replace(tzinfo=None) > boundary:
+            ordered = {value.astimezone(timezone.utc): value for value in displaced}
+            yield from (ordered[key] for key in sorted(ordered))
+            displaced, boundary = [], None
+        actual = normalize_recurrence_time(nominal)
+        if actual.replace(tzinfo=None) != nominal.replace(tzinfo=None):
+            wall = actual.replace(tzinfo=None)
+            boundary = wall if boundary is None else max(boundary, wall)
+        if boundary is None:
+            yield actual
+            continue
+        displaced.append(actual)
+        if len(displaced) > 2 * MAX_MINUTELY_COUNT:
+            raise RecurrenceRangeError('This clock-change window exceeds 20,000 recurrence instances. Choose a smaller date range.')
+    if displaced:
+        ordered = {value.astimezone(timezone.utc): value for value in displaced}
+        yield from (ordered[key] for key in sorted(ordered))
+
+
+def _exclusion_walls(value: datetime):
+    """Match a normalized exclusion against dateutil's nominal gap clocks.
+
+    Exclusions use UTC identities in storage. Dateutil compares values sharing
+    a timezone by wall clock, so a real 03:30 exclusion would otherwise leave
+    the nominal 02:30 gap rule value visible. Inspect only nearby offsets,
+    including whole-day timezone jumps, rather than scanning recurrence history.
+    """
+    yield value
+    offsets = set()
+    for days in (-2, -1, 1, 2):
+        try:
+            offsets.add((value + timedelta(days=days)).utcoffset())
+        except (OverflowError, ValueError):
+            continue
+    for offset in offsets:
+        if offset is None or offset == value.utcoffset():
+            continue
+        try:
+            nominal = (value.replace(tzinfo=None) + offset - value.utcoffset()).replace(tzinfo=value.tzinfo)
+            if (not _valid_wall_time(nominal) and nominal.timestamp() == value.timestamp()):
+                yield nominal
+        except (OverflowError, ValueError):
+            continue
+
+
 def recurrence_key(value: datetime | date, all_day: bool = False) -> str:
     if all_day or not isinstance(value, datetime):
         return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
@@ -114,9 +190,9 @@ def schedule_fields(starts: Iterable[datetime], *, all_day: bool = False) -> dic
 def base_schedule_starts(master: Event, *, limit: int = 10000) -> list[datetime]:
     """Return a finite canonical schedule, retaining DTSTART as its first item.
 
-    Authoring metadata describes the base schedule, independently of detached
-    exceptions and exclusions. Its literal language never replaces RRULE/RDATE
-    as the stored functional schedule.
+    This helper deliberately ignores exclusions and detached ranges. Current
+    authoring text describes actual starts via schedule_authoring.displayed_starts;
+    use this nominal view only for legacy metadata and base-identity operations.
     """
     if master.recurrence_rule:
         fields = normalized_rule(master.recurrence_rule, master)
@@ -272,7 +348,9 @@ def _recurrence_set(master: Event, *, after: datetime | None = None, include_dat
         for key in master.recurrence_dates:
             rules.rdate(key_datetime(key, master))
     for key in master.excluded_dates:
-        rules.exdate(key_datetime(key, master))
+        excluded = key_datetime(key, master)
+        for value in (excluded,) if master.all_day else _exclusion_walls(excluded):
+            rules.exdate(value)
     return rules
 
 
@@ -337,11 +415,52 @@ def shift_rule(rule: str, shift: timedelta, master: Event) -> str:
     return ";".join(f"{name}={value}" for name, value in parts.items())
 
 
+def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | None:
+    """Map an authored relative program's instruction identities to a new root.
+
+    Literal relative month/year arithmetic is reevaluated from the new root;
+    translating its cached timestamps would change its clipping semantics.
+    A moved detached exception can use the linear path only when that path
+    already produces the program's requested actual starts without rewriting.
+    """
+    from .patterns import PatternError, expand_sequence, is_relative_sequence
+    from .schedule_authoring import authoring_anchor, expression_matches
+    text = master.schedule_expression
+    if (master.schedule_syntax != 2 or not is_relative_sequence(text)
+            or not expression_matches(master, text)):
+        return None
+    previous = authoring_anchor(master)
+    current = (datetime.combine(start.date(), time.min, previous.tzinfo) if master.all_day
+               else start.astimezone(previous.tzinfo))
+    try:
+        old = expand_sequence(text, previous)
+        new = expand_sequence(text, current)
+    except PatternError as error:
+        raise RecurrenceError(str(error)) from error
+    shift = current.replace(tzinfo=None) - previous.replace(tzinfo=None)
+    moved_exceptions = any(
+        key not in master.excluded_dates
+        and recurrence_key(Event.from_dict(payload).start, master.all_day) != key
+        for key, payload in master.recurrence_overrides.items())
+    if moved_exceptions:
+        linear = all((before.replace(tzinfo=None) + shift).replace(tzinfo=previous.tzinfo).timestamp() == after.timestamp()
+                     for before, after in zip(old, new))
+        if not linear:
+            raise RecurrenceError(
+                'This relative program includes a moved occurrence whose original identity cannot be '
+                'reanchored safely. Move that occurrence back or edit the sequence explicitly first.'
+            )
+        return None
+    return {recurrence_key(before, master.all_day): recurrence_key(after, master.all_day)
+            for before, after in zip(old, new)}
+
+
 def updated_series(master: Event, reference: Event, edited: Event,
                    replace_schedule: bool | ScheduleReplacement = False) -> Event:
     """Project a whole-series edit without accessing storage or mutating inputs.
 
-    Relative edits shift the original master from the selected occurrence. An
+    Relative edits reanchor an authored relative program; standard rules and
+    concrete date sets shift the original master from the selected occurrence. An
     absolute schedule replacement instead takes the editor's DTSTART/date set.
     Both previews and persisted edits use this same rule/exception projection.
     """
@@ -443,16 +562,35 @@ def updated_series(master: Event, reference: Event, edited: Event,
         end = start + duration
     checked_wall(end)
 
+    relative_keys = None
+    relative_program = False
+    if (shift and edited.all_day == master.all_day and edited.schedule_syntax == 2
+            and edited.schedule_expression == master.schedule_expression
+            and rules_equivalent(edited.recurrence_rule, master.recurrence_rule, master)):
+        from .patterns import is_relative_sequence
+        from .schedule_authoring import expression_matches
+        relative_program = is_relative_sequence(master.schedule_expression) and expression_matches(master, master.schedule_expression)
+        if relative_program:
+            relative_keys = relative_reanchor_map(master, start)
+
     def shift_key(key):
+        if relative_keys is not None and key in relative_keys:
+            return relative_keys[key]
         value = checked_wall((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone))
         return recurrence_key(value, edited.all_day)
 
     dates = tuple(shift_key(key) for key in master.recurrence_dates) if edited.recurrence_dates == master.recurrence_dates else edited.recurrence_dates
     exclusions = tuple(shift_key(key) for key in master.excluded_dates) if edited.excluded_dates == master.excluded_dates else edited.excluded_dates
     rule = edited.recurrence_rule
+    if relative_keys is not None:
+        fields = schedule_fields([key_datetime(key, master) for key in relative_keys.values()], all_day=edited.all_day)
+        rule, dates = fields['recurrence_rule'], fields['recurrence_dates']
+        # Hidden old exclusions are harmless tombstones unless the new program
+        # explicitly reuses that timestamp as one of its active instructions.
+        exclusions = tuple(key for key in exclusions if key not in set(relative_keys.values()))
     shifted_authoring = None
     stale_authoring = False
-    if rules_equivalent(rule, master.recurrence_rule, master):
+    if relative_keys is None and rules_equivalent(rule, master.recurrence_rule, master):
         if shift and master.schedule_syntax == 2 and edited.schedule_expression == master.schedule_expression:
             from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
             from .schedule_authoring import expression_matches
@@ -478,7 +616,11 @@ def updated_series(master: Event, reference: Event, edited: Event,
     for key, payload in master.recurrence_overrides.items():
         moved_key = shift_key(key)
         value = Event.from_dict(payload)
-        override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone))
+        if relative_keys is not None:
+            nominal_offset = wall(value.start) - wall(key_datetime(key, master))
+            override_start = checked_wall((wall(key_datetime(moved_key, master)) + nominal_offset).replace(tzinfo=zone))
+        else:
+            override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone))
         override_duration = duration if duration_changed else wall(value.end) - wall(value.start)
         override_source = edited if duration_changed else value
         if override_duration <= timedelta(0):
@@ -542,6 +684,10 @@ def updated_series(master: Event, reference: Event, edited: Event,
             expression, anchor = shift_schedule_expression(
                 expression, anchor, shift, base_schedule_starts(updated), syntax=1)
         updated = replace(updated, schedule_expression=expression, expression_anchor=anchor)
+    if relative_program:
+        from .schedule_authoring import expression_matches
+        if updated.schedule_expression != master.schedule_expression or not expression_matches(updated, master.schedule_expression):
+            raise RecurrenceError('This move cannot preserve the relative sequence and its occurrence identities. Edit the sequence explicitly first.')
     return updated
 
 
@@ -551,6 +697,8 @@ def _valid_wall_time(value: datetime) -> bool:
 
 def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
     key = key or recurrence_key(start, master.all_day)
+    if not master.all_day:
+        start = normalize_recurrence_time(start)
     values = dict(
         id=occurrence_id(master.id, key), start=start,
         series_id=master.id, recurrence_id=key, recurrence_rule="",
@@ -570,6 +718,8 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
         end = datetime.fromtimestamp(start.timestamp() + master.end.timestamp() - master.start.timestamp(), zone)
     else:
         end = start + wall_duration
+    if not master.all_day:
+        end = normalize_recurrence_time(end)
     return replace(master, end=end, **values)
 
 
@@ -619,7 +769,11 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         explicit = [initial, *(key_datetime(key, master) for key in master.recurrence_dates)]
         explicit.sort(key=lambda value: value.timestamp())
         finite = (value for value in explicit if value.timestamp() >= lower.timestamp())
-        regular = (value for value in rules.xafter(lower, inc=True) if _valid_wall_time(value))
+        # A different-zone boundary makes dateutil compare instants rather
+        # than nominal wall clocks around a skipped hour. Normalized rule
+        # values then merge with finite dates in the same chronological order.
+        regular = normalize_recurrence_stream(rules.xafter(lower.astimezone(timezone.utc), inc=True),
+                                             all_day=master.all_day)
         for generated in merge(finite, regular, key=lambda value: value.timestamp()):
             if generated.timestamp() >= end.timestamp():
                 break
@@ -629,7 +783,7 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
                 if generated.timestamp() > earliest[-1].start.timestamp():
                     break
             key = recurrence_key(generated, master.all_day)
-            if key in master.recurrence_overrides or key in excluded or not _valid_wall_time(generated):
+            if key in master.recurrence_overrides or key in excluded:
                 continue
             item = occurrence(master, generated, key)
             if overlaps(item, start, end):

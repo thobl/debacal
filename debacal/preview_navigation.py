@@ -141,8 +141,6 @@ class PreviewNavigation:
             for index, generated in enumerate(islice(recurrence_set(master), NAVIGATION_LIMIT + 1)):
                 if index == NAVIGATION_LIMIT:
                     raise ValueError('This complex series exceeds the 10,000-occurrence navigation limit.')
-                if generated.astimezone(timezone.utc).astimezone(generated.tzinfo).replace(tzinfo=None) != generated.replace(tzinfo=None):
-                    continue
                 item = occurrence(master, generated)
                 values[item.id] = item
             for key in master.recurrence_overrides:

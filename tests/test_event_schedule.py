@@ -56,7 +56,7 @@ def test_month_and_leap_year_rules_skip_missing_dates_instead_of_clipping():
 
 
 def test_large_common_counts_use_constant_work_and_supported_years_are_checked():
-    with patch('debacal.event_schedule.rrulestr', side_effect=AssertionError('should use date arithmetic')):
+    with patch('debacal.regular_schedule.rrulestr', side_effect=AssertionError('should use date arithmetic')):
         end = count_to_until(START, 'DAILY', 1, 100000)
         assert until_to_count(START, 'DAILY', 1, end) == 100000
         assert count_to_until(START, 'WEEKLY', 1, 10000) == START.date() + timedelta(weeks=9999)

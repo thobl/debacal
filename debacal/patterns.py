@@ -16,6 +16,7 @@ from __future__ import annotations
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from math import gcd
 import re
 from typing import Iterable
 
@@ -26,7 +27,8 @@ MAX_PATTERN_LENGTH = 8192
 MAX_NESTING = 8
 _INTEGER = re.compile(r'[0-9]+')
 _CLOCK = re.compile(r'([0-9]{1,2}):([0-9]{2})')
-_TAIL = re.compile(r'(?<![^\s,])every\(\s*([0-9]+)\s*([dwmy]?)\s*\)\s*$', re.I)
+_TAIL = re.compile(r'(?<![^\s,])every\(\s*([0-9]+)\s*([dwmy]?)\s*'
+                   r'(?:,\s*(count|until)\s*=\s*([^()]+?)\s*)?\)\s*$', re.I)
 _FREQUENCIES = {'d': 'DAILY', 'w': 'WEEKLY', 'm': 'MONTHLY', 'y': 'YEARLY'}
 
 
@@ -39,15 +41,21 @@ class SequenceTail:
     prefix: str
     interval: int
     unit: str
+    count: int | None = None
+    until: date | None = None
 
     @property
     def frequency(self):
         return _FREQUENCIES[self.unit]
 
+    @property
+    def unbounded(self):
+        return self.count is None and self.until is None
+
 
 @dataclass(frozen=True)
 class CompiledSequence:
-    """A finite prefix followed by an interoperable, unbounded calendar rule."""
+    """A finite prefix followed by an interoperable calendar recurrence."""
     prefix_starts: tuple[datetime, ...]
     tail_start: datetime
     recurrence_rule: str
@@ -61,7 +69,7 @@ class CompiledSequence:
 
 
 def sequence_tail(expression: str) -> SequenceTail | None:
-    """Recognize a terminal every(Nunit), without expanding an endless list.
+    """Recognize terminal every(Nunit[, count=N|until=D.M.YYYY]).
 
     This is a standard calendar recurrence, distinct from relative +m/+y
     instructions: missing month days and leap dates are skipped, not clipped.
@@ -74,20 +82,44 @@ def sequence_tail(expression: str) -> SequenceTail | None:
         return None
     match = _TAIL.search(expression)
     if match is None or 'every' in expression[:match.start()].lower():
-        raise PatternError('Use every(1d), every(2w), every(1m) or every(1y) as the final instruction.')
+        raise PatternError('Use every(1d), every(2w), every(1m) or every(1y) as the final instruction; '
+                           'optionally add count=N or until=D.M.YYYY inside its parentheses.')
     if len(match[1]) > 3 or not 1 <= int(match[1]) <= 999:
-        raise PatternError('The indefinite repeat interval must be between 1 and 999.')
+        raise PatternError('The repeat interval must be between 1 and 999.')
     prefix = expression[:match.start()].rstrip()
     if prefix.endswith(','):
         prefix = prefix[:-1].rstrip()
-    return SequenceTail(prefix, int(match[1]), match[2].lower() or 'w')
+    count = until = None
+    if match[3] and match[3].lower() == 'count':
+        if not re.fullmatch(r'[0-9]{1,6}', match[4]) or not 1 <= int(match[4]) <= 100000:
+            raise PatternError('The repeat count must be between 1 and 100,000, including the tail start.')
+        count = int(match[4])
+    elif match[3]:
+        bound = re.fullmatch(r'([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})\.?', match[4])
+        try:
+            if bound is None:
+                raise ValueError
+            until = date(int(bound[3]), int(bound[2]), int(bound[1]))
+        except ValueError as exc:
+            raise PatternError('Use a complete final date, for example until=13.11.2026.') from exc
+    return SequenceTail(prefix, int(match[1]), match[2].lower() or 'w', count, until)
 
 
-def expression_for_regular(kind, interval=1):
-    """A simple unbounded recurrence has a concise custom authoring form."""
+def expression_for_regular(kind, interval=1, *, count=None, until=None):
+    """One spelling for a regular recurrence and its optional inclusive bound."""
     unit = next((unit for unit, frequency in _FREQUENCIES.items() if frequency == str(kind).upper()), None)
     if unit is None or type(interval) is not int or not 1 <= interval <= 999:
         raise PatternError('Choose a daily, weekly, monthly or yearly interval between 1 and 999.')
+    if count is not None and until is not None:
+        raise PatternError('Choose either a repeat count or a final date, not both.')
+    if count is not None:
+        if type(count) is not int or not 1 <= count <= 100000:
+            raise PatternError('The repeat count must be between 1 and 100,000, including the tail start.')
+        return f'every({interval}{unit}, count={count})'
+    if until is not None:
+        if not isinstance(until, date) or isinstance(until, datetime):
+            raise PatternError('Choose a valid final recurrence date.')
+        return f'every({interval}{unit}, until={until.day}.{until.month}.{until.year:04d})'
     return f'every({interval}{unit})'
 
 
@@ -290,6 +322,105 @@ class _Parser:
         return _Absolute(day, month, year, hour, minute)
 
 
+def relative_sequence_steps(expression):
+    """Return the expanded ``(amount, unit)`` relative program, or None.
+
+    Multipliers and groups are transparent. An empty program, absolute date or
+    clock, regular every(...) tail, and invalid text are not relative programs.
+    """
+    try:
+        if sequence_tail(expression) is not None:
+            return None
+        steps = _Parser(expression, MAX_SEQUENCE_EVENTS).sequence()
+    except PatternError:
+        return None
+    if not steps or not all(isinstance(step, _Relative) for step in steps):
+        return None
+    return tuple((step.amount, step.unit) for step in steps)
+
+
+def is_relative_sequence(expression):
+    """Whether a valid nonempty finite program contains only relative steps."""
+    return relative_sequence_steps(expression) is not None
+
+
+def _relative_program_text(steps):
+    """Compress known relative nodes without inferring different date units."""
+    if not steps:
+        return ''
+    texts = ['+' + str(step.amount) + ('' if step.unit == 'w' else step.unit) for step in steps]
+    if len(set(texts)) == 1:
+        return texts[0] if len(texts) == 1 else f'{len(texts)}*{texts[0]}'
+    if len(texts) <= DEFAULT_LIMIT:
+        forms, indexes, masks = [], {}, []
+        for text in texts:
+            if text not in indexes:
+                indexes[text] = len(forms)
+                forms.append(_ShortForm(text))
+            masks.append(1 << indexes[text])
+        return _simplify_masks(masks, forms, prefer_dates=False)
+    # Long programs avoid the block optimizer. A primitive whole-program
+    # period and adjacent runs can still retain compact instruction intent.
+    borders = [0] * len(texts)
+    for index in range(1, len(texts)):
+        border = borders[index - 1]
+        while border and texts[index] != texts[border]:
+            border = borders[border - 1]
+        if texts[index] == texts[border]:
+            border += 1
+        borders[index] = border
+    period = len(texts) - borders[-1]
+    if period < len(texts) and len(texts) % period == 0:
+        body = _relative_program_text(steps[:period])
+        return f'{len(texts) // period}*({body})'
+    runs = []
+    for text in texts:
+        if runs and runs[-1][0] == text:
+            runs[-1] = text, runs[-1][1] + 1
+        else:
+            runs.append((text, 1))
+    return ' '.join(f'{count}*{text}' if count > 1 else text for text, count in runs)
+
+
+def split_relative_sequence(expression, anchor, boundary):
+    """Partition relative instruction intent at a nominal occurrence start.
+
+    Return ``(None, original_text)`` before the primary, otherwise two finite
+    programs. Empty text means a singleton. Non-relative programs return None;
+    a relative program with an unknown boundary raises rather than guessing.
+    Re-parsing proves identical relative nodes, so future reanchoring retains
+    the original units/clipping rather than a coincident day-gap inference.
+    """
+    if not is_relative_sequence(expression):
+        return None
+    _aware(anchor)
+    _validate_wall(anchor)
+    _aware(boundary)
+    steps = _Parser(expression, MAX_SEQUENCE_EVENTS).sequence()
+    values, _cursor = _execute_steps(steps, anchor)
+    if len(values) != len(steps) + 1:
+        raise PatternError('This relative sequence has ambiguous occurrence boundaries and cannot be split safely.')
+    target = _instant(boundary)
+    index = next((index for index, value in enumerate(values) if _instant(value) == target), None)
+    if index is None:
+        raise PatternError('The selected occurrence does not match a relative instruction boundary.')
+    if index == 0:
+        return None, expression
+    before_steps, after_steps = steps[:index - 1], steps[index:]
+    before, after = _relative_program_text(before_steps), _relative_program_text(after_steps)
+    for text, expected_steps, primary, expected_values in (
+        (before, before_steps, anchor, values[:index]),
+        (after, after_steps, values[index], values[index:]),
+    ):
+        actual_steps = _Parser(text, MAX_SEQUENCE_EVENTS).sequence()
+        if actual_steps != expected_steps:
+            raise PatternError('The split cannot preserve the original relative instructions.')
+        actual, _cursor = _execute_steps(actual_steps, primary)
+        if [_instant(value) for value in actual] != [_instant(value) for value in expected_values]:
+            raise PatternError('The split cannot preserve the original relative occurrence starts.')
+    return before, after
+
+
 def _relative(step, previous):
     try:
         if step.unit in ('min', 'h'):
@@ -380,8 +511,30 @@ def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMI
     _check_limit(limit)
     _aware(anchor)
     _validate_wall(anchor)
-    if sequence_tail(expression) is not None:
-        raise PatternError('An indefinite sequence has no finite list of events. Browse its occurrences in the preview.')
+    tail = sequence_tail(expression)
+    if tail is not None:
+        if tail.unbounded:
+            raise PatternError('An indefinite sequence has no finite list of events. Browse its occurrences in the preview.')
+        compiled = compile_sequence(expression, anchor, limit=limit)
+        from dateutil.rrule import rrulestr
+        from .recurrence import normalize_recurrence_time
+        rule = compiled.recurrence_rule
+        # Timed expansion uses aware local clocks. Stored all-day rules still
+        # use DATE UNTIL, but this entry point expands a timed prototype.
+        result = list(compiled.prefix_starts)
+        seen = {_instant(value) for value in result}
+        for value in rrulestr(rule, dtstart=anchor):
+            value = normalize_recurrence_time(value)
+            if _instant(value).isoformat() in compiled.excluded_dates:
+                continue
+            stamp = _instant(value)
+            if stamp in seen:
+                continue
+            result.append(value)
+            seen.add(stamp)
+            if len(result) > limit:
+                raise PatternError(f'This sequence exceeds the limit of {limit} events, including the fixed event.')
+        return result
     steps = _Parser(expression, limit).sequence()
     return _execute_steps(steps, anchor)[0]
 
@@ -398,19 +551,49 @@ def _execute_steps(steps, anchor):
     return values, previous
 
 
+def _check_tail_count_range(tail, start):
+    """Prove a finite calendar count fits without expanding its occurrences."""
+    if tail.count is None:
+        return
+    try:
+        if tail.unit in ('d', 'w'):
+            start.date() + timedelta(days=tail.interval * (tail.count - 1) * (7 if tail.unit == 'w' else 1))
+            return
+        # Month/day validity repeats after 400 Gregorian years. Compute the
+        # final period using at most one calendar cycle, not the tail's count.
+        months = tail.interval * (12 if tail.unit == 'y' else 1)
+        cycle = 4800 // gcd(months, 4800)
+        initial = start.year * 12 + start.month - 1
+        valid = []
+        for period in range(cycle):
+            year, month = divmod((initial + period * months) % 4800, 12)
+            if start.day <= monthrange(year + 400, month + 1)[1]:
+                valid.append(period)
+        repetitions, remainder = divmod(tail.count - 1, len(valid))
+        final_period = repetitions * cycle + valid[remainder]
+        year, _month = divmod(initial + final_period * months, 12)
+        if not 1 <= year <= 9999:
+            raise OverflowError
+    except (OverflowError, ValueError) as exc:
+        raise PatternError('The repeat count extends beyond the supported years 1–9999.') from exc
+
+
 def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
                      limit: int = DEFAULT_LIMIT) -> CompiledSequence | None:
-    """Compile an indefinite tail into one RRULE plus finite date exceptions.
+    """Compile a regular tail into one RRULE plus finite date exceptions.
 
     The original primary remains DTSTART. Prefixes must share that DTSTART's
     recurrence phase; otherwise one standard rule cannot represent them and we
     refuse the conversion rather than shifting or truncating any occurrences.
-    Only the bounded period preceding the tail is visited.
+    Only the bounded period preceding the tail is visited, including for large
+    finite tails. COUNT counts tail occurrences including its cursor; UNTIL is
+    an inclusive local calendar date and does not restrict the finite prefix.
     """
     tail = sequence_tail(expression)
     if tail is None:
         return None
     from dateutil.rrule import rrulestr
+    from .recurrence import normalize_recurrence_time
     _check_limit(limit)
     _aware(anchor)
     _validate_wall(anchor)
@@ -418,9 +601,12 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     if all_day and any(value.time() != time.min for value in values):
         raise PatternError('Time entries require a timed event.')
     if start.microsecond or anchor.microsecond:
-        raise PatternError('An indefinite recurrence requires whole-second times.')
+        raise PatternError('A regular recurrence requires whole-second times.')
     if _instant(start) < _instant(anchor):
-        raise PatternError('The indefinite tail must start at or after the primary event.')
+        raise PatternError('The regular tail must start at or after the primary event.')
+    if tail.until is not None and tail.until < start.date():
+        raise PatternError('The final recurrence date must not precede the tail start.')
+    _check_tail_count_range(tail, start)
     if tail.unit == 'd':
         phase = (start.date() - anchor.date()).days
     elif tail.unit == 'w':
@@ -432,7 +618,7 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     else:
         phase = start.year - anchor.year
     if phase % tail.interval:
-        raise PatternError('This indefinite tail does not align with the primary event for that interval. '
+        raise PatternError('This regular tail does not align with the primary event for that interval. '
                            'Choose an aligned start or a different interval.')
     parts = [f'FREQ={tail.frequency}', f'INTERVAL={tail.interval}']
     if tail.unit == 'w' and start.weekday() != anchor.weekday():
@@ -449,18 +635,27 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     key = (lambda value: value.date().isoformat()) if all_day else (lambda value: _instant(value).isoformat())
     desired = {key(value) for value in values}
     generated = set()
+    prefix_count = 0
     found = False
     for index, value in enumerate(rrulestr(rule, dtstart=anchor)):
         if index >= MAX_SEQUENCE_EVENTS:
-            raise PatternError('This indefinite tail needs more than 10,000 earlier recurrence exceptions.')
-        if not _valid_wall(value):
-            continue
+            raise PatternError('This regular tail needs more than 10,000 earlier recurrence exceptions.')
+        value = normalize_recurrence_time(value)
         if _instant(value) >= _instant(start):
             found = _instant(value) == _instant(start)
+            prefix_count = index
             break
         generated.add(key(value))
     if not found:
-        raise PatternError('This indefinite tail cannot retain its exact time in a standard calendar rule.')
+        raise PatternError('This regular tail cannot retain its exact time in a standard calendar rule.')
+    if tail.count is not None:
+        rule += f';COUNT={prefix_count + tail.count}'
+    elif tail.until is not None:
+        if all_day:
+            rule += f';UNTIL={tail.until.year:04d}{tail.until.month:02d}{tail.until.day:02d}'
+        else:
+            boundary = _instant(datetime.combine(tail.until, time.max, anchor.tzinfo))
+            rule += f';UNTIL={boundary.year:04d}' + boundary.strftime('%m%dT%H%M%SZ')
     # Tail DTSTART is generated by the rule; the primary is always a set member.
     rdates = desired - generated - {key(anchor), key(start)}
     exclusions = generated - desired
@@ -491,7 +686,7 @@ def _unique_starts(starts: Iterable[datetime]):
 
 
 def _absolute_text(value, anchor):
-    day = f'{value.day}.{value.month}.{value.year:04d}.'
+    day = f'{value.day}.{value.month}.{value.year:04d}'
     if value.timetz().replace(tzinfo=None) == anchor.timetz().replace(tzinfo=None):
         return day
     if value.second or value.microsecond:
@@ -533,10 +728,14 @@ def serialize_sequence(starts: Iterable[datetime]) -> str:
 
 
 def shift_unbounded_expression(expression: str, previous: datetime, current: datetime) -> tuple[str, str]:
-    """Move a finite prefix and retain its terminal calendar recurrence."""
+    """Move a regular tail and prefix, retaining count or shifting its end date.
+
+    The name is retained for callers of the original unbounded-only helper;
+    bounded every(...) uses exactly the same movement semantics.
+    """
     tail = sequence_tail(expression)
     if tail is None:
-        raise PatternError('An indefinite sequence is required.')
+        raise PatternError('A regular every(...) tail is required.')
     old = compile_sequence(expression, previous)
     zone = previous.tzinfo
     current = current.astimezone(zone)
@@ -545,21 +744,29 @@ def shift_unbounded_expression(expression: str, previous: datetime, current: dat
         return _validate_wall((value.replace(tzinfo=None) + delta).replace(tzinfo=zone, fold=value.fold))
     expected = tuple(shifted(value) for value in old.prefix_starts)
     cursor = shifted(old.tail_start)
+    until = None
+    if tail.until is not None:
+        try:
+            boundary = datetime.combine(tail.until, previous.time().replace(tzinfo=None)) + delta
+            until = boundary.date()
+        except (ValueError, OverflowError) as exc:
+            raise PatternError('The moved final recurrence date extends beyond the supported years 1–9999.') from exc
     try:
         candidate = compile_sequence(expression, current)
         if ({_instant(value) for value in candidate.prefix_starts} == {_instant(value) for value in expected}
-                and _instant(candidate.tail_start) == _instant(cursor)):
+                and _instant(candidate.tail_start) == _instant(cursor) and until == tail.until):
             return expression, current.date().isoformat()
     except PatternError:
         pass
-    prefix = serialize_sequence(expected)
+    prefix = reconstruct_sequence(expected, prefer_dates=False)
     if _instant(expected[-1]) != _instant(cursor):
         prefix = (prefix + ' ' + _absolute_text(cursor, current)).strip()
-    result = (prefix + ' ' + expression_for_regular(tail.frequency, tail.interval)).strip()
+    result = (prefix + ' ' + expression_for_regular(tail.frequency, tail.interval,
+                                                   count=tail.count, until=until)).strip()
     compiled = compile_sequence(result, current)
     if ({_instant(value) for value in compiled.prefix_starts} != {_instant(value) for value in expected}
             or _instant(compiled.tail_start) != _instant(cursor)):
-        raise PatternError('The moved indefinite sequence cannot retain its exact dates.')
+        raise PatternError('The moved regular sequence cannot retain its exact dates.')
     return result, current.date().isoformat()
 
 
@@ -758,11 +965,47 @@ def _simplify_masks(masks, forms, *, prefer_dates=True):
     return encode(tuple(masks), 0, not prefer_dates).text
 
 
+def _linear_sequence(values, *, prefer_dates=True):
+    """Bounded per-transition work for sets too large for block optimization.
+
+    Adjacent transitions sharing one verified instruction form a repeat run;
+    other transitions choose the same concise-date preference as the full
+    optimizer. This deliberately searches no nested or alternating motifs.
+    """
+    candidates = [_transition_atoms(previous, value, values[0])
+                  for previous, value in zip(values, values[1:])]
+    if any(not choices for choices in candidates):
+        return serialize_sequence(values)
+    result, index = [], 0
+    while index < len(candidates):
+        shared = set(candidates[index])
+        end = index + 1
+        while end < len(candidates):
+            common = shared & candidates[end].keys()
+            if not common:
+                break
+            shared = common
+            end += 1
+        if end - index > 1:
+            atom = min(shared, key=lambda text: (len(text), candidates[index][text], text))
+            result.append(f'{end - index}*{atom}')
+        else:
+            atom = min(shared, key=lambda text: (int(prefer_dates and text.startswith('+')),
+                                                len(text), candidates[index][text], text))
+            result.append(atom)
+        index = end
+    expression = ' '.join(result)
+    reproduced = expand_sequence(expression, values[0], limit=max(DEFAULT_LIMIT, len(values)))
+    if [_instant(value) for value in reproduced] != [_instant(value) for value in values]:
+        return serialize_sequence(values)
+    return expression
+
+
 def simplify_sequence(starts: Iterable[datetime], *, prefer_dates=True) -> str:
     """Choose a short, verified sequence for clicked dates and precise clocks.
 
     The fixed first event and instruction order are retained. Optimization is
-    bounded to 500 instants; larger legacy sets use the full-date serializer.
+    bounded to 500 instants; larger sets use a linear run/concise-atom pass.
     Every atom is certified against the original anchor, and the final result
     must reproduce every timestamp before it is returned. Unrepeated dates
     prefer explicit calendar entries; ``prefer_dates=False`` also allows short
@@ -772,7 +1015,7 @@ def simplify_sequence(starts: Iterable[datetime], *, prefer_dates=True) -> str:
     if len(values) == 1:
         return ''
     if len(values) > DEFAULT_LIMIT:
-        return serialize_sequence(values)
+        return _linear_sequence(values, prefer_dates=prefer_dates)
     indexes, forms, masks = {}, [], []
     for previous, value in zip(values, values[1:]):
         candidates = _transition_atoms(previous, value, values[0])
@@ -823,9 +1066,9 @@ def shift_schedule_expression(expression: str, anchor: str, shift: timedelta | i
                               starts: Iterable[datetime | date], *, syntax: int = 2) -> tuple[str, str]:
     """Keep a moved schedule's text equivalent to its actual occurrence instants.
 
-    Relative-only literals keep their exact formatting when re-evaluation from
-    the moved first event produces the same instants. Absolute instructions are
-    rewritten as full dates and clocks. Legacy syntax delegates to its preserved
+    Literals keep their exact formatting when re-evaluation from the moved
+    first event produces the same instants. Other instructions are reconstructed
+    in the normal concise form. Legacy syntax delegates to its preserved
     implementation; callers must supply syntax=1 for legacy authoring text.
     """
     if not shift or not expression:
@@ -843,18 +1086,14 @@ def shift_schedule_expression(expression: str, anchor: str, shift: timedelta | i
             raise PatternError(str(exc)) from exc
     if syntax != 2:
         raise PatternError('Unsupported custom sequence version.')
-    steps = _Parser(expression, MAX_SEQUENCE_EVENTS).sequence()
-    if all(isinstance(step, _Relative) for step in steps):
-        try:
-            expanded = expand_sequence(expression, values[0], limit=MAX_SEQUENCE_EVENTS)
-            matches = {_instant(value) for value in expanded} == {_instant(value) for value in values}
-        except PatternError:
-            matches = False
-        if matches:
-            return expression, values[0].date().isoformat()
-    serialized = serialize_sequence(values)
-    if not serialized:
-        serialized = _absolute_text(values[0], values[0])
+    try:
+        expanded = expand_sequence(expression, values[0], limit=MAX_SEQUENCE_EVENTS)
+        matches = {_instant(value) for value in expanded} == {_instant(value) for value in values}
+    except PatternError:
+        matches = False
+    if matches:
+        return expression, values[0].date().isoformat()
+    serialized = reconstruct_sequence(values)
     return serialized, values[0].date().isoformat()
 
 

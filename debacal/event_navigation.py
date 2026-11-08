@@ -44,15 +44,13 @@ def adjacent_event_day(resources, day, direction, zone, matches=lambda event, ma
                 # away from the display timezone's midnight across the dateline.
                 boundary += timedelta(days=-2 if direction > 0 else 2)
             rules = recurrence_set(master, after=boundary if direction > 0 else None)
-            nominal = (rules.xafter(boundary, inc=True) if direction > 0 else _previous(rules, boundary))
+            utc_boundary = boundary.astimezone(timezone.utc)
+            nominal = (rules.xafter(utc_boundary, inc=True) if direction > 0 else _previous(rules, utc_boundary))
             for index, value in enumerate(nominal):
                 if index >= 10000 + len(master.recurrence_overrides):
                     break
                 key = recurrence_key(value, master.all_day)
                 if key in master.recurrence_overrides:
-                    continue
-                # Calendar views omit nonexistent local times as well.
-                if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None):
                     continue
                 if consider(occurrence(master, value, key), master):
                     break

@@ -18,7 +18,7 @@ from .models import Event
 from .recurrence import (
     RecurrenceError, ScheduleReplacement, base_schedule_starts, canonical_rule, event_zone,
     key_datetime, occurrence_id, recurrence_key, recurrence_set,
-    rules_equivalent, updated_series,
+    rules_equivalent, updated_series, _valid_wall_time,
 )
 
 
@@ -65,32 +65,35 @@ def _has_visible_occurrence(master):
     for index, start in enumerate(recurrence_set(master)):
         if index >= MAX_SPLIT_SCAN:
             raise RecurrenceError('Too many excluded dates to split safely. Edit the whole series or choose a nearer occurrence.')
-        if (start.astimezone(timezone.utc).astimezone(start.tzinfo).replace(tzinfo=None)
-                == start.replace(tzinfo=None)):
+        if recurrence_key(start, master.all_day) not in excluded:
             return True
     return False
 
 
-def _refresh_authoring(part, source):
+def _refresh_authoring(part, source, *, preferred_expression=None):
     """Retain an editable annotation only when it describes this partition."""
     part = replace(part, schedule_expression='', expression_anchor='', schedule_syntax=1)
     if not source.schedule_expression:
         return part
     try:
         from .patterns import PatternError
-        from .schedule_authoring import authoring_anchor, reconstruct_authoring, simplified_rule
+        from .schedule_authoring import authoring_anchor, expression_matches, reconstruct_authoring, simplified_rule
         # Use the same certified conversion as the editor. In particular, a
         # split tail's expression must include all retained additions/removals.
         normalized = replace(part, recurrence_rule=simplified_rule(part))
-        authoring = reconstruct_authoring(normalized)
         anchor = authoring_anchor(normalized)
-        expression = authoring.expression
-        if not expression:
-            expression = f'{anchor.day}.{anchor.month}.{anchor.year:04d}'
+        if preferred_expression is not None:
+            if not expression_matches(normalized, preferred_expression):
+                raise RecurrenceError('The relative sequence cannot be split safely at this occurrence. Edit its definition explicitly first.')
+            expression = preferred_expression
+        else:
+            expression = reconstruct_authoring(normalized).expression
     except (RecurrenceError, PatternError, ValueError, OverflowError):
+        if preferred_expression is not None:
+            raise
         return part  # Standard rules/dates remain authoritative and intact.
     return replace(normalized, schedule_expression=expression,
-                   expression_anchor=anchor.date().isoformat(), schedule_syntax=2)
+                   expression_anchor=anchor.date().isoformat() if expression else '', schedule_syntax=2)
 
 
 def partition_series(master: Event, reference: Event) -> tuple[Event | None, Event | None]:
@@ -117,6 +120,15 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
     if pivot_key in master.excluded_dates:
         raise RecurrenceError('This occurrence is excluded from the series. Refresh before editing it.')
     cutoff = _instant(pivot)
+    relative_parts = None
+    if master.schedule_syntax == 2 and master.schedule_expression:
+        from .patterns import PatternError, split_relative_sequence
+        from .schedule_authoring import authoring_anchor, expression_matches
+        if expression_matches(master, master.schedule_expression):
+            try:
+                relative_parts = split_relative_sequence(master.schedule_expression, authoring_anchor(master), pivot)
+            except PatternError as error:
+                raise RecurrenceError(str(error)) from error
     parts = _rule_parts(master) if master.recurrence_rule else {}
     consumed, first_future, future_sample = 0, None, []
     if parts:
@@ -177,10 +189,16 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
             initial = recurrence_key(master.start, master.all_day)
             start = (master.start.astimezone(event_zone(master)) if not after and initial in local_base
                      else min(options, key=_instant))
+        end = _end_at(master, start)
+        if after and not master.all_day and not all(_valid_wall_time(value) for value in (start, end)):
+            raise RecurrenceError(
+                'This occurrence crosses a daylight-saving clock gap. '
+                'Split at another occurrence to preserve the series time and duration.'
+            )
         # DTSTART itself belongs to the set even when it did not match RRULE.
         # Keep that original anchor as RDATE if the rule's tail starts elsewhere.
         rdates = tuple(key for key in local_base if key != recurrence_key(start, master.all_day))
-        part = replace(master, start=start, end=_end_at(master, start), recurrence_rule=_rule_text(rule_parts),
+        part = replace(master, start=start, end=end, recurrence_rule=_rule_text(rule_parts),
                        recurrence_dates=rdates, excluded_dates=exclusions, recurrence_overrides=overrides,
                        series_id='', recurrence_id='')
         if not _has_visible_occurrence(part):
@@ -191,7 +209,8 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
             actual = list(islice(_rule_iterator(part), _PHASE_SAMPLE))
             if [_instant(value) for value in actual] != [_instant(value) for value in future_sample]:
                 raise RecurrenceError('This rule changes phase when split. Edit the whole series or use an explicit finite schedule.')
-        return _refresh_authoring(part, master)
+        preferred = relative_parts[1 if after else 0] if relative_parts is not None else None
+        return _refresh_authoring(part, master, preferred_expression=preferred)
 
     return build(False), build(True)
 

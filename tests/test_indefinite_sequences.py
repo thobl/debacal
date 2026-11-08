@@ -249,7 +249,7 @@ def test_primary_edit_of_absolute_prefix_is_not_applied_twice():
     fields = draft.fields(start, end)
     edited = replace(source, start=start, end=end, **fields)
     moved = updated_series(source, source, edited)
-    assert '11:00-8.11.2026' in moved.schedule_expression
+    assert moved.schedule_expression == '11:00-8. every(1w)'
     assert '12:00' not in moved.schedule_expression
     assert draft.validation_starts(start) == [start, START.replace(day=8, hour=11)]
     assert_roundtrip(moved)

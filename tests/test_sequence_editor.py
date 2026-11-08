@@ -185,7 +185,7 @@ def test_actual_workspace_group_edit_uses_master_reference_from_later_occurrence
     assert reopen.sequence_starts() == [value.start for value in occurrences(store, moved)]
 
 
-def test_all_day_sequences_and_dst_errors_are_not_silently_normalized(editor):
+def test_all_day_clocks_are_rejected_and_generated_duration_resolves_dst_gap(editor):
     store, create, _ = editor
     dialog = create()
     dialog.all_day.setChecked(True)
@@ -199,10 +199,13 @@ def test_all_day_sequences_and_dst_errors_are_not_silently_normalized(editor):
     assert not dialog.result_events and 'timed event' in dialog.error.text()
     gap = create(datetime(2027, 3, 27, 1, 30, tzinfo=ZONE))
     gap.end.setDateTime(gap.start.dateTime().addSecs(3600))
-    gap.pattern.setText('+1d')  # The next end at 02:30 falls inside the DST gap.
+    gap.pattern.setText('+1d')  # A generated end follows standard timezone interpretation.
     gap.save()
-    assert not gap.result_events and 'clocks change' in gap.error.text()
-    assert not gap.preview.masters
+    assert gap.result_events and not gap.error.text()
+    store.apply('Create range crossing clock change', gap.result_events)
+    values = occurrences(store, gap.result_events[0])
+    assert [(value.start.hour, value.end.hour) for value in values] == [(1, 2), (1, 3)]
+    assert len(gap.preview.visible_events) == 2
 
 
 def test_unrepresentable_imported_precision_is_retained_on_ordinary_edits(editor):
@@ -226,7 +229,7 @@ def test_stale_authoring_text_never_replaces_times_changed_by_another_client(edi
     master = Event('external', 'local', 'Changed in another client', START, START + timedelta(minutes=90),
                    recurrence_dates=(first.isoformat(), second.isoformat()), schedule_syntax=2,
                    schedule_expression='11:00-7.11.2026 11:00-8.11.2026', expression_anchor=START.date().isoformat())
-    store.apply('Import externally edited schedule', [master])
+    store.apply_remote([master])
     selected = occurrences(store, master)[1]
     dialog = create(event=selected, series=master, edit_scope='group')
     assert dialog.sequence_starts() == [START, first, second]

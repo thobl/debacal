@@ -126,7 +126,8 @@ def test_one_date_pattern_can_be_edited_and_moved_without_losing_its_language(de
     assert changed.start.date() == master.start.date() + timedelta(days=1)
     assert changed.end - changed.start == master.end - master.start
     assert 'Mo' not in changed.schedule_expression
-    assert expand_pattern(changed.schedule_expression, datetime.fromisoformat(changed.expression_anchor).date()) == [changed.start.date()]
+    assert changed.schedule_expression == changed.expression_anchor == ''
+    assert expand_pattern(changed.schedule_expression, changed.start.date()) == [changed.start.date()]
 
 
 def test_password_only_calendar_edit_preserves_arbitrary_server_color(desktop):

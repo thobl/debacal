@@ -207,7 +207,7 @@ class SequenceSerializationTests(unittest.TestCase):
         values = [ANCHOR, datetime(2026, 11, 13, 9, tzinfo=ZONE), datetime(2026, 11, 20, 14, 15, tzinfo=ZONE),
                   datetime(2025, 2, 3, 11, tzinfo=ZONE)]
         text = serialize_sequence(values)
-        self.assertIn('14:15-20.11.2026.', text)
+        self.assertIn('14:15-20.11.2026', text)
         self.assertEqual(expand_sequence(text, values[0]), values)
 
     def test_reconstruction_compacts_relative_week_runs_without_repeating_anchor(self):
@@ -258,10 +258,10 @@ class SequenceSerializationTests(unittest.TestCase):
         with self.assertRaisesRegex(PatternError, 'ambiguous'):
             serialize_sequence([first, later_fold])
 
-    def test_single_value_authorship_survives_a_move(self):
+    def test_single_value_authorship_normalizes_to_an_empty_addition_sequence(self):
         moved = ANCHOR + timedelta(days=1)
         text, anchor = shift_schedule_expression('7.11.2026.', ANCHOR.date().isoformat(), timedelta(days=1), [moved])
-        self.assertTrue(text)
+        self.assertEqual(text, '')
         self.assertEqual(expand_sequence(text, moved), [moved])
         self.assertEqual(anchor, moved.date().isoformat())
 

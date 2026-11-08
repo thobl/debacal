@@ -194,18 +194,6 @@ class EventClipboard:
             moved = replace(event, start=start, end=end)
             if event.recurring:
                 moved = updated_series(event, event, moved)
-                # Whole-series editing intentionally applies the editor's
-                # common fields/duration to exceptions. Copying preserves each
-                # exception's own content and duration while moving its dates.
-                preserved = {}
-                for key, payload in event.recurrence_overrides.items():
-                    new_key = recurrence_key((wall(key_datetime(key, event)) + shift).replace(tzinfo=zone), event.all_day)
-                    override = Event.from_dict(payload)
-                    override_start, override_end = _moved_times(override, shift, zone)
-                    preserved[new_key] = replace(override, id=occurrence_id(event.id, new_key),
-                                                 series_id=event.id, recurrence_id=new_key,
-                                                 start=override_start, end=override_end).to_dict()
-                moved = replace(moved, recurrence_overrides=preserved)
             new_id = str(uuid4())
             cloned = reidentify_series(moved, new_id, new_id)
             group_id = group_ids.get(event.group_id)

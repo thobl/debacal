@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from .models import Event
 from .agenda_style import AgendaResultDelegate
-from .recurrence import occurrence, recurrence_key, recurrence_set, overlaps
+from .recurrence import normalize_recurrence_stream, occurrence, recurrence_key, recurrence_set, overlaps
 from .search_result_style import SearchResultDelegate as _ResultDelegate
 from .search_result_style import disclosure_rect as _disclosure_rect
 from .timeutil import local_zone, now
@@ -680,11 +680,11 @@ class SearchPanel(QTreeWidget):
         else:
             iterator = chain((found,), iterator)
         def normal():
-            for start in iterator:
+            for start in normalize_recurrence_stream(iterator, all_day=master.all_day):
                 key = recurrence_key(start, master.all_day)
                 if key in master.recurrence_overrides:
                     continue
-                if start.astimezone(timezone.utc).astimezone(start.tzinfo).replace(tzinfo=None) != start.replace(tzinfo=None):
+                if floor is not None and start.timestamp() < floor.timestamp():
                     continue
                 yield occurrence(master, start, key)
         if master.id not in self._override_records:
