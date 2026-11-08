@@ -69,7 +69,8 @@ def test_constructing_a_picker_never_shows_a_temporary_top_level_window(desktop)
         picker = DateTimeRangePicker(START, START + timedelta(hours=1), parent=parent)
         widgets.append(picker)
         assert shown == []
-        assert picker.full_day_button.parentWidget() is picker
+        assert picker.isAncestorOf(picker.full_day_button)
+        assert not picker.full_day_button.isWindow()
         assert picker.windowType() == Qt.WindowType.Dialog
         assert picker.windowModality() == Qt.WindowModality.WindowModal
         picker.open()
@@ -189,7 +190,7 @@ def test_all_day_picker_uses_inclusive_end_but_returns_exclusive_end(desktop):
     picker = make_picker(desktop, start, start + timedelta(days=3), endpoint='end', all_day=True)
     assert not picker.strip.isVisible() and not picker.full_day_button.isVisible()
     assert picker.view_day == start.date() + timedelta(days=2)
-    assert '3 days' in picker.summary.text() and ':' not in picker.summary.text()
+    assert picker.day_count.text() == '3 days'
     picker.choose_date(start.date() - timedelta(days=1))
     assert picker.draft_end == start and picker.draft_start == start - timedelta(days=3)
     assert picker.duration == timedelta(days=3)
@@ -229,6 +230,94 @@ def test_range_pointer_gestures_and_end_hover_show_duration(desktop):
         strip.grab()
     captions = [call.args[2] for call in draw.call_args_list]
     assert '15:00' in captions and '2h' in captions
+
+
+@pytest.mark.parametrize('endpoint,minute,clock,duration', [
+    ('start', 8 * 60 + 30, '08:30', '1h 30min'),
+    ('end', 11 * 60 + 30, '11:30', '2h 30min'),
+])
+def test_resizing_keeps_original_range_and_live_endpoint_duration_feedback(desktop, endpoint, minute, clock, duration):
+    app, _ = desktop
+    picker = make_picker(desktop)
+    strip = picker.strip
+    handle = strip.start_handle() if endpoint == 'start' else strip.end_handle()
+    point = handle.center().toPoint()
+    target = QPoint(point.x(), round(strip.y_for(minute)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseMove(strip, target)
+    settle(app)
+    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
+        strip.grab()
+    captions = [call.args[2] for call in draw.call_args_list]
+    assert 'Before: 09:00–10:00 · 1h' in captions
+    assert clock in captions and duration in captions
+    # Pointer feedback is a transaction until the gesture is committed.
+    assert picker.draft_start == START and picker.duration == timedelta(hours=1)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    settle(app)
+    assert format_duration(picker.duration) == duration
+    assert strip.before_caption == ''
+
+
+def test_short_events_retain_both_clocks_and_have_separate_resize_targets(desktop):
+    app, _ = desktop
+    picker = make_picker(desktop, end=START + timedelta(minutes=15))
+    strip = picker.strip
+    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
+        strip.grab()
+    captions = [call.args[2] for call in draw.call_args_list]
+    assert {'09:00', '09:15', '15min'} <= set(captions)
+    point = strip.end_handle().center().toPoint()
+    target = QPoint(point.x(), round(strip.y_for(10 * 60)))
+    QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseMove(strip, target)
+    QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
+    settle(app)
+    assert picker.draft_start == START and picker.duration == timedelta(hours=1)
+
+
+def test_full_day_shortcut_is_remappable_and_works_from_calendar_or_timeline(desktop):
+    app, _ = desktop
+    picker = make_picker(desktop, full_day_shortcut='H')
+    picker.activateWindow()
+    picker.calendar.setFocus()
+    settle(app)
+    QTest.keyClick(picker.calendar, Qt.Key.Key_H)
+    settle(app)
+    assert picker.full_day and picker.full_day_button.isChecked()
+    assert (picker.strip.first_minute, picker.strip.last_minute) == (0, 1440)
+    assert '(H)' in picker.full_day_button.toolTip()
+    picker.strip.setFocus()
+    settle(app)
+    QTest.keyClick(picker.strip, Qt.Key.Key_F)
+    settle(app)
+    assert picker.full_day
+    QTest.keyClick(picker.strip, Qt.Key.Key_H)
+    settle(app)
+    assert not picker.full_day and not picker.full_day_button.isChecked()
+    assert (picker.strip.first_minute, picker.strip.last_minute) != (0, 1440)
+
+
+def test_full_day_shortcut_respects_year_text_entry_and_can_be_disabled(desktop):
+    app, _ = desktop
+    picker = make_picker(desktop, full_day_shortcut='2')
+    picker.activateWindow()
+    picker.month.show_year_popup()
+    settle(app)
+    field = picker.month.year_popup.year_input
+    QTest.keyClicks(field, '2028')
+    settle(app)
+    assert field.text() == '2028' and not picker.full_day
+    picker.month.year_popup.close()
+    picker = make_picker(desktop, full_day_shortcut='')
+    picker.activateWindow()
+    picker.strip.setFocus()
+    settle(app)
+    QTest.keyClick(picker.strip, Qt.Key.Key_F)
+    settle(app)
+    assert not picker.full_day
+    all_day = make_picker(desktop, START.replace(hour=0), START.replace(hour=0) + timedelta(days=1), all_day=True)
+    assert not all_day.full_day_shortcut.isEnabled()
 
 
 def test_dst_gap_and_invalid_ranges_keep_the_valid_draft(desktop):

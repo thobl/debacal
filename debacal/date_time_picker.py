@@ -5,11 +5,11 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 import math
 
-from PySide6.QtCore import QDate, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QDate, QEvent, QPointF, QRectF, QSignalBlocker, Qt
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCalendarWidget, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .appearance import stylesheet, widget_palette
@@ -34,7 +34,7 @@ class DateTimeRangePicker(QDialog):
     selection displays the last included day and converts it back on Apply.
     """
     def __init__(self, start, end, *, endpoint='start', preferences=None,
-                 calendar_color='#587c67', parent=None, all_day=False):
+                 calendar_color='#587c67', parent=None, all_day=False, full_day_shortcut='F'):
         super().__init__(parent, Qt.WindowType.Dialog)
         # Establish the final transient-dialog modality before its first map.
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -57,23 +57,10 @@ class DateTimeRangePicker(QDialog):
         self.setPalette(widget_palette(self.preferences))
         self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
         scale = self.preferences.font_scale / 100
-        self.resize(round((345 if all_day else 550) * scale), round((320 if all_day else 420) * scale))
+        self.resize(round((345 if all_day else 540) * scale), round((310 if all_day else 420) * scale))
         outer = QVBoxLayout(self)
         outer.setContentsMargins(15, 13, 15, 13)
         outer.setSpacing(10)
-        header = QHBoxLayout()
-        self.day_label = QLabel()
-        self.day_label.setObjectName('sidebarSectionHeading')
-        header.addWidget(self.day_label, 1)
-        # setVisible() below must never map a temporary, parentless window.
-        self.full_day_button = icon_button('expand', 'Show all 24 hours', preferences=self.preferences, parent=self)
-        self.full_day_button.setCheckable(True)
-        self.full_day_button.setToolTip('Show all 24 hours')
-        self.full_day_button.setAccessibleName('Show all 24 hours')
-        self.full_day_button.toggled.connect(self.set_full_day)
-        self.full_day_button.setVisible(not all_day)
-        header.addWidget(self.full_day_button)
-        outer.addLayout(header)
         visual = QHBoxLayout()
         visual.setSpacing(14)
         calendar_preferences = replace(self.preferences, show_week_numbers=False)
@@ -84,15 +71,35 @@ class DateTimeRangePicker(QDialog):
         self.month.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.calendar = self.month.calendar
         self.calendar.selectionChanged.connect(self.choose_selected_date)
-        visual.addWidget(self.month, 1)
+        calendar_column = QVBoxLayout()
+        calendar_column.setSpacing(4)
+        calendar_column.addWidget(self.month, 1)
+        self.day_count = QLabel(self)
+        self.day_count.setProperty('muted', True)
+        self.day_count.setAlignment(Qt.AlignmentFlag.AlignRight)
+        calendar_column.addWidget(self.day_count)
+        self.day_count.setVisible(all_day)
+        visual.addLayout(calendar_column, 1)
+        self.time_column = QWidget(self)
+        timeline = QVBoxLayout(self.time_column)
+        timeline.setContentsMargins(0, 0, 0, 0)
+        timeline.setSpacing(2)
+        time_header = QHBoxLayout()
+        time_header.setContentsMargins(0, 0, 0, 0)
+        label = QLabel('Time')
+        label.setObjectName('sidebarSectionHeading')
+        time_header.addWidget(label, 1)
+        # Give every control a parent before changing visibility.
+        self.full_day_button = icon_button('expand', 'Show all 24 hours', preferences=self.preferences, parent=self.time_column)
+        self.full_day_button.setCheckable(True)
+        self.full_day_button.toggled.connect(self.set_full_day)
+        time_header.addWidget(self.full_day_button)
+        timeline.addLayout(time_header)
         self.strip = TimeRangeStrip(self)
-        self.strip.setVisible(not all_day)
-        visual.addWidget(self.strip)
+        timeline.addWidget(self.strip, 1)
+        visual.addWidget(self.time_column)
+        self.time_column.setVisible(not all_day)
         outer.addLayout(visual, 1)
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
-        self.summary.setProperty('muted', True)
-        outer.addWidget(self.summary)
         self.error = QLabel()
         self.error.setWordWrap(True)
         self.error.setProperty('error', True)
@@ -107,6 +114,13 @@ class DateTimeRangePicker(QDialog):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
+        self.full_day_shortcut = QShortcut(QKeySequence(full_day_shortcut or ''), self)
+        self.full_day_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.full_day_shortcut.setEnabled(bool(full_day_shortcut and not all_day))
+        self.full_day_shortcut.activated.connect(self.full_day_button.toggle)
+        for field in self.findChildren(QLineEdit):
+            field.installEventFilter(self)
+        self._update_full_day_tooltip()
         self.refresh()
 
     @property
@@ -125,8 +139,24 @@ class DateTimeRangePicker(QDialog):
 
     def set_full_day(self, enabled):
         self.full_day = bool(enabled)
-        self.full_day_button.setToolTip('Fit event hours' if enabled else 'Show all 24 hours')
+        if self.full_day_button.isChecked() != self.full_day:
+            with QSignalBlocker(self.full_day_button):
+                self.full_day_button.setChecked(self.full_day)
+        self._update_full_day_tooltip()
         self.strip.refresh()
+
+    def _update_full_day_tooltip(self):
+        caption = 'Fit event hours' if self.full_day else 'Show all 24 hours'
+        shortcut = self.full_day_shortcut.key().toString(QKeySequence.SequenceFormat.NativeText)
+        self.full_day_button.setToolTip(caption + (' (' + shortcut + ')' if shortcut else ''))
+        self.full_day_button.setAccessibleName(caption)
+
+    def eventFilter(self, field, event):
+        if isinstance(field, QLineEdit) and event.type() == QEvent.Type.ShortcutOverride:
+            # Remapped letter/digit shortcuts must not consume year input.
+            event.accept()
+            return True
+        return super().eventFilter(field, event)
 
     def refresh(self):
         self._updating = True
@@ -134,17 +164,8 @@ class DateTimeRangePicker(QDialog):
             day = self.view_day
             self.calendar.setSelectedDate(QDate(day.year, day.month, day.day))
             self.calendar.setCurrentPage(day.year, day.month)
-            self.day_label.setText(self.preferences.format_date(day, weekday=True))
             if self.all_day:
-                first = self.preferences.format_date(self.draft_start.date())
-                last = self.preferences.format_date((self.draft_end - timedelta(days=1)).date())
-            else:
-                first, last = self.preferences.format_time(self.draft_start), self.preferences.format_time(self.draft_end)
-                if not self.same_day:
-                    first = self.preferences.format_date(self.draft_start.date()) + ' · ' + first
-                    last = self.preferences.format_date(self.draft_end.date()) + ' · ' + last
-            self.summary.setText(first + (' — ' + last if first != last else '') + '  ·  '
-                                 + format_duration(self.duration, all_day=self.all_day))
+                self.day_count.setText(format_duration(self.duration, all_day=True))
             self.error.hide()
             self.strip.refresh()
         finally:
@@ -234,7 +255,7 @@ class TimeRangeStrip(QWidget):
         self._hover = self._drag = self._draft = None
         self._invalid = None
         self._moved = False
-        self.setFixedWidth(round(190 * self.preferences.font_scale / 100))
+        self.setFixedWidth(self.gutter + round(148 * self.preferences.font_scale / 100))
         self.setMinimumHeight(round(250 * self.preferences.font_scale / 100))
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -243,11 +264,39 @@ class TimeRangeStrip(QWidget):
 
     @property
     def continues_before(self):
-        return self.picker.draft_start.date() < self.picker.view_day
+        return self.active_range[0].date() < self.picker.view_day
 
     @property
     def continues_after(self):
-        return self.picker.draft_end.date() > self.picker.view_day
+        return self.active_range[1].date() > self.picker.view_day
+
+    @property
+    def active_range(self):
+        return self._draft or (self.picker.draft_start, self.picker.draft_end)
+
+    @property
+    def axis_top(self):
+        return 18 * self.preferences.font_scale / 100
+
+    @property
+    def axis_bottom(self):
+        # A stable strip-local line is reserved for the pre-drag reference.
+        return self.height() - 30 * self.preferences.font_scale / 100
+
+    @property
+    def axis_height(self):
+        return max(1, self.axis_bottom - self.axis_top)
+
+    def range_caption(self, start, end):
+        caption = self.preferences.format_time(start) + '–' + self.preferences.format_time(end)
+        days = (end.date() - start.date()).days
+        if days:
+            caption += f' (+{days}d)'
+        return caption + ' · ' + format_duration(range_duration(start, end))
+
+    @property
+    def before_caption(self):
+        return 'Before: ' + self.range_caption(self._drag[3], self._drag[4]) if self._drag else ''
 
     def refresh(self):
         if not self._drag:
@@ -265,12 +314,12 @@ class TimeRangeStrip(QWidget):
         if isinstance(value, datetime):
             local = value.astimezone(self.picker.zone)
             value = (local.replace(tzinfo=None) - datetime.combine(self.picker.view_day, time.min)).total_seconds() / 60
-        return 12 + (value - self.first_minute) / max(1, self.last_minute - self.first_minute) * max(1, self.height() - 24)
+        return self.axis_top + (value - self.first_minute) / max(1, self.last_minute - self.first_minute) * self.axis_height
 
     minute_y = y_for
 
     def minute_at(self, point, *, endpoint=False):
-        minute = self.first_minute + (point.y() - 12) / max(1, self.height() - 24) * (self.last_minute - self.first_minute)
+        minute = self.first_minute + (point.y() - self.axis_top) / self.axis_height * (self.last_minute - self.first_minute)
         return max(self.first_minute, min(self.last_minute if endpoint else self.last_minute - 15, round(minute / 15) * 15))
 
     def time_at(self, point, *, endpoint=False):
@@ -280,19 +329,22 @@ class TimeRangeStrip(QWidget):
                 + timedelta(minutes=minute)).replace(fold=previous.fold)
 
     def _band_for(self, start, end):
-        top, bottom = max(12, self.y_for(start)), min(self.height() - 12, self.y_for(end))
-        height = max(16, bottom - top)
-        return QRectF(self.gutter + 10, min(top, self.height() - 12 - height), 30, height)
+        scale = self.preferences.font_scale / 100
+        top, bottom = max(self.axis_top, self.y_for(start)), min(self.axis_bottom, self.y_for(end))
+        height = max(3 * scale, bottom - top)
+        return QRectF(self.gutter + 8 * scale, min(top, self.axis_bottom - height), 36 * scale, height)
 
     def band_rect(self):
         return self._band_for(self.picker.draft_start, self.picker.draft_end)
 
     def start_handle(self):
-        return (QRectF(self.gutter + 7, self.y_for(self.picker.draft_start) - 5, 36, 10)
+        scale = self.preferences.font_scale / 100
+        return (QRectF(self.gutter + 5 * scale, self.y_for(self.picker.draft_start) - 5 * scale, 42 * scale, 10 * scale)
                 if self.picker.draft_start.date() == self.picker.view_day else QRectF())
 
     def end_handle(self):
-        return (QRectF(self.gutter + 7, self.y_for(self.picker.draft_end) - 5, 36, 10)
+        scale = self.preferences.font_scale / 100
+        return (QRectF(self.gutter + 5 * scale, self.y_for(self.picker.draft_end) - 5 * scale, 42 * scale, 10 * scale)
                 if self.picker.draft_end.date() == self.picker.view_day else QRectF())
 
     def hover_hint(self, value):
@@ -303,50 +355,95 @@ class TimeRangeStrip(QWidget):
             duration = self.picker.duration
         return self.preferences.format_time(value), format_duration(duration)
 
+    def _clock_label(self, value):
+        scale = self.preferences.font_scale / 100
+        return QRectF(0, self.y_for(value) - 9 * scale, self.gutter - 7 * scale, 18 * scale)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         colors = scheme_for(self.preferences)
         style = event_colors(self.picker.calendar_color, self.preferences)
         scale = self.preferences.font_scale / 100
+        start, end = self.active_range
+        band = self._band_for(start, end)
+        visible = [value for value in (start, end) if value.date() == self.picker.view_day]
+        short = len(visible) == 2 and self.y_for(end) - self.y_for(start) < 28 * scale
         painter.fillRect(self.rect(), QColor(colors.background))
         painter.setPen(QPen(QColor(colors.line), scale))
-        painter.drawLine(QPointF(self.gutter, 12), QPointF(self.gutter, self.height() - 12))
-        step = 60 if (self.height() - 24) / max(1, (self.last_minute - self.first_minute) / 60) >= 22 else 120
+        painter.drawLine(QPointF(self.gutter, self.axis_top), QPointF(self.gutter, self.axis_bottom))
+        step = 60 if self.axis_height / max(1, (self.last_minute - self.first_minute) / 60) >= 22 * scale else 120
         for minute in range(self.first_minute, self.last_minute + 1, 30):
             y = self.y_for(minute)
             painter.setPen(QPen(QColor(colors.line), scale))
-            painter.drawLine(QPointF(self.gutter - (5 if minute % 60 == 0 else 3), y), QPointF(self.gutter, y))
-            if minute % step == 0:
+            painter.drawLine(QPointF(self.gutter - (5 if minute % 60 == 0 else 3) * scale, y), QPointF(self.gutter, y))
+            if minute % step == 0 and all(abs(y - self.y_for(value)) >= 14 * scale for value in visible):
                 caption = '24:00' if minute == 1440 else self.preferences.format_time(self.time_at(minute))
-                text(painter, QRectF(0, y - 8, self.gutter - 8, 16), caption, QColor(colors.muted), 7.5,
-                     align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        start, end = self._draft or (self.picker.draft_start, self.picker.draft_end)
-        band = self._band_for(start, end)
-        painter.setPen(QPen(QColor(style.outline), 1.2))
+                text(painter, QRectF(0, y - 8 * scale, self.gutter - 8 * scale, 16 * scale), caption,
+                     QColor(colors.muted), 7.5, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if self._draft and self._drag:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            previous = QColor(style.outline)
+            previous.setAlpha(110)
+            painter.setPen(QPen(previous, scale, Qt.PenStyle.DashLine))
+            old = self._band_for(self._drag[3], self._drag[4])
+            radius = corner_radius(self.preferences, 3)
+            painter.drawRoundedRect(old, radius, radius)
+        painter.setPen(QPen(QColor(style.outline), 1.2 * scale))
         painter.setBrush(QColor(style.fill))
-        painter.drawRoundedRect(band, corner_radius(self.preferences, 3), corner_radius(self.preferences, 3))
-        if not self._draft:
-            for handle in (self.start_handle(), self.end_handle()):
-                if not handle.isEmpty():
-                    painter.setPen(QPen(QColor(style.outline), 1.4))
-                    painter.drawLine(QPointF(handle.left() + 3, handle.center().y()), QPointF(handle.right() - 3, handle.center().y()))
-        for continued, y, direction in ((self.continues_before, 14, -1), (self.continues_after, self.height() - 14, 1)):
+        radius = min(corner_radius(self.preferences, 3), band.height() / 2)
+        painter.drawRoundedRect(band, radius, radius)
+        # The outline itself supplies both resize edges; no extra lines cut
+        # across the rounded corners.
+        for value in visible:
+            if short and value == end:
+                continue
+            label = self._clock_label(value)
+            painter.fillRect(label, QColor(colors.background))
+            text(painter, label, self.preferences.format_time(value), QColor(colors.ink), 8, True,
+                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        bracket_x = band.right() + 8 * scale
+        painter.setPen(QPen(QColor(colors.muted), scale))
+        painter.drawLine(QPointF(bracket_x, band.top()), QPointF(bracket_x, band.bottom()))
+        for y in (band.top(), band.bottom()):
+            painter.drawLine(QPointF(bracket_x - 3 * scale, y), QPointF(bracket_x + 3 * scale, y))
+        info_x = bracket_x + 8 * scale
+        lines = []
+        if short:
+            lines.append(self.preferences.format_time(end))
+        duration_caption = format_duration(range_duration(start, end))
+        lines.append(duration_caption)
+        outside = end if self.continues_after else start if self.continues_before else None
+        if outside is not None:
+            days = (outside.date() - self.picker.view_day).days
+            lines.append(self.preferences.format_time(outside) + f' ({days:+}d)')
+        height = 17 * scale * len(lines)
+        top = max(self.axis_top - 6 * scale, min(self.axis_bottom - height, band.center().y() - height / 2))
+        for index, caption in enumerate(lines):
+            text(painter, QRectF(info_x, top + 17 * scale * index, self.width() - info_x, 17 * scale), caption,
+                 QColor(colors.ink if caption == lines[0] else colors.muted), 8,
+                 caption == duration_caption)
+        for continued, y, direction in ((self.continues_before, self.axis_top + 2 * scale, -1),
+                                        (self.continues_after, self.axis_bottom - 2 * scale, 1)):
             if continued:
-                x = self.gutter + 25
-                painter.setPen(QPen(QColor(style.outline), 1.4))
-                painter.drawLine(QPointF(x - 5, y - direction * 4), QPointF(x, y + direction))
-                painter.drawLine(QPointF(x, y + direction), QPointF(x + 5, y - direction * 4))
+                x = band.center().x()
+                painter.setPen(QPen(QColor(style.outline), 1.4 * scale))
+                painter.drawLine(QPointF(x - 5 * scale, y - direction * 4 * scale), QPointF(x, y + direction * scale))
+                painter.drawLine(QPointF(x, y + direction * scale), QPointF(x + 5 * scale, y - direction * 4 * scale))
         if self._hover is not None and not self._drag:
             y = self.y_for(self._hover)
-            painter.setPen(QPen(QColor(colors.muted), .9, Qt.PenStyle.DotLine))
-            painter.drawLine(QPointF(self.gutter + 2, y), QPointF(self.width() - 3, y))
-            caption, duration = self.hover_hint(self.time_at(self._hover))
-            top = max(2, min(self.height() - 38, y - 9))
-            box = QRectF(self.gutter + 48, top, self.width() - self.gutter - 50, 36)
-            painter.fillRect(box, QColor(colors.background))
-            text(painter, QRectF(box.x(), box.y(), box.width(), 18), caption, QColor(colors.ink), 8, True)
-            text(painter, QRectF(box.x(), box.y() + 18, box.width(), 18), duration, QColor(colors.muted), 8)
+            if y < band.top() - 8 * scale or y > band.bottom() + 8 * scale:
+                painter.setPen(QPen(QColor(colors.muted), .9 * scale, Qt.PenStyle.DotLine))
+                painter.drawLine(QPointF(self.gutter + 2 * scale, y), QPointF(self.width() - 3 * scale, y))
+                caption, duration = self.hover_hint(self.time_at(self._hover))
+                top = max(self.axis_top - 8 * scale, min(self.axis_bottom - 36 * scale, y - 9 * scale))
+                box = QRectF(info_x, top, self.width() - info_x, 36 * scale)
+                painter.fillRect(box, QColor(colors.background))
+                text(painter, QRectF(box.x(), box.y(), box.width(), 18 * scale), caption, QColor(colors.ink), 8, True)
+                text(painter, QRectF(box.x(), box.y() + 18 * scale, box.width(), 18 * scale), duration, QColor(colors.muted), 8)
+        if self.before_caption:
+            text(painter, QRectF(0, self.height() - 20 * scale, self.width(), 18 * scale),
+                 self.before_caption, QColor(colors.muted), 7.5)
         painter.end()
 
     def mousePressEvent(self, event):
@@ -356,8 +453,11 @@ class TimeRangeStrip(QWidget):
         point = event.position()
         self._hover = self._draft = self._invalid = None
         self._moved = False
-        kind = ('start' if self.start_handle().contains(point) else 'end' if self.end_handle().contains(point)
-                else 'move' if self.band_rect().contains(point) and self.picker.same_day
+        handles = [(name, handle) for name, handle in (('start', self.start_handle()), ('end', self.end_handle()))
+                   if not handle.isEmpty() and (handle.contains(point) or self._clock_label(
+                       self.picker.draft_start if name == 'start' else self.picker.draft_end).contains(point))]
+        target = min(handles, key=lambda item: abs(point.y() - item[1].center().y()))[0] if handles else None
+        kind = (target if target else 'move' if self.band_rect().contains(point) and self.picker.same_day
                 else 'cross' if self.band_rect().contains(point)
                 else 'create' if self.picker.same_day else self.picker.endpoint)
         self._drag = kind, point, self.minute_at(point), self.picker.draft_start, self.picker.draft_end
@@ -388,7 +488,7 @@ class TimeRangeStrip(QWidget):
                 first, last = sorted((other, value), key=lambda stamp: stamp.timestamp())
                 draft = first, max(first + timedelta(minutes=15), last)
             else:
-                distance = (point.y() - origin.y()) / max(1, self.height() - 24) * (self.last_minute - self.first_minute)
+                distance = (point.y() - origin.y()) / self.axis_height * (self.last_minute - self.first_minute)
                 delta = timedelta(minutes=round(distance / 15) * 15)
                 draft = start + delta, end + delta
             validate_datetime(draft[0])

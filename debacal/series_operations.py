@@ -16,7 +16,7 @@ from dateutil.rrule import rrulestr
 
 from .models import Event
 from .recurrence import (
-    RecurrenceError, base_schedule_starts, canonical_rule, event_zone,
+    RecurrenceError, ScheduleReplacement, base_schedule_starts, canonical_rule, event_zone,
     key_datetime, occurrence_id, recurrence_key, recurrence_set,
     rules_equivalent, updated_series,
 )
@@ -77,7 +77,31 @@ def _refresh_authoring(part, source):
     if not source.schedule_expression:
         return part
     try:
-        from .patterns import PatternError, simplify_sequence
+        from .patterns import PatternError, compile_sequence, expression_for_regular, sequence_tail, simplify_sequence
+        if source.schedule_syntax == 2 and sequence_tail(source.schedule_expression):
+            parts = _rule_parts(part) if part.recurrence_rule else {}
+            if parts and not {'COUNT', 'UNTIL'} & parts.keys():
+                expression = expression_for_regular(parts.get('FREQ'), int(parts.get('INTERVAL', '1')))
+                anchor = (datetime.combine(part.start.date(), time.min, event_zone(part)) if part.all_day
+                          else part.start.astimezone(event_zone(part)))
+                compiled = compile_sequence(expression, anchor, all_day=part.all_day)
+                # The new DTSTART is an actual tail occurrence. Constraints
+                # formerly needed to distinguish the prototype now equal the
+                # new default clock/date and can be removed without changing
+                # any occurrence. This also lets future moves follow DTSTART.
+                equivalent = dict(parts)
+                defaults = {'BYHOUR': anchor.hour, 'BYMINUTE': anchor.minute, 'BYSECOND': anchor.second}
+                if parts.get('FREQ') in ('MONTHLY', 'YEARLY'):
+                    defaults['BYMONTHDAY'] = anchor.day
+                if parts.get('FREQ') == 'YEARLY':
+                    defaults['BYMONTH'] = anchor.month
+                for name, value in defaults.items():
+                    if equivalent.get(name) == str(value):
+                        equivalent.pop(name)
+                equivalent_rule = _rule_text(equivalent)
+                if rules_equivalent(compiled.recurrence_rule, equivalent_rule, part):
+                    return replace(part, recurrence_rule=equivalent_rule, schedule_expression=expression,
+                                   expression_anchor=anchor.date().isoformat(), schedule_syntax=2)
         starts = base_schedule_starts(part, limit=500)
         expression = simplify_sequence(starts)
         if not expression:
@@ -192,7 +216,7 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
 
 
 def updated_future(master: Event, reference: Event, edited: Event,
-                   replace_schedule: bool = False) -> tuple[Event | None, Event | None]:
+                   replace_schedule: bool | ScheduleReplacement = False) -> tuple[Event | None, Event | None]:
     """Project the same following-occurrence edit for storage and editor preview."""
     before, after = partition_series(master, reference)
     if after is None:

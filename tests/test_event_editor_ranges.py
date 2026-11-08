@@ -99,7 +99,7 @@ def test_duration_presets_and_all_day_toggle_keep_endpoint_semantics(editor):
     assert editor.start.isAllDay() and editor.end.isAllDay()
     editor.open_range_picker('end')
     picker = editor.range_picker
-    assert picker.strip.isHidden()
+    assert not picker.strip.isVisible()
     assert picker.view_day == START.date()
     picker.reject()
     editor.all_day.setChecked(False)

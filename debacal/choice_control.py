@@ -12,11 +12,12 @@ class ChoiceControl(SegmentedControl):
     currentIndexChanged = Signal(int)
     currentChanged = Signal(object)
 
-    def __init__(self, options, preferences, parent=None, *, icons=None):
+    def __init__(self, options, preferences, parent=None, *, icons=None, icon_only=False):
         super().__init__(parent)
         self.preferences = preferences
         self.options = list(options)
         self.icons = icons or {}
+        self.icon_only = bool(icon_only)
         self.buttons = {}
         self.group = QButtonGroup(self)
         self._index = 0
@@ -29,6 +30,8 @@ class ChoiceControl(SegmentedControl):
             if data in self.icons:
                 button.setIcon(icon(self.icons[data], scheme_for(preferences).accent))
                 button.setIconSize(QSize(round(18 * preferences.font_scale / 100), round(18 * preferences.font_scale / 100)))
+                if self.icon_only:
+                    button.setText('')
             button.setStyleSheet('padding: 0 2px;')
             button.setToolTip(caption)
             button.clicked.connect(lambda _checked=False, value=index: self.setCurrentIndex(value))
@@ -87,6 +90,6 @@ class ChoiceControl(SegmentedControl):
                            for index, (caption, data) in enumerate(self.options))
         for index, button in enumerate(self._buttons):
             if self.icons:
-                button.setText(self.options[index][0] if captions_fit else '')
+                button.setText(self.options[index][0] if captions_fit and not self.icon_only else '')
             button.setFixedSize(width + (index < remainder), self.height())
         super().resizeEvent(event)

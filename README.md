@@ -268,6 +268,9 @@ by calendars in the same account and remain in the secure keyring.
   CalDAV account before saving its selected calendars. Start and End accept typed
   dates and times or open a shared month-and-time-range picker. Moving Start
   preserves duration; setting an earlier End moves Start back by that duration.
+  The time strip labels both endpoints and brackets the duration. During a drag,
+  the original range and duration remain visible beside the live range. Its
+  full-day toggle uses the same configurable shortcut as the main calendar.
   Duration edits and preset buttons adjust End. All-day fields show the first and
   last included dates. Repeat controls show synchronized count and final-date
   fields; choose Indefinite for an ongoing rule.
@@ -318,7 +321,13 @@ The event editor separates primary-event controls from a full-height month
 preview. **Starts**, **Ends**, and **Duration** define the primary event. Choose
 **Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
 Monthly, Yearly, and Custom controls. Alternatives are choices from which one
-event can later be confirmed.
+event can later be confirmed. Frequency choices use icons with tooltips; the
+separate **+** beside them adds an occurrence with its own date and time.
+
+Choosing a regular frequency from Custom starts a clean regular pattern,
+removing custom additions, exclusions, and individual range changes. Returning
+to Custom restores that editor scope's previous custom draft, including its
+text and individual ranges. Changes become permanent only when saved.
 
 Click a preview date to add or remove an occurrence. Regular date selections
 automatically use the corresponding standard recurrence; irregular selections
@@ -351,6 +360,14 @@ previous instruction:
   initial event. The next relative instruction runs from that exact date.
 * `4*+2` repeats a step four times; `2*(+1w +2d)` repeats a group. Groups may nest.
   Repeat counts add occurrences after the initial event. `+0` is invalid.
+* A final `every(2w)` continues every two weeks indefinitely from the preceding
+  event; `every(1d)`, `every(1m)`, and `every(1y)` use days, months, and years.
+  Omitting the unit means weeks. Used alone, it repeats the primary event.
+  These tails follow standard calendar recurrence: monthly/yearly patterns skip
+  missing dates, so an endless monthly event on the 31st skips February.
+  A finite prefix can precede the tail, such as `+2 +3 every(1w)`. The tail's
+  interval must align with the primary event's recurrence cycle; an incompatible
+  prefix such as `+3 every(2w)` is rejected with an explanation.
 
 ```text
 13. +1 18. 2. 3.2. +2
@@ -362,8 +379,10 @@ previous instruction:
 Starting at **7 November 2026, 09:00**, the first example adds 13 November,
 20 November, 18 December, 2 January, 3 February, and 17 February: seven events
 including the initial one. Duplicate instants appear once, while each instruction
-still updates the cursor. Expansion is bounded to 500 events including the fixed
-event; repeat budgets are checked before execution. Nonexistent local times during
+still updates the cursor. Finite expansion is bounded to 500 events including the fixed
+event; repeat budgets are checked before execution. Indefinite tails remain
+standard RRULEs with finite additions/exclusions, rather than generated copies.
+Nonexistent local times during
 a daylight-saving clock change are rejected. During a repeated hour, absolute
 dates retain the initial event's choice, while relative and time-only steps
 retain the previous event's choice.
@@ -394,7 +413,7 @@ clients. The **Schedule** controls support daily, weekly, monthly and yearly
 schedules with interval/count/end-date controls. Custom uses the sequence
 language; there is no raw RRULE editor. Imported advanced rules remain intact
 during ordinary edits. Finite imported patterns can be converted with **Edit as
-sequence**, while the preview can add or remove dates without flattening an
+sequence**; simple unbounded patterns use `every(...)`. The preview can add or remove dates without flattening an
 unbounded rule. The recurrence controls share one height so Notes stays in place
 when switching patterns.
 

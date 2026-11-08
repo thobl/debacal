@@ -49,6 +49,9 @@ QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox, QKeySequenceE
     selection-background-color: $selection; selection-color: $ink;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus, QComboBox:focus, QKeySequenceEdit:focus { border-color: $focus; }
+QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled, QKeySequenceEdit:disabled {
+    background: $control_surface; color: $disabled; border: 1px dashed $control_edge;
+}
 QComboBox, QAbstractSpinBox { padding-right: 30px; }
 QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 24px;
     background: $control_surface; border: 1px solid $control_edge; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }

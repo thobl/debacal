@@ -93,7 +93,7 @@ def test_primary_range_stays_editable_after_preview_builds_regular_and_custom_se
     assert event.end - event.start == timedelta(minutes=45)
 
 
-def test_custom_range_addition_survives_rule_edit_save_and_ics_roundtrip(author):
+def test_custom_range_addition_is_restored_after_trying_a_clean_regular_pattern(author):
     create, store = author
     source = Event('source', 'local', 'A series', START, START + timedelta(minutes=45),
                    recurrence_rule='FREQ=DAILY;COUNT=4', timezone_id=ZONE.key)
@@ -104,6 +104,8 @@ def test_custom_range_addition_survives_rule_edit_save_and_ics_roundtrip(author)
     assert dialog.repeat.currentData() == 'RDATE'
     dialog.repeat.setCurrentData('DAILY')
     dialog.repeat_count.setValue(5)
+    assert all(value.start != added for value in visible(dialog.build_events()[0]))
+    dialog.repeat.setCurrentData('RDATE')
     dialog.title.setText('Changed after adding an occurrence')
     dialog.location.setText('Another room')
     edited = save(dialog)

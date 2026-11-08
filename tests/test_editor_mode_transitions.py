@@ -32,11 +32,12 @@ def editor_factory():
     owned, errors = [], []
     with patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _type, value, _trace: errors.append(value)):
-        def create(source=None, scale=100):
+        def create(source=None, scale=100, bindings=None):
             selected = occurrence(source, source.start) if source else None
             dialog = EventDialog([Calendar('local', 'Personal', '#587c67')], START,
                                  START + timedelta(hours=1), event=selected, series=source,
-                                 edit_scope='group', preferences=Preferences(date_format='european', font_scale=scale))
+                                 edit_scope='group', preferences=Preferences(date_format='european', font_scale=scale),
+                                 scope_bindings=bindings)
             dialog.resize(1080, 900)
             dialog.title.setText('An appointment')
             owned.append(dialog)
@@ -74,6 +75,7 @@ def test_custom_regular_and_alternative_modes_save_the_visible_schedule(editor_f
     dialog = editor_factory()
     dialog.pattern.setText('+1d +3d +2w')
     assert dialog.repeat.currentData() == 'RDATE'
+    original = starts(dialog.build_events()[0])
     for kind in ('DAILY', 'MONTHLY', 'WEEKLY'):
         dialog.repeat.setCurrentData(kind)
         dialog.interval.setValue(2)
@@ -82,15 +84,14 @@ def test_custom_regular_and_alternative_modes_save_the_visible_schedule(editor_f
         event = dialog.build_events()[0]
         assert 'FREQ=' + kind in event.recurrence_rule
         assert event.schedule_expression == ''
-        expected = starts(event)
         dialog.repeat.setCurrentData('RDATE')
-        assert starts(dialog.build_events()[0]) == expected
+        assert starts(dialog.build_events()[0]) == original
         dialog.schedule_mode.setCurrentData('alternatives')
         assert dialog.build_events()[0].candidate
         dialog.schedule_mode.setCurrentData('single')
         assert not dialog.build_events()[0].recurring
         dialog.schedule_mode.setCurrentData('repeat')
-        assert starts(dialog.build_events()[0]) == expected
+        assert starts(dialog.build_events()[0]) == original
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
     event = dialog.result_events[0]
@@ -168,3 +169,72 @@ def test_scope_switching_preserves_invalid_sequence_text_without_poisoning_other
     dialog.repeat.setCurrentData('DAILY')
     assert not dialog.error.text()
     assert dialog.build_events()[0].recurrence_rule
+
+
+def test_picker_inherits_remapped_full_day_key_for_primary_and_additional_occurrences(editor_factory):
+    dialog = editor_factory(bindings={'full_day': 'F8'})
+    for open_picker in (lambda: dialog.open_range_picker('start'),
+                        lambda: dialog.open_range_picker('end'), dialog.add_occurrence):
+        open_picker()
+        picker = dialog.range_picker
+        QApplication.processEvents()
+        assert 'F8' in picker.full_day_button.toolTip()
+        picker.strip.setFocus()
+        QTest.keyClick(picker.strip, Qt.Key.Key_F8)
+        assert picker.full_day
+        QTest.keyClick(picker.strip, Qt.Key.Key_F8)
+        assert not picker.full_day
+        picker.reject()
+
+
+def test_frequency_icons_keep_names_accessible_and_limits_are_disabled_when_indefinite(editor_factory):
+    dialog = editor_factory()
+    dialog.schedule_mode.setCurrentData('repeat')
+    for caption, kind in dialog.repeat.options:
+        button = dialog.repeat.buttons[kind]
+        assert button.text() == '' and not button.icon().isNull()
+        assert button.toolTip() == caption and button.accessibleName() == caption
+    assert dialog.add_occurrence_button.parentWidget() is dialog.schedule_section
+    dialog.no_end.setChecked(True)
+    assert not dialog.repeat_count.isEnabled() and not dialog.repeat_until.isEnabled()
+    assert 'indefinite' in dialog.repeat_count.toolTip()
+    dialog.no_end.setChecked(False)
+    assert dialog.repeat_count.isEnabled() and dialog.repeat_until.isEnabled()
+
+
+def test_indefinite_sequence_saves_and_remains_editable_after_trying_a_regular_pattern(editor_factory):
+    dialog = editor_factory()
+    text = '+2d +3d every(1w)'
+    dialog.pattern.setText(text)
+    custom = dialog.build_events()[0]
+    assert custom.schedule_expression == text
+    assert 'FREQ=WEEKLY' in custom.recurrence_rule
+    assert 'COUNT=' not in custom.recurrence_rule and 'UNTIL=' not in custom.recurrence_rule
+    expected = starts(custom)
+    assert START + timedelta(days=2) in expected
+    assert START + timedelta(days=5) in expected
+    assert START + timedelta(days=12) in expected
+    assert dialog.preview.masters
+    dialog.repeat.setCurrentData('MONTHLY')
+    dialog.no_end.setChecked(True)
+    assert not dialog.build_events()[0].recurrence_dates
+    dialog.repeat.setCurrentData('RDATE')
+    assert dialog.pattern.text() == text
+    assert starts(dialog.build_events()[0]) == expected
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
+    restored = parse_ics(export_ics(dialog.result_events), 'local')[0]
+    assert restored.schedule_expression == text and starts(restored) == expected
+
+
+def test_indefinite_regular_pattern_can_be_opened_as_a_sequence(editor_factory):
+    dialog = editor_factory()
+    dialog.schedule_mode.setCurrentData('repeat')
+    dialog.repeat.setCurrentData('WEEKLY')
+    dialog.interval.setValue(2)
+    dialog.no_end.setChecked(True)
+    expected = starts(dialog.build_events()[0])
+    dialog.repeat.setCurrentData('RDATE')
+    assert dialog.pattern.text() == 'every(2w)'
+    assert starts(dialog.build_events()[0]) == expected
+    assert not dialog.error.text()

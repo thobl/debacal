@@ -17,6 +17,7 @@ import re
 from dateutil.rrule import rruleset, rrulestr
 
 from .models import Event
+from .schedule_replacement import ScheduleReplacement
 
 
 MAX_MINUTELY_COUNT = 10000
@@ -336,7 +337,8 @@ def shift_rule(rule: str, shift: timedelta, master: Event) -> str:
     return ";".join(f"{name}={value}" for name, value in parts.items())
 
 
-def updated_series(master: Event, reference: Event, edited: Event, replace_schedule: bool = False) -> Event:
+def updated_series(master: Event, reference: Event, edited: Event,
+                   replace_schedule: bool | ScheduleReplacement = False) -> Event:
     """Project a whole-series edit without accessing storage or mutating inputs.
 
     Relative edits shift the original master from the selected occurrence. An
@@ -372,7 +374,8 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
             zone = event_zone(updated)
             duration = (updated.end.astimezone(zone).replace(tzinfo=None)
                         - updated.start.astimezone(zone).replace(tzinfo=None))
-            for key, payload in master.recurrence_overrides.items():
+            inherited_overrides = {} if replace_schedule is ScheduleReplacement.RESET else master.recurrence_overrides
+            for key, payload in inherited_overrides.items():
                 replacement = edited.recurrence_overrides.get(key)
                 if replacement is not None and replacement != payload:
                     continue
@@ -401,7 +404,7 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
             # own ends rather than projecting the master's duration over them.
             # Unchanged source exceptions keep the common-field projection.
             for key, payload in edited.recurrence_overrides.items():
-                if payload == master.recurrence_overrides.get(key):
+                if replace_schedule is not ScheduleReplacement.RESET and payload == master.recurrence_overrides.get(key):
                     continue
                 when = key_datetime(key, updated)
                 previous = rules.before(when, inc=True)
@@ -444,8 +447,34 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
     dates = tuple(shift_key(key) for key in master.recurrence_dates) if edited.recurrence_dates == master.recurrence_dates else edited.recurrence_dates
     exclusions = tuple(shift_key(key) for key in master.excluded_dates) if edited.excluded_dates == master.excluded_dates else edited.excluded_dates
     rule = edited.recurrence_rule
+    shifted_authoring = None
+    stale_authoring = False
     if rules_equivalent(rule, master.recurrence_rule, master):
-        rule = shift_rule(rule, shift, master)
+        if shift and master.schedule_syntax == 2 and edited.schedule_expression == master.schedule_expression:
+            from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
+            try:
+                tail = sequence_tail(master.schedule_expression)
+            except PatternError:
+                tail, stale_authoring = None, True
+            if tail:
+                author_start = (datetime.combine(master.start.date(), time.min, zone) if master.all_day
+                                else master.start.astimezone(zone))
+                author_moved = (datetime.combine(start.date(), time.min, zone) if edited.all_day
+                                else start.astimezone(zone))
+                try:
+                    original = compile_sequence(master.schedule_expression, author_start, all_day=master.all_day)
+                    stale_authoring = (not rules_equivalent(original.recurrence_rule, master.recurrence_rule, master) or
+                        not set(original.recurrence_dates) <= set(master.recurrence_dates) or
+                        not set(original.excluded_dates) <= set(master.excluded_dates))
+                except PatternError:
+                    stale_authoring = True
+                if not stale_authoring:
+                    shifted_authoring = shift_unbounded_expression(master.schedule_expression,
+                        author_start, author_moved)
+                    rule = compile_sequence(shifted_authoring[0], author_moved,
+                                            all_day=edited.all_day).recurrence_rule
+        if shifted_authoring is None:
+            rule = shift_rule(rule, shift, master)
     overrides = {}
     for key, payload in master.recurrence_overrides.items():
         moved_key = shift_key(key)
@@ -475,8 +504,36 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
                       schedule_syntax=edited.schedule_syntax,
                       raw_ics=rekey_recurrence_templates(master, shift_key))
     if expression:
-        from .patterns import shift_schedule_expression
-        if edited.schedule_syntax == 2:
+        from .patterns import PatternError, compile_sequence, sequence_tail, shift_schedule_expression, shift_unbounded_expression
+        try:
+            tail = sequence_tail(expression) if edited.schedule_syntax == 2 else None
+        except PatternError:
+            # A proprietary annotation left behind by another client must not
+            # prevent an otherwise valid standard-rule edit or move.
+            return replace(updated, schedule_expression='' if shift else expression,
+                           expression_anchor='' if shift else anchor)
+        if tail:
+            # A tail has no finite list to materialize. Its finite prefix can
+            # still be shifted and its standard recurrence stays interoperable.
+            if stale_authoring:
+                expression, anchor = '', ''
+            elif shift:
+                author_start = (datetime.combine(updated.start.date(), time.min, zone) if updated.all_day
+                                else updated.start.astimezone(zone))
+                try:
+                    compiled = compile_sequence(expression, author_start, all_day=updated.all_day)
+                    already_projected = (expression != master.schedule_expression and
+                        rules_equivalent(compiled.recurrence_rule, updated.recurrence_rule, updated) and
+                        set(compiled.recurrence_dates) <= set(updated.recurrence_dates) and
+                        set(compiled.excluded_dates) <= set(updated.excluded_dates))
+                except PatternError:
+                    already_projected = False
+                if shifted_authoring is not None:
+                    expression, anchor = shifted_authoring
+                elif not already_projected:
+                    previous = author_start - (timedelta(days=shift.days) if updated.all_day else shift)
+                    expression, anchor = shift_unbounded_expression(expression, previous, author_start)
+        elif edited.schedule_syntax == 2:
             # The v2 whole-series editor can convert legacy authoring text on
             # open. That new literal must follow the same timestamp move even
             # though it differs from the original stored expression.

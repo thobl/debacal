@@ -15,6 +15,7 @@ from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 from .models import Calendar, Event
+from .schedule_replacement import ScheduleReplacement
 
 
 class HistoryConflict(ValueError):
@@ -610,12 +611,14 @@ class Store:
             return self.apply(label, [chosen], alternatives)
 
     @staticmethod
-    def _preserve_mouse_exceptions(master: Event, reference: Event, edited: Event, projected: Event) -> Event:
+    def _preserve_mouse_exceptions(master: Event, reference: Event, edited: Event, projected: Event,
+                                   *, authoritative_keys=()) -> Event:
         """Move exception snapshots without applying dialog common fields.
 
         Dragging an unusually long exception moves the regular one-hour series
         without making every occurrence longer. Resizing explicitly applies
         the new duration to the regular event and all detached exceptions.
+        Explicit occurrence ranges from a dialog keep their submitted ends.
         """
         from .recurrence import event_zone, key_datetime, recurrence_key
         zone = event_zone(master)
@@ -646,7 +649,8 @@ class Store:
                 original, id=moved.id, calendar_id=moved.calendar_id,
                 ical_uid=moved.ical_uid, series_id=moved.series_id,
                 recurrence_id=moved.recurrence_id, start=moved.start,
-                end=end_for(moved.start, edited if resized else original),
+                end=(moved.end if moved_key in authoritative_keys else
+                     end_for(moved.start, edited if resized else original)),
             ).to_dict()
         return replace(projected, end=end_for(projected.start, duration_source), recurrence_overrides=overrides)
 
@@ -761,7 +765,12 @@ class Store:
                 before, projected = None, updated_series(master, master, submission, replace_schedule)
             # Start with copy-style exception content preservation. A duration
             # edit then deliberately replaces each affected exception's end.
-            projected = self._preserve_mouse_exceptions(master, source, submission, projected)
+            if replace_schedule is not ScheduleReplacement.RESET:
+                submitted_overrides = schedule_changes.get("recurrence_overrides", {})
+                explicit_keys = {key for key, payload in submitted_overrides.items()
+                                 if payload != master.recurrence_overrides.get(key)}
+                projected = self._preserve_mouse_exceptions(master, source, submission, projected,
+                                                            authoritative_keys=explicit_keys)
             if resized:
                 span = wall(edited.end) - wall(edited.start)
                 def resized_end(value):
@@ -801,7 +810,7 @@ class Store:
                 return selection.instantiate("group", target, calendar.id, preserve_calendars=preserve_calendars)
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
-    def edit_selection(self, refs, scope, reference, edited, *, replace_schedule=False,
+    def edit_selection(self, refs, scope, reference, edited, *, replace_schedule: bool | ScheduleReplacement = False,
                        label="Edit selected events", expected_masters=()) -> int | None:
         """Apply only changed primary fields across the selected union."""
         from .series_operations import partition_series
@@ -816,7 +825,8 @@ class Store:
                 _, base = partition_series(master, reference)
             common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
                       if getattr(edited, name) != getattr(reference, name)}
-            names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "schedule_expression", "expression_anchor", "schedule_syntax")
+            names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "recurrence_overrides",
+                     "schedule_expression", "expression_anchor", "schedule_syntax")
             schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
             if scope == "single" and reference.series_id:
                 # A dated Single form never configures recurrence. Clearing its
@@ -829,14 +839,14 @@ class Store:
 
     def edit_series(
         self, reference: Event, edited: Event, label: str = "Edit series", *,
-        replace_schedule: bool = False, preserve_exceptions: bool = False,
+        replace_schedule: bool | ScheduleReplacement = False, preserve_exceptions: bool = False,
     ) -> int | None:
         """Persist the same pure series projection used by editor previews."""
         from .recurrence import updated_series
         with self._transaction():
             master = self._reviewed_master(reference)
             updated = updated_series(master, reference, edited, replace_schedule)
-            if preserve_exceptions:
+            if preserve_exceptions and replace_schedule is not ScheduleReplacement.RESET:
                 updated = self._preserve_mouse_exceptions(master, reference, edited, updated)
             return self.apply(label, [updated])
 
@@ -865,7 +875,7 @@ class Store:
 
     def edit_future(
         self, reference: Event, edited: Event, label: str = "Edit this and following events", *,
-        replace_schedule: bool = False, expected_master: Event | None = None,
+        replace_schedule: bool | ScheduleReplacement = False, expected_master: Event | None = None,
         preserve_exceptions: bool = False,
     ) -> int | None:
         """Split and edit a series in one undoable, synchronizable operation.
@@ -880,7 +890,7 @@ class Store:
             before, after = updated_future(master, reference, edited, replace_schedule)
             if after is None:
                 raise ValueError("There are no events at or after this occurrence.")
-            if preserve_exceptions:
+            if preserve_exceptions and replace_schedule is not ScheduleReplacement.RESET:
                 after = self._preserve_mouse_exceptions(master, reference, edited, after)
             if before is None:
                 after = replace(after, id=master.id, calendar_id=master.calendar_id,

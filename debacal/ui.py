@@ -561,7 +561,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if all_day:
             end = end or start + timedelta(days=1)
         default = self.store.get_default_calendar()
-        dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences, default_calendar_id=default.id if default else None)
+        dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
+                             default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
         dialog.all_day.setChecked(all_day)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if self.apply_events('Create ' + str(len(dialog.result_events)) + ' event(s)', dialog.result_events):
