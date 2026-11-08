@@ -78,6 +78,49 @@ def test_one_parent_per_series_and_colored_two_line_presentation(workspace):
     assert all(panel.event_id(item) != master.id for item in children)
 
 
+@pytest.mark.parametrize('agenda', [False, True])
+def test_native_event_rows_expose_date_time_source_and_location_without_color_only_meaning(workspace, agenda):
+    _, store, panel = workspace
+    calendar = Calendar('colored', 'Synthetic calendar', '#123abc')
+    store.save_calendar(calendar)
+    source = replace(event(location='Room 42', recurrence_rule='FREQ=DAILY;COUNT=3'), calendar_id=calendar.id)
+    store.apply('Create', [source])
+    if agenda:
+        panel.populate_upcoming(START)
+        rows = [panel.topLevelItem(0)]
+    else:
+        panel.populate('needle')
+        root = panel.topLevelItem(0)
+        root.setExpanded(True)
+        rows = [root, root.child(0)]
+    for item in rows:
+        assert item.data(Qt.ItemDataRole.AccessibleTextRole) == source.title
+        details = item.data(Qt.ItemDataRole.AccessibleDescriptionRole)
+        assert panel.preferences.format_date(START.date(), weekday=True) in details
+        assert panel.preferences.format_time(START) in details
+        assert calendar.name in details and source.location in details
+    renamed = replace(calendar, name='New calendar alias')
+    panel.update_context([renamed], replace(panel.preferences, time_format='12h'))
+    for item in rows:
+        details = item.data(Qt.ItemDataRole.AccessibleDescriptionRole)
+        assert renamed.name in details and calendar.name not in details
+        assert panel.preferences.format_time(START) in details
+
+
+def test_native_row_describes_repeated_hour_endpoints_and_true_elapsed_duration(workspace):
+    _, store, panel = workspace
+    start = datetime(2026, 10, 25, 2, 45, tzinfo=ZONE)
+    end = datetime(2026, 10, 25, 2, 15, tzinfo=ZONE, fold=1)
+    source = replace(event(), start=start, end=end)
+    store.apply('Create', [source])
+    panel.populate('needle')
+    item = panel.topLevelItem(0)
+    details = item.data(Qt.ItemDataRole.AccessibleDescriptionRole)
+    assert '02:45 CEST' in details and '02:15 CET' in details
+    assert '30min elapsed' in details
+    assert '30min elapsed' in item.toolTip(0)
+
+
 def test_finite_series_pages_preserve_all_distinct_occurrence_ids(workspace):
     _, store, panel = workspace
     store.apply('Create', [event(recurrence_rule='FREQ=DAILY;COUNT=250')])
@@ -111,6 +154,53 @@ def test_unbounded_series_has_fixed_page_cap_and_bounded_context_seek(workspace)
     assert parent.childCount() == 101
     assert panel.event_id(parent.child(100)) is None
     assert not parent.child(100).flags() & Qt.ItemFlag.ItemIsSelectable
+
+
+@pytest.mark.parametrize('activation', ['mouse', 'keyboard'])
+def test_capped_series_can_explicitly_restart_near_view_without_rebasing_other_results(workspace, activation):
+    app, store, panel = workspace
+    first, other = event('first', recurrence_rule='FREQ=DAILY'), event('other', recurrence_rule='FREQ=DAILY')
+    store.apply('Create', [first, other])
+    panel.populate('needle')
+    parent, other_parent = panel.topLevelItem(0), panel.topLevelItem(1)
+    parent.setExpanded(True)
+    other_parent.setExpanded(True)
+    for _ in range(9):
+        panel.load_more(parent)
+    panel.load_more(other_parent)
+    old_ids = [panel.event_id(child) for child in genuine_children(parent)]
+    other_ids = [panel.event_id(child) for child in genuine_children(other_parent)]
+    assert len(old_ids) == 100
+    later = START + timedelta(days=500)
+    panel.set_range(later, later + timedelta(days=7))
+    panel.populate('needle')
+    parent.setExpanded(False)
+    parent.setExpanded(True)
+    assert [panel.event_id(child) for child in genuine_children(parent)] == old_ids
+    # Even rebuilding a query keeps ordinary result-following stable.
+    panel.populate('')
+    panel.populate('needle')
+    parent, other_parent = panel.topLevelItem(0), panel.topLevelItem(1)
+    assert [panel.event_id(child) for child in genuine_children(parent)] == old_ids
+    footer = parent.child(parent.childCount() - 1)
+    assert footer.text() == 'Show dates near current view'
+    assert footer.flags() & Qt.ItemFlag.ItemIsEnabled
+    emitted = []
+    panel.result_selected.connect(lambda *values: emitted.append(values))
+    panel.scrollToItem(footer)
+    app.processEvents()
+    if activation == 'mouse':
+        QTest.mouseClick(panel.viewport(), Qt.MouseButton.LeftButton, pos=panel.visualItemRect(footer).center())
+    else:
+        panel.setCurrentItem(footer)
+        QTest.keyClick(panel, Qt.Key.Key_Return)
+    children = genuine_children(parent)
+    assert len(children) == 10
+    assert panel.result_event(panel.event_id(children[0])).start == later
+    assert panel.result_event(panel.event_id(parent)).start == later
+    assert [panel.event_id(child) for child in genuine_children(other_parent)] == other_ids
+    assert all(panel.row_item(identity) is None for identity in old_ids)
+    assert not emitted
 
 
 def test_lazy_dates_start_near_requested_calendar_range(workspace):

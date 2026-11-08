@@ -215,14 +215,18 @@ def test_selected_event_uses_visible_marker_independent_of_white_calendar_color(
     assert selected != plain
 
 
-def test_selected_day_is_state_only(widgets):
+def test_selected_day_has_a_date_marker_without_filling_timed_columns(widgets):
     _, _, _, make_canvas, make_month, make_header = widgets
     canvas, month, header = make_canvas(), make_month(), make_header()
     selected = DAYS[1]
     initial = {widget: widget.grab().toImage() for widget in (canvas, month, header)}
     for widget in (canvas, month, header):
         widget.set_selected_day(selected)
-        assert widget.grab().toImage() == initial[widget]
+        image = widget.grab().toImage()
+        if widget is canvas:
+            assert image == initial[widget]
+        else:
+            assert image != initial[widget]
         assert widget.selected_day == selected and selected != NOW.date()
     for widget in (canvas, month, header):
         widget.set_selected_day(None)

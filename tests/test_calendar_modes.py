@@ -13,7 +13,7 @@ from PySide6.QtGui import QContextMenuEvent, QColor
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
-from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas
+from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas, paint_colors
 from debacal.models import Calendar, Event
 
 
@@ -212,7 +212,14 @@ def test_soft_multiple_selection_keeps_calendar_color_and_no_persistent_day_fill
     widget = make(kind, values)
     before = widget.grab().toImage()
     widget.set_selected_day(DAYS[1])
-    assert widget.grab().toImage() == before
+    date_selected = widget.grab().toImage()
+    if kind == 'month':
+        assert date_selected != before
+        body_top = round(widget.header_height + widget.month_row_metrics()[0])
+        assert date_selected.copy(0, body_top, widget.width(), widget.height() - body_top) == before.copy(
+            0, body_top, widget.width(), widget.height() - body_top)
+    else:
+        assert date_selected == before
     widget.set_selection({item.id for item in values})
     image = widget.grab().toImage()
     for identifier in ('event', 'second'):
@@ -242,12 +249,62 @@ def test_event_tooltip_shows_details_without_gesture_instructions(surfaces, kind
     assert all(phrase not in tooltip for phrase in ('Double-click', 'Drag', 'Ctrl', 'Select '))
 
 
-def test_header_selection_day_is_state_only(surfaces):
+@pytest.mark.parametrize('day_index', [1, 3])
+def test_header_action_date_marker_is_restricted_to_number_region_and_coexists_with_today(surfaces, day_index):
     _, make = surfaces
     widget = make('header')
     original = widget.grab().toImage()
+    widget.set_selected_day(DAYS[day_index])
+    selected = widget.grab().toImage()
+    assert selected != original
+    assert selected.copy(0, 0, widget.width(), 27) == original.copy(0, 0, widget.width(), 27)
+    # The current-day background and the rest of each day column stay intact.
+    width = (widget.width() - widget.gutter) / 7
+    assert selected.pixelColor(round(widget.gutter + (day_index + .8) * width), 40) == original.pixelColor(
+        round(widget.gutter + (day_index + .8) * width), 40)
+
+
+@pytest.mark.parametrize('day_index', [1, 3])
+def test_month_action_date_header_preserves_today_border_and_event_area(surfaces, day_index):
+    _, make = surfaces
+    widget = make('month')
+    original = widget.grab().toImage()
+    widget.set_selected_day(DAYS[day_index])
+    selected = widget.grab().toImage()
+    assert selected != original
+    body_top = round(widget.header_height + widget.month_row_metrics()[0])
+    assert selected.copy(0, body_top, widget.width(), widget.height() - body_top) == original.copy(
+        0, body_top, widget.width(), widget.height() - body_top)
+
+
+def test_week_today_background_fills_its_header_without_badge_margins(surfaces):
+    _, make = surfaces
+    widget = make('header')
+    colors = paint_colors(widget)
+    image = widget.grab().toImage()
+    width = (widget.width() - widget.gutter) / 7
+    left = widget.gutter + 3 * width
+    for x, y in ((left + 2, 2), (left + width - 3, 2), (left + width - 3, widget.height() - 3)):
+        assert image.pixelColor(round(x), round(y)) == colors.selection
+
+
+def test_month_today_border_and_selected_header_are_distinct_from_outside_month(surfaces):
+    _, make = surfaces
+    widget = make('month')
+    colors = paint_colors(widget)
     widget.set_selected_day(DAYS[1])
-    assert widget.grab().toImage() == original
+    image = widget.grab().toImage()
+    width = (widget.width() - widget.week_gutter) / 7
+    height = (widget.height() - widget.header_height) / 6
+    def pixel(column, row, horizontal=.6, vertical=.5):
+        return image.pixelColor(round(widget.week_gutter + (column + horizontal) * width),
+                                round(widget.header_height + (row + vertical) * height))
+    assert pixel(3, 0) == colors.background  # Today is a border, not a cell fill.
+    assert pixel(3, 5) == colors.outside_month
+    assert image.pixelColor(round(widget.week_gutter + 1.6 * width), widget.header_height + 8) == colors.selection
+    assert pixel(1, 0) == colors.background  # Selection stays in the header.
+    edge = image.pixelColor(round(widget.week_gutter + 3 * width + 1), round(widget.header_height + height / 2))
+    assert edge != colors.line and edge != colors.background
 
 
 @pytest.mark.parametrize('kind', ['timed', 'month', 'all-day'])

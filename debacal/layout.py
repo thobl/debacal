@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import heapq
-from typing import Iterable, Protocol
+from typing import Iterable, Mapping, Protocol
 
 
 class CalendarInterval(Protocol):
@@ -22,7 +22,8 @@ class Placement:
 
 
 def layout_events(events: Iterable[CalendarInterval], *, window_start: datetime | None = None,
-                  window_end: datetime | None = None) -> list[Placement]:
+                  window_end: datetime | None = None,
+                  visual_ranges: Mapping[str, tuple[float, float]] | None = None) -> list[Placement]:
     """Place intervals into the fewest columns in each connected overlap group.
 
     Touching endpoints do not overlap. Zero-duration events occupy fifteen
@@ -32,6 +33,9 @@ def layout_events(events: Iterable[CalendarInterval], *, window_start: datetime 
 
     Optional window bounds clip intervals for a day view without constructing
     full event objects. Input validation still applies to the original events.
+    A wall-clock surface may supply its actual painted vertical ranges instead;
+    their positive spans include minimum marker heights. Column allocation then
+    prevents visible overlaps even when repeated-hour instants are disjoint.
     """
     values = [(event.start.timestamp(), event.end.timestamp(), event.id) for event in events]
     if len({value[2] for value in values}) != len(values):
@@ -40,8 +44,14 @@ def layout_events(events: Iterable[CalendarInterval], *, window_start: datetime 
         raise ValueError("Events must not end before they start.")
     lower = window_start.timestamp() if window_start is not None else float('-inf')
     upper = window_end.timestamp() if window_end is not None else float('inf')
-    ordered = sorted((max(start, lower), min(end, upper), identifier) for start, end, identifier in values
-                     if (lower <= start < upper if start == end else start < upper and end > lower))
+    clipped = ((max(start, lower), min(end, upper), identifier) for start, end, identifier in values
+               if (lower <= start < upper if start == end else start < upper and end > lower))
+    if visual_ranges is not None:
+        ordered = sorted((*visual_ranges[identifier], identifier) for _start, _end, identifier in clipped)
+        if any(end <= start for start, end, _identifier in ordered):
+            raise ValueError('Visual event ranges must have positive height.')
+    else:
+        ordered = sorted(clipped)
     result: list[Placement] = []
     component: list[tuple[str, int]] = []
     active: list[tuple[float, int]] = []

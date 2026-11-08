@@ -130,3 +130,92 @@ def test_event_tooltip_distinguishes_repeated_clock_phases(desktop):
     source = Event('repeat-hour', 'local', 'Forty-five minutes', start, end)
     tooltip = event_tooltip(source, Preferences(time_format='24h'))
     assert '02:30 CEST' in tooltip and '02:15 CET' in tooltip
+    assert '45min elapsed' in tooltip
+
+
+@pytest.mark.parametrize('fold', [0, 1])
+@pytest.mark.parametrize('operation', ['move', 'resize'])
+def test_real_gesture_preserves_repeated_hour_phase_in_preview_and_commit(desktop, fold, operation):
+    app, owned = desktop
+    start = datetime(2026, 10, 25, 2, 0, tzinfo=ZONE, fold=fold)
+    source = Event('source', 'local', 'Repeated hour', start,
+                   datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=fold))
+    canvas = CalendarCanvas()
+    owned.append(canvas)
+    canvas.set_data([start.date()], [source], [CALENDAR])
+    canvas.resize(600, 2000)
+    canvas.fit_to_viewport(2000, full_day=True)
+    canvas.show()
+    app.processEvents()
+    rect = canvas.rects()[0][0]
+    origin = QPoint(round(rect.center().x()), round(rect.bottom() - 2 if operation == 'resize' else rect.top() + 3))
+    target = origin + QPoint(0, round(canvas.hour_height / 4))
+    preview = QSignalSpy(canvas.drag_preview_requested)
+    committed = QSignalSpy(canvas.move_requested)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(canvas, target)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=target)
+    assert preview.count() and committed.count() == 1
+    for values in (preview.at(preview.count() - 1), committed.at(0)):
+        moved_start, moved_end = values[1:3]
+        expected_start_shift = timedelta(minutes=15 if operation == 'move' else 0)
+        assert elapsed_duration(source.start, moved_start) == expected_start_shift
+        assert elapsed_duration(source.end, moved_end) == timedelta(minutes=15)
+        assert moved_start.fold == fold and moved_end.fold == fold
+
+
+def test_dragging_into_nonexistent_hour_rejects_preview_and_commit_once(desktop):
+    app, owned = desktop
+    start = datetime(2027, 3, 28, 1, 15, tzinfo=ZONE)
+    source = Event('source', 'local', 'Before the clock change', start, start + timedelta(minutes=30))
+    canvas = CalendarCanvas()
+    owned.append(canvas)
+    canvas.set_data([start.date()], [source], [CALENDAR])
+    canvas.resize(600, 2000)
+    canvas.fit_to_viewport(2000, full_day=True)
+    canvas.show()
+    app.processEvents()
+    rect = canvas.rects()[0][0]
+    origin = QPoint(round(rect.center().x()), round(rect.top() + 3))
+    target = origin + QPoint(0, round(canvas.hour_height))
+    preview, committed, rejected = (QSignalSpy(signal) for signal in (
+        canvas.drag_preview_requested, canvas.move_requested, canvas.gesture_rejected))
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseMove(canvas, target)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=target)
+    assert preview.count() == committed.count() == 0
+    assert rejected.count() == 1 and 'clocks change' in rejected.at(0)[0]
+
+
+@pytest.mark.parametrize('crossing', [False, True])
+def test_repeated_hour_events_are_both_visible_labeled_and_mouse_selectable(desktop, crossing):
+    app, owned = desktop
+    start = datetime(2026, 10, 25, 2, 45 if crossing else 15, tzinfo=ZONE)
+    end = datetime(2026, 10, 25, 2, 15, tzinfo=ZONE, fold=1) if crossing else start + timedelta(minutes=30)
+    first = Event('first', 'local', 'First phase', start, end)
+    second_start = start.replace(fold=1)
+    second = Event('second', 'local', 'Second phase', second_start,
+                   datetime.fromtimestamp(second_start.timestamp() + 1800, ZONE))
+    canvas = CalendarCanvas()
+    owned.append(canvas)
+    canvas.set_data([start.date()], [first, second], [CALENDAR])
+    canvas.resize(700, 2000)
+    canvas.fit_to_viewport(2000, full_day=True)
+    canvas.show()
+    app.processEvents()
+    rects = {item.id: rect for rect, item in canvas.rects()}
+    assert rects['first'].height() > 0 and rects['second'].height() > 0
+    assert not rects['first'].intersects(rects['second'])
+    selected = QSignalSpy(canvas.selected)
+    for identity in ('first', 'second'):
+        point = rects[identity].center().toPoint()
+        assert canvas.hit(point)[1].id == identity
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=point)
+        assert selected.at(selected.count() - 1)[0] == identity
+    with patch('debacal.calendar_widgets.text') as draw_text:
+        canvas.grab()
+    labels = [call.args[2] for call in draw_text.call_args_list]
+    assert any('CEST' in label and 'First phase' in label for label in labels)
+    assert any('CET' in label and 'Second phase' in label for label in labels)
+    assert 'CEST' in event_tooltip(first, canvas.preferences)
+    assert 'CET' in event_tooltip(second, canvas.preferences)

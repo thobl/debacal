@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSe
 from PySide6.QtGui import QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
-    QLineEdit, QMenu, QDialog, QFileDialog,
+    QLineEdit, QMenu, QDialog, QFileDialog, QScrollArea, QFrame, QAbstractButton, QAbstractItemView,
     QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
 )
 
@@ -31,7 +31,7 @@ from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
-from .search_panel import MORE_ROLE, event_matches_query
+from .search_panel import event_matches_query
 from .status_dialog import StatusDialog, StatusIssue
 from .calendar_choice_dialog import CalendarChoiceDialog
 from .credentials import CredentialStore
@@ -77,12 +77,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._sync_issues = {}
         self._sync_messages = deque(maxlen=100)
         self._local_issues = OrderedDict()
+        self._view_issues = ()
         self._issue_sequence = 0
         self._last_sync = None
         self._notified_conflicts = {}
         self.tray_icon = None
         self.preferences = Preferences.load(store)
         self.anchor = now().date()
+        self._clock_day = self.anchor
         self.selected_day = self.anchor
         self.view = 'week'
         self.selected_id = None
@@ -99,6 +101,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_index = None
         self._events_revision = None
         self._range_cache = OrderedDict()
+        self._range_issue_cache = {}
         self._surface_data_key = None
         self._filter_masters = {}
         self._navigation_sources = None
@@ -126,13 +129,25 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             from .sync import SyncEngine
             self.engine = SyncEngine(store.path, credential_store=self.credentials)
         self.setWindowTitle('Debacal' + (' — ' + profile_label if profile_label else ''))
-        self.resize(1400, 900)
-        self.setMinimumSize(1030, 690)
+        screen = self.screen() or QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        self.setMinimumSize(min(1030, available.width()) if available is not None else 1030,
+                            min(690, available.height()) if available is not None else 690)
+        self.resize(min(1400, available.width()) if available is not None else 1400,
+                    min(900, available.height()) if available is not None else 900)
         self.setLocale(self.preferences.qt_locale())
         self.setPalette(widget_palette(self.preferences))
         self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
         central = QWidget()
-        self.setCentralWidget(central)
+        central.setMinimumSize(1030, 690)
+        self.workspace_content = central
+        self.workspace_scroll = QScrollArea()
+        self.workspace_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.workspace_scroll.setWidgetResizable(True)
+        self.workspace_scroll.setWidget(central)
+        central.setAutoFillBackground(False)
+        self.workspace_scroll.viewport().setAutoFillBackground(False)
+        self.setCentralWidget(self.workspace_scroll)
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -151,9 +166,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.sync_timer.timeout.connect(self.sync_now)
         self.configure_auto_sync()
         self.clock_timer = QTimer(self)
-        self.clock_timer.timeout.connect(self.canvas.update)
-        self.clock_timer.timeout.connect(self.year.update)
-        self.clock_timer.timeout.connect(self.refresh_agenda_clock)
+        self.clock_timer.timeout.connect(self.refresh_clock)
         self.clock_timer.start(60_000)
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
@@ -199,6 +212,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if revision != self._events_revision:
             self._events_revision = revision
             self._range_cache.clear()
+            self._range_issue_cache.clear()
             self._filter_masters.clear()
             self._navigation_sources = None
             self._navigation_sources_key = None
@@ -289,12 +303,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def query_view_events(self, days, calendars, revision):
         identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
         if not identifiers:
+            self._view_issues = ()
             return []
         begin, end = at(days[0]), at(days[-1] + timedelta(days=1))
         key = revision, begin.timestamp(), end.timestamp(), identifiers
         events = self._range_cache.get(key)
         if events is not None:
             self._range_cache.move_to_end(key)
+            self._view_issues = self._range_issue_cache.get(key, ())
             return list(events)
         selected = set(identifiers)
         for cached_key, cached_events in reversed(self._range_cache.items()):
@@ -303,19 +319,26 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 # Hiding sources only filters this complete page; retaining
                 # its superset avoids duplicate pages evicting useful data.
                 self._range_cache.move_to_end(cached_key)
+                self._view_issues = tuple(issue for issue in self._range_issue_cache.get(cached_key, ())
+                                          if issue[0].calendar_id in selected)
                 return [event for event in cached_events if event.calendar_id in selected]
-        events = self.store.query_occurrences(begin, end, identifiers)
+        issues = []
+        events = self.store.query_occurrences(begin, end, identifiers, issues=issues)
+        self._view_issues = tuple(issues)
         # Keep a dense current page too: these Event objects already belong
         # to the displayed view. Re-decoding it for each preference or source
         # toggle is expensive. An oversized page lives alone and is evicted
         # as soon as another window is cached; ordinary pages share the budget.
         if len(events) > RANGE_CACHE_EVENT_LIMIT:
             self._range_cache.clear()
+            self._range_issue_cache.clear()
         self._range_cache[key] = tuple(events)
+        self._range_issue_cache[key] = self._view_issues
         while len(self._range_cache) > 1 and (
                 len(self._range_cache) > RANGE_CACHE_PAGE_LIMIT
                 or sum(map(len, self._range_cache.values())) > RANGE_CACHE_EVENT_LIMIT):
-            self._range_cache.popitem(last=False)
+            evicted, _events = self._range_cache.popitem(last=False)
+            self._range_issue_cache.pop(evicted, None)
         return events
 
     def update_hints(self):
@@ -931,6 +954,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._drag_preview_request = None
         self.render_placement()
 
+    def reject_drag(self, message):
+        self.clear_drag_preview()
+        self.report_error(message)
+
     def delete_event(self, event_id=None, group=None, scope=None):
         event = self.event_by_id(event_id or self.selected_id or '')
         if event is None:
@@ -1180,6 +1207,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self.search_timer.stop()
         self.results.setEnabled(True)
+        previous_issues = self.results.agenda_issues if self.results.agenda_mode else ()
         query = self.search.text().strip()
         self.results_heading.setText('Search results' if query else 'Next events')
         self.results.setAccessibleName('Search results' if query else 'Next events')
@@ -1190,13 +1218,32 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_index = getattr(self.results, '_search_index', None)
         self.apply_search_filter()
         self.sync_search_selection()
+        current_issues = self.results.agenda_issues if self.results.agenda_mode else ()
+        if current_issues != previous_issues:
+            self.update_sync_status()
 
-    def refresh_agenda_clock(self):
+    def refresh_clock(self):
+        if self._closed:
+            return
+        current = now()
+        self.canvas.update()
+        self.year.update()
+        if current.date() != self._clock_day:
+            self._clock_day = current.date()
+            self.header.update()
+            self.month.update()
+            self.mini.calendar.updateCells()
+        self.refresh_agenda_clock(current)
+
+    def refresh_agenda_clock(self, current=None):
         if not self._closed and self.results.agenda_mode:
-            current = now()
+            previous_issues = self.results.agenda_issues
+            current = current if current is not None else now()
             self.results.populate_upcoming(current)
             self.results.refresh_agenda_presentation(current)
             self.sync_search_selection()
+            if self.results.agenda_issues != previous_issues:
+                self.update_sync_status()
 
     def search_changed(self, *_):
         # Programmatic queries and clearing stay immediate. Actual typing is
@@ -1251,6 +1298,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search.selectAll()
         self.update_hints()
 
+    def reveal_workspace_focus(self):
+        """Keep keyboard-focused controls reachable in the compact viewport.
+
+        Painted grids keep their current scroll position; clicking an event
+        must not pan the whole workspace merely because its canvas has focus.
+        """
+        if self._closed:
+            return
+        target = QApplication.focusWidget()
+        if target is None or not self.workspace_content.isAncestorOf(target):
+            return
+        area = target.parentWidget()
+        while area is not None and area is not self:
+            if isinstance(area, QScrollArea):
+                area.ensureWidgetVisible(target, 8, 8)
+            area = area.parentWidget()
 
     def cycle_search_result(self, direction):
         self.flush_search()
@@ -1548,6 +1611,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = f'{len(self.engine.conflicts)} conflict(s) need review'
         elif self._sync_issues:
             value = 'Synced with resource issues · open Sync status'
+        elif self._view_issues:
+            value = f'{len(self._view_issues)} series unavailable in this view · open details'
+        elif self.results.agenda_mode and self.results.agenda_issues:
+            value = f'{len(self.results.agenda_issues)} series unavailable in upcoming events · open details'
         elif self._local_issues:
             value = f'{len(self._local_issues)} issue(s) · open details'
         elif self._last_sync:
@@ -1563,6 +1630,23 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def status_issues(self):
         issues = list(self.local_issues)
         calendars = {calendar.id: calendar for calendar in self.store.list_calendars()}
+        projections = {event.id: (event, error, ['the calendar']) for event, error in self._view_issues}
+        if self.results.agenda_mode:
+            for event, error in self.results.agenda_issues:
+                if event.id in projections:
+                    projections[event.id][2].append('upcoming events')
+                else:
+                    projections[event.id] = event, error, ['upcoming events']
+        for event, error, contexts in projections.values():
+            calendar = calendars.get(event.calendar_id)
+            title = event.title + ' · dates unavailable'
+            details = ((calendar.name + '\n') if calendar is not None else '') + str(error)
+            details += '\n\nDates from this series are omitted from ' + ' and '.join(contexts) + '. Other events remain visible.'
+            if self.view != 'day' and 'the calendar' in contexts:
+                label, action = 'Show day view', lambda: self.set_view('day')
+            else:
+                label, action = 'Edit event…', lambda identity=event.id: self.edit_event(identity)
+            issues.append(StatusIssue('view:' + event.id, title, details, label, action))
         for kind, values in (('error', self._sync_errors), ('issue', self._sync_issues)):
             for calendar_id, message in values.items():
                 calendar = calendars.get(calendar_id)
@@ -1764,6 +1848,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.ensure_event_visible(event.id)
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.FocusIn and isinstance(obj, (
+                QAbstractButton, QAbstractItemView, QLineEdit, QAbstractSpinBox, QComboBox, QTextEdit, QPlainTextEdit)):
+            QTimer.singleShot(0, self, self.reveal_workspace_focus)
         if (event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease)
                 and self.isActiveWindow() and not QApplication.activeModalWidget()):
             modifiers = event.modifiers()
@@ -1829,7 +1916,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 if item is None:
                     self.cycle_search_result(1)
                     item = self.results.currentItem()
-                if item is not None and item.data(MORE_ROLE) is True:
+                if self.results.is_paging_action(item):
                     self.results.load_more(item)
                     self.sync_search_selection()
                     return True
@@ -1892,6 +1979,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                          for source in sources if source.data is not None)
         self._import_requests.clear()
         self._range_cache.clear()
+        self._range_issue_cache.clear()
+        self._view_issues = ()
         if self.engine:
             self.engine.close()
         if self.tray_icon:

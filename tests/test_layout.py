@@ -56,6 +56,18 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual([p.event_id for p in placements], ["crossing", "overlapping"])
         self.assertTrue(all(p.columns == 2 for p in placements))
 
+    def test_visual_ranges_partition_disjoint_instants_that_share_wall_coordinates(self):
+        zone = ZoneInfo('Europe/Berlin')
+        first = Interval('first', datetime(2026, 10, 25, 2, 15, tzinfo=zone),
+                         datetime(2026, 10, 25, 2, 45, tzinfo=zone))
+        second = Interval('second', first.start.replace(fold=1), first.end.replace(fold=1))
+        self.assertTrue(all(value.columns == 1 for value in layout_events([first, second])))
+        visual = layout_events([second, first], visual_ranges={'first': (20, 50), 'second': (20, 50)})
+        self.assertEqual([(value.event_id, value.column, value.columns) for value in visual],
+                         [('first', 0, 2), ('second', 1, 2)])
+        with self.assertRaisesRegex(ValueError, 'positive height'):
+            layout_events([first], visual_ranges={'first': (20, 20)})
+
 
 if __name__ == "__main__":
     unittest.main()

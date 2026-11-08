@@ -36,6 +36,10 @@ def workspace():
         try:
             yield app, window, store
         finally:
+            # The copy workflow installs an owned QMimeData. Dispose test
+            # clipboard data while Qt/Python are alive, like the clipboard
+            # and workflow fixtures, rather than at native static teardown.
+            app.clipboard().clear()
             window.close()
             window.executor.shutdown(wait=True)
             window.deleteLater()
@@ -50,6 +54,12 @@ def geometry(window):
 
 def test_routine_actions_are_silent_and_removed_ui_does_not_reserve_space(workspace):
     app, window, store = workspace
+    # This checks the removed calendar footer at normal geometry. Compact
+    # screens intentionally reserve space for the outer fallback scrollbars.
+    window.resize(1400, 900)
+    settle(app)
+    assert window.workspace_scroll.horizontalScrollBar().maximum() == 0
+    assert window.workspace_scroll.verticalScrollBar().maximum() == 0
     assert not hasattr(window, 'notice') and not hasattr(window, 'message_stack')
     assert window.findChild(QLabel, 'profileBadge') is None
     assert window.stack.mapTo(window, window.stack.rect().bottomLeft()).y() >= window.height() - 10

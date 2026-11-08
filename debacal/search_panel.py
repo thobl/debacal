@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import Event
+from .calendar_widgets import event_detail_lines
 from .agenda_style import AgendaResultDelegate
 from .recurrence import normalize_recurrence_stream, occurrence, recurrence_key, recurrence_set, overlaps
 from .search_result_style import SearchResultDelegate as _ResultDelegate
@@ -143,6 +144,7 @@ class SearchPanel(QTreeWidget):
         self._expansion_contexts = {}
         self._render_signature = None
         self._agenda_caches = OrderedDict()
+        self.agenda_issues = ()
         self._agenda_render_key = None
         self._agenda_presentation_events = ()
         self._items_by_id = {}
@@ -157,6 +159,10 @@ class SearchPanel(QTreeWidget):
     @staticmethod
     def event_id(item):
         return item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+
+    @staticmethod
+    def is_paging_action(item):
+        return item is not None and item.data(MORE_ROLE) in (True, 'rebase')
 
     def invalidate(self):
         self._index = None
@@ -198,7 +204,7 @@ class SearchPanel(QTreeWidget):
             item.setData(COLOR_ROLE, calendar.color if calendar else '#788373')
             if effective is not None:
                 item.setData(SUBTITLE_ROLE, self._when(effective))
-                item.setToolTip(0, self._event_tooltip(source, effective))
+                self._present_event_details(item, source, effective)
         self.viewport().update()
         self.refresh_agenda_presentation()
         return True
@@ -456,7 +462,7 @@ class SearchPanel(QTreeWidget):
         if representative is not None:
             self._events_by_id[self.event_id(item)] = representative
             item.setData(SUBTITLE_ROLE, self._when(representative))
-            item.setToolTip(0, self._event_tooltip(master, representative))
+            self._present_event_details(item, master, representative)
         else:
             self._events_by_id.pop(self.event_id(item), None)
 
@@ -565,15 +571,19 @@ class SearchPanel(QTreeWidget):
                     and instant(cache['start']) <= instant(start)
                     and instant(end) <= instant(cache['end']))
         events = [event for event in cache['events'] if overlaps(event, start, end)] if reusable else []
+        self.agenda_issues = cache.get('issues', ()) if reusable else ()
         if not reusable or (len(events) < limit and not cache['exhausted']):
             # A little lookahead covers normal refreshes within this minute.
             # If many short events expire, refill instead of returning too few.
             padded = instant(end).replace(second=0, microsecond=0) + timedelta(minutes=1)
             padded = padded.astimezone(end.tzinfo)
             fetch_limit = max(1, limit * 2)
-            values = self.store.upcoming_occurrences(start, padded, visible, limit=fetch_limit) if limit else []
+            issues = []
+            values = self.store.upcoming_occurrences(start, padded, visible, limit=fetch_limit, issues=issues) if limit else []
+            self.agenda_issues = tuple(issues)
             self._agenda_caches[identity] = {'identity': identity, 'start': start, 'end': padded,
-                                             'events': tuple(values), 'exhausted': len(values) < fetch_limit}
+                                             'events': tuple(values), 'exhausted': len(values) < fetch_limit,
+                                             'issues': self.agenda_issues}
             self._agenda_caches.move_to_end(identity)
             while len(self._agenda_caches) > 8:
                 self._agenda_caches.popitem(last=False)
@@ -626,20 +636,27 @@ class SearchPanel(QTreeWidget):
         item.setData(SUBTITLE_ROLE, self._when(event))
         calendar = self._calendars.get(event.calendar_id)
         item.setData(COLOR_ROLE, calendar.color if calendar else '#788373')
-        item.setToolTip(0, self._event_tooltip(event))
+        self._present_event_details(item, event)
         return item
 
-    def _event_tooltip(self, event, representative=None):
+    def _event_details(self, event, representative=None):
         effective = representative or event
         calendar = self._calendars.get(event.calendar_id)
-        lines = [event.title, self._when(effective)]
-        if calendar:
-            lines.append(calendar.name)
+        lines = event_detail_lines(effective, self.preferences, calendar, include_description=False, zone=local_zone())
+        lines[0] = event.title
         if effective.title != event.title:
-            lines.append('Shown occurrence: ' + effective.title)
-        if effective.location:
-            lines.append(effective.location)
-        return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>'
+            lines.insert(2, 'Shown occurrence: ' + effective.title)
+        return lines
+
+    def _event_tooltip(self, event, representative=None):
+        return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>')
+                                  for line in self._event_details(event, representative)) + '</qt>'
+
+    def _present_event_details(self, item, event, representative=None):
+        lines = self._event_details(event, representative)
+        item.setToolTip(0, '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>')
+        item.setData(Qt.ItemDataRole.AccessibleTextRole, lines[0])
+        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, '\n'.join(lines[1:]))
 
     def _when(self, event):
         local = event.start if event.all_day else event.start.astimezone(local_zone())
@@ -650,6 +667,8 @@ class SearchPanel(QTreeWidget):
         item = _ResultItem([title])
         item.setData(SUBTITLE_ROLE, subtitle)
         item.setData(MORE_ROLE, more)
+        item.setData(Qt.ItemDataRole.AccessibleTextRole, title)
+        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, subtitle)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         if not more:
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
@@ -745,15 +764,39 @@ class SearchPanel(QTreeWidget):
             if state['pages'] < MAX_PAGES:
                 self._placeholder(item, 'More dates…', f'{state["pages"] * size:,} dates shown', more=True)
             else:
-                self._placeholder(item, f'{state["pages"] * size:,} dates shown',
-                                  'Choose another calendar range to inspect later dates.')
+                self._placeholder(item, 'Show dates near current view',
+                                  f'{state["pages"] * size:,} dates shown', more='rebase')
         if remember:
             self._pages[master_id] = state['pages']
 
     def load_more(self, item):
-        """Load another bounded page for a parent or its More dates row."""
+        """Load a bounded page or explicitly restart near the visible calendar."""
         if item is not None:
-            self._load_page(item.parent() if item.data(MORE_ROLE) is True else item)
+            if item.data(MORE_ROLE) == 'rebase':
+                self.show_dates_near_view(item.parent())
+            else:
+                self._load_page(item.parent() if item.data(MORE_ROLE) is True else item)
+
+    def show_dates_near_view(self, item):
+        if item is None or item.data(MASTER_ROLE) not in self._masters:
+            return
+        master_id = item.data(MASTER_ROLE)
+        blocked = self.blockSignals(True)
+        try:
+            for child in item.takeChildren():
+                identity = self.event_id(child)
+                self._items_by_id.pop(identity, None)
+                self._events_by_id.pop(identity, None)
+                self._row_scopes.pop(identity, None)
+            self._states.pop(master_id, None)
+            self._pages.pop(master_id, None)
+            self._prefetched.pop(master_id, None)
+            self._expansion_contexts[master_id] = self._range[0] if self._range else now()
+            self._context_budget = CONTEXT_SCAN_LIMIT
+            self._set_representative(item, self._masters[master_id], self._representative(self._masters[master_id]))
+            self._load_page(item)
+        finally:
+            self.blockSignals(blocked)
 
     def _expanded_item(self, item):
         if self._updating:
@@ -771,8 +814,8 @@ class SearchPanel(QTreeWidget):
             self.result_selected.emit(self.event_id(current), QApplication.keyboardModifiers())
 
     def _activate_item(self, item, _column):
-        if item.data(MORE_ROLE) is True:
-            self._load_page(item.parent())
+        if self.is_paging_action(item):
+            self.load_more(item)
         elif identifier := self.event_id(item):
             self.activated.emit(identifier)
 
@@ -793,9 +836,9 @@ class SearchPanel(QTreeWidget):
             item.setExpanded(not item.isExpanded())
             event.accept()
             return
-        if item is not None and item.data(MORE_ROLE) is True:
+        if self.is_paging_action(item):
             self._auxiliary_press = event.position().toPoint()
-            self._load_page(item.parent())
+            self.load_more(item)
             event.accept()
             return
         self._mouse_selecting = True
@@ -820,7 +863,7 @@ class SearchPanel(QTreeWidget):
             if fold is not None and fold.contains(event.position()):
                 event.accept()
                 return
-            if item is not None and item.data(MORE_ROLE) is True:
+            if self.is_paging_action(item):
                 event.accept()
                 return
             if identifier := self.event_id(item):

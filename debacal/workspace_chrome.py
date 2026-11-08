@@ -123,7 +123,7 @@ class WorkspaceChrome:
             self.selection_buttons[mode] = button
         self.style_segments(list(self.selection_buttons.values()))
         self.selection_control.set_buttons(list(self.selection_buttons.values()))
-        events_section, _events_heading, events_row = self.toolbar_section('Events')
+        events_section, _events_heading, events_row = self.toolbar_section('Actions')
         events_row.setContentsMargins(0, 3, 0, 3)
         self.new_button = self.icon_button('new', 'Create an event', self.create_event, events_row, 'new_event')
         self.undo_button = self.icon_button('undo', 'Undo', self.undo, events_row, 'undo')
@@ -186,6 +186,8 @@ class WorkspaceChrome:
                 self.move_event(reference.id, start, end, reference=reference,
                                 copy=bool(modifiers & Qt.KeyboardModifier.ControlModifier)))
             widget.drag_preview_requested.connect(self.preview_drag)
+            if hasattr(widget, 'gesture_rejected'):
+                widget.gesture_rejected.connect(self.reject_drag)
         for widget in (self.header, self.canvas, self.month, self.all_day_canvas):
             widget.day_selected.connect(self.select_day)
             widget.create_all_day_requested.connect(self.create_all_day_event)

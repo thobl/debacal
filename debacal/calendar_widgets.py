@@ -20,7 +20,8 @@ from .theme import corner_radius, scheme_for
 from .event_style import event_colors, source_outline
 from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
-from .event_duration import add_elapsed, end_for
+from .event_duration import add_elapsed, elapsed_duration, end_for
+from .date_time_fields import format_duration
 
 # Default aliases remain available to standalone painter callers. Live surfaces
 # resolve their own preferences through paint_colors rather than mutating these.
@@ -58,6 +59,23 @@ def weekday_label_rect(left, width, scale):
 
 def day_number_rect(left, width, scale):
     return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
+
+
+def paint_selected_date(painter, label, day, selected, widget, size):
+    """Underline the action date without adding a badge or changing its type."""
+    if day != selected or label.width() <= 0 or label.height() <= 2:
+        return
+    scale = display_scale(widget)
+    font = ui_font(widget.preferences, size)
+    font.setBold(True)
+    metrics = QFontMetricsF(font)
+    width = min(label.width(), metrics.horizontalAdvance(str(day.day)))
+    baseline = label.center().y() + (metrics.ascent() - metrics.descent()) / 2
+    y = min(label.bottom() - scale, baseline + metrics.descent() + scale)
+    painter.save()
+    painter.setPen(QPen(paint_colors(widget).muted, 1.5 * scale))
+    painter.drawLine(QPointF(label.left(), y), QPointF(label.left() + width, y))
+    painter.restore()
 
 
 def week_number_rect(left, width, scale, preferences=None):
@@ -103,10 +121,28 @@ def at(day, hour=0, minute=0):
     return datetime.combine(day, time(hour, minute), local_zone())
 
 
-def event_tooltip(event, preferences, calendar=None):
-    """Full event details without gesture instructions or interpreted markup."""
-    start = event.start if event.all_day else event.start.astimezone(local_zone())
-    end = event.end if event.all_day else event.end.astimezone(local_zone())
+def repeated_clock(value):
+    return value.utcoffset() != value.replace(fold=1 - value.fold).utcoffset()
+
+
+def clock_zone_label(value):
+    """Distinguish repeated phases even when a zone reuses its abbreviation."""
+    alternate = value.replace(fold=1 - value.fold)
+    if value.tzname() and (not repeated_clock(value) or alternate.tzname() != value.tzname()):
+        return value.tzname()
+    offset = value.strftime('%z')
+    return 'UTC' + (offset[:3] + ':' + offset[3:] if len(offset) == 5 else offset)
+
+
+def event_clock_context(start, end):
+    return repeated_clock(start) or repeated_clock(end) or start.utcoffset() != end.utcoffset()
+
+
+def event_detail_lines(event, preferences, calendar=None, *, include_description=True, zone=None):
+    """Plain details shared by tooltips and native accessible event rows."""
+    zone = local_zone() if zone is None else zone
+    start = event.start if event.all_day else event.start.astimezone(zone)
+    end = event.end if event.all_day else event.end.astimezone(zone)
     when = preferences.format_date(start.date(), weekday=True)
     if event.all_day:
         last = end.date() - timedelta(days=1)
@@ -115,19 +151,27 @@ def event_tooltip(event, preferences, calendar=None):
         when += ' · All day'
     else:
         when += ' · ' + preferences.format_time(start)
-        changing_offset = end.utcoffset() != start.utcoffset()
-        if changing_offset:
-            when += ' ' + (start.tzname() or start.strftime('%z'))
+        clock_context = event_clock_context(start, end)
+        if clock_context:
+            when += ' ' + clock_zone_label(start)
         if end.timestamp() != start.timestamp():
             when += ('–' if end.date() == start.date() else
                      ' — ' + preferences.format_date(end.date(), weekday=True) + ' · ')
             when += preferences.format_time(end)
-            if changing_offset:
-                when += ' ' + (end.tzname() or end.strftime('%z'))
+            if clock_context:
+                when += ' ' + clock_zone_label(end)
+        if clock_context:
+            when += ' · ' + (format_duration(elapsed_duration(start, end), elapsed=True) or '0min') + ' elapsed'
     lines = [event.title, when]
     if calendar is not None:
         lines.append(calendar.name)
-    lines.extend(value for value in (event.location, event.description) if value)
+    lines.extend(value for value in (event.location, event.description if include_description else '') if value)
+    return lines
+
+
+def event_tooltip(event, preferences, calendar=None):
+    """Full event details without gesture instructions or interpreted markup."""
+    lines = event_detail_lines(event, preferences, calendar)
     return '<qt>' + '<br>'.join(escape(line).replace('\n', '<br>') for line in lines) + '</qt>'
 
 
@@ -334,13 +378,13 @@ class DayHeader(QWidget):
             if shade is not None:
                 p.fillRect(QRectF(x, 0, w, self.height()), shade)
             if today:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(colors.selection)
-                p.drawRoundedRect(QRectF(x + 6, 5 * scale, w - 12, 52 * scale), corner_radius(self, 4), corner_radius(self, 4))
+                p.fillRect(QRectF(x, 0, w, self.height()), colors.selection)
             day_color = weekend_text(day, self.preferences, colors,
                                      colors.accent if today else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
-            text(p, day_number_rect(x, w, scale), str(day.day),
+            number = day_number_rect(x, w, scale)
+            paint_selected_date(p, number, day, self.selected_day, self, DAY_NUMBER_SIZE)
+            text(p, number, str(day.day),
                  weekend_text(day, self.preferences, colors, colors.accent if today else colors.ink), DAY_NUMBER_SIZE, True)
         draw_column_grid(p, self.gutter, self.width(), self.days, self.height(), colors.line)
         p.setPen(QPen(colors.line, 1))
@@ -359,6 +403,7 @@ class CalendarCanvas(QWidget):
     selected = Signal(str)
     selected_scoped = Signal(str, object)
     gesture_started = Signal(str)
+    gesture_rejected = Signal(str)
     drag_preview_requested = Signal(str, object, object, object)
     placement_moved = Signal(object)
     placement_confirmed = Signal(object)
@@ -754,7 +799,16 @@ class CalendarCanvas(QWidget):
             if self.fixed_all_day:
                 daily = [item for item in daily if not item.all_day]
             timed = [item for item in daily if not item.all_day]
-            placements = {value.event_id: value for value in layout_events(timed, window_start=start, window_end=end)}
+            visual_ranges = {}
+            for item in timed:
+                local_start = datetime.fromtimestamp(max(item.start.timestamp(), start.timestamp()), zone)
+                local_end = datetime.fromtimestamp(min(item.end.timestamp(), end.timestamp()), zone)
+                top = ((local_start - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
+                bottom = ((local_end - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
+                height = max((18 if item.start.timestamp() == item.end.timestamp() else 14) * scale, bottom - top - 2)
+                visual_ranges[item.id] = self.time_top + top + 1, self.time_top + top + 1 + height
+            placements = {value.event_id: value for value in layout_events(
+                timed, window_start=start, window_end=end, visual_ranges=visual_ranges)}
             allday = {item.id: slot for slot, item in enumerate(item for item in daily if item.all_day)}
             for item in daily:
                 x = self.gutter + index * width
@@ -763,13 +817,9 @@ class CalendarCanvas(QWidget):
                     rect = QRectF(x + 3 + slot * width / count, 4, width / count - 6, 33 * scale)
                 else:
                     placement = placements[item.id]
-                    local_start = max(item.start.astimezone(zone), start)
-                    local_end = min(item.end.astimezone(zone), end)
-                    top = ((local_start - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
-                    bottom = ((local_end - start).total_seconds() / 3600 - self.start_hour) * self.hour_height
+                    top, bottom = visual_ranges[item.id]
                     rect = QRectF(x + placement.column * width / placement.columns + 3,
-                                  self.time_top + top + 1, width / placement.columns - 6,
-                                  max((18 if item.start.timestamp() == item.end.timestamp() else 14) * scale, bottom - top - 2))
+                                  top, width / placement.columns - 6, bottom - top)
                 result.append((rect, item))
         if cache_tag is not None:
             self._shape_cache[cache_tag] = key, result
@@ -864,11 +914,18 @@ class CalendarCanvas(QWidget):
             p.setClipRect(rect.adjusted(4, 1, -3, -1))
             point_event = event.start.timestamp() == event.end.timestamp()
             scale = display_scale(self)
-            title = (self.preferences.format_time(event.start.astimezone(local_zone())) + ' · ' if point_event else '') + event.title
+            local_start, local_end = event.start.astimezone(local_zone()), event.end.astimezone(local_zone())
+            clock_context = not event.all_day and event_clock_context(local_start, local_end)
+            phase = clock_zone_label(local_start) if clock_context else ''
+            if phase and local_start.utcoffset() != local_end.utcoffset():
+                phase += '→' + clock_zone_label(local_end)
+            prefix = self.preferences.format_time(local_start) if point_event else ''
+            prefix += (' ' if prefix else '') + phase
+            title = (prefix + ' · ' if prefix else '') + event.title
             reserve = 12 + (confirm.width() + 6 * scale if confirm is not None else 0)
             text(p, QRectF(rect.x() + 8, rect.y() + 1, rect.width() - reserve, min(21 * scale, rect.height() - 2)), title, QColor(style.ink), 9, True)
             if rect.height() > 39 * scale:
-                value = self.preferences.format_time(event.start.astimezone(local_zone())) + '–' + self.preferences.format_time(event.end.astimezone(local_zone()))
+                value = self.preferences.format_time(local_start) + '–' + self.preferences.format_time(local_end)
                 if event.candidate:
                     value += ' · option'
                 text(p, QRectF(rect.x() + 8, rect.y() + 23 * scale, rect.width() - 12, 18 * scale), value, QColor(style.muted), 8)
@@ -926,6 +983,51 @@ class CalendarCanvas(QWidget):
                       max(self.start_hour * 60, self.start_hour * 60 + round((point.y() - self.time_top) / self.hour_height * 4) * 15))
         return day, minutes
 
+    def gesture_range(self, kind, item, ghost):
+        """Resolve one wall-grid gesture identically for preview and commit.
+
+        An ambiguous target keeps the source endpoint's repeated-hour phase.
+        Normal targets discard a meaningless fold; nonexistent clocks are
+        rejected rather than silently moved across the daylight-saving gap.
+        """
+        day, begin, finish = ghost
+        zone = local_zone()
+
+        def target(minute, reference=None):
+            phase = reference.astimezone(zone).fold if reference is not None else 0
+            value = (at(self.days[day]) + timedelta(minutes=minute)).replace(fold=phase)
+            resolved = value.astimezone(timezone.utc).astimezone(zone)
+            if resolved.replace(tzinfo=None) != value.replace(tzinfo=None):
+                raise ValueError('This local time does not exist because the clocks change. Choose another time.')
+            return resolved
+
+        start = item.start if kind == 'resize' else target(begin, item.start if item else None)
+        end = end_for(item, start) if kind == 'move' else target(finish, item.end if item else None)
+        if kind == 'resize' and end.timestamp() < start.timestamp():
+            # An endpoint dragged back into a repeated hour must still follow
+            # its start, even when the old end was outside the repeated hour.
+            alternate = end.replace(fold=1 - end.fold)
+            if alternate.timestamp() >= start.timestamp():
+                end = alternate
+        if end.timestamp() < start.timestamp():
+            raise ValueError('The end must not be before the start.')
+        if end.astimezone(timezone.utc).astimezone(end.tzinfo).replace(tzinfo=None) != end.replace(tzinfo=None):
+            raise ValueError('This local time does not exist because the clocks change. Choose another time.')
+        return start, end
+
+    def resolved_gesture_range(self, kind, item, ghost):
+        try:
+            values = self.gesture_range(kind, item, ghost)
+        except (ValueError, OverflowError) as error:
+            message = str(error)
+            if message != getattr(self, '_gesture_error', None):
+                self.gesture_rejected.emit(message)
+            self._gesture_error = message
+            self.setToolTip(message)
+            return None
+        self._gesture_error = None
+        return values
+
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton or not self.days:
             return
@@ -947,6 +1049,7 @@ class CalendarCanvas(QWidget):
         if self.begin_confirmation(point):
             return
         self._placement_consumed = False
+        self._gesture_error = None
         self.selected_day = day
         self.gesture_modifiers = event.modifiers()
         hit = self.hit(point)
@@ -1019,13 +1122,8 @@ class CalendarCanvas(QWidget):
             start_min = min(max(0, original_min + minute - old_min), 1440 - 1 / 60_000_000)
             self.ghost = (day, start_min, start_min + duration)
         if kind != 'create' and self.ghost:
-            target_day, begin, finish = self.ghost
-            start = item.start if kind == 'resize' else at(self.days[target_day]) + timedelta(minutes=begin)
-            end = (at(self.days[target_day]) + timedelta(minutes=finish)
-                   if kind == 'resize' else end_for(item, start))
-            if kind == 'resize':
-                end = end.replace(fold=item.end.astimezone(local_zone()).fold)
-            self.drag_preview_requested.emit(item.id, start, end, event.modifiers())
+            if values := self.resolved_gesture_range(kind, item, self.ghost):
+                self.drag_preview_requested.emit(item.id, *values, event.modifiers())
         self.update()
 
     def leaveEvent(self, event):
@@ -1049,19 +1147,14 @@ class CalendarCanvas(QWidget):
         if drag:
             kind, item, _, (day, minute) = drag
             if ghost:
-                day, minute, finish = ghost
-                start = at(self.days[day]) + timedelta(minutes=minute)
-                end = at(self.days[day]) + timedelta(minutes=finish)
-                if kind == 'create':
-                    self.create_requested.emit(start, end)
-                elif kind == 'resize':
-                    end = end.replace(fold=item.end.astimezone(local_zone()).fold)
-                    self.move_requested.emit(item.id, item.start, end)
-                    self.move_scoped_requested.emit(item, item.start, end, event.modifiers())
-                else:
-                    end = end_for(item, start)
-                    self.move_requested.emit(item.id, start, end)
-                    self.move_scoped_requested.emit(item, start, end, event.modifiers())
+                values = self.resolved_gesture_range(kind, item, ghost)
+                if values is not None:
+                    start, end = values
+                    if kind == 'create':
+                        self.create_requested.emit(start, end)
+                    else:
+                        self.move_requested.emit(item.id, start, end)
+                        self.move_scoped_requested.emit(item, start, end, event.modifiers())
         if deferred and not ghost:
             self.emit_selection(*deferred)
         if drag and drag[0] == 'create' and not ghost and not self.placement_active and not self._placement_consumed:
@@ -1401,19 +1494,16 @@ class MonthCanvas(QWidget):
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(rect, shade)
-            if day == today:
-                if shade is not None:
-                    p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(colors.selection)
-                    p.drawRoundedRect(QRectF(x + 5 * scale, y + 2 * scale,
-                                            max(0, min(28 * scale, width - 10 * scale)), 26 * scale),
-                                      corner_radius(self, 4) * scale, corner_radius(self, 4) * scale)
-                else:
-                    p.fillRect(rect, colors.selection)
+            if day == self.selected_day:
+                p.fillRect(QRectF(x, y, width, self.month_row_metrics()[0]), colors.selection)
             p.setPen(QPen(colors.line, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
-            text(p, QRectF(x + 10, y + 3 * scale, width - 18, day_label_height), str(day.day),
+            if day == today:
+                p.setPen(QPen(colors.accent, 2 * scale))
+                p.drawRect(rect.adjusted(scale, scale, -scale, -scale))
+            number = QRectF(x + 10, y + 3 * scale, width - 18, day_label_height)
+            text(p, number, str(day.day),
                  weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink), 10, True)
         p.setPen(QPen(colors.line, 1))
         for index in range(8):

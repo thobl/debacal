@@ -111,7 +111,10 @@ def test_adaptive_eleven_hour_fit_does_not_create_a_one_pixel_scrollbar(workspac
     # An eleven-hour range has non-terminating scale values at these heights.
     # Its contents still fit and should not reserve a scrollbar for roundoff.
     target_height = 387
+    # Exercise a deliberately shorter inner canvas rather than the compact
+    # screen fallback, whose workspace normally retains a690px minimum.
     window.setMinimumHeight(1)
+    window.workspace_content.setMinimumHeight(1)
     window.resize(window.width(), window.height() + target_height - window.scroll.viewport().height())
     settle(app)
     assert window.scroll.viewport().height() == target_height
