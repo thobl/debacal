@@ -12,6 +12,7 @@ from debacal.ics_range_policy import GENERATED, POLICY, SIGNATURE, expected_rang
 from debacal import ics_range_policy as range_codec
 from debacal.models import Event
 from debacal.recurrence import expand_event, recurrence_key
+from debacal.schedule_authoring import expression_event
 from debacal.vdirsyncer_backend import semantic
 
 
@@ -65,6 +66,32 @@ def test_own_cut_roundtrip_keeps_policy_symbolic_and_standard_clients_see_same_r
     other, = parse(standard, 'local')
     assert other.range_policy == '' and len(other.recurrence_overrides) == 1
     assert ranges(other) == ranges(original)
+
+
+@pytest.mark.parametrize('parse', [parse_ics, parse_fallback])
+@pytest.mark.parametrize('all_day', [False, True])
+def test_authored_cut_exports_missing_starts_as_skipped_months_for_all_clients(parse, all_day):
+    start = datetime(2027, 1, 30, 0 if all_day else 9, tzinfo=UTC)
+    duration = timedelta(days=2) if all_day else timedelta(days=1, hours=1)
+    original = expression_event(Event('cut-day30', 'local', 'Month end', start, start + duration,
+                                      all_day=all_day),
+                                'every(1m, overflow=cut, span=2, count=5)')
+    raw = export_ics([original])
+    assert raw.count((GENERATED + ':').encode()) == 2  # April and June only.
+    restored, = parse(raw, 'local')
+    standard = edit_blocks(raw, lambda block: [line for line in block
+        if not line.startswith(tuple(name + ':' for name in (GENERATED, POLICY, SIGNATURE)))])
+    other, = parse(standard, 'local')
+    window = datetime(2027, 1, 1, tzinfo=UTC), datetime(2027, 8, 1, tzinfo=UTC)
+    expected = expand_event(original, *window)
+    assert [(item.start.month, item.start.day) for item in expected] == [(1, 30), (3, 30), (4, 30), (5, 30), (6, 30)]
+    def normalized(items):
+        return [(item.start.date(), item.end.date()) if all_day else (item.start, item.end) for item in items]
+    for decoded in (restored, other):
+        actual = expand_event(decoded, *window)
+        assert normalized(actual) == normalized(expected)
+    assert restored.range_policy == 'cut' and not restored.recurrence_overrides
+    assert other.range_policy == '' and len(other.recurrence_overrides) == 2
 
 
 @pytest.mark.parametrize('parse', [parse_ics, parse_fallback])

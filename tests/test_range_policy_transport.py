@@ -67,7 +67,7 @@ def test_whole_series_transports_keep_the_chosen_policy(tmp_path, policy, bounde
         else:
             moved, = EventClipboard.capture([event], reference, 'group').instantiate('group', target, 'local')
             assert moved.id != event.id
-        expected_months = [1, 3, 4, 5] if policy == 'skip' else [1, 2, 3, 4]
+        expected_months = [1, 3, 4, 5] if policy in ('skip', 'cut') else [1, 2, 3, 4]
         actual = values(moved)
         assert [item.start.month for item in actual[:4]] == expected_months
         assert all(item.start.day == 29 for item in actual if item.start.month != 2)
@@ -75,7 +75,7 @@ def test_whole_series_transports_keep_the_chosen_policy(tmp_path, policy, bounde
         if policy == 'shift':
             assert (february.start.day, february.end.date().isoformat()) == (27, '2027-03-01')
         elif policy == 'cut':
-            assert (february.start.day, february.end.date().isoformat()) == (28, '2027-03-01')
+            assert february is None
         assert moved.range_policy == ('cut' if policy == 'cut' else '')
         assert expression_matches(moved, moved.schedule_expression)
         if operation == 'move':

@@ -254,7 +254,8 @@ and calendar. One undo restores the entire choice set. Confirmed siblings remain
 ## Month-range Cut policy
 
 Skip and Shift overflow policies use standard RRULE constraints. Cut retains
-standard native starts but shortens overflowing ends at the month boundary.
+standard native starts, omitting months without the preferred starting date,
+but shortens overflowing ends at the month boundary.
 Locally it stays one small master with `range_policy="cut"`; generated ranges
 are not thousands of stored event overrides.
 

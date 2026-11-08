@@ -336,9 +336,6 @@ class EventDialog(FormDialog):
         self.overflow_policy = ChoiceControl([('Skip', 'skip'), ('Shift', 'shift'), ('Cut', 'cut')], self.preferences,
             icons={'skip': 'overflow_skip', 'shift': 'overflow_shift', 'cut': 'overflow_cut'}, icon_only=True)
         self.overflow_policy.setAccessibleName('Short-month handling')
-        self.overflow_policy.buttons['skip'].setToolTip('Skip · Leave out periods without all required calendar dates.')
-        self.overflow_policy.buttons['shift'].setToolTip('Shift · Move the whole occurrence earlier to fit, keeping its duration.')
-        self.overflow_policy.buttons['cut'].setToolTip('Cut · Keep the start and trim the part beyond the end of the month.')
         self.overflow_policy.setCurrentIndex(-1)
         frequency_row.addWidget(self.overflow_policy)
         scheduling.addLayout(frequency_row)
@@ -758,18 +755,44 @@ class EventDialog(FormDialog):
                         if self.all_day.isChecked() else
                         range_duration(self._last_start.astimezone(start.tzinfo), self._last_end.astimezone(start.tzinfo)))
             end = start + duration
+            event_span = occupied_span(start, end, self.all_day.isChecked())
             relevant, allow_cut = range_policy_options(start, end, kind, interval,
                 all_day=self.all_day.isChecked(), preferred_day=preferred_day,
                 range_policy=self._draft.range_policy or '',
                 span=self._draft.range_span if self._draft.overflow else None)
-            span = (self._draft.range_span if self._draft.overflow
-                    else occupied_span(start, end, self.all_day.isChecked()))
+            span = self._draft.range_span if self._draft.overflow else event_span
             shift_fits = shift_range_fits(start, kind, interval, span=span if allow_cut else 1)
             allow_cut = allow_cut and regular
-            if not regular and occupied_span(start, end, self.all_day.isChecked()) > 1:
+            if not regular and event_span > 1:
                 # Mixed finite programs currently express start-date steps,
                 # not a single month-contained range policy.
                 relevant = allow_cut = False
+            if allow_cut:
+                problem = ('Not every month in this series has room for the full date range.'
+                           if kind == 'MONTHLY' else
+                           'In some years, this month is too short for the full date range.')
+                skip = 'Omit occurrences where the full range does not fit.'
+                shift = 'Move the whole event earlier to fit, keeping its duration.'
+            else:
+                problem = ('Not every month in this series has the chosen starting day.'
+                           if kind == 'MONTHLY' else
+                           'The chosen starting date does not exist every year.')
+                skip = 'Omit occurrences when that date is missing.'
+                shift = ('Use the last day of that month instead.' if span == event_span == 1 else
+                         'Move the start to the last day of that month, keeping its duration.')
+            self.overflow_policy.buttons['skip'].setToolTip(f'Skip · {problem} {skip}')
+            period = 'months' if kind == 'MONTHLY' else 'years'
+            self.overflow_policy.buttons['cut'].setToolTip(
+                f'Cut · {problem} Keep the start and trim the part beyond the end of the month. '
+                f'Skip {period} without the starting date.')
+            if shift_fits:
+                shift_tip = f'{problem} {shift}'
+            else:
+                shift_tip = ('The full date range cannot fit in every month in this series.'
+                             if kind == 'MONTHLY' else
+                             'In some years, the full date range cannot fit in this month.')
+                shift_tip += ' Choose Skip or Cut.' if allow_cut else ' Choose Skip or a shorter range.'
+            self.overflow_policy.buttons['shift'].setToolTip(f'Shift · {shift_tip}')
         blocked = self.overflow_policy.blockSignals(True)
         try:
             self.overflow_policy.setOptionVisible('cut', allow_cut)
@@ -783,10 +806,6 @@ class EventDialog(FormDialog):
         self.overflow_policy.setVisible(repeated and relevant and not self.common_fields_only)
         self.overflow_policy.setEnabled(editable)
         self.overflow_policy.buttons['shift'].setEnabled(editable and shift_fits)
-        self.overflow_policy.buttons['shift'].setToolTip(
-            'Shift · Move the whole occurrence earlier to fit, keeping its duration.' if shift_fits else
-            'Shift · This whole range cannot fit in every month. Choose Skip or Cut.' if allow_cut else
-            'Shift · This whole range cannot fit in every month. Choose Skip or a shorter range.')
 
     def _sync_schedule_controls(self):
         was_loading, self._loading = self._loading, True

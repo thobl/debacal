@@ -66,7 +66,7 @@ def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None,
             result += f';BYMONTHDAY={day},{day + range_span - 1};BYSETPOS=-2'
         elif overflow == 'shift' and range_span > 1:
             result += f';BYMONTHDAY={day},-{range_span};BYSETPOS=1'
-        elif overflow in ('shift', 'cut'):
+        elif overflow == 'shift':
             result += ';BYMONTHDAY=' + ','.join(str(value) for value in range(min(28, day), day + 1))
             result += ';BYSETPOS=-1'
         elif preferred_day is not None:

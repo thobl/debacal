@@ -7,10 +7,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from debacal.models import Event
+from debacal.patterns import PatternError, compile_sequence
 from debacal.range_policies import (cut_range_for_key, iter_cut_ranges, occupied_span,
                                      occurrence_end, range_policy_options, shift_range_fits,
                                      uncut_occurrence_end)
 from debacal.recurrence import expand_event, occurrence, recurrence_key
+from debacal.regular_schedule import count_to_until, until_to_count
+from debacal.schedule_authoring import expression_event, expression_matches
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -44,6 +47,66 @@ def test_timed_cut_truncates_at_month_end_instead_of_using_the_original_end_cloc
     assert february.start == datetime(2027, 2, 28, 9, tzinfo=ZONE)
     assert february.end == datetime(2027, 3, 1, tzinfo=ZONE)
     assert items[2].end == datetime(2027, 3, 29, 10, tzinfo=ZONE)
+
+
+@pytest.mark.parametrize('all_day', [False, True])
+def test_authored_cut_skips_missing_start_dates_and_only_shortens_existing_ranges(all_day):
+    start = datetime(2027, 1, 30, 0 if all_day else 9, tzinfo=ZONE)
+    duration = timedelta(days=2) if all_day else timedelta(days=1, hours=1)
+    text = 'every(1m, overflow=cut, span=2, count=5)'
+    authored = expression_event(event(start=start, end=start + duration, all_day=all_day), text)
+    # The standard start rule keeps day 30. Cut changes April/June's end,
+    # whereas Shift would invent a February start and move April earlier.
+    assert 'BYSETPOS' not in authored.recurrence_rule
+    items = visible(authored, datetime(2027, 1, 1, tzinfo=ZONE), datetime(2027, 8, 1, tzinfo=ZONE))
+    assert [(item.start.month, item.start.day) for item in items] == [(1, 30), (3, 30), (4, 30), (5, 30), (6, 30)]
+    assert items[2].end == datetime(2027, 5, 1, tzinfo=ZONE)
+    assert items[4].end == datetime(2027, 7, 1, tzinfo=ZONE)
+    assert items[3].end == items[3].start + duration
+    assert expression_matches(authored, text)
+
+
+def test_cut_with_explicit_preferred_day_keeps_it_instead_of_clamping_it():
+    start = datetime(2027, 1, 28, tzinfo=ZONE)
+    text = 'every(1m, day=30, overflow=cut, span=2, count=4)'
+    authored = expression_event(event(start=start, end=start + timedelta(days=2)), text)
+    assert 'BYMONTHDAY=30' in authored.recurrence_rule
+    items = visible(authored, datetime(2027, 1, 1, tzinfo=ZONE), datetime(2027, 7, 1, tzinfo=ZONE))
+    assert [(item.start.month, item.start.day) for item in items] == [(1, 30), (3, 30), (4, 30), (5, 30)]
+    assert items[2].end == datetime(2027, 5, 1, tzinfo=ZONE)
+    assert expression_matches(authored, text)
+
+
+def test_yearly_cut_skips_years_without_the_starting_leap_day():
+    start = datetime(2028, 2, 29, tzinfo=ZONE)
+    text = 'every(1y, overflow=cut, span=2, count=3)'
+    authored = expression_event(event(start=start, end=start + timedelta(days=2)), text)
+    items = visible(authored, datetime(2028, 1, 1, tzinfo=ZONE), datetime(2037, 1, 1, tzinfo=ZONE))
+    assert [(item.start.year, item.start.month, item.start.day) for item in items] == [
+        (2028, 2, 29), (2032, 2, 29), (2036, 2, 29)]
+    assert all(item.end == datetime(item.start.year, 3, 1, tzinfo=ZONE) for item in items)
+    assert expression_matches(authored, text)
+
+
+def test_cut_regular_count_and_until_controls_count_only_existing_start_dates():
+    start = datetime(2027, 1, 30, tzinfo=ZONE)
+    options = dict(overflow='cut', range_span=2)
+    assert count_to_until(start, 'MONTHLY', 1, 4, **options) == datetime(2027, 5, 30).date()
+    assert until_to_count(start, 'MONTHLY', 1, datetime(2027, 4, 30).date(), **options) == 3
+
+
+@pytest.mark.parametrize('unit', ['1m', '1m!'])
+def test_cut_count_bound_proof_accounts_for_months_with_missing_start_dates(unit):
+    start = datetime(9999, 1, 30, tzinfo=ZONE)
+    compile_sequence(f'every({unit}, overflow=cut, span=2, count=11)', start, all_day=True)
+    with pytest.raises(PatternError, match='beyond the supported years'):
+        compile_sequence(f'every({unit}, overflow=cut, span=2, count=12)', start, all_day=True)
+
+
+def test_impossible_preferred_cut_start_has_a_validation_error():
+    start = datetime(2027, 2, 28, tzinfo=ZONE)
+    with pytest.raises(PatternError, match='cannot retain its exact time'):
+        compile_sequence('every(1y, day=30, overflow=cut, span=2, count=3)', start, all_day=True)
 
 
 def test_fixed_duration_imported_rule_still_flows_across_months():

@@ -110,8 +110,10 @@ For an all-day reference covering **28–29 January**, span is two:
 | `every(1m, overflow=cut, span=2)` | 28 February only. |
 
 Skip/Shift compile their start constraints into standard RRULEs. Cut retains
-the preferred start, clamps it if necessary, and truncates the native end at
-the next month's midnight. For timed events this is a month-boundary cut,
+the preferred starting date and omits months where that date does not exist;
+it truncates only the native end at the next month's midnight. For example,
+a 30–31 January range has no February occurrence, becomes 30 April only in
+April, and returns to 30–31 May in May. For timed events this is a month-boundary cut,
 **not** independent clamping of the end's day and clock. It never moves an end
 before its start. Later months recover the reference's original duration.
 

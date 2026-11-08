@@ -120,6 +120,83 @@ def test_single_day_shows_only_skip_and_shift_without_a_blank_cut_segment(editor
     assert ranges(dialog)[1] == ('2027-02-28', '2027-03-01')
 
 
+def test_tooltips_follow_changes_between_single_day_and_full_range_policies(editors):
+    start = datetime(2027, 1, 29, tzinfo=UTC)
+    dialog = editors(start, start + timedelta(days=1))
+    monthly(dialog)
+    choices = dialog.overflow_policy
+
+    def assert_one_day_tooltips():
+        assert 'Not every month' in choices.buttons['skip'].toolTip()
+        shift = choices.buttons['shift'].toolTip()
+        assert 'last day' in shift
+        assert 'duration' not in shift
+        assert 'full date range' not in shift
+
+    assert_one_day_tooltips()
+    dialog.duration.setText('2d')
+    dialog._duration_changed()
+    assert 'full date range' in choices.buttons['skip'].toolTip()
+    assert 'keeping its duration' in choices.buttons['shift'].toolTip()
+    assert 'Skip months without the starting date' in choices.buttons['cut'].toolTip()
+    dialog.duration.setText('1d')
+    dialog._duration_changed()
+    assert_one_day_tooltips()
+
+
+def test_leap_day_tooltips_explain_missing_yearly_date(editors):
+    start = datetime(2028, 2, 29, tzinfo=UTC)
+    dialog = editors(start, start + timedelta(days=1))
+    monthly(dialog)
+    dialog.repeat.setCurrentData('YEARLY')
+    choices = dialog.overflow_policy
+    assert not choices.isHidden()
+    for policy in ('skip', 'shift'):
+        tooltip = choices.buttons[policy].toolTip()
+        assert 'date does not exist every year' in tooltip
+        assert 'duration' not in tooltip
+
+
+def test_intentional_cross_month_tooltips_describe_only_missing_start_dates(editors):
+    start = datetime(2027, 1, 31, tzinfo=UTC)
+    dialog = editors(start, start + timedelta(days=2))
+    monthly(dialog)
+    choices = dialog.overflow_policy
+    assert not choices.isHidden()
+    assert choices.buttons['cut'].isHidden()
+    assert 'chosen starting day' in choices.buttons['skip'].toolTip()
+    shift = choices.buttons['shift'].toolTip()
+    assert 'Move the start to the last day' in shift
+    assert 'keeping its duration' in shift
+    assert 'full date range' not in shift
+
+
+def test_cut_skips_months_without_the_starting_day(editors):
+    start = datetime(2027, 1, 30, tzinfo=UTC)
+    dialog = editors(start, start + timedelta(days=2))
+    monthly(dialog)
+    dialog.overflow_policy.setCurrentData('cut')
+    assert ranges(dialog) == [('2027-01-30', '2027-02-01'),
+                              ('2027-03-30', '2027-04-01'),
+                              ('2027-04-30', '2027-05-01')]
+
+
+def test_saved_cut_rule_can_be_explicitly_updated_without_silently_changing_it(editors):
+    start = datetime(2027, 1, 30, tzinfo=UTC)
+    source = Event('saved-cut', 'local', 'Month end', start, start + timedelta(days=2), all_day=True,
+        recurrence_rule='FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=28,29,30;BYSETPOS=-1;COUNT=3',
+        range_policy='cut', schedule_expression='every(1m, overflow=cut, span=2, count=3)',
+        expression_anchor=start.date().isoformat(), schedule_syntax=2)
+    dialog = editors(source=source)
+    assert dialog.build_events()[0].recurrence_rule == source.recurrence_rule
+    monthly(dialog)
+    assert not dialog.overflow_policy.isHidden()
+    dialog.overflow_policy.setCurrentData('cut')
+    assert ranges(dialog) == [('2027-01-30', '2027-02-01'),
+                              ('2027-03-30', '2027-04-01'),
+                              ('2027-04-30', '2027-05-01')]
+
+
 def test_no_overflow_hides_the_whole_group(editors):
     start = datetime(2027, 1, 12, tzinfo=UTC)
     dialog = editors(start, start + timedelta(days=2))

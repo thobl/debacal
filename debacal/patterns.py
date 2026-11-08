@@ -841,8 +841,11 @@ def _check_tail_count_range(tail, start, preferred_day=None):
         for period in range(cycle):
             year, month = divmod((initial + period * months) % 4800, 12)
             required_day = (preferred_day or start.day) + (tail.range_span - 1 if tail.overflow == 'skip' else 0)
-            if tail.clamp or tail.overflow in ('shift', 'cut') or required_day <= monthrange(year + 400, month + 1)[1]:
+            if ((tail.clamp and not tail.overflow) or tail.overflow == 'shift'
+                    or required_day <= monthrange(year + 400, month + 1)[1]):
                 valid.append(period)
+        if not valid:
+            raise PatternError('No selected calendar day exists in this recurrence.')
         repetitions, remainder = divmod(tail.count - 1, len(valid))
         final_period = repetitions * cycle + valid[remainder]
         year, _month = divmod(initial + final_period * months, 12)
@@ -922,7 +925,7 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
                                 () if key(anchor) in desired else (key(anchor),), duplicate_starts=duplicates)
     if tail.preferred_day is not None:
         preferred_day = tail.preferred_day
-    elif not tail.clamp:
+    elif tail.overflow or not tail.clamp:
         preferred_day = start.day
     if start.microsecond or anchor.microsecond:
         raise PatternError('A regular recurrence requires whole-second times.')
