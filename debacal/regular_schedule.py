@@ -226,6 +226,13 @@ class RegularSchedule:
     def from_rule(cls, rule: str, start: datetime, *, all_day=False):
         """Return regular controls only when they can retain all rule clauses."""
         try:
+            _aware(start)
+            if (not all_day and start.fold
+                    and start.replace(fold=0).utcoffset() != start.utcoffset()):
+                # Native TZID recurrences generate the first repeated-hour
+                # phase. Date-only UNTIL controls cannot safely count against
+                # a retained second-phase reference; preserve its document.
+                return None
             parts = dict(part.strip().upper().split('=', 1) for part in rule.removeprefix('RRULE:').split(';'))
             kind = parts.get('FREQ')
             if (kind in ('MONTHLY', 'YEARLY') and parts.get('BYSETPOS') == '-1'

@@ -1,6 +1,7 @@
 """Selector intersections stay exact through certification and repeated moves."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -75,3 +76,49 @@ def test_overflow_controls_cannot_rewrite_a_span_that_does_not_fit_any_month():
     assert [item.start.date().isoformat() for item in values] == [
         '2026-10-31', '2026-11-29', '2026-12-30', '2027-01-30']
     assert RegularSchedule.from_rule(rule, start) is None
+
+
+def test_retained_second_phase_anchor_does_not_certify_a_shorter_count_as_exact_until():
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2025, 10, 26, 2, 15, tzinfo=zone, fold=1)
+    end = datetime.fromtimestamp(start.timestamp() + 900, zone)
+    counted = Event('late', 'local', 'Retained repeated hour', start, end,
+                    recurrence_rule='FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU;COUNT=1')
+    bounded = replace(counted, recurrence_rule='FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU;UNTIL=20261025T003000Z')
+    begin, finish = datetime(2025, 10, 1, tzinfo=zone), datetime(2027, 1, 1, tzinfo=zone)
+    # The native rule's first phase is intentional. The later cutoff includes
+    # a second year's occurrence even though the reference carries fold=1.
+    assert [item.start.astimezone(timezone.utc).isoformat() for item in expand_event(counted, begin, finish)] == [
+        '2025-10-26T00:15:00+00:00']
+    assert [item.start.astimezone(timezone.utc).isoformat() for item in expand_event(bounded, begin, finish)] == [
+        '2025-10-26T00:15:00+00:00', '2026-10-25T00:15:00+00:00']
+    assert not recurrence_matches(counted, bounded)
+    assert not recurrence_matches(bounded, counted)
+    assert RegularSchedule.from_rule(counted.recurrence_rule, start) is None
+    assert RegularSchedule.from_rule(bounded.recurrence_rule, start) is None
+
+    view = reconstruct_authoring(bounded)
+    assert view.structured and expression_matches(bounded, view.expression)
+    saved = replace(bounded, schedule_expression=view.expression, schedule_syntax=2)
+    with Store(':memory:') as store:
+        store.apply('Save retained second-phase document', [saved])
+        for hour in (3, 4):
+            current = store.get_event(saved.id)
+            selected = expand_event(current, begin, finish)[0]
+            target = selected.start.replace(hour=hour, fold=0)
+            store.move_selection([selected], 'group', selected, target, target + timedelta(minutes=15))
+            moved = store.get_event(saved.id)
+            assert [(item.start.date().isoformat(), item.start.hour, item.start.minute)
+                    for item in expand_event(moved, begin, finish)] == [
+                ('2025-10-26', hour, 15), ('2026-10-25', hour, 15)]
+            assert expression_matches(moved, moved.schedule_expression)
+
+
+@pytest.mark.parametrize('frequency', ['MONTHLY', 'YEARLY'])
+def test_regular_controls_refuse_only_an_actually_ambiguous_second_phase(frequency):
+    zone = ZoneInfo('Europe/Berlin')
+    late = datetime(2026, 10, 25, 2, 15, tzinfo=zone, fold=1)
+    rule = f'FREQ={frequency};COUNT=1'
+    assert RegularSchedule.from_rule(rule, late) is None
+    assert RegularSchedule.from_rule(rule, late.replace(fold=0)) is not None
+    assert RegularSchedule.from_rule(rule, late.astimezone(timezone.utc).replace(fold=1)) is not None
