@@ -244,17 +244,19 @@ def test_resizing_keeps_original_range_and_live_endpoint_duration_feedback(deskt
     QTest.mousePress(strip, Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseMove(strip, target)
     settle(app)
-    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw:
+    with patch.object(picker_module, 'text', wraps=picker_module.text) as draw, \
+         patch.object(strip, '_draw_range', wraps=strip._draw_range) as ranges:
         strip.grab()
     captions = [call.args[2] for call in draw.call_args_list]
-    assert 'Before: 09:00–10:00 · 1h' in captions
+    assert not any(caption.startswith('Before:') for caption in captions)
+    assert any(call.kwargs.get('ghost') and call.args[1:3] == (START, START + timedelta(hours=1))
+               for call in ranges.call_args_list)
     assert clock in captions and duration in captions
     # Pointer feedback is a transaction until the gesture is committed.
     assert picker.draft_start == START and picker.duration == timedelta(hours=1)
     QTest.mouseRelease(strip, Qt.MouseButton.LeftButton, pos=target)
     settle(app)
     assert format_duration(picker.duration) == duration
-    assert strip.before_caption == ''
 
 
 def test_short_events_retain_both_clocks_and_have_separate_resize_targets(desktop):

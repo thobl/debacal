@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
     QSizePolicy, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -37,55 +37,100 @@ REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
 
 
 class RangeFields(QWidget):
-    """Pair endpoints on roomy forms and stack them when text needs the room."""
+    """Compact inline endpoint labels, stacked when the text needs more room."""
     def __init__(self, start, end, preferences):
         super().__init__()
         self.preferences = preferences
-        self.row = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self.fields = start, end
+        self.labels = []
+        self._arranging = False
+        self.row = QGridLayout(self)
         self.row.setContentsMargins(0, 0, 0, 0)
-        self.row.setSpacing(10)
-        for caption, field in (('Starts', start), ('Ends', end)):
-            column = QWidget()
-            layout = QVBoxLayout(column)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(5)
+        self.row.setHorizontalSpacing(8)
+        self.row.setVerticalSpacing(8)
+        for caption, field in (('Start', start), ('End', end)):
             label = QLabel(caption)
             label.setBuddy(field)
-            layout.addWidget(label)
-            layout.addWidget(field)
-            self.row.addWidget(column, 1)
+            self.labels.append(label)
+            field.lineEdit().textChanged.connect(self._arrange)
+        self._arrange()
+
+    def _arrange(self, *_):
+        if self._arranging:
+            return
+        self._arranging = True
+        try:
+            scale = self.preferences.font_scale / 100
+            for field in self.fields:
+                field.ensurePolished()
+                caption = self.preferences.format_date(date(2026, 11, 28))
+                if not field.isAllDay():
+                    caption += ' ' + self.preferences.format_time(time(23, 55))
+                width = (field.lineEdit().fontMetrics().horizontalAdvance(caption)
+                         + round(18 * scale) + field.button.width() + 2)
+                field.setFixedWidth(max(round(164 * scale), min(round(210 * scale), width)))
+            for label in self.labels:
+                label.ensurePolished()
+            needed = sum(field.width() for field in self.fields)
+            needed += sum(label.fontMetrics().horizontalAdvance(label.text()) for label in self.labels) + 24
+            self._wide = self.width() >= needed
+            for field, label in zip(self.fields, self.labels):
+                self.row.removeWidget(label)
+                self.row.removeWidget(field)
+            for column in range(5):
+                self.row.setColumnStretch(column, 0)
+            for index, (field, label) in enumerate(zip(self.fields, self.labels)):
+                label.setMinimumWidth(0)
+                label.setMaximumWidth(16777215)
+                if self._wide:
+                    self.row.addWidget(label, 0, index * 2)
+                    self.row.addWidget(field, 0, index * 2 + 1)
+                else:
+                    label.setFixedWidth(label.fontMetrics().horizontalAdvance('Duration'))
+                    self.row.addWidget(label, index, 0)
+                    self.row.addWidget(field, index, 1)
+            self.row.setColumnStretch(4 if self._wide else 2, 1)
+        finally:
+            self._arranging = False
 
     def resizeEvent(self, event):
-        threshold = round(360 * self.preferences.font_scale / 100)
-        direction = QBoxLayout.Direction.LeftToRight if event.size().width() >= threshold else QBoxLayout.Direction.TopToBottom
-        self.row.setDirection(direction)
+        self._arrange()
         super().resizeEvent(event)
+
+    def minimumSizeHint(self):
+        # A wide arrangement must not force its parent to stay wide before a
+        # resize can reflow the fields into their two-row arrangement.
+        width = max(field.width() for field in self.fields)
+        width += max(label.fontMetrics().horizontalAdvance('Duration') for label in self.labels) + 8
+        return QSize(width, super().minimumSizeHint().height())
 
 
 class DurationFields(QWidget):
-    """Give longer preset lists a full row instead of clipping their captions."""
-    def __init__(self, field, choices, settings):
+    """Inline duration entry and presets, with a full preset row when needed."""
+    def __init__(self, field, choices):
         super().__init__()
-        self.field, self.choices, self.settings = field, choices, settings
+        self.field, self.choices = field, choices
         self.row = QGridLayout(self)
         self.row.setContentsMargins(0, 0, 0, 0)
         self.row.setHorizontalSpacing(7)
         self.row.setVerticalSpacing(5)
-        self.row.addWidget(field, 0, 0)
-        self.row.addWidget(settings, 0, 2)
-        self.row.setColumnStretch(1, 1)
+        self.label = QLabel('Duration')
+        self.label.setBuddy(field)
+        self.row.addWidget(self.label, 0, 0)
+        self.row.addWidget(field, 0, 1)
+        self.row.setColumnStretch(2, 1)
         self._wide = None
         self._arrange()
 
     def _arrange(self):
         metrics = self.choices.fontMetrics()
         needed = max((metrics.horizontalAdvance(caption) + 12 for caption, _ in self.choices.options), default=0)
-        wide = self.width() >= self.field.maximumWidth() + self.settings.width() + 14 + needed * self.choices.count()
+        wide = self.width() >= self.label.sizeHint().width() + self.field.maximumWidth() + 21 + needed * self.choices.count()
         if wide == self._wide:
             return
         self._wide = wide
         self.row.removeWidget(self.choices)
-        self.row.addWidget(self.choices, 0 if wide else 1, 1 if wide else 0, 1, 1 if wide else 3)
+        self.row.addWidget(self.choices, 0 if wide else 1, 2 if wide else 0, 1, 1 if wide else 3)
 
     def replace_choices(self, control):
         self.row.removeWidget(self.choices)
@@ -149,6 +194,7 @@ class EventDialog(FormDialog):
         self.scope_bindings = DEFAULT_MODE_BINDINGS | (scope_bindings or {})
         self._new_id = str(uuid4())
         self._loading = True
+        self.calendar_change_requested = False
         self._validation_field = None
         self._schedule_error = None
         self._scope_sources, self._scope_values = {}, {}
@@ -181,17 +227,22 @@ class EventDialog(FormDialog):
         left.setSpacing(0)
         self.heading = QLabel('Edit event' if event else 'Create event')
         self.heading.setObjectName('brand')
-        self.heading.setContentsMargins(18, 16, 18, 14)
-        left.addWidget(self.heading)
-        self.scope_controls = ChoiceControl([('One', 'single'), ('All', 'group'), ('Following', 'future')], self.preferences, self)
+        self.header = QWidget()
+        header_row = QHBoxLayout(self.header)
+        header_row.setContentsMargins(18, 16, 18, 14)
+        header_row.setSpacing(10)
+        header_row.addWidget(self.heading, 1)
+        self.scope_controls = ChoiceControl([('Select one event', 'single'), ('Select all in a series', 'group'),
+                                             ('Select this and following events', 'future')], self.preferences, self,
+                                           icons={'single': 'single', 'group': 'series', 'future': 'following'}, icon_only=True)
+        self.scope_controls.setFixedSize(round(32 * scale) * 3, round(32 * scale))
         self.scope = self.scope_controls
         self.scope_buttons = self.scope.buttons
         self.scope.setCurrentData(self._scope_name)
+        header_row.addWidget(self.scope_controls, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        left.addWidget(self.header)
         if event:
-            scope_box, scope_layout = self._section(left)
-            scope_layout.addWidget(self._heading('Apply to'))
-            scope_layout.addWidget(self.scope_controls)
-            self._divider(left)
+            self.scope_controls.show()
         else:
             self.scope_controls.hide()
         self.controls_scroll = QScrollArea()
@@ -213,7 +264,9 @@ class EventDialog(FormDialog):
         self.form.setVerticalSpacing(8)
         target = event.calendar_id if event else default_calendar_id
         self.calendar = CalendarChoice(self.calendars, self.preferences, selected_id=target)
-        self.calendar.setEnabled(event is None)
+        self.calendar.setEnabled(not (event and event.read_only))
+        if self.common_fields_only:
+            self.calendar.setToolTip('Choose a calendar to move all selected events; leave unchanged to keep their calendars.')
         self.title = QLineEdit()
         self.location = QLineEdit()
         for index, (caption, field) in enumerate((('Calendar', self.calendar), ('&Title', self.title), ('&Location', self.location))):
@@ -233,22 +286,28 @@ class EventDialog(FormDialog):
         self.start, self.end = DateTimeField(self.preferences), DateTimeField(self.preferences)
         self.start.setAccessibleName('Start date and time')
         self.end.setAccessibleName('End date and time')
-        timing.addWidget(RangeFields(self.start, self.end, self.preferences))
+        self.range_fields = RangeFields(self.start, self.end, self.preferences)
+        timing.addWidget(self.range_fields)
         self.duration = QLineEdit()
         self.duration.setAccessibleName('Duration')
         self.duration.setMaximumWidth(round(110 * scale))
         self.duration.setToolTip('Changing duration adjusts the end.')
         self.duration_choices = ChoiceControl([('30min', 30), ('45min', 45), ('1h', 60)], self.preferences)
-        self.duration_preferences = self._icon_button('settings', 'Duration button preferences', self.configure_durations)
-        self.duration_fields = DurationFields(self.duration, self.duration_choices, self.duration_preferences)
-        timing.addWidget(QLabel('Duration'))
+        self.duration_fields = DurationFields(self.duration, self.duration_choices)
         timing.addWidget(self.duration_fields)
         self._divider(sections)
         self.schedule_section, scheduling = self._section(sections)
         scheduling.addWidget(self._heading('Schedule'))
         self.schedule_mode = ChoiceControl([('Single', 'single'), ('Repeat', 'repeat'), ('Alternatives', 'alternatives')], self.preferences,
                                           icons={'single': 'single', 'repeat': 'series', 'alternatives': 'alternatives'})
-        scheduling.addWidget(self.schedule_mode)
+        self.schedule_mode_row = QHBoxLayout()
+        self.schedule_mode_row.setContentsMargins(0, 0, 0, 0)
+        self.schedule_mode_row.setSpacing(round(14 * scale))
+        self.schedule_mode_row.addWidget(self.schedule_mode, 1)
+        self.add_occurrence_button = icon_button('new', 'Add occurrence at another date or time', self.add_occurrence,
+                                                preferences=self.preferences)
+        self.schedule_mode_row.addWidget(self.add_occurrence_button)
+        scheduling.addLayout(self.schedule_mode_row)
         self.repeat = ChoiceControl([('Daily', 'DAILY'), ('Weekly', 'WEEKLY'), ('Monthly', 'MONTHLY'),
                                      ('Yearly', 'YEARLY'), ('Custom', 'RDATE')], self.preferences,
                                     icons={'DAILY': 'day', 'WEEKLY': 'week', 'MONTHLY': 'month', 'YEARLY': 'year', 'RDATE': 'sequence'},
@@ -260,10 +319,6 @@ class EventDialog(FormDialog):
         frequency_row.setSpacing(0)
         self.repeat.setFixedWidth(self.repeat.height() * self.repeat.count())
         frequency_row.addWidget(self.repeat)
-        frequency_row.addSpacing(round(14 * scale))
-        self.add_occurrence_button = icon_button('new', 'Add occurrence at another date or time', self.add_occurrence,
-                                                preferences=self.preferences)
-        frequency_row.addWidget(self.add_occurrence_button)
         frequency_row.addStretch(1)
         scheduling.addLayout(frequency_row)
         self.recurrence_details = QStackedWidget()
@@ -323,7 +378,7 @@ class EventDialog(FormDialog):
         advanced = QVBoxLayout(self.advanced_page)
         advanced.setContentsMargins(0, 0, 0, 0)
         advanced.setSpacing(4)
-        self.advanced_summary = QLabel('Imported custom recurrence')
+        self.advanced_summary = QLabel('Calendar recurrence')
         self.advanced_summary.setToolTip('This recurrence is preserved. Adjust dates in the preview or choose a regular pattern.')
         advanced.addWidget(self.advanced_summary)
         self.convert_sequence_button = action_button('Edit as sequence', lambda: self._enter_custom(restore=False))
@@ -388,7 +443,8 @@ class EventDialog(FormDialog):
             shortcut.activated.connect(lambda value=scope: self.scope.setCurrentData(value))
             self.mode_shortcuts[action] = shortcut
             label = shortcut_label(binding)
-            self.scope_buttons[scope].setToolTip(self.scope_buttons[scope].text() + (' · ' + label if label else ''))
+            caption = self.scope_buttons[scope].accessibleName()
+            self.scope_buttons[scope].setToolTip(caption + (' (' + label + ')' if label else ''))
         self.title.setFocus()
         self.title.selectAll()
 
@@ -447,11 +503,17 @@ class EventDialog(FormDialog):
         self.title.textChanged.connect(self._update_preview)
         self.location.textChanged.connect(self._update_preview)
         self.description.textChanged.connect(self._update_preview)
+        self.calendar.activated.connect(self._calendar_selected)
+        self.calendar.currentIndexChanged.connect(self._calendar_selected)
         self.calendar.currentIndexChanged.connect(self._update_preview)
         self.preview.date_toggled.connect(self.toggle_date)
         self.preview.occurrence_selected.connect(self._preview_selected)
         self.preview.occurrence_remove_requested.connect(self.remove_occurrence)
         self.preview.occurrence_edit_requested.connect(self.edit_occurrence)
+
+    def _calendar_selected(self, *_):
+        if not self._loading and self.original is not None:
+            self.calendar_change_requested = True
 
     @property
     def edit_reference(self):
@@ -479,7 +541,9 @@ class EventDialog(FormDialog):
         source = self.schedule_source(scope)
         if reference:
             start, end = reference.start, reference.end
-        elif end is None:
+            self.calendar.setCurrentIndex(self.calendar.findData(reference.calendar_id))
+        self.calendar_change_requested = False
+        if reference is None and end is None:
             end = start + timedelta(minutes=self.preferences.default_event_duration_minutes)
         all_day = bool(reference and reference.all_day)
         if not all_day:
@@ -629,22 +693,6 @@ class EventDialog(FormDialog):
         if not self._loading and minutes is not None:
             self.duration.setText(format_duration(timedelta(minutes=minutes), all_day=self.all_day.isChecked()))
             self._duration_changed()
-
-    def configure_durations(self):
-        from .preferences_dialog import PreferencesDialog
-        window = self.window()
-        while window.parentWidget() is not None:
-            window = window.parentWidget().window()
-        if hasattr(window, 'show_preferences'):
-            window.show_preferences(category='calendar')
-            self.preferences = window.preferences
-            self._sync_presets()
-        else:
-            dialog = PreferencesDialog(self.preferences, self)
-            dialog.set_category('calendar')
-            dialog.applied.connect(lambda preferences, _bindings: self._set_duration_preferences(preferences))
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                self._set_duration_preferences(dialog.result_preferences)
 
     def _set_duration_preferences(self, preferences):
         self.preferences = preferences
@@ -901,13 +949,14 @@ class EventDialog(FormDialog):
         return [event]
 
     def _project_preview(self, event):
+        projected = event
         if self.series and self.scope.currentData() == 'group':
-            return updated_series(self.series, self.edit_reference, event, replace_schedule=self.schedule_replacement)
-        if self.series and self.scope.currentData() == 'future':
+            projected = updated_series(self.series, self.edit_reference, event, replace_schedule=self.schedule_replacement)
+        elif self.series and self.scope.currentData() == 'future':
             from .series_operations import updated_future
-            _, tail = updated_future(self.series, self.original, event, self.schedule_replacement)
-            return tail
-        return event
+            _, projected = updated_future(self.series, self.original, event, self.schedule_replacement)
+        return (replace(projected, calendar_id=event.calendar_id)
+                if projected is not None and projected.calendar_id != event.calendar_id else projected)
 
     def _update_preview(self, *_):
         if self._loading:
@@ -917,7 +966,6 @@ class EventDialog(FormDialog):
         self.schedule_mode.setEnabled(editable)
         self.schedule_mode.setVisible(not self.common_fields_only)
         self.repeat.setVisible(repeated and not self.common_fields_only)
-        self.frequency_row.itemAt(1).spacerItem().changeSize(round(14 * self.preferences.font_scale / 100) if repeated else 0, 0)
         self.repeat.setEnabled(editable)
         regular = repeated and self._draft.kind in REGULAR_KINDS
         self.recurrence_details.setVisible(repeated and not self.common_fields_only)
@@ -931,6 +979,8 @@ class EventDialog(FormDialog):
                                     else 'Final recurrence date')
         self.custom_controls.setEnabled(editable)
         self.custom_input.setCurrentIndex(1 if self._draft.kind == 'advanced' else 0)
+        self.advanced_summary.setToolTip(getattr(self._draft, 'authoring_error', '') or
+            'This recurrence is preserved. Adjust dates in the preview or choose a regular pattern.')
         self.pattern.setEnabled(editable)
         self.add_occurrence_button.setEnabled(editable)
         self.add_occurrence_button.setVisible(not self.common_fields_only)
@@ -1102,6 +1152,7 @@ class EventDialog(FormDialog):
 
     def _snapshot(self):
         return dict(start=self._last_start, end=self._last_end, duration=self._duration,
+            calendar_id=self.calendar.currentData(), calendar_change_requested=self.calendar_change_requested,
             start_text=self.start.text(), end_text=self.end.text(), title=self.title.text(), location=self.location.text(),
             notes=self.description.toPlainText(), all_day=self.all_day.isChecked(), timed_range=self._timed_range,
             mode=self.schedule_mode.currentData(), draft=deepcopy(self._draft), repeat_draft=deepcopy(self._repeat_draft),
@@ -1111,6 +1162,8 @@ class EventDialog(FormDialog):
             until_text=self.repeat_until.text(), pattern_text=self.pattern.text())
 
     def _restore(self, state):
+        self.calendar.setCurrentIndex(self.calendar.findData(state['calendar_id']))
+        self.calendar_change_requested = state['calendar_change_requested']
         self.all_day.setChecked(state['all_day'])
         self._timed_range = state['timed_range']
         self._set_range(state['start'], state['end'])

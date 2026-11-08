@@ -56,7 +56,7 @@ class CalendarChoice(QComboBox):
         self.clear()
         self._calendars = {}
         for calendar in calendars:
-            if self.writable_only and (calendar.read_only or calendar.kind == 'ics'):
+            if self.writable_only and (not calendar.enabled or calendar.read_only or calendar.kind == 'ics'):
                 continue
             self._calendars[calendar.id] = calendar
             self.addItem(calendar_color_icon(calendar.color, self.preferences), calendar.name, calendar.id)

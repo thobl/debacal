@@ -680,7 +680,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             previous_ids = {value.id for value in expected}
             self.store.edit_selection(refs, scope, reference, edited,
                                       replace_schedule=dialog.schedule_replacement,
+                                      calendar_id=(dialog.calendar.currentData()
+                                                   if getattr(dialog, 'calendar_change_requested', False) else None),
                                       expected_masters=expected)
+            destination = self.store.get_calendar(edited.calendar_id)
+            if destination and not destination.visible and (edited.calendar_id != reference.calendar_id
+                                                            or getattr(dialog, 'calendar_change_requested', False)):
+                self.store.set_calendar_visible(destination.id, True)
             zone = local_zone()
             shift = edited.start.astimezone(zone).replace(tzinfo=None) - reference.start.astimezone(zone).replace(tzinfo=None)
             target = (event.start.astimezone(zone).replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=event.start.fold)

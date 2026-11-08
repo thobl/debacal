@@ -161,7 +161,7 @@ preferences.
 One event master represents one UID resource. RRULE, RDATE, EXDATE and detached
 RECURRENCE-ID exceptions remain standard iCalendar. Views expand occurrences;
 sync never flattens the series. The editor's regular controls, chosen dates and
-advanced rule field are different ways to configure this same schedule model.
+custom sequence are different ways to configure this same schedule model.
 Custom authoring text and its anchor date are retained in SQLite/history and
 written into the master VEVENT's proprietary properties whenever a custom
 definition exists. These fields travel through the same CalDAV resource as the
@@ -200,19 +200,22 @@ the master definition.
 
 Another Debacal instance restores the definition even when its local calendar
 IDs or display timezone differ. Sequence clock times continue to use the series'
-original authoring zone; the editor identifies that zone while showing Starts
-and Ends in the local display zone. For a current version-2 definition matching
+original authoring zone; the editor identifies that zone while showing Start
+and End in the local display zone. For a current version-2 definition matching
 the standard schedule, a title-only edit keeps the definition, anchor, authoring
 zone and event instants intact. Legacy version-1 definitions are upgraded to the
 current notation when edited. Changes to the definition alone also enter the
 outbox and synchronize.
 
-RRULE/RDATE/EXDATE remain the functional schedule other clients understand.
+RRULE/RDATE/EXDATE and detached exceptions remain the functional schedule other
+clients understand. Reconstructed text describes the displayed occurrence starts,
+including changed times, while retained occurrences keep their original
+RECURRENCE-ID and exception details.
 If another client changes those dates without updating the proprietary text,
 the editor reconstructs an equivalent definition for finite schedules of up to
-500 occurrences. Larger or unbounded schedules show a notice and retain their
-standard recurrence until a replacement definition is entered. If a client
-removes the proprietary fields, a clean pull accepts their removal and retains
+500 occurrences and supported unbounded rules with finite exceptions. Other
+schedules retain their standard recurrence until a replacement definition is
+entered. If a client removes the proprietary fields, a clean pull accepts their removal and retains
 the standard schedule; it does not silently restore an old annotation.
 
 To check sharing, save a custom series in instance A and finish Sync, then sync

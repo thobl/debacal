@@ -347,7 +347,7 @@ def test_pinned_primary_click_preserves_authored_literal_and_clean_state():
     assert changed is source and draft.expression == text and not draft.configuration_changed
 
 
-def test_custom_occurrence_range_keeps_literal_and_receives_later_common_field_changes():
+def test_custom_occurrence_range_updates_literal_and_receives_later_common_field_changes():
     text = '  4*(+2)  '
     source = master(**schedule_fields(expand_sequence(text, START)), schedule_expression=text,
                     expression_anchor=START.date().isoformat(), schedule_syntax=2)
@@ -355,7 +355,9 @@ def test_custom_occurrence_range_keeps_literal_and_receives_later_common_field_c
     draft = ScheduleDraft.from_event(source)
     changed = draft.edit_occurrence(source, selected, selected.start + timedelta(hours=2),
                                     selected.end + timedelta(hours=3))
-    assert changed.schedule_expression == text
+    assert '11:00' in changed.schedule_expression
+    assert instants(expand_sequence(changed.schedule_expression, changed.start)) == instants(
+        [value.start for value in visible(changed)])
     assert changed.recurrence_rule == source.recurrence_rule
     edited = replace(changed, title='New shared title', location='New room')
     projected = updated_series(source, source, edited, replace_schedule=True)

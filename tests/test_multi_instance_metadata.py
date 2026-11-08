@@ -22,6 +22,7 @@ from debacal.models import Calendar
 from debacal.patterns import expand_sequence
 from debacal.recurrence import base_schedule_starts, expand_series, recurrence_key
 from debacal.store import Store
+from debacal.schedule_authoring import displayed_starts
 from debacal.vdirsyncer_backend import VdirsyncerBackend, semantic
 from test_vdirsyncer import FakeCLI
 
@@ -235,9 +236,7 @@ def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_res
     assert imported.excluded_dates == original.excluded_dates
     assert set(imported.recurrence_overrides) == set(original.recurrence_overrides)
     opened = editor(b, imported)
-    active_nominal = [value for value in base_schedule_starts(imported)
-                      if recurrence_key(value, imported.all_day) not in imported.excluded_dates]
-    assert instants(expand_sequence(opened.pattern.text(), imported.start)) == instants(active_nominal)
+    assert instants(expand_sequence(opened.pattern.text(), imported.start)) == instants(displayed_starts(imported))
 
     selected = next(value for value in expand_series(imported, START, START + timedelta(days=200))
                     if value.start == values[2].start)
@@ -264,9 +263,7 @@ def test_candidate_overrides_exclusions_and_following_split_sync_as_complete_res
         assert received.candidate
         reopened = editor(a, received)
         assert reopened.pattern.text() == expected.schedule_expression
-        active_nominal = [value for value in base_schedule_starts(received)
-                          if recurrence_key(value, received.all_day) not in received.excluded_dates]
-        assert instants(expand_sequence(reopened.pattern.text(), received.start)) == instants(active_nominal)
+        assert instants(expand_sequence(reopened.pattern.text(), received.start)) == instants(displayed_starts(received))
 
 
 @pytest.mark.parametrize('stripped', [METADATA, {'X-DEBACAL-PATTERN'}, {'X-DEBACAL-PATTERN-VERSION'},

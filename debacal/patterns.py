@@ -569,10 +569,13 @@ class _ShortForm:
     years: int = 0
     depth: int = 0
     groups: int = 0
+    offsets: int = 0
 
     @property
     def score(self):
-        return len(self.text), self.years, self.depth, self.groups, self.text
+        # Unrepeated offsets obscure an irregular set's actual dates. Repeated
+        # strides/motifs are meaningful patterns and carry no such penalty.
+        return self.offsets, len(self.text), self.years, self.depth, self.groups, self.text
 
 
 def _transition_atoms(previous, value, anchor):
@@ -621,7 +624,7 @@ def _transition_atoms(previous, value, anchor):
     return result
 
 
-def _simplify_masks(masks, forms):
+def _simplify_masks(masks, forms, *, prefer_dates=True):
     """Bounded lattice DP: concatenation, shared atoms, and periodic blocks.
 
     Short blocks are searched directly. Longer primitive periods are proposed
@@ -640,15 +643,17 @@ def _simplify_masks(masks, forms):
             frequencies[bit.bit_length() - 1] += 1
             bits -= bit
 
-    def atom(mask):
-        if mask not in atom_cache:
+    def atom(mask, patterned=False):
+        key = mask, patterned
+        if key not in atom_cache:
             bits, choices = mask, []
             while bits:
                 bit = bits & -bits
-                choices.append(forms[bit.bit_length() - 1])
+                form = forms[bit.bit_length() - 1]
+                choices.append(form if not patterned else _ShortForm(form.text, form.years))
                 bits -= bit
-            atom_cache[mask] = min(choices, key=lambda form: form.score)
-        return atom_cache[mask]
+            atom_cache[key] = min(choices, key=lambda form: form.score)
+        return atom_cache[key]
 
     def signature(mask, prefer_relative):
         bits, choices = mask, []
@@ -663,16 +668,13 @@ def _simplify_masks(masks, forms):
         return min(choices, key=lambda pair: (-frequencies[pair[0]], pair[1].score))[0]
 
     def consider(prefix, suffix, best):
-        length = len(prefix.text) + len(suffix.text) + bool(suffix.text)
-        metrics = (length, prefix.years + suffix.years, max(prefix.depth, suffix.depth), prefix.groups + suffix.groups)
-        if metrics > best.score[:4]:
-            return best
         text = prefix.text + (' ' + suffix.text if suffix.text else '')
-        candidate = _ShortForm(text, metrics[1], metrics[2], metrics[3])
+        candidate = _ShortForm(text, prefix.years + suffix.years, max(prefix.depth, suffix.depth),
+                               prefix.groups + suffix.groups, prefix.offsets + suffix.offsets)
         return candidate if candidate.score < best.score else best
 
-    def encode(sequence, level):
-        key = sequence, level
+    def encode(sequence, level, patterned=False):
+        key = sequence, level, patterned
         if key in cache:
             return cache[key]
         count = len(sequence)
@@ -687,16 +689,17 @@ def _simplify_masks(masks, forms):
                     break
                 cheap_runs[start] = stop - start + 1
         for start in range(count - 1, -1, -1):
-            first = atom(sequence[start])
+            first = atom(sequence[start], patterned)
             tail = best[start + 1]
             selected = _ShortForm(first.text + (' ' + tail.text if tail.text else ''),
-                                  first.years + tail.years, tail.depth, tail.groups)
+                                  first.years + tail.years, tail.depth, tail.groups,
+                                  first.offsets + tail.offsets)
             shared = sequence[start]
             for stop in range(start + 1, count):
                 shared &= sequence[stop]
                 if not shared:
                     break
-                common = atom(shared)
+                common = atom(shared, True)
                 repeated = _ShortForm(f'{stop - start + 1}*{common.text}', common.years)
                 selected = consider(repeated, best[stop + 1], selected)
             if level < MAX_NESTING and work[0] > 0:
@@ -742,7 +745,7 @@ def _simplify_masks(masks, forms):
                         if not valid:
                             break
                         repetitions += 1
-                        body = encode(tuple(common), level + 1)
+                        body = encode(tuple(common), level + 1, True)
                         grouped = _ShortForm(f'{repetitions}*({body.text})', body.years,
                                              body.depth + 1, body.groups + 1)
                         selected = consider(grouped, best[start + repetitions * period], selected)
@@ -752,16 +755,18 @@ def _simplify_masks(masks, forms):
             cache[key] = result
         return result
 
-    return encode(tuple(masks), 0).text
+    return encode(tuple(masks), 0, not prefer_dates).text
 
 
-def simplify_sequence(starts: Iterable[datetime]) -> str:
+def simplify_sequence(starts: Iterable[datetime], *, prefer_dates=True) -> str:
     """Choose a short, verified sequence for clicked dates and precise clocks.
 
     The fixed first event and instruction order are retained. Optimization is
     bounded to 500 instants; larger legacy sets use the full-date serializer.
     Every atom is certified against the original anchor, and the final result
-    must reproduce every timestamp before it is returned.
+    must reproduce every timestamp before it is returned. Unrepeated dates
+    prefer explicit calendar entries; ``prefer_dates=False`` also allows short
+    isolated offsets when describing the phase of an ongoing regular tail.
     """
     values = _unique_starts(starts)
     if len(values) == 1:
@@ -777,10 +782,10 @@ def simplify_sequence(starts: Iterable[datetime]) -> str:
         for text, full_year in candidates.items():
             if text not in indexes:
                 indexes[text] = len(forms)
-                forms.append(_ShortForm(text, full_year))
+                forms.append(_ShortForm(text, full_year, offsets=int(text.startswith('+'))))
             mask |= 1 << indexes[text]
         masks.append(mask)
-    expression = _simplify_masks(masks, forms)
+    expression = _simplify_masks(masks, forms, prefer_dates=prefer_dates)
     try:
         expanded = expand_sequence(expression, values[0])
     except PatternError:
@@ -790,9 +795,9 @@ def simplify_sequence(starts: Iterable[datetime]) -> str:
     return expression
 
 
-def reconstruct_sequence(starts: Iterable[datetime]) -> str:
+def reconstruct_sequence(starts: Iterable[datetime], *, prefer_dates=True) -> str:
     """Equivalent short instructions for legacy sources and current date sets."""
-    return simplify_sequence(starts)
+    return simplify_sequence(starts, prefer_dates=prefer_dates)
 
 
 def reconstruct_pattern(dates: list[date]) -> str | None:

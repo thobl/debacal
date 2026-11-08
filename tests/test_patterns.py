@@ -213,7 +213,7 @@ class SequenceSerializationTests(unittest.TestCase):
     def test_reconstruction_compacts_relative_week_runs_without_repeating_anchor(self):
         old = legacy_patterns.expand_pattern('13(Mo X) 2X 4(Mo X)', date(2026, 11, 4))
         expression = reconstruct_pattern(old)
-        self.assertEqual(expression, '12*+2 +4 3*+2')
+        self.assertEqual(expression, '12*+2 24. 3*+2')
         self.assertEqual(expand_pattern(expression, old[0]), old)
         self.assertEqual(reconstruct_pattern([ANCHOR.date()]), '')
         self.assertIsNone(reconstruct_pattern([]))

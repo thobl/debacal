@@ -552,6 +552,8 @@ class Store:
 
     def edit_occurrence(self, instance: Event, edited: Event, label: str = "Edit occurrence") -> int | None:
         from .recurrence import occurrence_id
+        if edited.calendar_id != instance.calendar_id:
+            return self.edit_selection([instance], "single", instance, edited, label=label)
         with self._transaction():
             master = self._reviewed_master(instance)
             if not instance.series_id:
@@ -709,14 +711,35 @@ class Store:
             return self.apply(label, [event for key, event in changed.items() if key not in deleted], deleted)
 
     def _transform_selection(self, roots, scope, reference, edited, *, common_changes=None,
-                             schedule_changes=None, replace_schedule=False):
+                             schedule_changes=None, replace_schedule=False, calendar_id=None,
+                             delete_ids=None):
         """Compile projections in memory; no write occurs until every root passes."""
         from datetime import timedelta
         from .event_clipboard import _moved_times
         from .recurrence import event_zone, occurrence_id, updated_series, _valid_wall_time
-        from .series_operations import partition_series, reidentify_series, updated_future
+        from .series_operations import clone_event, detach_event, partition_series, reidentify_series, updated_future
         from .selection import is_whole_root
         common_changes, schedule_changes = common_changes or {}, schedule_changes or {}
+        deleted = delete_ids if delete_ids is not None else set()
+        used_uids = set()
+        if calendar_id is not None:
+            self._assert_writable([{"calendar_id": calendar_id}])
+            used_uids = {event.ical_uid for event in self.list_events(calendar_ids=[calendar_id])}
+            # A remotely stored resource pending deletion still owns its UID.
+            # Reusing it could make the sync bridge identify the new resource
+            # as the old deletion instead of an independent insertion.
+            for state in self.list_sync_state(calendar_id):
+                payload = (state.get("base_payload") or {}).get("event") or {}
+                if payload.get("ical_uid"):
+                    used_uids.add(payload["ical_uid"])
+
+        def transferred(value, *, keep_id=False):
+            identifier = value.id if keep_id else str(uuid4())
+            uid = value.ical_uid if value.ical_uid not in used_uids else str(uuid4())
+            used_uids.add(uid)
+            return clone_event(value, new_id=identifier, new_uid=uid,
+                               calendar_id=calendar_id, group_id=value.group_id)
+
         reference_zone = event_zone(reference)
         reference_wall = lambda value: value.astimezone(reference_zone).replace(tzinfo=None)
         old_duration = reference_wall(reference.end) - reference_wall(reference.start)
@@ -751,9 +774,21 @@ class Store:
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                                     schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
                     previous = changed.get(master.id, master)
-                    changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
+                    if calendar_id is not None and calendar_id != master.calendar_id:
+                        changed[master.id] = replace(previous,
+                            excluded_dates=tuple(sorted(set(previous.excluded_dates) | {root.recurrence_id})),
+                            recurrence_overrides={key: payload for key, payload in previous.recurrence_overrides.items()
+                                                  if key != root.recurrence_id})
+                        value = transferred(detach_event(master, value))
+                        changed[value.id] = value
+                    else:
+                        changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
                 else:
-                    changed[master.id] = replace(value, **schedule_changes)
+                    value = replace(value, **schedule_changes)
+                    if calendar_id is not None and calendar_id != master.calendar_id:
+                        deleted.add(master.id)
+                        value = transferred(value)
+                    changed[value.id] = value
                 continue
             base = master
             if root_scope == "future" and master.recurring:
@@ -787,6 +822,10 @@ class Store:
                 changed[master.id] = before
                 new_id = str(uuid4())
                 projected = reidentify_series(projected, new_id, new_id)
+            if calendar_id is not None and calendar_id != master.calendar_id:
+                if before is None:
+                    deleted.add(master.id)
+                projected = transferred(projected, keep_id=before is not None)
             changed[projected.id] = projected
         return list(changed.values())
 
@@ -811,12 +850,20 @@ class Store:
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
     def edit_selection(self, refs, scope, reference, edited, *, replace_schedule: bool | ScheduleReplacement = False,
-                       label="Edit selected events", expected_masters=()) -> int | None:
-        """Apply only changed primary fields across the selected union."""
+                       label="Edit selected events", expected_masters=(), calendar_id=None) -> int | None:
+        """Edit an exact selected union, including an optional calendar transfer.
+
+        An unchanged editor calendar retains each selected event's source.
+        An explicit calendar_id applies that target even when it matches the
+        reference, allowing a mixed-calendar selection to be gathered together.
+        """
         from .series_operations import partition_series
         from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, reference, expected_masters)
+            self._assert_writable(root.to_dict() for root in roots)
+            if calendar_id is None and edited.calendar_id != reference.calendar_id:
+                calendar_id = edited.calendar_id
             master = self.get_event(reference.series_id or reference.id)
             reference_root = next(root for root in roots if (root.series_id or root.id) == master.id)
             reference_scope = "group" if is_whole_root(reference_root) else scope
@@ -832,10 +879,12 @@ class Store:
                 # A dated Single form never configures recurrence. Clearing its
                 # inherited annotation must not clear another selected family.
                 schedule = {}
+            deleted = set()
             projections = self._transform_selection(roots, scope, reference, edited,
                                                     common_changes=common, schedule_changes=schedule,
-                                                    replace_schedule=replace_schedule)
-            return self.apply(label, projections)
+                                                    replace_schedule=replace_schedule,
+                                                    calendar_id=calendar_id, delete_ids=deleted)
+            return self.apply(label, projections, deleted)
 
     def edit_series(
         self, reference: Event, edited: Event, label: str = "Edit series", *,
@@ -843,6 +892,9 @@ class Store:
     ) -> int | None:
         """Persist the same pure series projection used by editor previews."""
         from .recurrence import updated_series
+        if edited.calendar_id != reference.calendar_id:
+            return self.edit_selection([reference], "group", reference, edited, label=label,
+                                       replace_schedule=replace_schedule)
         with self._transaction():
             master = self._reviewed_master(reference)
             updated = updated_series(master, reference, edited, replace_schedule)
@@ -885,6 +937,10 @@ class Store:
         updates the original resource without creating an empty past.
         """
         from .series_operations import reidentify_series, updated_future
+        if edited.calendar_id != reference.calendar_id:
+            return self.edit_selection([reference], "future", reference, edited, label=label,
+                                       replace_schedule=replace_schedule,
+                                       expected_masters=[expected_master] if expected_master is not None else ())
         with self._transaction():
             master = self._reviewed_future_master(reference, expected_master)
             before, after = updated_future(master, reference, edited, replace_schedule)

@@ -321,17 +321,6 @@ class TimeRangeStrip(QWidget):
     def continues_after(self):
         return self._minute_for(self.active_range[1]) > self.last_minute
 
-    def range_caption(self, start, end):
-        caption = self.preferences.format_time(start) + '–' + self.preferences.format_time(end)
-        days = (end.date() - start.date()).days
-        if days:
-            caption += f' (+{days}d)'
-        return caption + ' · ' + format_duration(range_duration(start, end))
-
-    @property
-    def before_caption(self):
-        return 'Before: ' + self.range_caption(self._drag.start, self._drag.end) if self._drag else ''
-
     def refresh(self):
         if not self._drag:
             self._hover = self._draft = self._invalid = None
@@ -500,12 +489,6 @@ class TimeRangeStrip(QWidget):
                 painter.setPen(QPen(QColor(style.outline), 1.4 * scale))
                 painter.drawLine(QPointF(x - 5 * scale, y - direction * 4 * scale), QPointF(x, y + direction * scale))
                 painter.drawLine(QPointF(x, y + direction * scale), QPointF(x + 5 * scale, y - direction * 4 * scale))
-        if self.before_caption:
-            top = self.height() - 36 * scale if band.center().y() < self.height() / 2 else 0
-            reference = QRectF(0, top, self.width(), 36 * scale)
-            painter.fillRect(reference, QColor(colors.background))
-            text(painter, reference, self.before_caption, QColor(colors.muted), 7.5,
-                 align=int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter) | int(Qt.TextFlag.TextWordWrap))
         painter.end()
 
     def _valid_preview(self, draft):

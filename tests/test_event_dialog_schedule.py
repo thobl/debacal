@@ -169,6 +169,8 @@ def test_future_regular_controls_use_nominal_anchor_for_moved_primary(author, se
     source = store.get_event(source.id)
     selected = next(value for value in visible(source) if value.start == moved_start)
     dialog = create(source, selected, 'future')
+    assert dialog.repeat.currentData() == 'DAILY'
+    assert dialog._draft.schedule_anchor(moved_start) == START + timedelta(days=2)
     assert dialog.repeat_until.value().date() == (START + timedelta(days=4)).date()
     if setting == 'count':
         dialog.repeat_count.setValue(4)

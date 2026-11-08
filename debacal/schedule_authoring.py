@@ -1,14 +1,16 @@
 """Lossless conversion between canonical recurrence sets and authoring text.
 
-The text describes every nominal active start, including additions and removed
-dates. Detached occurrence ranges/content remain separate standard exceptions.
+The text describes the starts the user actually sees. Detached occurrence
+ranges/content remain standard exceptions with their original RECURRENCE-ID;
+a derived recurrence set provides the authoring view without changing storage.
 No conversion is adopted unless its complete recurrence set has been certified.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 
+from .models import Event
 from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
                        expression_for_regular, reconstruct_sequence)
 from .recurrence import (RecurrenceError, event_zone, key_datetime, normalized_rule,
@@ -108,6 +110,97 @@ def _contains(event, key, rules=None):
     return previous is not None and _valid_wall(previous) and recurrence_key(previous, event.all_day) == recurrence_key(value, event.all_day)
 
 
+def displayed_schedule(event):
+    """Project actual starts into a temporary identity-free recurrence set.
+
+    This is exclusively an authoring/proof view. Persisting it would replace
+    detached exceptions with unrelated RDATEs and lose their identities/content.
+    Duplicate starts cannot be expressed by the sequence language, so reject
+    those explicitly rather than silently collapsing different occurrences.
+    """
+    if not event.recurrence_overrides:
+        return event
+    excluded = set(event.excluded_dates)
+    actual = []
+    nominal = set()
+    for key, payload in event.recurrence_overrides.items():
+        if key in excluded:
+            continue
+        item = Event.from_dict(payload)
+        if item.all_day != event.all_day:
+            raise RecurrenceError('Occurrences with different all-day settings keep their standard exceptions; a single sequence cannot describe them.')
+        if not _valid_wall(item.start):
+            raise RecurrenceError('An occurrence uses a nonexistent local time. Its standard exception is preserved.')
+        nominal.add(key)
+        actual.append(recurrence_key(item.start, event.all_day))
+    if not actual:
+        return replace(event, recurrence_overrides={})
+    base = replace(event, excluded_dates=tuple(excluded | nominal), recurrence_overrides={})
+    rules = recurrence_set(base)
+    if len(actual) != len(set(actual)) or any(_contains(base, key, rules) for key in actual):
+        raise RecurrenceError('Several occurrences start at the same time. Their separate standard exceptions are preserved; a single sequence cannot describe them.')
+    # Exclusion keys suppress both RRULE and RDATE values. Restore an actual
+    # start after suppressing all detached nominal slots, including swaps.
+    return replace(base, recurrence_dates=tuple(set(event.recurrence_dates) | set(actual)),
+                   excluded_dates=tuple((excluded | nominal) - set(actual)))
+
+
+def displayed_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
+    """Return the complete finite actual-start view, primary first."""
+    if _unbounded(event):
+        raise RecurrenceError('An unbounded recurrence cannot be expanded into a finite custom sequence.')
+    return _finite_starts(displayed_schedule(event), authoring_zone=authoring_zone, limit=limit)
+
+
+def retain_displayed_overrides(candidate, source, *, shift=None):
+    """Map retained actual starts back to their standard nominal identities.
+
+    ``candidate`` is a newly evaluated expression without exceptions. An old
+    exception survives when its actual start still occurs in that expression.
+    Set operations translate that displayed slot back to its RECURRENCE-ID,
+    leaving its complete payload available to other calendar clients.
+    """
+    shift = timedelta(0) if shift is None else shift
+    zone = event_zone(candidate)
+
+    def moved(value):
+        local = (datetime.combine(value.date(), time.min, zone) if candidate.all_day
+                 else value.astimezone(zone))
+        return (local.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=local.fold)
+
+    rules = recurrence_set(candidate)
+    overrides, actual, nominal = {}, set(), set()
+    for key, payload in source.recurrence_overrides.items():
+        if key in source.excluded_dates:
+            continue
+        item = Event.from_dict(payload)
+        start, end = moved(item.start), moved(item.end)
+        if not _valid_wall(start) or not _valid_wall(end):
+            raise RecurrenceError('Moving this occurrence would use a nonexistent local time. Choose another time.')
+        actual_key = recurrence_key(start, candidate.all_day)
+        if not _contains(candidate, actual_key, rules):
+            continue
+        nominal_key = recurrence_key(moved(key_datetime(key, source)), candidate.all_day)
+        overrides[nominal_key] = replace(item, start=start, end=end, all_day=candidate.all_day,
+                                         recurrence_id=nominal_key).to_dict()
+        actual.add(actual_key)
+        nominal.add(nominal_key)
+    # A requested additional occurrence at a retained nominal slot would be
+    # overwritten by that exception. Refuse this ambiguous conversion.
+    if any(_contains(candidate, key, rules) for key in nominal - actual):
+        raise RecurrenceError('A new occurrence uses the original slot of a moved occurrence. Choose another time or change that occurrence first.')
+    bare = replace(candidate, recurrence_dates=(), excluded_dates=())
+    bare_rules = recurrence_set(bare)
+    additions = {key for key in nominal if not _contains(bare, key, bare_rules)}
+    removals = {key for key in actual if _contains(bare, key, bare_rules)}
+    result = replace(candidate, recurrence_dates=tuple((set(candidate.recurrence_dates) - actual) | additions),
+                     excluded_dates=tuple((set(candidate.excluded_dates) | removals) - nominal),
+                     recurrence_overrides=overrides)
+    if not recurrence_matches(displayed_schedule(result), candidate):
+        raise RecurrenceError('This sequence edit cannot preserve the occurrence exceptions without changing its dates.')
+    return result
+
+
 def recurrence_matches(first, second):
     """Exact nominal-set equivalence, with bounded finite exceptions.
 
@@ -140,10 +233,14 @@ def recurrence_matches(first, second):
 
 
 def expression_matches(event, expression, *, authoring_zone=None):
-    """Whether the whole expression describes the canonical nominal schedule."""
+    """Whether the whole expression describes the displayed actual starts.
+
+    Use ``recurrence_matches`` for nominal RRULE/RDATE/EXDATE comparisons.
+    Durations/content are preserved separately, never inferred from this text.
+    """
     try:
         candidate = expression_event(event, expression, authoring_zone=authoring_zone)
-        return recurrence_matches(event, candidate)
+        return recurrence_matches(displayed_schedule(event), candidate)
     except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
         return False
 
@@ -192,7 +289,7 @@ def _tail_expression(event, *, authoring_zone=None):
             # DTSTART may be an off-rule prototype; certify against the rule
             # rather than treating its unconditional set membership as a tail.
             try:
-                trial = compile_sequence((reconstruct_sequence([anchor, candidate]) + ' ' + tail).strip(), anchor, all_day=event.all_day)
+                trial = compile_sequence((reconstruct_sequence([anchor, candidate], prefer_dates=False) + ' ' + tail).strip(), anchor, all_day=event.all_day)
             except PatternError:
                 continue
             if simplified_rule(replace(authoring_event(event, anchor.tzinfo), recurrence_rule=trial.recurrence_rule)) == simplified_rule(event):
@@ -213,7 +310,9 @@ def _tail_expression(event, *, authoring_zone=None):
     ordered = [anchor, *[value for value in values if recurrence_key(value, event.all_day) != primary]]
     # A prefix may name dates before the prototype. The last instruction must
     # still put the cursor at the first unaffected tail member.
-    prefix = reconstruct_sequence(ordered)
+    # A jump into an ongoing regular tail describes that tail's phase, rather
+    # than an arbitrary list of dates, so retain compact offset instructions.
+    prefix = reconstruct_sequence(ordered, prefer_dates=False)
     result = (prefix + ' ' + tail).strip()
     if not expression_matches(event, result, authoring_zone=anchor.tzinfo):
         raise RecurrenceError('This recurrence cannot be represented by a complete custom sequence. Its rule is preserved.')
@@ -222,15 +321,16 @@ def _tail_expression(event, *, authoring_zone=None):
 
 def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
     """Return an immutable, certified view before any editor state changes."""
-    unbounded = _unbounded(event)
+    displayed = displayed_schedule(event)
+    unbounded = _unbounded(displayed)
     if (prefer_literal and event.schedule_syntax == 2 and event.schedule_expression
             and expression_matches(event, event.schedule_expression, authoring_zone=authoring_zone)):
-        values = None if unbounded else _finite_starts(event, authoring_zone=authoring_zone)
+        values = None if unbounded else _finite_starts(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(event.schedule_expression, values, unbounded)
     if unbounded:
-        expression = _tail_expression(event, authoring_zone=authoring_zone)
+        expression = _tail_expression(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(expression, None, True)
-    values = _finite_starts(event, authoring_zone=authoring_zone)
+    values = _finite_starts(displayed, authoring_zone=authoring_zone)
     expression = reconstruct_sequence(values)
     if not expression_matches(event, expression, authoring_zone=authoring_zone):
         raise RecurrenceError('This schedule cannot be represented losslessly by a custom sequence.')

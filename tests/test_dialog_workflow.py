@@ -219,7 +219,7 @@ def test_finite_standard_preview_conversion_preserves_base_dates_exclusions_and_
     assert dialog.repeat.currentData() == 'RDATE' and dialog.schedule_replacement
     # The editable custom sequence contains actual dates, excluding the deleted
     # occurrence; exception identities must still survive the conversion.
-    assert utc(dialog.sequence_starts()) == utc([value for value in starts if recurrence_key(value) not in source.excluded_dates] + [extra])
+    assert utc(dialog.sequence_starts()) == before | utc([extra])
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
     store.edit_series(dialog.edit_reference, dialog.result_events[0], replace_schedule=dialog.schedule_replacement)

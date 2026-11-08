@@ -12,6 +12,7 @@ from debacal.models import Calendar, Event
 from debacal.patterns import expand_sequence, serialize_sequence
 from debacal.recurrence import RecurrenceError, base_schedule_starts, expand_event, recurrence_set, schedule_fields
 from debacal.store import Store
+from debacal.schedule_authoring import displayed_starts
 
 
 ZONE = ZoneInfo('Europe/Berlin')
@@ -41,7 +42,7 @@ def instants(values):
 
 class ExpressionTests(unittest.TestCase):
     def assert_authoring_matches(self, event):
-        functional = base_schedule_starts(event)
+        functional = displayed_starts(event)
         authored = expand_sequence(event.schedule_expression, event.start)
         self.assertEqual(authored[0], event.start)
         self.assertEqual(instants(authored), instants(functional))
@@ -199,7 +200,7 @@ class ExpressionTests(unittest.TestCase):
                 store.edit_series(master, changed)
                 self.assert_authoring_matches(store.get_event(master.id))
 
-    def test_exclusions_and_detached_overrides_stay_separate_from_base_authoring(self):
+    def test_exclusions_and_detached_overrides_keep_identity_while_text_describes_actual_starts(self):
         with Store(':memory:') as store:
             master = custom_event('+2 +2 +3')
             store.apply('Create', [master])

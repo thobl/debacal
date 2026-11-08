@@ -235,7 +235,7 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
         self.assertEqual(dialog.result_events, [])
 
-    def test_edit_locks_calendar_and_preserves_read_only_metadata(self):
+    def test_read_only_event_keeps_calendar_locked_and_preserves_metadata(self):
         self.store.save_calendar(Calendar("other", "Other", "#775533"))
         start = datetime(2026, 11, 4, 10, tzinfo=ZONE)
         original = Event("old", "local", "Read only", start, start + timedelta(hours=1), read_only=True)

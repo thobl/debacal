@@ -529,9 +529,15 @@ def updated_series(master: Event, reference: Event, edited: Event,
             # The v2 whole-series editor can convert legacy authoring text on
             # open. That new literal must follow the same timestamp move even
             # though it differs from the original stored expression.
-            expression, anchor = shift_schedule_expression(
-                expression, anchor or master.start.astimezone(zone).date().isoformat(),
-                shift, base_schedule_starts(updated), syntax=2)
+            from .schedule_authoring import displayed_starts
+            try:
+                expression, anchor = shift_schedule_expression(
+                    expression, anchor or master.start.astimezone(zone).date().isoformat(),
+                    shift, displayed_starts(updated), syntax=2)
+            except (RecurrenceError, PatternError):
+                # Optional authoring text must not block a valid standard move
+                # when actual starts cannot be represented by this language.
+                expression, anchor = '', ''
         elif expression == master.schedule_expression and anchor == master.expression_anchor:
             expression, anchor = shift_schedule_expression(
                 expression, anchor, shift, base_schedule_starts(updated), syntax=1)

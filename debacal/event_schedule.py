@@ -20,7 +20,8 @@ from .recurrence import (
     key_datetime, occurrence, recurrence_key, recurrence_set, schedule_fields,
     updated_series,
 )
-from .schedule_authoring import expression_event, expression_matches, reconstruct_authoring
+from .schedule_authoring import (displayed_starts, expression_event, expression_matches,
+                                 reconstruct_authoring, retain_displayed_overrides)
 
 
 REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
@@ -214,6 +215,7 @@ class ScheduleDraft:
     expression: str = ''
     advanced_rule: str = ''
     initial_expression: str = ''
+    authoring_error: str = ''
     _loaded_config: tuple = field(default=(), repr=False)
     _expression_mode: bool = field(default=False, repr=False)
     _loaded_expression_mode: bool = field(default=False, repr=False)
@@ -234,15 +236,28 @@ class ScheduleDraft:
                      else source.start.astimezone(zone))
             regular = RegularSchedule.from_rule(source.recurrence_rule, start, all_day=source.all_day) if source.recurrence_rule else None
             authored = (bool(source.schedule_expression) or bool(source.recurrence_dates and not source.recurrence_rule)
-                        or bool(regular and (source.excluded_dates or source.recurrence_dates)))
+                        or bool(regular and (source.excluded_dates or source.recurrence_dates))
+                        or bool(source.recurrence_overrides))
             if authored:
                 try:
                     view = reconstruct_authoring(source, authoring_zone=zone)
                     draft._take_authoring(view, source)
-                except (PatternError, RecurrenceError, ValueError, OverflowError):
+                except (PatternError, RecurrenceError, ValueError, OverflowError) as error:
                     # Unsupported or malformed annotations are display-only.
                     # Canonical fields remain untouched until an explicit edit.
                     draft.kind = 'advanced' if source.recurring else 'once'
+                    draft.authoring_error = str(error)
+                    primary = recurrence_key(source.start, source.all_day)
+                    if (regular is not None and primary in source.recurrence_overrides
+                            and not source.schedule_expression and not source.recurrence_dates
+                            and not source.excluded_dates):
+                        # A following-series partition may begin with a moved
+                        # detached exception. Its fixed nominal root cannot be
+                        # rendered as actual-start sequence text, but its plain
+                        # standard rule still has valid editable controls. Keep
+                        # these bound to the nominal root, not the displayed
+                        # exception's possibly distant date/time.
+                        draft._take_regular(regular)
             elif regular is not None:
                 draft._take_regular(regular)
             elif source.recurrence_rule:
@@ -256,6 +271,7 @@ class ScheduleDraft:
     def _take_authoring(self, view, master, *, force_custom=False):
         """Install a certified view; exception handling has already succeeded."""
         self.kind, self.expression, self._expression_mode = 'custom', view.expression, True
+        self.authoring_error = ''
         self._materialized = list(view.starts) if view.starts is not None else None
         anchor = self.author_anchor(master.start, all_day=master.all_day)
         evaluated = expression_event(master, view.expression, authoring_zone=anchor.tzinfo)
@@ -310,6 +326,7 @@ class ScheduleDraft:
             staged.source = replace(source, recurrence_dates=(), excluded_dates=(), recurrence_overrides=overrides)
         staged._take_regular(regular)
         staged.expression = ''
+        staged.authoring_error = ''
         staged._expression_mode = False
         staged._materialized = None
         staged._edited_fields = None
@@ -348,6 +365,7 @@ class ScheduleDraft:
         if regular:
             staged._take_regular(regular)
         staged.expression = text
+        staged.authoring_error = ''
         staged._expression_mode = True
         staged._materialized = None
         staged._edited_fields = None
@@ -369,25 +387,8 @@ class ScheduleDraft:
                     recurrence_rule=functional['recurrence_rule'], recurrence_dates=functional['recurrence_dates'],
                     excluded_dates=functional.get('excluded_dates', ()), recurrence_overrides={},
                     timezone_id=getattr(anchor.tzinfo, 'key', ''))
-                rules = recurrence_set(candidate)
                 shift = anchor.replace(tzinfo=None) - source_anchor.replace(tzinfo=None)
-                overrides = {}
-                for key, payload in source.recurrence_overrides.items():
-                    nominal = key_datetime(key, source)
-                    nominal = (datetime.combine(nominal.date(), time.min, anchor.tzinfo) if all_day
-                               else nominal.astimezone(anchor.tzinfo))
-                    moved = (nominal.replace(tzinfo=None) + shift).replace(tzinfo=anchor.tzinfo, fold=nominal.fold)
-                    member = rules.before(moved, inc=True)
-                    moved_key = recurrence_key(moved, all_day)
-                    if member is None or recurrence_key(member, all_day) != moved_key:
-                        continue
-                    override = Event.from_dict(payload)
-                    def shifted(value):
-                        local = datetime.combine(value.date(), time.min, anchor.tzinfo) if all_day else value.astimezone(anchor.tzinfo)
-                        return (local.replace(tzinfo=None) + shift).replace(tzinfo=anchor.tzinfo, fold=local.fold)
-                    overrides[moved_key] = replace(override, start=shifted(override.start), end=shifted(override.end),
-                                                   recurrence_id=moved_key, all_day=all_day).to_dict()
-                candidate = replace(candidate, recurrence_overrides=overrides)
+                candidate = retain_displayed_overrides(candidate, source, shift=shift)
                 staged._store_graphical(candidate, reference_start=start,
                     reference_end=start + ((staged._primary_reference_end - staged._primary_reference_start)
                                            if staged._primary_reference_start and staged._primary_reference_end else duration))
@@ -431,9 +432,7 @@ class ScheduleDraft:
     def starts(self, start, *, all_day=False, limit=DEFAULT_LIMIT):
         if self._edited_master is not None:
             effective = self._project_edited(start, all_day=all_day)
-            values = base_schedule_starts(effective, limit=limit)
-            return [value for value in values if recurrence_key(value, all_day) not in effective.excluded_dates
-                    or recurrence_key(value, all_day) == recurrence_key(effective.start, all_day)]
+            return list(displayed_starts(effective, authoring_zone=self.authoring_zone, limit=limit))
         anchor = self.author_anchor(self._source_range(start, all_day=all_day)[0], all_day=all_day)
         if self.source is not None and not self.configuration_changed and self._loaded_expression_mode:
             values = self._materialized if self._materialized is not None else base_schedule_starts(self.source, limit=limit)
@@ -487,7 +486,7 @@ class ScheduleDraft:
                         and expression_matches(source, self.expression, authoring_zone=anchor.tzinfo)):
                     values.update(schedule_expression=self.expression, expression_anchor=source.start.date().isoformat())
                 return values
-            if self.expression and sequence_tail(self.expression):
+            if self.expression and (sequence_tail(self.expression) or source.recurrence_overrides):
                 # Only the certified editor view may drive authoring moves.
                 # A remote client may have left stale proprietary metadata on
                 # the source while changing its canonical weekly/daily rule.
@@ -601,8 +600,9 @@ class ScheduleDraft:
                 master = replace(master, **schedule_fields(view.starts, all_day=master.all_day),
                                  timezone_id=getattr(zone, 'key', ''))
             staged._store_graphical(master, reference_start=reference_start, reference_end=reference_end)
-        except (RecurrenceError, PatternError, ValueError, OverflowError):
+        except (RecurrenceError, PatternError, ValueError, OverflowError) as error:
             staged.kind, staged.expression, staged._expression_mode = 'advanced', '', False
+            staged.authoring_error = str(error)
             staged.advanced_rule = master.recurrence_rule
             staged._materialized = None
             master = replace(master, schedule_expression='', expression_anchor='', schedule_syntax=2)

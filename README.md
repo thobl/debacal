@@ -292,7 +292,7 @@ by calendars in the same account and remain in the secure keyring.
   dates and times or open a shared month-and-time-range picker. Moving Start
   preserves duration; setting an earlier End moves Start back by that duration.
   The time strip labels both endpoints and brackets the duration. During a drag,
-  the original range and duration remain visible beside the live range. Its
+  an outline retains the original range beside the live time and duration. Its
   full-day toggle uses the same configurable shortcut as the main calendar.
   Hover over the left timeline to preview a new start/end time, then click to
   choose it. The event box on the right can be moved or resized independently.
@@ -321,6 +321,10 @@ selected series overlap. Multi-event edits apply changed common fields and
 relative times while retaining untouched values. Select one series to edit its
 recurrence configuration. Each batch mutation is one undoable operation; a
 read-only or stale selected resource rejects the batch before any event changes.
+Changing the calendar in the editor moves the affected events to that writable
+calendar, using the same one/all/following selection. An unchanged calendar
+choice preserves each source in a mixed-calendar selection. Transfers queue the
+source removal and destination upload independently and can be undone together.
 
 A following edit splits at the selected event's original recurrence date. The
 past keeps its identity; the future gets a new calendar UID and retains a
@@ -350,11 +354,13 @@ exception content; moving also preserves their different durations.
 ### Irregular groups and candidate slots
 
 The event editor separates primary-event controls from a full-height month
-preview. **Starts**, **Ends**, and **Duration** define the primary event. Choose
-**Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
+preview. Inline **Start**, **End**, and **Duration** fields define the primary event.
+When editing, compact scope buttons in the heading use the main view's icons and
+shortcuts. Choose **Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
 Monthly, Yearly, and Custom controls. Alternatives are choices from which one
 event can later be confirmed. Frequency choices use icons with tooltips; the
-separate **+** beside them adds an occurrence with its own date and time.
+separate **+** beside Single/Repeat/Alternatives adds an occurrence with its own
+date and time.
 
 Choosing a regular frequency from Custom starts a clean regular pattern,
 removing custom additions, exclusions, and individual range changes. Returning
@@ -369,7 +375,7 @@ Start and End. **Add occurrence** opens the same range picker, initially using
 the primary time and duration, so an extra occurrence can have a different time
 or duration. Occurrence navigation offers First, Previous, Next, and Last; Last
 is unavailable for an endless series. Month arrows browse without changing the
-primary event.
+primary event; the month heading sits immediately after these buttons.
 
 Custom instructions add occurrences after the primary event, so its date need
 not be repeated in the sequence. Its duration applies unless an individual
@@ -420,9 +426,10 @@ dates retain the initial event's choice, while relative and time-only steps
 retain the previous event's choice.
 
 Automatically reconstructed sequences use explicit clocks for time changes,
-rather than minute/hour offsets. Already-saved expressions containing `h` or
-`min` offsets remain readable and keep their original meaning. Opening a series
-or changing its title does not rewrite its text.
+rather than minute/hour offsets. Changing an occurrence's time in the preview
+updates its clock in the sequence. Already-saved expressions containing `h` or
+`min` offsets remain readable and keep their original meaning. Valid saved text
+keeps its formatting when a series is opened or its title changes.
 
 The text remains editable when reopening a saved custom series. Title edits
 preserve it; moving a series keeps relative text when equivalent and rewrites
@@ -433,8 +440,9 @@ primary date records the new version; ordinary title edits retain the original
 metadata. Clicking preview dates adds or
 removes dates and reconstructs a compact equivalent sequence. It compares short
 day/month dates, relative steps, clock changes and repeated groups, omitting a
-year whenever the shorter form selects exactly the same date. Regular gaps and
-repeated blocks use multipliers when that makes the expression shorter. Calendar
+year whenever the shorter form selects exactly the same date. Irregular dates
+prefer individual date instructions over unrelated relative day offsets. Regular
+gaps and repeated blocks still use compact relative steps and multipliers. Calendar
 clicks remain available after simplification. Hand-entered text keeps its
 formatting until a calendar click changes the selection. Live validation keeps
 the text cursor, selection, and undo history intact; invalid pending text cannot
@@ -445,13 +453,14 @@ a finite prefix followed by `every(...)`, including its added and removed dates.
 For example, skipping the second and third occurrences of an endless weekly
 series produces `+3 every(1w)`. The original event remains, followed by another
 three weeks later and weekly events thereafter. Per-occurrence ranges and
-content remain standard detached exceptions and survive text edits when their
-nominal dates remain in the sequence.
+content remain standard detached exceptions. Unchanged displayed starts retain
+their original recurrence IDs and exception details through text edits.
 
 Text conversions share one checked authoring model across the editor, series
 moves, and following-event splits. A generated expression must reproduce the
-complete nominal recurrence, including additions and exclusions. Unsupported
-rules or oversized prefixes retain their canonical calendar data; conversion
+complete set of displayed starts, including additions, exclusions, and moved exceptions.
+The underlying calendar recurrence and exception identities remain intact.
+Unsupported rules or oversized prefixes retain their canonical calendar data; conversion
 fails without partially changing the draft or substituting another frequency.
 
 Saving creates one undoable operation. Regular schedules use standard RRULE;
