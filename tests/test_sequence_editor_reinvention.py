@@ -133,14 +133,15 @@ def test_document_larger_than_qlineedit_default_is_fully_editable(editors):
     assert dialog.build_events()[0].recurrence_dates == source.recurrence_dates
 
 
-def test_coincident_reference_moves_have_an_editable_identity_aware_document(editors):
+def test_coincident_reference_moves_have_compact_text_and_keep_exception_content(editors):
     source = Event('same', 'local', 'Same time', START, START + timedelta(hours=1),
                    **compile_sequence('every(1d, count=2)', START).fields)
     moved = replace(source, start=START + timedelta(days=1), end=START + timedelta(days=1, hours=1),
                     recurrence_rule='', description='Retain the first occurrence notes')
     source = replace(source, recurrence_overrides={recurrence_key(START): moved.to_dict()})
     dialog = editors(source=source)
-    assert dialog.pattern.text().startswith('schedule{')
+    assert not dialog.pattern.text().startswith('schedule{')
+    assert '+0d' in dialog.pattern.text()
     assert expression_matches(source, dialog.pattern.text())
     assert dialog.build_events()[0].recurrence_overrides == source.recurrence_overrides
 

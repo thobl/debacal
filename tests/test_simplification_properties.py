@@ -26,9 +26,9 @@ def instants(values):
 
 def assert_roundtrip(simplify, values):
     expression = simplify(iter(values))
-    unique = list(dict.fromkeys(instants(values)))
-    expanded = patterns.expand_sequence(expression, values[0], limit=max(500, len(unique)))
-    assert instants(expanded) == unique, expression
+    expected = instants(values)
+    expanded = patterns.expand_sequence(expression, values[0], limit=max(500, len(expected)))
+    assert instants(expanded) == expected, expression
     assert expanded[0].timestamp() == values[0].timestamp()
     return expression
 

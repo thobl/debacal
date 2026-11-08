@@ -18,7 +18,8 @@ def _aware(value):
     return value
 
 
-def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None):
+def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None,
+           preferred_day=None, selectors=(), week_start='MO'):
     kind = str(kind).upper()
     if kind not in REGULAR_KINDS:
         raise RecurrenceError('Choose a daily, weekly, monthly or yearly recurrence.')
@@ -30,18 +31,45 @@ def _parts(kind, interval=1, weekdays=(), *, clamp=False, start=None):
     result = f'FREQ={kind};INTERVAL={interval}'
     if kind == 'WEEKLY' and days:
         result += ';BYDAY=' + ','.join(_DAY_NAMES[day] for day in days)
+    week_start = str(week_start).upper()
+    if week_start not in _DAY_NAMES or (kind != 'WEEKLY' and week_start != 'MO'):
+        raise RecurrenceError('Choose a valid first weekday for a weekly recurrence.')
+    if kind == 'WEEKLY' and week_start != 'MO':
+        result += ';WKST=' + week_start
+    if selectors:
+        from .patterns import PatternError, _weekday_selectors
+        try:
+            names = _weekday_selectors(selectors, {'MONTHLY': 'm', 'YEARLY': 'y'}.get(kind))
+        except PatternError as error:
+            raise RecurrenceError(str(error)) from error
+        if clamp or preferred_day is not None:
+            raise RecurrenceError('Choose weekday selection or a calendar day, not both.')
+        result += ';BYDAY=' + ','.join(names)
+        if kind == 'YEARLY':
+            _aware(start)
+            result += ';BYMONTH=' + str(start.month)
+    if preferred_day is not None and (kind not in ('MONTHLY', 'YEARLY')
+                                      or type(preferred_day) is not int or not 1 <= preferred_day <= 31):
+        raise RecurrenceError('Choose a monthly/yearly day from 1 through 31.')
     if clamp:
         if kind not in ('MONTHLY', 'YEARLY'):
             raise RecurrenceError('Clamping is available only for monthly and yearly recurrences.')
         _aware(start)
-        result += ';BYMONTHDAY=' + ','.join(str(day) for day in range(min(28, start.day), start.day + 1))
+        day = preferred_day or start.day
+        result += ';BYMONTHDAY=' + ','.join(str(value) for value in range(min(28, day), day + 1))
         result += ';BYSETPOS=-1'
         if kind == 'YEARLY':
+            result += ';BYMONTH=' + str(start.month)
+    elif preferred_day is not None:
+        result += ';BYMONTHDAY=' + str(preferred_day)
+        if kind == 'YEARLY':
+            _aware(start)
             result += ';BYMONTH=' + str(start.month)
     return result
 
 
-def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=(), *, clamp=False) -> date:
+def count_to_until(start: datetime, kind: str, interval: int, count: int, weekdays=(), *, clamp=False,
+                   preferred_day=None, selectors=(), week_start='MO') -> date:
     """Inclusive last date of a COUNT rule, including DTSTART when it matches.
 
     Dateutil's calendar arithmetic deliberately skips nonexistent month days:
@@ -51,7 +79,8 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
     if type(count) is not int or not 1 <= count <= MAX_REPEAT_COUNT:
         raise RecurrenceError(f'Choose between 1 and {MAX_REPEAT_COUNT:,} occurrences.')
     try:
-        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start)
+        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start,
+                      preferred_day=preferred_day, selectors=selectors, week_start=week_start)
         if str(kind).upper() == 'DAILY':
             return start.date() + timedelta(days=interval * (count - 1))
         if str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
@@ -71,7 +100,8 @@ def count_to_until(start: datetime, kind: str, interval: int, count: int, weekda
 
 
 def until_to_count(start: datetime, kind: str, interval: int, until: date, weekdays=(),
-                   *, limit: int = MAX_REPEAT_COUNT, clamp=False) -> int:
+                   *, limit: int = MAX_REPEAT_COUNT, clamp=False,
+                   preferred_day=None, selectors=(), week_start='MO') -> int:
     """Count rule occurrences through an inclusive calendar date, with a cap."""
     _aware(start)
     if isinstance(until, datetime) or not isinstance(until, date):
@@ -82,7 +112,8 @@ def until_to_count(start: datetime, kind: str, interval: int, until: date, weekd
         raise RecurrenceError('Invalid recurrence count limit.')
     count = 0
     try:
-        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start)
+        rule = _parts(kind, interval, weekdays, clamp=clamp, start=start,
+                      preferred_day=preferred_day, selectors=selectors, week_start=week_start)
         if str(kind).upper() == 'DAILY':
             count = (until - start.date()).days // interval + 1
         elif str(kind).upper() == 'WEEKLY' and (not weekdays or set(weekdays) == {start.weekday()}):
@@ -114,10 +145,14 @@ class RegularSchedule:
     weekdays: tuple[int, ...] = ()
     ending: str = 'count'
     clamp: bool = False
+    preferred_day: int | None = None
+    selectors: tuple[str, ...] = ()
+    week_start: str = 'MO'
 
     def rule(self, start: datetime, *, all_day=False) -> str:
         _aware(start)
-        result = _parts(self.kind, self.interval, self.weekdays, clamp=self.clamp, start=start)
+        result = _parts(self.kind, self.interval, self.weekdays, clamp=self.clamp, start=start,
+                        preferred_day=self.preferred_day, selectors=self.selectors, week_start=self.week_start)
         if self.ending == 'never' or (self.count is None and self.until is None):
             return result
         if self.ending == 'until':
@@ -140,22 +175,54 @@ class RegularSchedule:
             parts = dict(part.strip().upper().split('=', 1) for part in rule.removeprefix('RRULE:').split(';'))
             kind = parts.get('FREQ')
             allowed = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'}
+            preferred_day, selectors = None, ()
+            week_start = parts.get('WKST', 'MO')
             if kind == 'WEEKLY':
                 allowed.add('BYDAY')
+            elif kind in ('MONTHLY', 'YEARLY') and 'BYDAY' in parts:
+                from .patterns import _weekday_selectors
+                selectors = _weekday_selectors(parts['BYDAY'].split(','), 'm' if kind == 'MONTHLY' else 'y')
+                allowed.add('BYDAY')
+                if kind == 'YEARLY':
+                    if parts.get('BYMONTH') != str(start.month):
+                        return None
+                    allowed.add('BYMONTH')
             clamp = False
-            if kind in ('MONTHLY', 'YEARLY') and parts.get('BYSETPOS') == '-1':
-                expected = dict(part.split('=', 1) for part in _parts(kind, clamp=True, start=start).split(';'))
+            if kind in ('MONTHLY', 'YEARLY') and 'BYMONTHDAY' in parts:
+                raw_days = parts['BYMONTHDAY'].split(',')
+                if not all(value.isdigit() and 1 <= int(value) <= 31 for value in raw_days):
+                    return None
+                candidate_days = tuple(sorted(set(int(value) for value in raw_days)))
+                preferred_day = max(candidate_days)
+                if selectors:
+                    return None
+                if parts.get('BYSETPOS') == '-1':
+                    if candidate_days != tuple(range(min(28, preferred_day), preferred_day + 1)):
+                        return None
+                    clamp = True
+                elif len(candidate_days) != 1:
+                    return None
+                allowed.add('BYMONTHDAY')
+                if preferred_day == start.day:
+                    preferred_day = None
+            if clamp:
+                expected = dict(part.split('=', 1) for part in _parts(kind, clamp=True, start=start,
+                                                                     preferred_day=preferred_day).split(';'))
                 clamp_keys = {'BYMONTHDAY', 'BYSETPOS'} | ({'BYMONTH'} if kind == 'YEARLY' else set())
                 if any(parts.get(key) != expected[key] for key in clamp_keys):
                     return None
                 allowed |= clamp_keys
-                clamp = True
-            if kind not in REGULAR_KINDS or parts.keys() - allowed or parts.get('WKST', 'MO') != 'MO':
+            elif kind == 'YEARLY' and 'BYMONTHDAY' in parts:
+                if parts.get('BYMONTH', str(start.month)) != str(start.month):
+                    return None
+                allowed.add('BYMONTH')
+            if kind not in REGULAR_KINDS or parts.keys() - allowed:
                 return None
-            days = tuple(_DAY_NAMES.index(day) for day in parts.get('BYDAY', '').split(',') if day)
+            days = tuple(sorted({_DAY_NAMES.index(day) for day in parts.get('BYDAY', '').split(',') if day})) if kind == 'WEEKLY' else ()
             interval = int(parts.get('INTERVAL', 1))
-            _parts(kind, interval, days, clamp=clamp, start=start)
-            if days and start.weekday() not in days:
+            rule_options = dict(clamp=clamp, preferred_day=preferred_day, selectors=selectors, week_start=week_start)
+            base_rule = _parts(kind, interval, days, start=start, **rule_options)
+            if (days or selectors or preferred_day is not None) and rrulestr(base_rule, dtstart=start).after(start, inc=True) != start:
                 # DTSTART is still a set member in the calendar model. A rule
                 # beginning on a different weekday has an extra prototype and
                 # cannot truthfully use controls whose count includes it.
@@ -164,8 +231,8 @@ class RegularSchedule:
                 return None
             if 'COUNT' in parts:
                 count = int(parts['COUNT'])
-                until = count_to_until(start, kind, interval, count, days, clamp=clamp)
-                return cls(kind, interval, count, until, days, 'count', clamp)
+                until = count_to_until(start, kind, interval, count, days, **rule_options)
+                return cls(kind, interval, count, until, days, 'count', clamp, preferred_day, selectors, week_start)
             if 'UNTIL' in parts:
                 value = parts['UNTIL']
                 if len(value) == 8:
@@ -181,10 +248,10 @@ class RegularSchedule:
                     candidate = datetime.combine(until, start.timetz()).replace(microsecond=0)
                     if candidate.timestamp() > stamp.timestamp():
                         until -= timedelta(days=1)
-                count = until_to_count(start, kind, interval, until, days, clamp=clamp)
-                last = count_to_until(start, kind, interval, count, days, clamp=clamp)
-                return cls(kind, interval, count, last, days, 'until', clamp)
-            return cls(kind, interval, None, None, days, 'never', clamp)
+                count = until_to_count(start, kind, interval, until, days, **rule_options)
+                last = count_to_until(start, kind, interval, count, days, **rule_options)
+                return cls(kind, interval, count, last, days, 'until', clamp, preferred_day, selectors, week_start)
+            return cls(kind, interval, None, None, days, 'never', clamp, preferred_day, selectors, week_start)
         except (ValueError, OverflowError, TypeError):
             return None
 

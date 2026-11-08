@@ -28,7 +28,7 @@ from .models import Event
 from .preferences import Preferences
 from .patterns import calendar_clamp_options, clamp_relevant, with_calendar_clamp
 from .recurrence import (ScheduleReplacement, event_zone, key_datetime, normalize_recurrence_time,
-                         recurrence_key, recurrence_set, updated_series)
+                         occurrence_id, recurrence_key, recurrence_set, updated_series)
 from .series_preview import SeriesPreview
 from .theme import scheme_for
 from .timeutil import local_zone
@@ -939,7 +939,13 @@ class EventDialog(FormDialog):
             fields = ScheduleDraft.from_event().fields(start, all_day=self.all_day.isChecked())
         else:
             self._validation_field = self.pattern
-            fields = draft.fields(start, end, all_day=self.all_day.isChecked())
+            prototype = Event(self.original.id if self.original else self._new_id,
+                              self.calendar.currentData() or 'local',
+                              self.title.text().strip() or 'Untitled event', start, end,
+                              location=self.location.text(), description=self.description.toPlainText(),
+                              all_day=self.all_day.isChecked(),
+                              candidate=self.schedule_mode.currentData() == 'alternatives')
+            fields = draft.fields(start, end, all_day=self.all_day.isChecked(), prototype=prototype)
         self.schedule_replacement = bool(self.series and self.scope.currentData() != 'single' and
             (draft.configuration_changed or (source and source.recurring and draft.kind == 'once')))
         if self.schedule_replacement and self._reset_schedule:
@@ -951,6 +957,18 @@ class EventDialog(FormDialog):
                       start=stored_start, end=stored_end, location=self.location.text(), description=self.description.toPlainText(),
                       all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives', **fields)
         event = replace(self.original, **values) if self.original else Event(**values)
+        if self.original is None and self.series is None and event.recurrence_overrides:
+            # A new draft has shared content controls and individual ranges.
+            # Header changes made after adding a range apply to every copy.
+            overrides = {}
+            for key, payload in event.recurrence_overrides.items():
+                item = Event.from_dict(payload)
+                overrides[key] = replace(item, id=occurrence_id(event.id, key),
+                    calendar_id=event.calendar_id, ical_uid=event.ical_uid,
+                    series_id=event.id, recurrence_id=key, title=event.title,
+                    location=event.location, description=event.description,
+                    candidate=event.candidate).to_dict()
+            event = replace(event, recurrence_overrides=overrides)
         if event.recurring:
             recurrence_set(event)
             if not single and (draft.kind == 'custom' or draft.expression):

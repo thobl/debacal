@@ -114,6 +114,8 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         return None, master
     if pivot_key in master.excluded_dates:
         raise RecurrenceError('This occurrence is excluded from the series. Refresh before editing it.')
+    from .coincident_occurrences import logical_occurrence_start
+    pivot = logical_occurrence_start(master, pivot_key)
     cutoff = _instant(pivot)
     relative_parts = None
     if master.schedule_syntax == 2 and master.schedule_expression:
@@ -169,11 +171,11 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         after_parts['COUNT'] = str(int(after_parts['COUNT']) - consumed)
 
     def belongs(key, after):
-        return (_instant(key_datetime(key, master)) >= cutoff) == after
+        return (_instant(logical_occurrence_start(master, key)) >= cutoff) == after
 
     def build(after):
         rule_parts = after_parts if after else before_parts
-        local_base = {key: value for key, value in base.items() if (_instant(value) >= cutoff) == after}
+        local_base = {key: value for key, value in base.items() if belongs(key, after)}
         overrides = {key: value for key, value in master.recurrence_overrides.items() if belongs(key, after)}
         exclusions = tuple(key for key in master.excluded_dates if belongs(key, after))
         if after and rule_parts:

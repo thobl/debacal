@@ -214,12 +214,24 @@ RECURRENCE-ID and exception details.
 Local changes refresh custom text before recording history or queuing uploads.
 Every canonical calendar has a definition: compact instructions where exact,
 otherwise an identity-aware `schedule{…}` document containing rule/add/omit/move.
-This includes coincident starts, excluded or moved references, advanced rules and
-large date sets. The document preserves nominal recurrence IDs and complete
+Compact instructions retain multiplicity: `2*+0d` means two distinct events at
+the reference, not one deduplicated date. Extra copies use separate standard
+nominal RDATE/RECURRENCE-ID slots with detached ranges at the shared actual
+start. Existing identities and complete detached content survive text re-entry,
+editing and transport. Other clients therefore see both occurrences without
+understanding X-PATTERN.
+
+Mixed all-day/timed occurrences, unsupported rules and huge irregular date sets
+still use the complete document. It preserves nominal recurrence IDs and full
 detached content; serialization does not expand infinite rules. It travels in
-the same X-PATTERN TEXT property, using standard escaping and folding.
+the same X-PATTERN TEXT property, using standard escaping and folding. A stored
+fallback is offered as compact text when the extended language can represent
+it exactly.
 Bounded `every(...)` and representable finite forms compile to standard RRULEs.
-Clamped month/year rules use standard BYMONTHDAY/BYSETPOS, so other clients
+Weekday selectors such as `every(1w, on=MO+WE)` and monthly ordinals such as
+`every(1m, on=-1FR)` use standard BYDAY; explicit weekly boundaries use WKST.
+Clamped month/year rules use standard BYMONTHDAY/BYSETPOS, including an explicit
+`day=31` preference retained after splitting at a shorter month. Other clients
 display the same dates. The [sequence specification](SEQUENCES.md) defines
 evaluation and equality checks. If another client changes the calendar without
 updating its proprietary text, Debacal reconstructs a matching definition.

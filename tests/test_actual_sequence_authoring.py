@@ -129,14 +129,14 @@ def test_duration_only_graphical_edit_keeps_literal_and_whitespace_parsing_prese
     assert displayed_starts(edited) == tuple([START, *[item.start for item in instances(edited) if item.start != START]])
 
 
-def test_duplicate_displayed_starts_stay_canonical_with_an_editable_document():
+def test_duplicate_displayed_starts_stay_canonical_with_compact_text():
     master = source('FREQ=DAILY;COUNT=4')
     selected = instances(master)[1]
     draft = ScheduleDraft.from_event(master)
     # Moving onto the next independent occurrence must not collapse the pair.
     start = selected.start + timedelta(days=1)
     changed = draft.edit_occurrence(master, selected, start, start + timedelta(hours=2))
-    assert draft.kind == 'custom' and draft.expression.startswith('schedule{')
+    assert draft.kind == 'custom' and not draft.expression.startswith('schedule{')
     assert expression_matches(changed, draft.expression)
     assert len(instances(changed)) == 4
     assert changed.recurrence_overrides

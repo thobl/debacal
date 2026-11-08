@@ -13,6 +13,7 @@ from typing import Iterable
 from dateutil.rrule import rrulestr
 
 from .models import Event
+from .coincident_occurrences import apply_occurrence_counts, multiplicities
 from .patterns import (DEFAULT_LIMIT, compile_sequence, expand_sequence,
                        is_relative_sequence, reconstruct_sequence, sequence_tail)
 from .recurrence import (
@@ -24,7 +25,7 @@ from .regular_schedule import (
     MAX_REPEAT_COUNT, REGULAR_KINDS, RegularSchedule, _aware, _parts,
     count_to_until, retain_relative_intent, until_to_count,
 )
-from .schedule_authoring import (canonical_starts, expression_event, expression_matches,
+from .schedule_authoring import (canonical_starts, displayed_schedule, expression_event, expression_matches,
                                  reconstruct_authoring, retain_displayed_overrides)
 from .sequence_document import is_sequence_document
 
@@ -49,6 +50,17 @@ def detect_regular_schedule(starts: Iterable[datetime], *, all_day=False) -> Reg
     if not fields['recurrence_rule']:
         return None
     return RegularSchedule.from_rule(fields['recurrence_rule'], values[0], all_day=all_day)
+
+
+def _editable_regular(regular, anchor):
+    """Use the compact text when basic controls cannot retain a rule clause."""
+    if regular is None:
+        return None
+    if (getattr(regular, 'selectors', ())
+            or getattr(regular, 'week_start', 'MO') != 'MO'
+            or getattr(regular, 'preferred_day', None) not in (None, anchor.day)):
+        return None
+    return regular
 
 
 @dataclass
@@ -109,6 +121,7 @@ class ScheduleDraft:
                    if not view.structured and not evaluated.recurrence_dates and not evaluated.excluded_dates else None)
         if not view.structured:
             regular = retain_relative_intent(view.expression, anchor, regular)
+        regular = _editable_regular(regular, anchor)
         if regular is not None and not force_custom:
             self._take_regular(regular)
         return regular
@@ -163,7 +176,8 @@ class ScheduleDraft:
         from .patterns import expression_for_regular
         staged.expression = expression_for_regular(regular.kind, regular.interval,
             count=regular.count if regular.ending == 'count' else None,
-            until=regular.until if regular.ending == 'until' else None, clamp=regular.clamp)
+            until=regular.until if regular.ending == 'until' else None, clamp=regular.clamp,
+            weekdays=regular.weekdays)
         staged.authoring_error = ''
         staged._expression_mode = False
         staged._materialized = None
@@ -180,16 +194,8 @@ class ScheduleDraft:
         # actual starts and exception identities. A simple calendar recurrence
         # uses bounded every(), so monthly skipping stays a standard rule;
         # unsupported finite BYxxx rules become an editable exact date set.
-        program_zone = event_zone(master) if master.all_day else self.authoring_zone
-        evaluated = expression_event(master, view.expression, authoring_zone=program_zone)
-        if not view.structured:
-            evaluated = retain_displayed_overrides(evaluated, master)
-        master = replace(master, start=evaluated.start, end=evaluated.end,
-                         recurrence_rule=evaluated.recurrence_rule,
-                         recurrence_dates=evaluated.recurrence_dates,
-                         excluded_dates=evaluated.excluded_dates,
-                         recurrence_overrides=evaluated.recurrence_overrides,
-                         timezone_id=evaluated.timezone_id)
+        # A certified view changes authoring mode, not the underlying calendar
+        # or nominal identities. Preserve even redundant standard properties.
         staged._store_graphical(master, reference_start=reference_start, reference_end=reference_end)
         self.__dict__.update(staged.__dict__)
 
@@ -205,9 +211,11 @@ class ScheduleDraft:
         if compiled is not None and all_day and any(value.time() != time.min for value in compiled.prefix_starts):
             raise RecurrenceError('Time entries require a timed event.')
         regular = (RegularSchedule.from_rule(compiled.recurrence_rule, anchor, all_day=all_day)
-                   if compiled is not None and detect and not compiled.recurrence_dates and not compiled.excluded_dates else None)
+                   if compiled is not None and detect and not compiled.recurrence_dates
+                   and not compiled.excluded_dates and not compiled.duplicate_starts else None)
         if not structured:
             regular = retain_relative_intent(text, anchor, regular)
+        regular = _editable_regular(regular, anchor)
         staged.kind = 'custom'
         if regular:
             staged._take_regular(regular)
@@ -343,7 +351,7 @@ class ScheduleDraft:
     def regular(self):
         return RegularSchedule(self.kind, self.interval, self.count, self.until, tuple(self.weekdays), self.ending, self.clamp)
 
-    def fields(self, start, end=None, *, all_day=False, preserve_source=True):
+    def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
         """Return Event recurrence/authoring fields, preserving untouched data."""
         if self._edited_master is not None:
             effective = self._project_edited(start, end=end, all_day=all_day)
@@ -385,14 +393,13 @@ class ScheduleDraft:
             values.update(schedule_expression='', expression_anchor='', schedule_syntax=1)
             return values
         if self._expression_mode or self.kind == 'custom':
-            if is_sequence_document(self.expression):
-                prototype = source or Event('draft', 'draft', 'Draft', anchor,
-                    end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
-                evaluated = expression_event(prototype, self.expression, authoring_zone=anchor.tzinfo)
-                values.update({name: deepcopy(getattr(evaluated, name)) for name in (
-                    'recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides')})
-            else:
-                values.update(compile_sequence(self.expression, anchor, all_day=all_day).fields)
+            prototype = source or prototype or Event('draft', 'draft', 'Draft', anchor,
+                end or anchor + (timedelta(days=1) if all_day else timedelta(hours=1)), all_day=all_day)
+            prototype = replace(prototype, start=anchor, end=end or anchor + (prototype.end - prototype.start),
+                                all_day=all_day, timezone_id=getattr(anchor.tzinfo, 'key', ''))
+            evaluated = expression_event(prototype, self.expression, authoring_zone=anchor.tzinfo)
+            values.update({name: deepcopy(getattr(evaluated, name)) for name in (
+                'recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides')})
             values.update(schedule_expression=self.expression, expression_anchor=anchor.date().isoformat())
             return values
         values['recurrence_rule'] = self.regular().rule(anchor, all_day=all_day)
@@ -535,6 +542,25 @@ class ScheduleDraft:
                        *, reference_start=None, reference_end=None):
         if not master.all_day:
             _checked(start)
+        existing = expand_event(master, start - timedelta(seconds=1), start + timedelta(seconds=1), limit=1000)
+        if any(recurrence_key(item.start, master.all_day) == recurrence_key(start, master.all_day) for item in existing):
+            counts = multiplicities(master)
+            counts[recurrence_key(start, master.all_day)] += 1
+            extras = [key_datetime(key, master) for key, count in counts.items() for _ in range(count)]
+            changed = apply_occurrence_counts(displayed_schedule(master), master, extras)
+            new_key = next(key for key in changed.recurrence_overrides
+                           if key not in master.recurrence_overrides
+                           and recurrence_key(Event.from_dict(changed.recurrence_overrides[key]).start, master.all_day)
+                           == recurrence_key(start, master.all_day))
+            if end is not None:
+                _checked(end)
+                if end.timestamp() <= start.timestamp():
+                    raise RecurrenceError('The end must be after the start.')
+                payloads = deepcopy(changed.recurrence_overrides)
+                payloads[new_key] = replace(Event.from_dict(payloads[new_key]), start=start, end=end).to_dict()
+                changed = replace(changed, recurrence_overrides=payloads)
+            self._adopt_graphical(changed, reference_start=reference_start, reference_end=reference_end)
+            return self._edited_master
         key = recurrence_key(start, master.all_day)
         overrides = deepcopy(master.recurrence_overrides)
         if end is not None:

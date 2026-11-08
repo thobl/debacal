@@ -11,8 +11,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 
 from .models import Event
-from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence,
-                       expression_for_regular, reconstruct_sequence)
+from .coincident_occurrences import apply_occurrence_counts, multiplicities
+from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
+                       expression_for_regular, reconstruct_sequence, sequence_tail)
 from .recurrence import (RecurrenceError, event_zone, key_datetime, normalized_rule,
                          normalize_recurrence_stream,
                          recurrence_key, recurrence_set)
@@ -46,6 +47,10 @@ def authoring_event(event, authoring_zone=None):
 def simplified_rule(event):
     """Remove only constraints exactly equal to the DTSTART defaults."""
     parts = normalized_rule(event.recurrence_rule, event)
+    if parts.get('FREQ') in {'DAILY', 'MONTHLY', 'YEARLY'} and 'BYWEEKNO' not in parts:
+        # A first weekday affects weekly periods or week-number selection;
+        # an ordinal weekday within a calendar month has no such dependency.
+        parts.pop('WKST', None)
     for name in ('INTERVAL', 'COUNT', 'BYHOUR', 'BYMINUTE', 'BYSECOND', 'BYMONTHDAY', 'BYMONTH'):
         value = parts.get(name, '')
         if value.lstrip('+-').isdigit():
@@ -83,10 +88,11 @@ def expression_event(event, expression, *, authoring_zone=None):
     prototype = authoring_event(event, authoring_zone)
     anchor = prototype.start
     compiled = compile_sequence(expression, anchor, all_day=event.all_day)
-    fields = compiled.fields
-    return replace(prototype, recurrence_rule=fields['recurrence_rule'],
-                   recurrence_dates=fields['recurrence_dates'], excluded_dates=fields.get('excluded_dates', ()),
-                   recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''))
+    candidate = replace(prototype, recurrence_rule=compiled.recurrence_rule,
+                        recurrence_dates=compiled.recurrence_dates, excluded_dates=compiled.excluded_dates,
+                        recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''))
+    return (apply_occurrence_counts(candidate, event, compiled.duplicate_starts)
+            if compiled.duplicate_starts or event.recurrence_overrides else candidate)
 
 
 def _unbounded(event):
@@ -134,8 +140,8 @@ def displayed_schedule(event):
 
     This is exclusively an authoring/proof view. Persisting it would replace
     detached exceptions with unrelated RDATEs and lose their identities/content.
-    Duplicate starts require the canonical scheduling document, so reject an
-    identity-free projection instead of silently collapsing occurrences.
+    Multiplicities are certified separately; this view represents only the
+    underlying actual-start set and never replaces the stored calendar.
     """
     if not event.recurrence_overrides:
         return event
@@ -148,6 +154,8 @@ def displayed_schedule(event):
         item = Event.from_dict(payload)
         if item.all_day != event.all_day:
             raise RecurrenceError('Occurrences with different all-day settings keep their standard exceptions; a single sequence cannot describe them.')
+        if item.all_day and (item.start.time() != time.min or item.end.time() != time.min):
+            raise RecurrenceError('All-day exceptions with explicit clocks retain their complete scheduling document.')
         if not _valid_wall(item.start):
             raise RecurrenceError('An occurrence uses a nonexistent local time. Its standard exception is preserved.')
         nominal.add(key)
@@ -156,8 +164,6 @@ def displayed_schedule(event):
         return replace(event, recurrence_overrides={})
     base = replace(event, excluded_dates=tuple(excluded | nominal), recurrence_overrides={})
     rules = recurrence_set(base)
-    if len(actual) != len(set(actual)) or any(_contains(base, key, rules) for key in actual):
-        raise RecurrenceError('Several occurrences start at the same time. Their separate standard exceptions are preserved; a single sequence cannot describe them.')
     # Exclusion keys suppress both RRULE and RDATE values. Restore an actual
     # start after suppressing all detached nominal slots, including swaps.
     return replace(base, recurrence_dates=tuple(set(event.recurrence_dates) | set(actual)),
@@ -168,7 +174,7 @@ def displayed_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     """Return the complete finite actual-start view, primary first."""
     if _unbounded(event):
         raise RecurrenceError('An unbounded recurrence cannot be expanded into a finite custom sequence.')
-    return _finite_starts(displayed_schedule(event), authoring_zone=authoring_zone, limit=limit)
+    return canonical_starts(event, authoring_zone=authoring_zone, limit=limit)
 
 
 def canonical_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
@@ -188,55 +194,19 @@ def canonical_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
             values.append(item.start.astimezone(authoring_zone or event_zone(event)))
             if len(values) > limit:
                 raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences.')
-    return tuple(sorted(values, key=lambda value: value.timestamp()))
+    anchor_key = recurrence_key(authoring_anchor(event, authoring_zone), event.all_day)
+    return tuple(sorted(values, key=lambda value: (recurrence_key(value, event.all_day) != anchor_key,
+                                                 value.timestamp())))
 
 
 def retain_displayed_overrides(candidate, source, *, shift=None):
-    """Map retained actual starts back to their standard nominal identities.
-
-    ``candidate`` is a newly evaluated expression without exceptions. An old
-    exception survives when its actual start still occurs in that expression.
-    Set operations translate that displayed slot back to its RECURRENCE-ID,
-    leaving its complete payload available to other calendar clients.
-    """
-    shift = timedelta(0) if shift is None else shift
-    zone = event_zone(candidate)
-
-    def moved(value):
-        local = (datetime.combine(value.date(), time.min, zone) if candidate.all_day
-                 else value.astimezone(zone))
-        return (local.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=local.fold)
-
-    rules = recurrence_set(candidate)
-    overrides, actual, nominal = {}, set(), set()
-    for key, payload in source.recurrence_overrides.items():
-        if key in source.excluded_dates:
-            continue
-        item = Event.from_dict(payload)
-        start, end = moved(item.start), moved(item.end)
-        if not _valid_wall(start) or not _valid_wall(end):
-            raise RecurrenceError('Moving this occurrence would use a nonexistent local time. Choose another time.')
-        actual_key = recurrence_key(start, candidate.all_day)
-        if not _contains(candidate, actual_key, rules):
-            continue
-        nominal_key = recurrence_key(moved(key_datetime(key, source)), candidate.all_day)
-        overrides[nominal_key] = replace(item, start=start, end=end, all_day=candidate.all_day,
-                                         recurrence_id=nominal_key).to_dict()
-        actual.add(actual_key)
-        nominal.add(nominal_key)
-    # A requested additional occurrence at a retained nominal slot would be
-    # overwritten by that exception. Refuse this ambiguous conversion.
-    if any(_contains(candidate, key, rules) for key in nominal - actual):
-        raise RecurrenceError('A new occurrence uses the original slot of a moved occurrence. Choose another time or change that occurrence first.')
-    bare = replace(candidate, recurrence_dates=(), excluded_dates=())
-    bare_rules = recurrence_set(bare)
-    additions = {key for key in nominal if not _contains(bare, key, bare_rules)}
-    removals = {key for key in actual if _contains(bare, key, bare_rules)}
-    result = replace(candidate, recurrence_dates=tuple((set(candidate.recurrence_dates) - actual) | additions),
-                     excluded_dates=tuple((set(candidate.excluded_dates) | removals) - nominal),
-                     recurrence_overrides=overrides)
-    if not recurrence_matches(displayed_schedule(result), candidate):
-        raise RecurrenceError('This sequence edit cannot preserve the occurrence exceptions without changing its dates.')
+    """Retain matching nominal identities without collapsing simultaneous events."""
+    counts = multiplicities(candidate)
+    extras = [key_datetime(key, candidate) for key, count in counts.items() for _ in range(count)]
+    result = apply_occurrence_counts(displayed_schedule(candidate), source, extras, shift=shift)
+    if (not recurrence_matches(displayed_schedule(result), displayed_schedule(candidate))
+            or multiplicities(result) != counts):
+        raise RecurrenceError('This sequence edit cannot preserve all occurrence identities and dates.')
     return result
 
 
@@ -267,7 +237,8 @@ def recurrence_matches(first, second):
         if all(value is not None and value.count is not None for value in regulars):
             def signature(regular):
                 days = regular.weekdays or ((first.start.weekday(),) if regular.kind == 'WEEKLY' else ())
-                return regular.kind, regular.interval, regular.count, days, regular.clamp
+                return (regular.kind, regular.interval, regular.count, days, regular.clamp,
+                        regular.selectors, regular.preferred_day, regular.week_start)
             same_rule = signature(regulars[0]) == signature(regulars[1])
     if not same_rule:
         if first_unbounded:
@@ -294,32 +265,91 @@ def expression_matches(event, expression, *, authoring_zone=None):
         return document_matches(event, expression)
     try:
         candidate = expression_event(event, expression, authoring_zone=authoring_zone)
-        return recurrence_matches(displayed_schedule(event), candidate)
+        return (recurrence_matches(displayed_schedule(event), displayed_schedule(candidate))
+                and multiplicities(event) == multiplicities(candidate))
     except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
         return False
+
+
+def _rule_expression_options(event, anchor):
+    """Describe supported standard clauses without sampling their occurrences.
+
+    These options are merely candidates. The caller proves the resulting
+    expression against the entire canonical schedule before adopting it.
+    """
+    parts = normalized_rule(simplified_rule(event), event)
+    frequency = parts.get('FREQ')
+    if frequency not in {'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'}:
+        raise RecurrenceError('This recurrence has no compact calendar-frequency notation.')
+    interval = int(parts.get('INTERVAL', '1'))
+    allowed = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST', 'BYHOUR', 'BYMINUTE', 'BYSECOND'}
+    if frequency in {'WEEKLY', 'MONTHLY', 'YEARLY'}:
+        allowed.add('BYDAY')
+    if frequency in {'MONTHLY', 'YEARLY'}:
+        allowed.update(('BYMONTHDAY', 'BYSETPOS'))
+    if frequency == 'YEARLY':
+        allowed.add('BYMONTH')
+    if parts.keys() - allowed:
+        raise RecurrenceError('This recurrence uses constraints outside the compact calendar notation.')
+
+    selectors = tuple(parts.get('BYDAY', '').split(',')) if parts.get('BYDAY') else ()
+    if frequency == 'WEEKLY' and selectors == (('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')[anchor.weekday()],):
+        selectors = ()  # The reference already gives this weekly default.
+    clamp, preferred_day = False, None
+    if 'BYSETPOS' in parts:
+        days = tuple(int(value) for value in parts.get('BYMONTHDAY', '').split(',') if value)
+        if (parts['BYSETPOS'] != '-1' or not days or selectors
+                or set(days) != set(range(min(28, max(days)), max(days) + 1))
+                or not 1 <= max(days) <= 31):
+            raise RecurrenceError('This positional recurrence has no compact calendar notation.')
+        clamp = True
+        preferred_day = max(days)
+    elif 'BYMONTHDAY' in parts:
+        if selectors or ',' in parts['BYMONTHDAY']:
+            raise RecurrenceError('This recurrence combines several independent calendar selectors.')
+        preferred_day = int(parts['BYMONTHDAY'])
+        if not 1 <= preferred_day <= 31:
+            raise RecurrenceError('This month-day recurrence has no compact calendar notation.')
+    if preferred_day == anchor.day:
+        preferred_day = None
+    return parts, dict(kind=frequency, interval=interval, weekdays=selectors,
+                       preferred_day=preferred_day, clamp=clamp, week_start=parts.get('WKST', 'MO'))
+
+
+def _rule_until(parts, anchor):
+    """Convert an exact rule cutoff to an inclusive date at its recurrence clock."""
+    text = parts.get('UNTIL')
+    if not text:
+        return None
+    if len(text) == 8:
+        return datetime.strptime(text, '%Y%m%d').date()
+    stamp = datetime.strptime(text.rstrip('Z'), '%Y%m%dT%H%M%S')
+    stamp = stamp.replace(tzinfo=timezone.utc if text.endswith('Z') else anchor.tzinfo)
+    local = stamp.astimezone(anchor.tzinfo)
+    candidate = local.replace(hour=int(parts.get('BYHOUR', anchor.hour)),
+                              minute=int(parts.get('BYMINUTE', anchor.minute)),
+                              second=int(parts.get('BYSECOND', anchor.second)), microsecond=0)
+    return local.date() - (timedelta(days=1) if candidate.timestamp() > stamp.timestamp() else timedelta())
+
+
+def _rule_shape(event):
+    return {name: value for name, value in normalized_rule(simplified_rule(event), event).items()
+            if name not in {'COUNT', 'UNTIL'}}
 
 
 def _tail_expression(event, *, authoring_zone=None):
     anchor = authoring_anchor(event, authoring_zone)
     if not event.all_day and not _same_zone(anchor.tzinfo, event_zone(event)):
         raise RecurrenceError('This ongoing recurrence uses another timezone. Its standard rule is preserved.')
-    parts = normalized_rule(simplified_rule(event), event)
-    frequency = parts.get('FREQ')
-    interval = int(parts.get('INTERVAL', '1'))
+    parts, options = _rule_expression_options(event, anchor)
+    count = int(parts['COUNT']) if 'COUNT' in parts else None
+    until = _rule_until(parts, anchor)
     try:
-        regular = RegularSchedule.from_rule(event.recurrence_rule, anchor, all_day=event.all_day)
-        tail = expression_for_regular(frequency, interval, clamp=regular.clamp if regular else False)
+        tail = expression_for_regular(**options, count=count, until=until)
     except PatternError as error:
         raise RecurrenceError(str(error)) from error
     if expression_matches(event, tail, authoring_zone=anchor.tzinfo):
         return tail
-    # A single terminal every() can express one calendar-frequency phase, not
-    # multiple weekdays, positions within months, or arbitrary BYSETPOS rules.
-    allowed = {'FREQ', 'INTERVAL', 'BYHOUR', 'BYMINUTE', 'BYSECOND'}
-    allowed |= {'BYDAY'} if frequency == 'WEEKLY' else {'BYMONTHDAY'} if frequency == 'MONTHLY' else {'BYMONTHDAY', 'BYMONTH'} if frequency == 'YEARLY' else set()
-    if (parts.keys() - allowed or any(',' in value for value in parts.values())
-            or ('BYDAY' in parts and parts['BYDAY'] not in ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'))):
-        raise RecurrenceError('This imported recurrence uses additional weekdays or constraints. Its rule is preserved.')
     primary = recurrence_key(anchor, event.all_day)
     bare = replace(event, recurrence_dates=(), excluded_dates=(), recurrence_overrides={})
     base_rules, actual_rules = recurrence_set(bare), recurrence_set(event)
@@ -340,10 +370,19 @@ def _tail_expression(event, *, authoring_zone=None):
             # DTSTART may be an off-rule prototype; certify against the rule
             # rather than treating its unconditional set membership as a tail.
             try:
-                trial = compile_sequence((reconstruct_sequence([candidate], anchor=anchor, prefer_dates=False) + ' ' + tail).strip(), anchor, all_day=event.all_day)
+                # A one-occurrence trial tells us both the phase and how many
+                # underlying rule instances precede this tail cursor. A
+                # bounded source consumes only its remaining COUNT here.
+                trial_tail = expression_for_regular(**options, count=1)
+                trial = compile_sequence((reconstruct_sequence([candidate], anchor=anchor, prefer_dates=False) + ' ' + trial_tail).strip(), anchor, all_day=event.all_day)
             except PatternError:
                 continue
-            if simplified_rule(replace(authoring_event(event, anchor.tzinfo), recurrence_rule=trial.recurrence_rule)) == simplified_rule(event):
+            if _rule_shape(replace(authoring_event(event, anchor.tzinfo), recurrence_rule=trial.recurrence_rule)) == _rule_shape(event):
+                before_count = int(normalized_rule(trial.recurrence_rule, event).get('COUNT', '1')) - 1
+                remaining = count - before_count if count is not None else None
+                if remaining is not None and remaining <= 0:
+                    continue
+                tail = expression_for_regular(**options, count=remaining, until=until)
                 cursor = candidate
                 break
     if cursor is None:
@@ -378,7 +417,7 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
         values = None
         if not unbounded:
             try:
-                values = _finite_starts(displayed, authoring_zone=authoring_zone)
+                values = canonical_starts(event, authoring_zone=authoring_zone)
             except RecurrenceError:
                 from .patterns import sequence_tail
                 # A certified bounded tail stays symbolic beyond the finite
@@ -388,9 +427,51 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
                     raise
         return SequenceAuthoring(event.schedule_expression, values, unbounded,
                                  is_sequence_document(event.schedule_expression))
+    extras = multiplicities(event)
+    if extras:
+        if unbounded:
+            expression = _tail_expression(displayed, authoring_zone=authoring_zone)
+            compiled = compile_sequence(expression, authoring_anchor(event, authoring_zone), all_day=event.all_day)
+            prefix = list(compiled.prefix_starts)
+            cursor = compiled.tail_start
+            # The tail shares one final cursor. Move that emission to the end
+            # while explicit extra copies remain independent occurrences.
+            cursor_index = next((index for index in range(len(prefix) - 1, -1, -1)
+                                 if recurrence_key(prefix[index], event.all_day) == recurrence_key(cursor, event.all_day)), None)
+            if cursor_index is not None:
+                prefix.pop(cursor_index)
+            for key, count in sorted(extras.items()):
+                prefix.extend([key_datetime(key, event)] * count)
+            prefix.append(cursor)
+            if len(prefix) > DEFAULT_LIMIT:
+                raise RecurrenceError('The coincident prefix exceeds the compact authoring limit.')
+            text = reconstruct_sequence(prefix, anchor=authoring_anchor(event, authoring_zone), prefer_dates=False)
+            expression = text + ' ' + expression[expression.lower().rfind('every('):]
+            values = None
+        else:
+            values = canonical_starts(event, authoring_zone=authoring_zone)
+            expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone))
+        if not expression_matches(event, expression, authoring_zone=authoring_zone):
+            raise RecurrenceError('The compact occurrence sequence could not retain its multiplicities.')
+        return SequenceAuthoring(expression, values, unbounded)
     if unbounded:
         expression = _tail_expression(displayed, authoring_zone=authoring_zone)
         return SequenceAuthoring(expression, None, True)
+    # Preserve named weekday/ordinal intent instead of replacing a compact
+    # standard rule with an unrelated finite sample of absolute dates. This
+    # path also handles an off-rule DTSTART through an explicit +0d prefix.
+    parts = normalized_rule(displayed.recurrence_rule, displayed)
+    has_selectors = ('BYDAY' in parts and (parts.get('FREQ') in {'MONTHLY', 'YEARLY'}
+                     or parts['BYDAY'] != ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')[authoring_anchor(displayed).weekday()]))
+    has_preferred_day = ('BYMONTHDAY' in parts
+                         and max(int(value) for value in parts['BYMONTHDAY'].split(','))
+                         != authoring_anchor(displayed).day)
+    if has_selectors or has_preferred_day:
+        try:
+            expression = _tail_expression(displayed, authoring_zone=authoring_zone)
+            return SequenceAuthoring(expression, None, False)
+        except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
+            pass
     try:
         values = _finite_starts(displayed, authoring_zone=authoring_zone)
     except RecurrenceError:
@@ -400,7 +481,10 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
                                             all_day=displayed.all_day)
         if regular is None or regular.count is None:
             raise
-        expression = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp)
+        expression = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp,
+            weekdays=getattr(regular, 'selectors', ()) or regular.weekdays,
+            preferred_day=getattr(regular, 'preferred_day', None),
+            week_start=getattr(regular, 'week_start', 'MO'))
         if not expression_matches(event, expression, authoring_zone=authoring_zone):
             raise
         return SequenceAuthoring(expression, None, False)
@@ -408,7 +492,10 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
     regular = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
                                         all_day=displayed.all_day)
     if regular is not None and regular.count is not None and regular.count > 1:
-        bounded = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp)
+        bounded = expression_for_regular(regular.kind, regular.interval, count=regular.count, clamp=regular.clamp,
+            weekdays=getattr(regular, 'selectors', ()) or regular.weekdays,
+            preferred_day=getattr(regular, 'preferred_day', None),
+            week_start=getattr(regular, 'week_start', 'MO'))
         evaluated = expression_event(event, expression, authoring_zone=authoring_zone)
         inferred = RegularSchedule.from_rule(evaluated.recurrence_rule, authoring_anchor(evaluated),
                                              all_day=evaluated.all_day)
@@ -435,7 +522,10 @@ def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
     if (prefer_literal and event.schedule_syntax == 2
             and is_sequence_document(event.schedule_expression)
             and document_matches(event, event.schedule_expression)):
-        return SequenceAuthoring(event.schedule_expression, None, _document_unbounded(event), True)
+        try:
+            return _compact_authoring(event, authoring_zone=authoring_zone, prefer_literal=False)
+        except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):
+            return SequenceAuthoring(event.schedule_expression, None, _document_unbounded(event), True)
     try:
         return _compact_authoring(event, authoring_zone=authoring_zone, prefer_literal=prefer_literal)
     except (PatternError, RecurrenceError, ValueError, TypeError, OverflowError):

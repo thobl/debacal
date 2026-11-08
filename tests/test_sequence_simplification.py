@@ -15,12 +15,7 @@ ANCHOR = datetime(2026, 11, 7, 9, tzinfo=ZONE)
 
 class SimplificationTests(unittest.TestCase):
     def assert_equivalent(self, values, expression):
-        expected, seen = [], set()
-        for value in values:
-            instant = value.astimezone(timezone.utc)
-            if instant not in seen:
-                expected.append(instant)
-                seen.add(instant)
+        expected = [value.astimezone(timezone.utc) for value in values]
         actual = [value.astimezone(timezone.utc) for value in expand_sequence(expression, values[0])]
         self.assertEqual(actual, expected)
 
@@ -182,7 +177,7 @@ class SimplificationTests(unittest.TestCase):
     def test_single_precise_anchor_and_duplicate_inputs(self):
         precise = ANCHOR.replace(second=12, microsecond=345)
         self.assertEqual(simplify_sequence([precise]), '+0d')
-        self.assertEqual(simplify_sequence([precise, precise]), '+0d')
+        self.assertEqual(expand_sequence(simplify_sequence([precise, precise]), precise), [precise, precise])
         values = [ANCHOR, ANCHOR + timedelta(weeks=1), ANCHOR + timedelta(weeks=1), ANCHOR + timedelta(weeks=2)]
         self.assert_equivalent(values, simplify_sequence(values))
 

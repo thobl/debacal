@@ -37,21 +37,25 @@ def visible(event):
             for item in expand_event(event, START - timedelta(days=15), START + timedelta(days=100))]
 
 
-@pytest.mark.parametrize('rule', [
-    'FREQ=WEEKLY;BYDAY=MO,WE',
-    'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1',
-    'FREQ=YEARLY;BYMONTH=1,3,9;BYMONTHDAY=3,14,28',
-    'FREQ=HOURLY;INTERVAL=2',
-    'FREQ=MINUTELY;INTERVAL=35;COUNT=8000',
+@pytest.mark.parametrize('rule,compact', [
+    ('FREQ=WEEKLY;BYDAY=MO,WE', True),
+    ('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', False),
+    ('FREQ=YEARLY;BYMONTH=1,3,9;BYMONTHDAY=3,14,28', False),
+    ('FREQ=HOURLY;INTERVAL=2', False),
+    ('FREQ=MINUTELY;INTERVAL=35;COUNT=8000', False),
 ])
-def test_arbitrary_standard_rules_have_total_definitions_without_expanding_them(rule):
+def test_arbitrary_standard_rules_have_total_definitions_without_expanding_them(rule, compact):
     event = source(recurrence_rule=rule)
     view = reconstruct_authoring(event)
-    assert view.expression and view.structured
-    assert is_sequence_document(view.expression)
+    assert view.expression and view.structured is not compact
+    assert is_sequence_document(view.expression) is not compact
     assert expression_matches(event, view.expression)
     restored = expression_event(event, view.expression)
-    assert schedule_fields(restored) == schedule_fields(event)
+    if compact:
+        assert 'on=MO+WE' in view.expression
+        assert visible(restored) == visible(event)
+    else:
+        assert schedule_fields(restored) == schedule_fields(event)
 
 
 @pytest.mark.parametrize('exclude_reference,move_reference', [(True, False), (False, True), (True, True)])
@@ -82,7 +86,7 @@ def test_excluding_all_occurrences_has_the_explicit_empty_sequence():
     assert visible(expression_event(event, view.expression)) == []
 
 
-def test_distinct_nominal_identities_with_coincident_starts_use_the_complete_document():
+def test_distinct_nominal_identities_with_coincident_starts_have_compact_text():
     event = source()
     one = occurrence(event, START + timedelta(days=1))
     two = occurrence(event, START + timedelta(days=2))
@@ -92,7 +96,7 @@ def test_distinct_nominal_identities_with_coincident_starts_use_the_complete_doc
     event = replace(event, recurrence_overrides={one.recurrence_id: one.to_dict(), two.recurrence_id: two.to_dict()})
     before = deepcopy(event.recurrence_overrides)
     view = reconstruct_authoring(event)
-    assert view.structured and expression_matches(event, view.expression)
+    assert not view.structured and expression_matches(event, view.expression)
     restored = expression_event(event, view.expression)
     assert restored.recurrence_overrides == before
     assert visible(restored) == visible(event)
@@ -184,12 +188,21 @@ def test_invalid_documents_leave_source_untouched(text):
     assert event.to_dict() == before
 
 
-def test_existing_readable_document_literal_is_preserved_without_canonicalizing_whitespace():
-    event = source(recurrence_rule='FREQ=WEEKLY;BYDAY=MO,WE')
-    literal = '  schedule {\n  "rule": "FREQ=WEEKLY;BYDAY=MO,WE"\n}\n'
+@pytest.mark.parametrize('rule,compact', [
+    ('FREQ=WEEKLY;BYDAY=MO,WE', True),
+    ('FREQ=YEARLY;BYMONTH=1,3,9;BYMONTHDAY=3,14,28', False),
+])
+def test_existing_document_upgrades_when_compact_and_preserves_whitespace_otherwise(rule, compact):
+    event = source(recurrence_rule=rule)
+    literal = '  schedule {\n  "rule": "' + rule + '"\n}\n'
     event = replace(event, schedule_expression=literal, schedule_syntax=2)
-    assert reconstruct_authoring(event).expression == literal
-    assert reconstruct_authoring(event).structured
+    view = reconstruct_authoring(event)
+    assert view.structured is not compact
+    assert expression_matches(event, view.expression)
+    if compact:
+        assert view.expression == 'every(1w, on=MO+WE)'
+    else:
+        assert view.expression == literal
 
 
 def test_even_a_malformed_imported_rule_keeps_an_editable_lossless_document():

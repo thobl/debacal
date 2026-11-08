@@ -65,7 +65,7 @@ def test_complex_rule_conversion_is_lossless_and_invalid_text_leaves_draft_uncha
     event = source('FREQ=WEEKLY;BYDAY=MO,WE')
     draft = ScheduleDraft.from_event(event)
     draft.use_sequence(event)
-    assert draft.expression.startswith('schedule{')
+    assert draft.expression == 'every(1w, on=MO+WE)'
     assert expression_matches(event, draft.expression)
     before = deepcopy(draft.__dict__)
     with pytest.raises(ValueError):

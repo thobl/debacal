@@ -17,7 +17,7 @@ from debacal.recurrence import (
     RecurrenceError, expand_event, occurrence, recurrence_key, rules_equivalent, updated_series,
 )
 from debacal.series_operations import partition_series
-from debacal.schedule_authoring import expression_matches
+from debacal.schedule_authoring import expression_event, expression_matches
 from debacal.store import Store
 
 
@@ -26,12 +26,13 @@ START = datetime(2026, 11, 4, 9, tzinfo=ZONE)
 
 
 def authored(expression='every(1w)', start=START, **changes):
-    compiled = compile_sequence(expression, start, all_day=changes.get('all_day', False))
     values = dict(id='series', calendar_id='local', ical_uid='endless-series', title='Meeting',
                   start=start, end=start + timedelta(hours=1), timezone_id='Europe/Berlin',
                   schedule_expression=expression, expression_anchor=start.date().isoformat(),
-                  schedule_syntax=2, **compiled.fields)
-    return Event(**(values | changes))
+                  schedule_syntax=2)
+    prototype = Event(**(values | {name: value for name, value in changes.items()
+                                  if name in ('start', 'end', 'all_day', 'timezone_id')}))
+    return replace(expression_event(prototype, expression), **changes)
 
 
 def visible(event, days=50):
@@ -206,14 +207,15 @@ def test_all_day_regular_to_custom_keeps_floating_dates_and_survives_move(tmp_pa
         assert_roundtrip(moved)
 
 
-def test_imported_multiday_rule_is_preserved_in_a_total_sequence_document():
+def test_imported_multiday_rule_has_compact_weekday_text():
     source = authored(recurrence_rule='FREQ=WEEKLY;BYDAY=MO,WE', schedule_expression='')
     draft = ScheduleDraft.from_event(source)
     before = draft.fields(START)
     draft.use_sequence(source)
     fields = draft.fields(START)
     assert expression_matches(source, draft.expression)
-    assert fields['recurrence_rule'] == before['recurrence_rule']
+    assert 'on=MO+WE' in draft.expression
+    assert rules_equivalent(fields['recurrence_rule'], before['recurrence_rule'], source)
     assert fields['recurrence_dates'] == before['recurrence_dates']
     assert fields['excluded_dates'] == before['excluded_dates']
 

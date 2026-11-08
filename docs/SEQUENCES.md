@@ -8,7 +8,8 @@ RECURRENCE-ID. The reference supplies the default clock and duration. It is a
 coordinate origin, **not a compulsory occurrence**. Removing or moving its
 occurrence is an ordinary single-occurrence operation; the reference can remain.
 
-Every schedule has an editable string. Short programs describe actual starts;
+Every schedule has an editable string. Short programs describe actual
+occurrences, including several at the same start;
 the complete `schedule{…}` form describes canonical scheduling fields and
 identities directly. Generation tries the short form first and always falls
 back to the complete form. Neither infinity, an excluded reference, coincident
@@ -33,7 +34,13 @@ date     = day, "." | day, ".", month, "."
          | day, ".", month, ".", four_digit_year ;
 clock    = hour, ":", two_digit_minute ;
 tail     = "every(", positive_integer, unit, [ "!" ],
-           [ ",", ( "count=", positive_integer | "until=", full_date ) ], ")" ;
+           { ",", option }, ")" ;
+option   = "on=", selector, { "+", selector }
+         | "day=", day | "week_start=", weekday
+         | "count=", positive_integer | "until=", full_date ;
+selector = [ ordinal ], weekday ;
+ordinal  = [ "-" ], ( "1" | "2" | "3" | "4" | "5" ) ;
+weekday  = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU" ;
 full_date = day, ".", month, ".", four_digit_year ;
 separator = whitespace | ",", [ whitespace ] ;
 ```
@@ -46,11 +53,14 @@ Blank input is an incomplete edit; `none` denotes an empty schedule.
 
 ### Evaluation
 
-Start with an empty set and a cursor at the reference. Each instruction moves
-the cursor and emits its new start. `+0d` explicitly emits the reference.
-Duplicate starts are deduplicated in this short **set** notation. Multipliers
-repeat instructions, never an implicit reference. `2*+1d` emits two events;
-`+0d 2*+1d` emits three.
+Start with an empty occurrence list and a cursor at the reference. Each finite
+instruction moves the cursor and emits **one separate occurrence**, even when
+another occurrence already has that start. `+0d` emits the current cursor
+without moving it: `2*+0d` means two distinct occurrences at the reference.
+This is a multiset of starts, not a deduplicated set. Multipliers repeat
+instructions, never an implicit reference. `2*+1d` emits two events;
+`+0d 2*+1d` emits three. An explicit full date returning to a previously emitted
+instant also creates another occurrence there.
 
 | Instruction | Meaning |
 | --- | --- |
@@ -85,11 +95,35 @@ missing date.
 
 ### Regular tails and bounds
 
-`every(1w)` emits the cursor and continues weekly. `count=N` counts tail
-occurrences including that cursor. `until=D.M.YYYY` includes starts on or
-before that local date. Bounds are mutually exclusive. Prefix starts neither
-consume the tail count nor inherit its bound. A tail is terminal; it cannot
+`every(1w)` starts at the cursor and continues weekly. A selector instead starts
+at its first matching instant on or after the cursor. `count=N` counts **tail
+occurrences**, not periods: `every(2w, on=MO+WE, count=6)` emits six appointments
+across active fortnightly weeks. `until=D.M.YYYY` includes starts on or before
+that local date. Bounds are mutually exclusive. A tail is terminal and cannot
 appear inside a repeated group.
+
+When the tail starts exactly at the **last emitted prefix occurrence**, it
+continues that occurrence rather than creating a second copy. Thus
+`+0d every(1d, count=3)` has three occurrences, while
+`2*+0d every(1d, count=3)` has four: two at the reference and one on each of the
+next two days. Only this final cursor overlap is shared. An earlier prefix
+occurrence coinciding with a later tail date is an additional copy. Prefix
+occurrences otherwise neither consume the tail count nor inherit its bound.
+
+`on=MO+WE` selects Mondays and Wednesdays. Weekly selectors use plain weekday
+names; monthly and yearly selectors may also use ordinals: `on=2MO` means the
+second Monday and `on=-1FR` the last Friday. Multiple selectors choose their
+union; selecting one date twice inside `on` does not multiply a standard rule
+occurrence. Yearly selectors apply within the tail cursor's month each year.
+`week_start=SU` chooses the weekly interval's week boundary; its default is MO.
+Options are case insensitive, may appear in any order, and cannot be repeated.
+
+`day=31` explicitly supplies the preferred month day, independently of the
+reference day. It is available for monthly/yearly tails and combines with `!`:
+`every(1m!, day=31)` starting on 30 November emits 30 November, 31 December,
+31 January, 28 February, 31 March. This preserves a clipped series suffix's
+original preference. Without `!`, missing preferred dates are skipped.
+`on` cannot combine with `day` or `!`; `week_start` applies only to weekly rules.
 
 An ordinary tail establishes its standard recurrence at its actual cursor.
 A clamped tail retains the preferred day. Thus after `+1m!` from 31 October,
@@ -101,6 +135,10 @@ preferred 31st with shorter-month clamping.
 +0d 4*(+2w) +3w 3*+2w
 +0d 10:00 11:00 9:00 10:00 11:00
 every(1m!, count=13)
+every(1w, on=MO+WE)
+every(1m, on=-1FR, count=6)
+every(1m!, day=31)
+2*+0d
 +0d +3w every(1w)
 every(1d, until=13.11.2026)
 none
@@ -172,7 +210,11 @@ string, RDATE list, EXDATE list, and exception map. The document writes this
 tuple's scheduling projection. Each exception keeps its nominal key and range;
 parsing merges its unchanged content at that same key. Unchanged text therefore
 round-trips scheduling fields and full exception payloads, including coincident
-events and infinite rules. This guarantees a string when a set projection cannot.
+events and infinite rules. This guarantees a string when compact occurrence
+notation is unsuitable. Mixed timed/all-day occurrences, unsupported rule
+combinations and huge irregular calendars can still use this complete form;
+coincident starts alone no longer require it. An existing fallback is offered
+as compact text when the extended language can now represent it exactly.
 
 ## Generation and normal form
 
@@ -181,15 +223,16 @@ undo history. Generate text only when it is absent or a schedule edit invalidate
 
 1. Preserve a certified expression and its relative intent.
 2. Express exact standard regular rules symbolically with `every` and a bound.
-3. For manageable finite sets or finite edits to supported ongoing rules,
+3. For manageable finite occurrence lists or finite edits to supported ongoing rules,
    generate a compact program and certify equivalence.
 4. Otherwise serialize the complete document and certify canonical equality.
 
-The finite normalizer takes an explicit reference and preserves the supplied
-order while removing duplicate actual starts by UTC instant. Canonical
-reconstruction supplies a stable order: the reference first when present,
-then the remaining starts by instant (floating date for all-day). It emits
-`+0d` only when the reference is present and `none` for an empty set.
+The finite normalizer takes an explicit reference and preserves every supplied
+occurrence, including repeated actual starts. Canonical reconstruction supplies
+a stable order: occurrences at the reference first, then the remaining starts
+by instant (floating date for all-day), retaining separate nominal identities
+for ties. Consecutive equal starts use `+0d`; repeated zero steps may use a
+multiplier. It emits `none` for an empty occurrence list.
 For each next start it considers
 day-only, day/month, full date, clock/date and relative atoms. Every candidate
 must evaluate to exactly that start. Repeated strides/blocks are compressed;
@@ -200,8 +243,10 @@ a dot, full-year dates do not, and units are always explicit.
 Bounded dynamic programming uses deterministic tie-breaks on irregular offsets,
 length, explicit years, nesting, groups and lexical order. Beyond the optimization
 budget, verified linear date/clock notation is sufficient. Global shortestness
-is not claimed. Re-expansion certifies finite output; supported ongoing rules
-require rule equivalence and exhaustive comparison of finite differences.
+is not claimed. Re-expansion certifies finite output **with multiplicity**;
+supported ongoing rules require rule equivalence and exhaustive comparison of
+finite date differences and extra-occurrence counts. A finite sample cannot
+prove equivalence between different infinite rules.
 Uncertain proofs select documents, never guessed short programs.
 
 Finite compilation first recognizes uniform relative programs beginning with
@@ -211,6 +256,25 @@ including hourly or minutely rules. Such standard rules do not reintroduce
 relative hour/minute syntax. Every inferred rule is checked against all
 emitted starts. A finite program omitting its reference uses explicit RDATEs
 and EXDATE(reference), so inference cannot invent a new DTSTART occurrence.
+
+### Standard identities for coincident occurrences
+
+iCalendar RRULE/RDATE describe a set and cannot encode an extra copy by repeating
+the same RDATE. Compact compilation therefore separates ordinary recurrence
+membership from finite additional occurrence counts. Existing detached
+RECURRENCE-IDs and their complete payloads are retained when text is re-read.
+New copies receive unused valid nominal RDATE slots and detached VEVENTs whose
+actual ranges point to the requested shared start. Nominal slots are whole
+seconds for timed events and dates for all-day events; allocation never
+overwrites a normal occurrence, exclusion, or retained identity. It searches
+unused slots near the reference within a bounded budget and rejects an edit
+atomically if no valid slot can be allocated.
+
+The correctness contract compares the actual-start **multiset**, then retains
+the identity/content mapping separately. Two nominal IDs at one instant must
+remain two events through text re-entry, move, split, history, and ICS sync.
+An unchanged text edit preserves their different durations, titles, notes,
+locations and alarms; these remain detached content rather than syntax fields.
 
 ## Operations and editor state
 
@@ -222,14 +286,24 @@ Opening a dialog is not a mutation.
   This applies equally to an occurrence at the reference.
 * **All:** content/duration edits preserve the schedule. Moving a certified
   relative program reevaluates its instructions at the moved reference and
-  retains text. Detached payloads/identities follow corresponding logical
+  retains its instruction intent. Named weekday selectors rotate with
+  a day move; weekly interval boundaries rotate with them to keep their phase.
+  An ordinal move is rejected before mutation if the requested new date would
+  no longer satisfy that ordinal (for example, moving a last Friday on 30 April
+  one day later does not make 1 May the last Saturday of May).
+  Detached payloads/identities follow corresponding logical
   occurrences. Explicit-date/document schedules translate canonically and
   reconstruct text when needed. Excluded references stay excluded.
-* **Following:** partition by selected nominal identity. The prefix stops before
-  it; the suffix receives a new UID/reference. Counts, UNTIL, additions,
+* **Following:** partition at the selected occurrence's logical position. A
+  rule-defined occurrence retains its nominal position after a move; an
+  independently added detached RDATE uses its actual start. This prevents a
+  coincident copy's allocated identity from placing it before earlier events.
+  Copies at the same logical position stay on the same side of the boundary;
+  selection highlights use this same ordering. The prefix stops before that
+  position; the suffix receives a new UID/reference. Counts, UNTIL, additions,
   exclusions and detached payloads are partitioned together. Then apply the
   all-series operation to the suffix. Both sides receive exact text; a clipped
-  suffix must not silently forget its former preferred calendar day.
+  suffix retains its former preferred calendar day with `day=N` when necessary.
 * **Copy/paste:** one copies the actual occurrence; all/following share the same
   projection/partition and placement logic with new identities. Originals remain.
 * **Confirm alternative:** retain the chosen actual event and remove all other
@@ -238,7 +312,10 @@ Opening a dialog is not a mutation.
 Start/End controls edit the reference. Preview edits modify individual
 occurrences, including the one at the reference, without redefining that origin.
 Removing its chip/day is allowed. Adding/removing days or changing a time updates
-the string. Regular controls appear only when exact. Explicitly switching from
+the string. Weekly basic controls preserve all selected weekdays. Ordinal
+selectors, a different preferred day and nondefault week boundaries stay in
+Custom when the basic controls cannot retain those clauses. Regular controls
+appear only when exact. Explicitly switching from
 custom to regular replaces the schedule while remembering the custom draft.
 
 Draft changes are staged and adopted atomically. Invalid pending text cannot
@@ -251,7 +328,8 @@ has no interpreter. Unannotated calendars are reconstructed canonically.
 ## Verification
 
 Tests cover retired spelling rejection; normalization round-trips and budgets;
-skip/clamp cycles, strides and leap years; rule/text/control agreement; excluded
+skip/clamp cycles, strides and leap years; weekday/ordinal selectors, interval
+phases and bounds; rule/text/control agreement; excluded
 and moved references; coincident identities; huge/ongoing/advanced documents;
 typed and graphical edits; all/following moves/splits; detached payload transport;
 clipboard projection; history/outbox and ICS round-trip. Seeded combinations

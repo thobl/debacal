@@ -144,7 +144,7 @@ def test_unbounded_import_has_an_editable_complete_definition(editor_factory):
                    recurrence_rule='FREQ=MONTHLY;BYDAY=-1FR', timezone_id=ZONE.key)
     dialog = editor_factory(source)
     assert dialog._draft.kind == 'custom'
-    assert dialog.pattern.text().startswith('schedule{')
+    assert 'every(1m, on=-1FR)' in dialog.pattern.text()
     assert expression_matches(source, dialog.pattern.text())
     assert dialog.build_events()[0].recurrence_rule == source.recurrence_rule
     assert not dialog.error.text()

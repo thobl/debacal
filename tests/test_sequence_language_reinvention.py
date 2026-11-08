@@ -81,8 +81,8 @@ def test_standard_tail_starts_its_own_calendar_phase_after_a_clamped_step():
 def test_day_week_and_absolute_instructions_reset_clamp_preference():
     anchor = at(2027, 1, 31)
     assert days('+1m! +1d +1m!', anchor) == [date(2027, 2, 28), date(2027, 3, 1), date(2027, 4, 1)]
-    assert days('+1m! +0d +1m!', anchor) == [date(2027, 2, 28), date(2027, 3, 28)]
-    assert days('+1m! 28.2.2027 +1m!', anchor) == [date(2027, 2, 28), date(2027, 3, 28)]
+    assert days('+1m! +0d +1m!', anchor) == [date(2027, 2, 28), date(2027, 2, 28), date(2027, 3, 28)]
+    assert days('+1m! 28.2.2027 +1m!', anchor) == [date(2027, 2, 28), date(2027, 2, 28), date(2027, 3, 28)]
 
 
 def test_year_clamp_returns_to_leap_day():

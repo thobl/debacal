@@ -2,7 +2,7 @@
 
 The reference supplies the initial cursor and default clock, but contributes no
 occurrence by itself. ``+0d`` emits it. Every finite instruction emits its new
-cursor; duplicate instants are emitted once. A final ``every(...)`` includes its
+cursor, including another occurrence at an already emitted instant. A final ``every(...)`` includes its
 cursor and follows standard calendar recurrence semantics. Month/year offsets
 skip invalid dates; the explicit ``!`` suffix clamps them while retaining their
 preferred day across consecutive month/year steps.
@@ -24,8 +24,9 @@ MAX_NESTING = 8
 _INTEGER = re.compile(r'[0-9]+')
 _CLOCK = re.compile(r'([0-9]{1,2}):([0-9]{2})')
 _TAIL = re.compile(r'(?<![^\s,])every\(\s*([0-9]+)\s*([dwmy])(!?)\s*'
-                   r'(?:,\s*(count|until)\s*=\s*([^()]+?)\s*)?\)\s*$', re.I)
+                   r'((?:,\s*[^(),]+)*)\)\s*$', re.I)
 _FREQUENCIES = {'d': 'DAILY', 'w': 'WEEKLY', 'm': 'MONTHLY', 'y': 'YEARLY'}
+_WEEKDAYS = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
 
 
 class PatternError(ValueError):
@@ -40,6 +41,9 @@ class SequenceTail:
     count: int | None = None
     until: date | None = None
     clamp: bool = False
+    weekdays: tuple[str, ...] = ()
+    preferred_day: int | None = None
+    week_start: str = 'MO'
 
     @property
     def frequency(self):
@@ -59,15 +63,37 @@ class CompiledSequence:
     recurrence_dates: tuple[str, ...]
     excluded_dates: tuple[str, ...]
     unbounded: bool = False
+    duplicate_starts: tuple[datetime, ...] = ()
 
     @property
     def fields(self):
+        if self.duplicate_starts:
+            raise PatternError('Coincident occurrences need an event reference. Use the event sequence compiler to retain their separate identities.')
         return dict(recurrence_rule=self.recurrence_rule, recurrence_dates=self.recurrence_dates,
                     excluded_dates=self.excluded_dates)
 
 
+def _weekday_selectors(values, unit):
+    """Normalize calendar weekdays without accepting ambiguous ordinal weeks."""
+    result = []
+    for value in values:
+        if type(value) is int and 0 <= value <= 6:
+            value = _WEEKDAYS[value]
+        value = str(value).upper()
+        match = re.fullmatch(r'([+-]?[1-5])?(MO|TU|WE|TH|FR|SA|SU)', value)
+        if match is None or (match[1] is not None and unit not in ('m', 'y')):
+            raise PatternError('Use weekday names MO, TU, WE, TH, FR, SA, SU; '
+                               'monthly/yearly selectors may use an ordinal such as -1FR.')
+        ordinal = str(int(match[1])) if match[1] is not None else ''
+        result.append(ordinal + match[2])
+    if result and unit not in ('w', 'm', 'y'):
+        raise PatternError('Weekday selection is available for weeks, months and years.')
+    return tuple(sorted(set(result), key=lambda value: (_WEEKDAYS.index(value[-2:]),
+                                                        int(value[:-2] or '0'))))
+
+
 def sequence_tail(expression: str) -> SequenceTail | None:
-    """Recognize terminal every(Nunit[, count=N|until=D.M.YYYY]).
+    """Recognize terminal every(Nunit[, on=MO+WE][, count=N|until=D.M.YYYY]).
 
     Invalid month days and leap dates are skipped unless the unit has an
     explicit clamp suffix, as in every(1m!, count=12).
@@ -87,25 +113,52 @@ def sequence_tail(expression: str) -> SequenceTail | None:
     prefix = expression[:match.start()].rstrip()
     if prefix.endswith(','):
         prefix = prefix[:-1].rstrip()
-    count = until = None
+    count = until = preferred_day = None
+    weekdays, week_start = (), 'MO'
     if match[3] and match[2].lower() not in ('m', 'y'):
         raise PatternError('Clamping is available only for month and year intervals.')
-    if match[4] and match[4].lower() == 'count':
-        if not re.fullmatch(r'[0-9]{1,6}', match[5]) or not 1 <= int(match[5]) <= 100000:
+    options = {}
+    for clause in match[4].split(',')[1:]:
+        name, separator, value = clause.strip().partition('=')
+        name, value = name.strip().lower(), value.strip()
+        if not separator or name not in ('on', 'day', 'week_start', 'count', 'until') or name in options:
+            raise PatternError('Use each on, day, week_start, count or until option at most once.')
+        options[name] = value
+    if 'count' in options and 'until' in options:
+        raise PatternError('Choose either a repeat count or a final date, not both.')
+    unit = match[2].lower()
+    if 'count' in options:
+        if not re.fullmatch(r'[0-9]{1,6}', options['count']) or not 1 <= int(options['count']) <= 100000:
             raise PatternError('The repeat count must be between 1 and 100,000, including the tail start.')
-        count = int(match[5])
-    elif match[4]:
-        bound = re.fullmatch(r'([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})', match[5])
+        count = int(options['count'])
+    if 'until' in options:
+        bound = re.fullmatch(r'([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})', options['until'])
         try:
             if bound is None:
                 raise ValueError
             until = date(int(bound[3]), int(bound[2]), int(bound[1]))
         except ValueError as exc:
             raise PatternError('Use a complete final date, for example until=13.11.2026.') from exc
-    return SequenceTail(prefix, int(match[1]), match[2].lower(), count, until, bool(match[3]))
+    if 'on' in options:
+        weekdays = _weekday_selectors([value.strip() for value in options['on'].split('+')], unit)
+    if 'day' in options:
+        if unit not in ('m', 'y') or not re.fullmatch(r'[0-9]{1,2}', options['day']) or not 1 <= int(options['day']) <= 31:
+            raise PatternError('Use day=1 through day=31 for monthly or yearly repeats.')
+        if weekdays:
+            raise PatternError('Choose weekday selection or a calendar day, not both.')
+        preferred_day = int(options['day'])
+    if weekdays and match[3]:
+        raise PatternError('Weekday selection cannot be combined with calendar-day clamping.')
+    if 'week_start' in options:
+        week_start = options['week_start'].upper()
+        if unit != 'w' or week_start not in _WEEKDAYS:
+            raise PatternError('Use week_start=MO through week_start=SU for weekly repeats.')
+    return SequenceTail(prefix, int(match[1]), unit, count, until, bool(match[3]),
+                        weekdays, preferred_day, week_start)
 
 
-def expression_for_regular(kind, interval=1, *, count=None, until=None, clamp=False):
+def expression_for_regular(kind, interval=1, *, count=None, until=None, clamp=False,
+                           weekdays=(), preferred_day=None, week_start='MO'):
     """One spelling for a regular recurrence and its optional inclusive bound."""
     unit = next((unit for unit, frequency in _FREQUENCIES.items() if frequency == str(kind).upper()), None)
     if unit is None or type(interval) is not int or not 1 <= interval <= 999:
@@ -114,16 +167,32 @@ def expression_for_regular(kind, interval=1, *, count=None, until=None, clamp=Fa
         raise PatternError('Choose either a repeat count or a final date, not both.')
     if clamp and unit not in ('m', 'y'):
         raise PatternError('Clamping is available only for month and year intervals.')
+    selectors = _weekday_selectors(weekdays, unit)
+    if preferred_day is not None and (unit not in ('m', 'y') or type(preferred_day) is not int
+                                      or not 1 <= preferred_day <= 31 or selectors):
+        raise PatternError('Choose a monthly/yearly day from 1 through 31, without weekday selection.')
+    if selectors and clamp:
+        raise PatternError('Weekday selection cannot be combined with calendar-day clamping.')
+    week_start = str(week_start).upper()
+    if week_start not in _WEEKDAYS or (unit != 'w' and week_start != 'MO'):
+        raise PatternError('Choose a valid first weekday for a weekly repeat.')
+    options = []
+    if selectors:
+        options.append('on=' + '+'.join(selectors))
+    if preferred_day is not None:
+        options.append(f'day={preferred_day}')
+    if week_start != 'MO':
+        options.append('week_start=' + week_start)
     unit += '!' if clamp else ''
     if count is not None:
         if type(count) is not int or not 1 <= count <= 100000:
             raise PatternError('The repeat count must be between 1 and 100,000, including the tail start.')
-        return f'every({interval}{unit}, count={count})'
+        options.append(f'count={count}')
     if until is not None:
         if not isinstance(until, date) or isinstance(until, datetime):
             raise PatternError('Choose a valid final recurrence date.')
-        return f'every({interval}{unit}, until={until.day}.{until.month}.{until.year:04d})'
-    return f'every({interval}{unit})'
+        options.append(f'until={until.day}.{until.month}.{until.year:04d}')
+    return f'every({interval}{unit}' + (', ' + ', '.join(options) if options else '') + ')'
 
 
 def _calendar_invalid(start, months, preferred_day):
@@ -137,14 +206,17 @@ def _calendar_invalid(start, months, preferred_day):
     return False
 
 
-def clamp_relevant(start, kind, interval=1):
+def clamp_relevant(start, kind, interval=1, *, preferred_day=None):
     """Whether a regular interval ever encounters an invalid calendar day."""
     try:
         _aware(start)
         unit = {'MONTHLY': 'm', 'YEARLY': 'y', 'm': 'm', 'y': 'y'}.get(kind)
         if unit is None or type(interval) is not int or not 1 <= interval <= 999:
             return False
-        return _calendar_invalid(start, interval * (12 if unit == 'y' else 1), start.day)
+        day = start.day if preferred_day is None else preferred_day
+        if type(day) is not int or not 1 <= day <= 31:
+            return False
+        return _calendar_invalid(start, interval * (12 if unit == 'y' else 1), day)
     except (PatternError, ValueError, OverflowError):
         return False
 
@@ -153,8 +225,10 @@ def with_calendar_clamp(expression, enabled):
     """Toggle m/y clamp suffixes without changing other text or formatting."""
     tail = sequence_tail(expression)
     _Parser(tail.prefix if tail else expression, MAX_SEQUENCE_EVENTS, allow_empty=tail is not None).sequence()
-    return re.sub(r'(?<=[0-9])([mMyY])!?',
-                  lambda match: match[1] + ('!' if enabled else ''), expression)
+    protected = _TAIL.search(expression).start() if tail is not None and tail.weekdays else len(expression)
+    return (re.sub(r'(?<=[0-9])([mMyY])!?',
+                   lambda match: match[1] + ('!' if enabled else ''), expression[:protected])
+            + expression[protected:])
 
 
 def calendar_clamp_options(expression, anchor):
@@ -180,9 +254,9 @@ def calendar_clamp_options(expression, anchor):
             else:
                 cursor = _absolute(step, cursor, anchor)
                 preferred_day = cursor.day
-        if tail is not None and tail.unit in ('m', 'y'):
+        if tail is not None and tail.unit in ('m', 'y') and not tail.weekdays:
             matters = _calendar_invalid(cursor, tail.interval * (12 if tail.unit == 'y' else 1),
-                                        preferred_day if tail.clamp else cursor.day)
+                                        tail.preferred_day or (preferred_day if tail.clamp else cursor.day))
             relevant |= matters
             enabled |= matters and tail.clamp
         return bool(relevant), bool(enabled)
@@ -583,10 +657,10 @@ def _absolute(step, previous, anchor):
 
 
 def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMIT) -> list[datetime]:
-    """Return the sequence's unique emitted instants, in instruction order.
+    """Return emitted occurrences, retaining coincident starts in instruction order.
 
     The instruction budget includes every expanded step, even a repeated date
-    that is later deduplicated. Full dates are exact; partial dates and clocks
+    even at a repeated start. Full dates are exact; partial dates and clocks
     advance. Zero relative offsets explicitly emit the existing cursor.
     """
     _check_limit(limit)
@@ -603,16 +677,17 @@ def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMI
         # Timed expansion uses aware local clocks. Stored all-day rules still
         # use DATE UNTIL, but this entry point expands a timed prototype.
         result = list(compiled.prefix_starts)
-        seen = {_instant(value) for value in result}
+        shared = bool(result and _instant(result[-1]) == _instant(compiled.tail_start))
         for value in rrulestr(rule, dtstart=anchor):
             value = normalize_recurrence_time(value)
+            if _instant(value) < _instant(compiled.tail_start):
+                continue
             if _instant(value).isoformat() in compiled.excluded_dates:
                 continue
             stamp = _instant(value)
-            if stamp in seen:
+            if shared and stamp == _instant(compiled.tail_start):
                 continue
             result.append(value)
-            seen.add(stamp)
             if len(result) > limit:
                 raise PatternError(f'This sequence exceeds the limit of {limit} events.')
         return result
@@ -621,7 +696,7 @@ def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMI
 
 
 def _execute_state(steps, anchor):
-    values, seen = [], set()
+    values = []
     previous = anchor
     preferred_day = anchor.day
     for step in steps:
@@ -632,10 +707,7 @@ def _execute_state(steps, anchor):
         else:
             previous = _absolute(step, previous, anchor)
             preferred_day = previous.day
-        stamp = _instant(previous)
-        if stamp not in seen:
-            values.append(previous)
-            seen.add(stamp)
+        values.append(previous)
     return values, previous, preferred_day
 
 
@@ -644,13 +716,85 @@ def _execute_steps(steps, anchor):
     return values, previous
 
 
-def _check_tail_count_range(tail, start):
+def duplicate_occurrences(values):
+    """Occurrences beyond the first at each instant, in emission order."""
+    seen, duplicates = set(), []
+    for value in values:
+        key = _instant(value)
+        if key in seen:
+            duplicates.append(value)
+        seen.add(key)
+    return tuple(duplicates)
+
+
+def tail_duplicate_occurrences(values, start, rule, anchor):
+    """Finite extra copies emitted alongside a standard terminal rule.
+
+    Only the last prefix emission is shared with the tail's cursor. Other
+    prefix emissions remain occurrences even when the rule later reaches them.
+    """
+    from dateutil.rrule import rrulestr
+    def date_until(match):
+        last = datetime.strptime(match[1], '%Y%m%d').date()
+        boundary = datetime.combine(last, time.max, anchor.tzinfo).astimezone(timezone.utc)
+        return 'UNTIL=' + f'{boundary.year:04d}' + boundary.strftime('%m%dT%H%M%SZ')
+    rule = re.sub(r'UNTIL=([0-9]{8})(?=;|$)', date_until, rule)
+    generated = rrulestr(rule, dtstart=anchor)
+    seen, extras = set(), []
+    cursor_key = _instant(start)
+    shared = bool(values and _instant(values[-1]) == cursor_key)
+    for value in values:
+        stamp = _instant(value)
+        in_tail = False
+        if stamp >= cursor_key:
+            previous = generated.before(value, inc=True)
+            in_tail = previous is not None and _instant(previous) == stamp
+        if stamp in seen or (in_tail and not (shared and stamp == cursor_key)):
+            extras.append(value)
+        seen.add(stamp)
+    return tuple(extras)
+
+
+def _check_tail_count_range(tail, start, preferred_day=None):
     """Prove a finite calendar count fits without expanding its occurrences."""
     if tail.count is None:
         return
     try:
+        if tail.unit == 'w' and tail.weekdays:
+            days = sorted(_WEEKDAYS.index(value) for value in tail.weekdays)
+            origin = _WEEKDAYS.index(tail.week_start)
+            offsets = sorted((day - origin) % 7 for day in days)
+            offset = (start.weekday() - origin) % 7
+            remaining = [day for day in offsets if day >= offset]
+            index = tail.count - 1
+            first_week = start.date() - timedelta(days=offset)
+            if index < len(remaining):
+                first_week + timedelta(days=remaining[index])
+            else:
+                periods, day = divmod(index - len(remaining), len(offsets))
+                first_week + timedelta(days=(periods + 1) * 7 * tail.interval + offsets[day])
+            return
         if tail.unit in ('d', 'w'):
             start.date() + timedelta(days=tail.interval * (tail.count - 1) * (7 if tail.unit == 'w' else 1))
+            return
+        if tail.weekdays:
+            # At most 4,800 monthly or 400 yearly periods cover a complete
+            # Gregorian cycle. Count positions symbolically, not 100k events.
+            months = tail.interval * (12 if tail.unit == 'y' else 1)
+            cycle = 4800 // gcd(months, 4800)
+            initial = start.year * 12 + start.month - 1
+            candidates = []
+            for period in range(cycle):
+                year, month = divmod((initial + period * months) % 4800, 12)
+                for day in _selected_month_days(year + 400, month + 1, tail.weekdays):
+                    candidates.append((period, day))
+            initial_days = _selected_month_days(start.year, start.month, tail.weekdays)
+            skipped = sum(day < start.day for day in initial_days)
+            rounds, index = divmod(tail.count - 1 + skipped, len(candidates))
+            final_period, _day = candidates[index]
+            year, _month = divmod(initial + (rounds * cycle + final_period) * months, 12)
+            if not 1 <= year <= 9999:
+                raise OverflowError
             return
         # Month/day validity repeats after 400 Gregorian years. Compute the
         # final period using at most one calendar cycle, not the tail's count.
@@ -660,7 +804,7 @@ def _check_tail_count_range(tail, start):
         valid = []
         for period in range(cycle):
             year, month = divmod((initial + period * months) % 4800, 12)
-            if tail.clamp or start.day <= monthrange(year + 400, month + 1)[1]:
+            if tail.clamp or (preferred_day or start.day) <= monthrange(year + 400, month + 1)[1]:
                 valid.append(period)
         repetitions, remainder = divmod(tail.count - 1, len(valid))
         final_period = repetitions * cycle + valid[remainder]
@@ -669,6 +813,20 @@ def _check_tail_count_range(tail, start):
             raise OverflowError
     except (OverflowError, ValueError) as exc:
         raise PatternError('The repeat count extends beyond the supported years 1–9999.') from exc
+
+
+def _selected_month_days(year, month, selectors):
+    values = set()
+    last = monthrange(year, month)[1]
+    for selector in selectors:
+        weekday = _WEEKDAYS.index(selector[-2:])
+        matching = [day for day in range(1, last + 1) if date(year, month, day).weekday() == weekday]
+        ordinal = int(selector[:-2]) if selector[:-2] else None
+        if ordinal is None:
+            values.update(matching)
+        elif -len(matching) <= ordinal <= len(matching):
+            values.add(matching[ordinal - 1] if ordinal > 0 else matching[ordinal])
+    return sorted(values)
 
 
 def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
@@ -694,6 +852,7 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     if all_day and any(value.time() != time.min for value in values):
         raise PatternError('Time entries require a timed event.')
     if tail is None:
+        duplicates = duplicate_occurrences(values)
         # A finite uniform program is a bounded standard rule, including its
         # skip/clamp behavior. Verify the projection before replacing dates;
         # graphically edited irregular sets still retain exact RDATEs.
@@ -708,7 +867,7 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
             if [_instant(value) for value in actual] == [_instant(value) for value in values]:
                 return CompiledSequence(tuple(values), start, regular.recurrence_rule,
                                         regular.recurrence_dates, regular.excluded_dates)
-        if values and _instant(values[0]) == _instant(anchor):
+        if not duplicates and values and _instant(values[0]) == _instant(anchor):
             # Exact sets entered as dates or clocks deserve the same standard
             # storage as equivalent relative programs. The detector assumes
             # its first value is DTSTART, so never apply it to an omitted
@@ -723,8 +882,10 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
                                             tuple(inferred.get('recurrence_dates', ())), ())
         desired = {key(value) for value in values}
         return CompiledSequence(tuple(values), start, '', tuple(sorted(desired - {key(anchor)})),
-                                () if key(anchor) in desired else (key(anchor),))
-    if not tail.clamp:
+                                () if key(anchor) in desired else (key(anchor),), duplicate_starts=duplicates)
+    if tail.preferred_day is not None:
+        preferred_day = tail.preferred_day
+    elif not tail.clamp:
         preferred_day = start.day
     if start.microsecond or anchor.microsecond:
         raise PatternError('A regular recurrence requires whole-second times.')
@@ -732,12 +893,12 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
         raise PatternError('The regular tail must start at or after the reference.')
     if tail.until is not None and tail.until < start.date():
         raise PatternError('The final recurrence date must not precede the tail start.')
-    _check_tail_count_range(tail, start)
     if tail.unit == 'd':
         phase = (start.date() - anchor.date()).days
     elif tail.unit == 'w':
-        first_week = anchor.date() - timedelta(days=anchor.weekday())
-        tail_week = start.date() - timedelta(days=start.weekday())
+        week_start = _WEEKDAYS.index(tail.week_start)
+        first_week = anchor.date() - timedelta(days=(anchor.weekday() - week_start) % 7)
+        tail_week = start.date() - timedelta(days=(start.weekday() - week_start) % 7)
         phase = (tail_week - first_week).days // 7
     elif tail.unit == 'm':
         phase = (start.year - anchor.year) * 12 + start.month - anchor.month
@@ -747,14 +908,18 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
         raise PatternError('This regular tail does not align with the reference for that interval. '
                            'Choose an aligned start or a different interval.')
     parts = [f'FREQ={tail.frequency}', f'INTERVAL={tail.interval}']
-    if tail.unit == 'w' and start.weekday() != anchor.weekday():
+    if tail.weekdays:
+        parts.append('BYDAY=' + ','.join(tail.weekdays))
+    elif tail.unit == 'w' and start.weekday() != anchor.weekday():
         parts.append('BYDAY=' + ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')[start.weekday()])
-    if tail.unit in ('m', 'y'):
+    if tail.unit == 'w' and tail.week_start != 'MO':
+        parts.append('WKST=' + tail.week_start)
+    if tail.unit in ('m', 'y') and not tail.weekdays:
         if tail.clamp and preferred_day > 28:
             parts.extend(('BYMONTHDAY=' + ','.join(str(day) for day in range(28, preferred_day + 1)), 'BYSETPOS=-1'))
         elif preferred_day != anchor.day:
             parts.append('BYMONTHDAY=' + str(preferred_day))
-    if tail.unit == 'y' and (tail.clamp or preferred_day != anchor.day or start.month != anchor.month):
+    if tail.unit == 'y' and (tail.clamp or tail.weekdays or preferred_day != anchor.day or start.month != anchor.month):
         parts.append('BYMONTH=' + str(start.month))
     for field, actual, original in (('BYHOUR', start.hour, anchor.hour), ('BYMINUTE', start.minute, anchor.minute),
                                   ('BYSECOND', start.second, anchor.second)):
@@ -770,12 +935,17 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
             raise PatternError('This regular tail needs more than 10,000 earlier recurrence exceptions.')
         value = normalize_recurrence_time(value)
         if _instant(value) >= _instant(start):
-            found = _instant(value) == _instant(start)
+            found = _instant(value) == _instant(start) or bool(tail.weekdays or tail.preferred_day is not None)
+            if found:
+                start = value
             prefix_count = index
             break
         generated.add(key(value))
     if not found:
         raise PatternError('This regular tail cannot retain its exact time in a standard calendar rule.')
+    if tail.until is not None and tail.until < start.date():
+        raise PatternError('No selected weekday or calendar day occurs on or before the final date.')
+    _check_tail_count_range(tail, start, preferred_day)
     if tail.count is not None:
         rule += f';COUNT={prefix_count + tail.count}'
     elif tail.until is not None:
@@ -789,7 +959,8 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     exclusions = generated - desired
     if _instant(anchor) < _instant(start) and key(anchor) not in desired:
         exclusions.add(key(anchor))
-    return CompiledSequence(tuple(values), start, rule, tuple(sorted(rdates)), tuple(sorted(exclusions)), tail.unbounded)
+    return CompiledSequence(tuple(values), start, rule, tuple(sorted(rdates)), tuple(sorted(exclusions)), tail.unbounded,
+                            duplicate_starts=tail_duplicate_occurrences(values, start, rule, anchor))
 
 
 def expand_pattern(expression: str, anchor: date, limit: int = DEFAULT_LIMIT) -> list[date]:
@@ -799,14 +970,12 @@ def expand_pattern(expression: str, anchor: date, limit: int = DEFAULT_LIMIT) ->
     return [value.date() for value in expand_sequence(expression, datetime.combine(anchor, time.min, timezone.utc), limit)]
 
 
-def _unique_starts(starts: Iterable[datetime]):
-    values, seen = [], set()
+def _occurrence_starts(starts: Iterable[datetime]):
+    values = []
     for value in starts:
         _aware(value)
         _validate_wall(value)
-        if _instant(value) not in seen:
-            values.append(value)
-            seen.add(_instant(value))
+        values.append(value)
     if not values:
         return []
     try:
@@ -825,7 +994,7 @@ def _absolute_text(value, anchor):
 
 
 def _serialize(starts, relative, anchor=None):
-    values = _unique_starts(starts)
+    values = _occurrence_starts(starts)
     anchor = _normalizer_anchor(values, anchor)
     values = [value.astimezone(anchor.tzinfo) for value in values]
     if not values:
@@ -891,6 +1060,23 @@ def shift_unbounded_expression(expression: str, previous: datetime, current: dat
         return _validate_wall((value.replace(tzinfo=None) + delta).replace(tzinfo=zone, fold=value.fold))
     expected = tuple(shifted(value) for value in old.prefix_starts)
     cursor = shifted(old.tail_start)
+    weekday_shift = (current.date() - previous.date()).days % 7
+    weekdays = tuple(value[:-2] + _WEEKDAYS[(_WEEKDAYS.index(value[-2:]) + weekday_shift) % 7]
+                     for value in tail.weekdays)
+    week_start = (_WEEKDAYS[(_WEEKDAYS.index(tail.week_start) + weekday_shift) % 7]
+                  if tail.unit == 'w' and tail.weekdays else tail.week_start)
+
+    def tail_text(until):
+        return expression_for_regular(tail.frequency, tail.interval, count=tail.count,
+            until=until, clamp=tail.clamp, weekdays=weekdays,
+            preferred_day=tail.preferred_day, week_start=week_start)
+
+    def check_shifted_selectors(compiled):
+        # An ordinal pattern can cross into another month: the day after the
+        # last Friday is not necessarily the last Saturday. Do not silently
+        # move the selected occurrence onto another date in that case.
+        if tail.unit in ('m', 'y') and tail.weekdays and compiled.tail_start.date() != cursor.date():
+            raise PatternError('This move cannot retain the selected weekday pattern at the chosen date.')
     until = None
     if tail.until is not None:
         try:
@@ -902,17 +1088,17 @@ def shift_unbounded_expression(expression: str, previous: datetime, current: dat
         # Relative instructions describe intent, not a fixed timedelta applied
         # to their previous materialized dates. Retain that intent when a new
         # anchor crosses a month boundary or changes invalid-date skipping.
-        if until == tail.until:
+        if until == tail.until and weekdays == tail.weekdays and week_start == tail.week_start:
             result = expression
         else:
-            result = (tail.prefix + ' ' + expression_for_regular(
-                tail.frequency, tail.interval, count=tail.count, until=until, clamp=tail.clamp)).strip()
-        compile_sequence(result, current)
+            result = (tail.prefix + ' ' + tail_text(until)).strip()
+        check_shifted_selectors(compile_sequence(result, current))
         return result, current.date().isoformat()
     try:
         candidate = compile_sequence(expression, current)
         if ({_instant(value) for value in candidate.prefix_starts} == {_instant(value) for value in expected}
-                and _instant(candidate.tail_start) == _instant(cursor) and until == tail.until):
+                and _instant(candidate.tail_start) == _instant(cursor) and until == tail.until
+                and weekdays == tail.weekdays and week_start == tail.week_start):
             return expression, current.date().isoformat()
     except PatternError:
         pass
@@ -925,9 +1111,9 @@ def shift_unbounded_expression(expression: str, previous: datetime, current: dat
         else:
             cursor_text = _absolute_text(cursor, current)
         prefix = (prefix + ' ' + cursor_text).strip()
-    result = (prefix + ' ' + expression_for_regular(tail.frequency, tail.interval,
-                                                   count=tail.count, until=until, clamp=tail.clamp)).strip()
+    result = (prefix + ' ' + tail_text(until)).strip()
     compiled = compile_sequence(result, current)
+    check_shifted_selectors(compiled)
     if ({_instant(value) for value in compiled.prefix_starts} != {_instant(value) for value in expected}
             or _instant(compiled.tail_start) != _instant(cursor)):
         raise PatternError('The moved regular sequence cannot retain its exact dates.')
@@ -1183,7 +1369,7 @@ def simplify_sequence(starts: Iterable[datetime], *, anchor=None, prefer_dates=T
     prefer explicit calendar entries; ``prefer_dates=False`` also allows short
     isolated offsets when describing the phase of an ongoing regular tail.
     """
-    values = _unique_starts(starts)
+    values = _occurrence_starts(starts)
     anchor = _normalizer_anchor(values, anchor)
     values = [value.astimezone(anchor.tzinfo) for value in values]
     if not values:
@@ -1249,7 +1435,7 @@ def shift_schedule_expression(expression: str, anchor: str, shift: timedelta | i
     delta = timedelta(days=shift) if isinstance(shift, int) else shift
     raw = list(starts)
     values = [value if isinstance(value, datetime) else datetime.combine(value, time.min, timezone.utc) for value in raw]
-    values = _unique_starts(values)
+    values = _occurrence_starts(values)
     if syntax != 2:
         raise PatternError('Unsupported custom sequence version.')
     try:

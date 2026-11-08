@@ -736,7 +736,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self._search_selection_active = False
         self._search_row_ids.clear()
-        self.selection.select(event, additive=additive)
+        self.selection.select(event, additive=additive,
+                              master=(self.store.get_event(event.series_id or event.id)
+                                      if additive and self.selection.scope == 'future' else None))
         self.selected_day = day or (event.start.date() if event.all_day else event.start.astimezone(local_zone()).date())
         self.mini.setSelectedDate(QDate(self.selected_day.year, self.selected_day.month, self.selected_day.day))
         self.sync_selection()

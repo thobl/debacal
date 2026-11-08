@@ -52,6 +52,10 @@ def test_document_detached_range_changes_refresh_metadata_history_and_outbox(sto
     master = source()
     store.apply('Create series', [master])
     values = occurrences(master)
+    # A differing second cannot be written by the minute-resolution notation.
+    precise = values[-1]
+    store.edit_occurrence(precise, replace(precise, start=precise.start + timedelta(seconds=17),
+                                          end=precise.end + timedelta(seconds=17)))
     selected = values[1]
     store.edit_occurrence(selected, replace(selected, start=values[2].start, end=values[2].end))
     before = store.get_event(master.id)
@@ -139,13 +143,13 @@ def test_remote_annotation_and_title_only_edit_are_preserved_until_a_local_sched
     assert_current_annotation(store, updated)
 
 
-def test_duplicate_actual_starts_have_a_lossless_document_and_remain_undoable(store):
+def test_duplicate_actual_starts_have_compact_text_and_remain_undoable(store):
     master = source()
     store.apply('Create series', [master])
     selected, neighbor = occurrences(master)[1:3]
     history = store.edit_occurrence(selected, replace(selected, start=neighbor.start, end=neighbor.end))
     changed = store.get_event(master.id)
-    assert changed.schedule_expression.startswith('schedule{')
+    assert not changed.schedule_expression.startswith('schedule{')
     assert expression_matches(changed, changed.schedule_expression)
     assert changed.expression_anchor == master.start.date().isoformat()
     assert len(occurrences(changed)) == 6

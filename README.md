@@ -337,12 +337,14 @@ calendar, using the same one/all/following selection. An unchanged calendar
 choice preserves each source in a mixed-calendar selection. Transfers queue the
 source removal and destination upload independently and can be undone together.
 
-A following edit splits at the selected event's original recurrence date. The
+A following edit splits at the selected event's original recurrence date for
+rule-defined occurrences, or its actual start for independently added dates.
+Coincident added copies share that boundary. The
 past keeps its identity; the future gets a new calendar UID and retains a
 standard recurrence rule. For example, moving an endless Monday series from
 one occurrence onward to Wednesday ends the Monday series before the selection
-and starts an endless Wednesday series. Moved exceptions and excluded dates are
-partitioned by their original recurrence IDs. The complete split is one undoable
+and starts an endless Wednesday series. Rule exceptions retain their original
+positions after being moved. The complete split is one undoable
 operation and synchronizes as ordinary calendar resources. Splitting at the
 first occurrence updates the original resource without leaving an empty past.
 
@@ -367,8 +369,8 @@ exception content; moving also preserves their different durations.
 The [sequence specification](docs/SEQUENCES.md) defines syntax, normalization,
 move/split behavior, correctness checks, and the operation test coverage.
 
-The event editor separates primary-event controls from a full-height month
-preview. Inline **Start**, **End**, and **Duration** fields define the primary event.
+The event editor separates reference-range controls from a full-height month
+preview. Inline **Start**, **End**, and **Duration** fields define that range.
 When editing, compact scope buttons in the heading use the main view's icons and
 shortcuts. Choose **Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
 Monthly, Yearly, and Custom controls. Alternatives are choices from which one
@@ -390,7 +392,10 @@ First/Previous/Next/Last navigate the preview; Last is disabled for endless rule
 Every schedule has an editable definition. For compact sequences, instructions
 are separated by spaces or commas and evaluated from a cursor at the reference:
 
-* `+0d` includes the reference explicitly; `none` denotes an empty schedule.
+* `+0d` emits an occurrence at the current cursor without moving it. At the
+  beginning it includes the reference; `2*+0d` creates two separate occurrences
+  there. Every finite instruction emits a separate event, including repeated
+  starts. `none` denotes an empty schedule.
 * `+2w`, `+3d`, `+1m`, `+1y` advance weeks, days, months, years. Units are
   mandatory. Month/year steps skip missing dates, following standard RRULE.
 * `+1m!` or `+1y!` clamps missing dates while retaining the preferred day.
@@ -404,22 +409,35 @@ are separated by spaces or commas and evaluated from a cursor at the reference:
   and unitless relative steps are not accepted.
 * `4*+2w` repeats a step; `2*(+1w +2d)` repeats a group. Nothing implicitly
   includes the reference: `+0d 4*+2w` has five occurrences.
-* A terminal `every(2w)` includes its current cursor and continues indefinitely.
-  `every(1m!, count=13)` clamps for thirteen occurrences including the cursor.
+* A terminal `every(2w)` starts at its current cursor and continues indefinitely.
+  If the last prefix event is already at that start, the tail continues it:
+  `+0d every(1d, count=3)` has three events; `2*+0d every(1d, count=3)` has four.
+* `every(1w, on=MO+WE)` selects Mondays and Wednesdays; `every(1m, on=-1FR)`
+  selects each month's last Friday. `every(2w, on=MO+WE, week_start=SU)` defines
+  its fortnightly weeks from Sunday. An off-selector reference is included
+  only if a finite instruction such as `+0d` emits it.
+* `every(1m!, day=31)` retains a preference for the 31st even when its reference
+  is a clipped date such as 30 November. Without `!`, missing dates are skipped.
+* `every(1m!, count=13)` clamps for thirteen tail occurrences;
   `every(1d, until=13.11.2026)` includes dates through that local day. Count
-  and until bounds are mutually exclusive; earlier prefix dates are separate.
+  and until bounds are mutually exclusive; count measures appointments, not
+  weeks or months. Earlier prefix events are separate except for the shared
+  final cursor occurrence.
 
 ```text
 +0d 13. +1w 18. 2. 3.2. +2w
 +0d 4*(+2w) +3w 3*+2w
 +0d 10:00 11:00 9:00 10:00 11:00
 +0d +3w every(1w)
+every(1w, on=MO+WE, count=12)
+every(1m, on=-1FR)
 ```
 
-The last example skips the second and third weekly occurrences while keeping
+The fourth example skips the second and third weekly occurrences while keeping
 the reference. Regular tails and representable finite patterns compile to
 standard RRULEs, including clamping with BYMONTHDAY/BYSETPOS. Irregular sets
-use standard RDATE/EXDATE and detached exceptions.
+use standard RDATE/EXDATE and detached exceptions. Coincident occurrences also
+use distinct standard identities, so other calendar clients retain both events.
 
 Valid matching text keeps its spelling and cursor position. Moving a whole
 relative series reevaluates its instructions at the new reference, retaining
@@ -429,12 +447,13 @@ compress repeated strides and groups. Invalid pending input cannot save an
 older valid schedule instead. Saves, splits and undo/redo retain text and
 canonical schedules together.
 
-Compact notation describes sets of starts. If identities or rule details need
-more information, the editable `schedule{…}` form directly records the canonical
-rule, additions, exclusions and nominal-ID-to-range moves. It keeps distinct
-events even when they start together, represents excluded or moved references,
-and handles large or infinite schedules without enumeration. There is always
-a sequence string; there is no separate uneditable advanced-recurrence state.
+Compact notation retains separate occurrences even when they start together.
+Mixed all-day/timed occurrences, huge irregular date sets, and unsupported rule
+combinations use the editable `schedule{…}` form, which directly records the
+canonical rule, additions, exclusions and nominal-ID-to-range moves without
+enumerating an infinite rule. Previously generated fallback text is offered in
+compact form when it can now be represented exactly. There is always a sequence
+string; there is no separate uneditable advanced-recurrence state.
 See the [full syntax, normal form and correctness contract](docs/SEQUENCES.md).
 
 Custom sequence definitions also synchronize between Debacal instances. The ICS

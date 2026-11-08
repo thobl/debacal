@@ -401,6 +401,11 @@ def shift_rule(rule: str, shift: timedelta, master: Event) -> str:
             if parts.get("FREQ") not in {"WEEKLY", "DAILY"} or any(token not in weekdays for token in tokens):
                 raise RecurrenceError("This custom weekday rule needs an explicit rule edit when moving the whole series.")
             parts["BYDAY"] = ",".join(weekdays[(weekdays.index(token) + days) % 7] for token in tokens)
+            if parts.get("FREQ") == "WEEKLY" and (int(parts.get("INTERVAL", "1")) > 1 or "WKST" in parts):
+                # Moving the weekdays across a week boundary must move their
+                # grouping as well, especially for a two-week interval.
+                start_day = weekdays.index(parts.get("WKST", "MO"))
+                parts["WKST"] = weekdays[(start_day + days) % 7]
     if "UNTIL" in parts:
         bound = parts["UNTIL"]
         if re.fullmatch(r"\d{8}", bound):
@@ -443,7 +448,7 @@ class _RelativeReanchorMap(dict):
             return default
 
 
-def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | None:
+def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=False) -> dict[str, str] | None:
     """Map an authored relative program's instruction identities to a new root.
 
     Relative instructions are reevaluated from the independent anchor. The
@@ -482,12 +487,18 @@ def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | No
         raise RecurrenceError(str(error)) from error
     old_keys = [recurrence_key(value, master.all_day) for value in old]
     new_keys = [recurrence_key(value, master.all_day) for value in new]
-    if (len(old_keys) != len(new_keys) or len(set(old_keys)) != len(old_keys)
-            or len(set(new_keys)) != len(new_keys)):
+    if (len(old_keys) != len(new_keys) or (not allow_duplicates and
+            (len(set(old_keys)) != len(old_keys) or len(set(new_keys)) != len(new_keys)))):
         # A set program whose coincident instructions change multiplicity has
         # no one-to-one logical correspondence. Its canonical document remains
         # movable through the ordinary timestamp projection instead.
         return None
+    if allow_duplicates:
+        repeated = {}
+        for old_key, new_key in zip(old_keys, new_keys):
+            if old_key in repeated and repeated[old_key] != new_key:
+                return None
+            repeated[old_key] = new_key
     actual_mapping = dict(zip(old_keys, new_keys))
     overrides = {key: recurrence_key(Event.from_dict(payload).start, master.all_day)
                  for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates}
@@ -517,6 +528,50 @@ def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | No
                 return recurrence_key(moved, master.all_day)
             return None
 
+        def weekly_selector_identity(target):
+            """Map a selected weekday's ordinal without scanning its history."""
+            names = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
+
+            def phase(compiled, specification):
+                week_start = names.index(specification.week_start)
+                offsets = sorted((names.index(day) - week_start) % 7 for day in specification.weekdays)
+                cursor = compiled.tail_start
+                cursor_offset = (cursor.weekday() - week_start) % 7
+                first = cursor.date() - timedelta(days=cursor_offset)
+                omitted = sum(offset < cursor_offset for offset in offsets)
+                return first, offsets, omitted
+
+            first, offsets, omitted = phase(old_compiled, tail)
+            new_first, new_offsets, new_omitted = phase(new_compiled, new_tail)
+            if len(offsets) != len(new_offsets):
+                return None
+            # A generated gap can be displayed on the neighbouring civil day.
+            # Recover its nominal date by checking the adjacent rule clocks.
+            for day_shift in (0, -1, 1, -2, 2):
+                nominal_day = target.date() + timedelta(days=day_shift)
+                days = (nominal_day - first).days
+                week, offset = divmod(days, 7)
+                if week < 0 or week % tail.interval or offset not in offsets:
+                    continue
+                index = week // tail.interval * len(offsets) + offsets.index(offset) - omitted
+                if index < 0 or (tail.count is not None and index >= tail.count):
+                    continue
+                if tail.until is not None and nominal_day > tail.until:
+                    continue
+                nominal = datetime.combine(nominal_day, old_compiled.tail_start.timetz())
+                actual = nominal if master.all_day else normalize_recurrence_time(nominal)
+                if recurrence_key(actual, master.all_day) != recurrence_key(target, master.all_day):
+                    continue
+                new_week, new_position = divmod(index + new_omitted, len(new_offsets))
+                moved_day = new_first + timedelta(days=new_week * new_tail.interval * 7 + new_offsets[new_position])
+                if new_tail.until is not None and moved_day > new_tail.until:
+                    return None
+                moved = datetime.combine(moved_day, new_compiled.tail_start.timetz())
+                if not master.all_day:
+                    moved = normalize_recurrence_time(moved)
+                return recurrence_key(moved, master.all_day)
+            return None
+
         def tail_stream(compiled, anchor):
             bare = replace(master, start=anchor, end=anchor + (master.end - master.start),
                            recurrence_rule=compiled.recurrence_rule,
@@ -535,6 +590,8 @@ def relative_reanchor_map(master: Event, start: datetime) -> dict[str, str] | No
             target = key_datetime(actual, master)
             if target.timestamp() < old_compiled.tail_start.timestamp():
                 return None
+            if tail.unit == 'w' and tail.weekdays:
+                return weekly_selector_identity(target)
             if tail.unit in ('d', 'w'):
                 return linear_tail_identity(target)
             for before, after in pairs:
@@ -687,6 +744,42 @@ def updated_series(master: Event, reference: Event, edited: Event,
     else:
         end = start + duration
     checked_wall(end)
+
+    if (shift and edited.all_day == master.all_day and edited.schedule_syntax == 2
+            and edited.schedule_expression == master.schedule_expression
+            and rules_equivalent(edited.recurrence_rule, master.recurrence_rule, master)):
+        from .patterns import PatternError, compile_sequence, sequence_tail, shift_unbounded_expression
+        from .coincident_occurrences import multiplicities, reanchor_compiled_multiset
+        previous_anchor = master.start.astimezone(zone)
+        try:
+            old_compiled = compile_sequence(master.schedule_expression, previous_anchor, all_day=master.all_day)
+        except PatternError:
+            old_compiled = None
+        if old_compiled is not None and (old_compiled.duplicate_starts or multiplicities(master)):
+            actual_mapping = relative_reanchor_map(master, start, allow_duplicates=True)
+            if actual_mapping is not None:
+                text = master.schedule_expression
+                if sequence_tail(text):
+                    text, _ = shift_unbounded_expression(text, previous_anchor, start)
+                new_compiled = compile_sequence(text, start, all_day=master.all_day)
+                projected = reanchor_compiled_multiset(master, old_compiled, new_compiled,
+                                                       start, end, actual_mapping)
+                overrides = {}
+                for key, payload in projected.recurrence_overrides.items():
+                    value = Event.from_dict(payload)
+                    own_end = value.end
+                    if duration_changed:
+                        own_end = (value.start + duration if duration > timedelta(0) else
+                                   datetime.fromtimestamp(value.start.timestamp() + duration_source.end.timestamp()
+                                                          - duration_source.start.timestamp(), zone))
+                    checked_wall(value.start)
+                    checked_wall(own_end)
+                    overrides[key] = replace(value, id=occurrence_id(master.id, key),
+                                             end=own_end, **shared_changes,
+                                             candidate=edited.candidate).to_dict()
+                projected = replace(projected, **shared_changes, candidate=edited.candidate,
+                                    recurrence_overrides=overrides)
+                return _annotate_schedule(projected, text)
 
     relative_keys = None
     if (shift and edited.all_day == master.all_day and edited.schedule_syntax == 2

@@ -55,7 +55,7 @@ class EventSelection:
             values[event.id] = event
         self._refs = list(values.values())
 
-    def select(self, event: Event, additive: bool = False) -> None:
+    def select(self, event: Event, additive: bool = False, *, master: Event | None = None) -> None:
         if not additive:
             self._refs = [event]
             return
@@ -83,6 +83,8 @@ class EventSelection:
         self._refs = [value for value in self._refs if family(value) != family(event)]
         if self.scope == "future":
             def nominal(value):
+                if master is not None:
+                    return _nominal(value, master)
                 if not value.recurrence_id:
                     return value.start.timestamp()
                 parsed = datetime.fromisoformat(value.recurrence_id)
@@ -102,7 +104,10 @@ def _master_id(event: Event) -> str:
 
 
 def _nominal(event: Event, master: Event) -> float:
-    return key_datetime(event.recurrence_id, master).timestamp() if event.recurrence_id else event.start.timestamp()
+    if event.recurrence_id:
+        from .coincident_occurrences import logical_occurrence_start
+        return logical_occurrence_start(master, event.recurrence_id).timestamp()
+    return event.start.timestamp()
 
 
 def selection_roots(store, refs: Iterable[Event], scope: str) -> list[Event]:

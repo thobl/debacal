@@ -52,11 +52,11 @@ class SequenceTests(unittest.TestCase):
         self.assertEqual(expand_sequence('+0d 11:30-3.2.2025', ANCHOR)[1],
                          datetime(2025, 2, 3, 11, 30, tzinfo=ZONE))
 
-    def test_duplicate_exact_dates_are_deduplicated_but_still_move_cursor(self):
+    def test_duplicate_exact_dates_keep_separate_occurrences_and_move_cursor(self):
         values = expand_sequence('+0d 1.1.2026 7.11.2026 +1w', ANCHOR)
         self.assertEqual([value.date() for value in values],
-                         [date(2026, 11, 7), date(2026, 1, 1), date(2026, 11, 14)])
-        self.assertEqual(expand_sequence('3*7.11.2026', ANCHOR), [ANCHOR])
+                         [date(2026, 11, 7), date(2026, 1, 1), date(2026, 11, 7), date(2026, 11, 14)])
+        self.assertEqual(expand_sequence('3*7.11.2026', ANCHOR), [ANCHOR] * 3)
 
     def test_units_and_stepwise_calendar_clipping(self):
         with self.assertRaises(PatternError):
@@ -180,7 +180,8 @@ class SequenceSerializationTests(unittest.TestCase):
     def test_timed_reconstruction_and_duplicate_inputs_are_lossless(self):
         values = expand_sequence('+0d +1w 14:00 +1d 18.', ANCHOR)
         self.assertEqual(expand_sequence(reconstruct_sequence(values), values[0]), values)
-        self.assertEqual(expand_sequence(serialize_sequence([ANCHOR, ANCHOR, *values[1:]]), ANCHOR), values)
+        repeated = [ANCHOR, ANCHOR, *values[1:]]
+        self.assertEqual(expand_sequence(serialize_sequence(repeated), ANCHOR), repeated)
 
     def test_relative_only_move_retains_exact_literal_when_equivalent(self):
         expression = ' +0d 2*(+1w  +2d) '
