@@ -1,0 +1,86 @@
+{
+  "tracks-light": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  },
+  "tiles-light": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  },
+  "tints-light": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  },
+  "tracks-dark": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  },
+  "tiles-dark": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  },
+  "tints-dark": {
+    "width": 1104,
+    "height": 843,
+    "day_width": 32.29,
+    "day_height": 34.17,
+    "busy_calendars": [
+      "work",
+      "local",
+      "projects",
+      "family",
+      "holidays",
+      "sport"
+    ]
+  }
+}

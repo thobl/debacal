@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debacal · year overview studies</title>
+<style>
+:root{color-scheme:light;--page:#f5f7f8;--panel:#fff;--ink:#29343d;--muted:#626f7a;--line:#dbe2e6;--accent:#486152;--selected:#e6eee8}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+body.dark{color-scheme:dark;--page:#182025;--panel:#222d34;--ink:#e3e9eb;--muted:#a8b5bd;--line:#3d4d57;--accent:#b1cbb8;--selected:#334d3e}
+main{max-width:1480px;margin:auto;padding:30px 24px 56px}h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}h2{font-size:19px;margin:0 0 7px}
+p{margin:8px 0}.intro{max-width:1000px;color:var(--muted)}.toolbar{display:flex;gap:28px;align-items:end;flex-wrap:wrap;margin:24px 0 18px}
+.label{display:block;font-size:12px;font-weight:650;color:var(--muted);margin-bottom:6px}.choices{display:flex;border-bottom:1px solid var(--line);gap:2px}
+button{font:inherit;color:var(--ink);background:transparent;border:0;border-bottom:2px solid transparent;padding:8px 13px;cursor:pointer}
+button:hover{background:var(--selected)}button[aria-pressed=true]{font-weight:650;color:var(--accent);border-color:var(--accent)}button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.legend{display:flex;gap:12px 22px;flex-wrap:wrap;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:6px;margin-bottom:18px}
+.source{display:inline-flex;align-items:center;gap:7px;font-size:13px}.swatch{width:13px;height:13px;border-radius:2px;background:var(--color)}
+.figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:12px}.figure img{display:block;width:100%;height:auto;max-width:1440px;margin:auto}
+.figure.compact img{max-width:780px}.caption{display:flex;justify-content:space-between;gap:24px;margin:12px 1px 24px}.caption p{margin:0;max-width:900px}.caption a,a{color:var(--accent)}
+.details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:20px 0 26px}.detail{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:17px}
+.detail img{display:block;width:100%;max-width:360px;height:auto;margin:12px auto 16px;image-rendering:auto}.detail h3{font-size:16px;margin:0}.detail p{font-size:13px;color:var(--muted)}
+.tradeoff{display:grid;grid-template-columns:1fr 1fr;gap:22px;padding-top:18px;border-top:1px solid var(--line)}.tradeoff p{margin:5px 0;color:var(--muted)}
+.context{font-size:13px;color:var(--muted)}code{font-size:12px}small{font-size:12px;color:var(--muted)}
+@media(max-width:800px){main{padding:22px 14px}.details{grid-template-columns:1fr}.tradeoff{grid-template-columns:1fr}.caption{display:block}.caption a{display:inline-block;margin-top:10px}.choices button{padding:8px 9px;font-size:13px}.toolbar{gap:18px}}
+</style>
+<main>
+  <h1>Year overview: calendar presence</h1>
+  <p class="intro">Three native-widget studies for a larger, more useful indication of which calendars have events on each day. These are proposals; the app’s year view has not been redesigned yet.</p>
+  <div class="toolbar">
+    <div><span class="label">Indicator design</span><div class="choices" id="options">
+      <button data-option="tracks" aria-pressed="true">A · Calendar tracks</button><button data-option="tiles" aria-pressed="false">B · Calendar tiles</button><button data-option="tints" aria-pressed="false">C · Tinted day cells</button>
+    </div></div>
+    <div><span class="label">Appearance</span><div class="choices" id="themes"><button data-mode="light" aria-pressed="true">Light</button><button data-mode="dark" aria-pressed="false">Dark</button></div></div>
+    <div><span class="label">Layout</span><div class="choices" id="sizes"><button data-size="full" aria-pressed="true">Desktop</button><button data-size="compact" aria-pressed="false">Three columns</button></div></div>
+  </div>
+  <div class="legend" aria-label="Calendar colors">
+    <span class="source"><i class="swatch" style="--color:#547797"></i>Work</span><span class="source"><i class="swatch" style="--color:#a36f59"></i>Personal</span><span class="source"><i class="swatch" style="--color:#557e69"></i>Projects</span><span class="source"><i class="swatch" style="--color:#9b85ad"></i>Family</span><span class="source"><i class="swatch" style="--color:#b69b46"></i>Public holidays</span><span class="source"><i class="swatch" style="--color:#6f9c9a"></i>Sport</span>
+  </div>
+  <figure class="figure" id="figure"><img id="overview" src="images/tracks-light-full.png" alt="A · Calendar tracks, full Debacal desktop showing all twelve months"></figure>
+  <div class="caption"><p id="description">A uses broad source-colored tracks below the date. It gives each calendar more area while keeping the date and the color information separate.</p><a id="original" href="images/tracks-light-full.png">Open full-size image</a></div>
+  <h2>Compare the same month</h2>
+  <p class="context">The workshop spans 16–18 November. On 18 November, six calendars have events: crowded days show the remaining calendar count as <strong>+N</strong>. Repeated events from the same calendar still produce one indicator. The hidden Archive calendar contributes no indicator.</p>
+  <div class="details">
+    <article class="detail"><h3>A · Calendar tracks</h3><img data-detail="tracks" src="images/tracks-light-detail.png" alt="November detail using wide stacked calendar tracks"><p>Source order stays consistent. Wide tracks are easy to scan across weeks and keep pale calendar colors visible. The date sits above the tracks.</p></article>
+    <article class="detail"><h3>B · Calendar tiles</h3><img data-detail="tiles" src="images/tiles-light-detail.png" alt="November detail using larger calendar tiles beside dates"><p>Date and source marks share the row. Each calendar is a substantial colored tile, with a clear limit of four positions and a +N tile on crowded days.</p></article>
+    <article class="detail"><h3>C · Tinted day cells</h3><img data-detail="tints" src="images/tints-light-detail.png" alt="November detail using softly segmented calendar-colored day backgrounds"><p>Presence uses nearly the whole cell. Soft fills keep dates readable, while solid color edges distinguish similar calendars. This gives the year a denser, more continuous texture.</p></article>
+  </div>
+  <div class="tradeoff">
+    <section><h2>My preference: A</h2><p>The tracks use the spare space directly, preserve calendar identity, and avoid putting dates over several colors. B is the clearest alternative if you prefer marks beside the dates; C gives the strongest sense of overall activity.</p></section>
+    <section><h2>Shared behavior</h2><p>Each indicator represents a visible calendar, not an event count or an individual selection target. Month headings and week numbers keep their navigation roles. A day can open the detailed calendar view, where individual events remain selectable.</p></section>
+  </div>
+  <p class="context">Synthetic example data only. The desktop images use the current Debacal shell and real year-view geometry. Reproduce with <code>QT_QPA_PLATFORM=offscreen .venv/bin/python design/2026-11-year-overview/render.py</code>.</p>
+</main>
+<script>
+const state={option:'tracks',mode:'light',size:'full'};
+const descriptions={tracks:'A uses broad source-colored tracks below the date. It gives each calendar more area while keeping the date and the color information separate.',tiles:'B pairs each date with a small cluster of larger calendar tiles. The day reads as one compact unit, with a +N tile when more calendars are present.',tints:'C fills the day with soft source-colored segments. It emphasizes the overall pattern of calendar activity while keeping the date on top.'};
+const names={tracks:'A · Calendar tracks',tiles:'B · Calendar tiles',tints:'C · Tinted day cells'};
+function update(){
+  document.body.classList.toggle('dark',state.mode==='dark');
+  document.querySelectorAll('[data-option]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.option===state.option));
+  document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===state.mode));
+  document.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.size===state.size));
+  const path=`images/${state.option}-${state.mode}-${state.size}.png`;
+  const main=document.getElementById('overview');main.src=path;main.alt=names[state.option]+(state.size==='full'?', full desktop showing all twelve months':', three-column overview of all twelve months');
+  document.getElementById('figure').classList.toggle('compact',state.size==='compact');
+  document.getElementById('original').href=path;document.getElementById('description').textContent=descriptions[state.option];
+  document.querySelectorAll('[data-detail]').forEach(img=>img.src=`images/${img.dataset.detail}-${state.mode}-detail.png`);
+}
+document.querySelectorAll('[data-option]').forEach(b=>b.addEventListener('click',()=>{state.option=b.dataset.option;update()}));
+document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{state.mode=b.dataset.mode;update()}));
+document.querySelectorAll('[data-size]').forEach(b=>b.addEventListener('click',()=>{state.size=b.dataset.size;update()}));
+</script>
+</html>
