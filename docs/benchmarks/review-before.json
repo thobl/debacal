@@ -1,0 +1,650 @@
+{
+  "environment": {
+    "python": "3.14.9",
+    "qt": "6.12.0",
+    "backend": "offscreen",
+    "profiled": false
+  },
+  "ordinary_events": 10000,
+  "weekly_series": 200,
+  "candidate_dates": 500,
+  "iterations": 3,
+  "import_resources": 4201,
+  "milliseconds": {
+    "open_workspace": [
+      157.623
+    ],
+    "day_view": [
+      26.692,
+      31.408,
+      30.673
+    ],
+    "month_view": [
+      92.081,
+      100.766,
+      99.01
+    ],
+    "week_view": [
+      30.579,
+      29.645,
+      32.928
+    ],
+    "year_view": [
+      559.5,
+      622.694,
+      563.937
+    ],
+    "year_next": [
+      448.215,
+      487.695,
+      553.618
+    ],
+    "year_previous": [
+      96.719,
+      102.319,
+      108.176
+    ],
+    "year_style_tints": [
+      31.427,
+      31.187,
+      35.196
+    ],
+    "year_style_tracks": [
+      23.486,
+      29.72,
+      26.044
+    ],
+    "year_hide_calendar": [
+      367.608,
+      377.909,
+      393.778
+    ],
+    "year_show_calendar": [
+      90.18,
+      92.792,
+      100.473
+    ],
+    "month_next": [
+      96.69,
+      100.806,
+      100.426
+    ],
+    "month_previous": [
+      22.045,
+      24.957,
+      26.597
+    ],
+    "hide_calendar": [
+      42.714,
+      47.946,
+      45.077
+    ],
+    "show_calendar": [
+      26.71,
+      32.546,
+      28.529
+    ],
+    "type_search": [
+      10.088,
+      2.787,
+      3.032
+    ],
+    "finish_search": [
+      182.5,
+      97.758,
+      94.281
+    ],
+    "search_follow": [
+      8.596,
+      9.08,
+      12.495
+    ],
+    "search_filter": [
+      6.566,
+      7.274,
+      8.863
+    ],
+    "clear_search": [
+      10.079,
+      8.916,
+      8.662
+    ],
+    "selection_all": [
+      6.593,
+      6.882,
+      7.627
+    ],
+    "selection_single": [
+      6.004,
+      6.037,
+      6.898
+    ],
+    "copy": [
+      8.215,
+      9.378,
+      9.54
+    ],
+    "paste_preview": [
+      8.848,
+      10.693,
+      9.785
+    ],
+    "paste_move_preview": [
+      6.125,
+      5.861,
+      6.134
+    ],
+    "paste_confirm": [
+      86.235,
+      161.325,
+      97.49
+    ],
+    "undo": [
+      63.356,
+      65.552,
+      131.993
+    ],
+    "redo": [
+      69.5,
+      69.061,
+      72.881
+    ],
+    "move_event": [
+      330.92,
+      342.995,
+      366.854
+    ],
+    "delete_event": [
+      67.145,
+      69.365,
+      70.996
+    ],
+    "edit_and_save": [
+      377.021,
+      385.473,
+      422.053
+    ],
+    "new_event_dialog": [
+      67.97,
+      70.264,
+      67.819
+    ],
+    "editor_regular_series": [
+      15.169,
+      15.537,
+      17.195
+    ],
+    "editor_custom_series": [
+      7.476,
+      4.614,
+      4.985
+    ],
+    "editor_preview_next": [
+      3.225,
+      2.698,
+      2.637
+    ],
+    "editor_preview_last": [
+      3.482,
+      2.498,
+      2.42
+    ],
+    "editor_build_events": [
+      0.428,
+      0.388,
+      0.371
+    ],
+    "date_time_picker": [
+      34.49,
+      37.162,
+      39.321
+    ],
+    "picker_change_start": [
+      0.616,
+      0.674,
+      0.661
+    ],
+    "picker_change_end": [
+      0.577,
+      0.576,
+      0.61
+    ],
+    "preferences_dialog": [
+      212.604,
+      184.632,
+      196.015
+    ],
+    "preferences_appearance": [
+      16.311,
+      17.974,
+      14.068
+    ],
+    "preferences_apply_unchanged": [
+      8.393,
+      7.781,
+      8.029
+    ],
+    "preferences_theme_warm": [
+      92.366,
+      116.395,
+      135.901
+    ],
+    "preferences_theme_neutral": [
+      80.927,
+      107.254,
+      134.551
+    ],
+    "preferences_font_120": [
+      108.771,
+      131.725,
+      157.737
+    ],
+    "preferences_font_100": [
+      90.792,
+      119.064,
+      157.23
+    ],
+    "export_ics": [
+      373.762
+    ],
+    "import_dialog": [
+      301.101
+    ],
+    "import_ready": [
+      17604.396
+    ],
+    "import_next_occurrence": [
+      20.189,
+      53.745,
+      50.478
+    ],
+    "import_next_month": [
+      80.714
+    ],
+    "import_toggle_date": [
+      14.955
+    ],
+    "import_selection_ready": [
+      19.969
+    ],
+    "import_accept": [
+      3.216
+    ],
+    "import_remap": [
+      215.805
+    ],
+    "import_apply": [
+      893.407
+    ],
+    "conflict_dialog": [
+      31.704
+    ],
+    "conflict_next_month": [
+      4.45
+    ],
+    "confirm_slot": [
+      72.945
+    ]
+  },
+  "summary": {
+    "open_workspace": {
+      "median_ms": 157.623,
+      "max_ms": 157.623,
+      "samples": 1
+    },
+    "day_view": {
+      "median_ms": 30.673,
+      "max_ms": 31.408,
+      "samples": 3
+    },
+    "month_view": {
+      "median_ms": 99.01,
+      "max_ms": 100.766,
+      "samples": 3
+    },
+    "week_view": {
+      "median_ms": 30.579,
+      "max_ms": 32.928,
+      "samples": 3
+    },
+    "year_view": {
+      "median_ms": 563.937,
+      "max_ms": 622.694,
+      "samples": 3
+    },
+    "year_next": {
+      "median_ms": 487.695,
+      "max_ms": 553.618,
+      "samples": 3
+    },
+    "year_previous": {
+      "median_ms": 102.319,
+      "max_ms": 108.176,
+      "samples": 3
+    },
+    "year_style_tints": {
+      "median_ms": 31.427,
+      "max_ms": 35.196,
+      "samples": 3
+    },
+    "year_style_tracks": {
+      "median_ms": 26.044,
+      "max_ms": 29.72,
+      "samples": 3
+    },
+    "year_hide_calendar": {
+      "median_ms": 377.909,
+      "max_ms": 393.778,
+      "samples": 3
+    },
+    "year_show_calendar": {
+      "median_ms": 92.792,
+      "max_ms": 100.473,
+      "samples": 3
+    },
+    "month_next": {
+      "median_ms": 100.426,
+      "max_ms": 100.806,
+      "samples": 3
+    },
+    "month_previous": {
+      "median_ms": 24.957,
+      "max_ms": 26.597,
+      "samples": 3
+    },
+    "hide_calendar": {
+      "median_ms": 45.077,
+      "max_ms": 47.946,
+      "samples": 3
+    },
+    "show_calendar": {
+      "median_ms": 28.529,
+      "max_ms": 32.546,
+      "samples": 3
+    },
+    "type_search": {
+      "median_ms": 3.032,
+      "max_ms": 10.088,
+      "samples": 3
+    },
+    "finish_search": {
+      "median_ms": 97.758,
+      "max_ms": 182.5,
+      "samples": 3
+    },
+    "search_follow": {
+      "median_ms": 9.08,
+      "max_ms": 12.495,
+      "samples": 3
+    },
+    "search_filter": {
+      "median_ms": 7.274,
+      "max_ms": 8.863,
+      "samples": 3
+    },
+    "clear_search": {
+      "median_ms": 8.916,
+      "max_ms": 10.079,
+      "samples": 3
+    },
+    "selection_all": {
+      "median_ms": 6.882,
+      "max_ms": 7.627,
+      "samples": 3
+    },
+    "selection_single": {
+      "median_ms": 6.037,
+      "max_ms": 6.898,
+      "samples": 3
+    },
+    "copy": {
+      "median_ms": 9.378,
+      "max_ms": 9.54,
+      "samples": 3
+    },
+    "paste_preview": {
+      "median_ms": 9.785,
+      "max_ms": 10.693,
+      "samples": 3
+    },
+    "paste_move_preview": {
+      "median_ms": 6.125,
+      "max_ms": 6.134,
+      "samples": 3
+    },
+    "paste_confirm": {
+      "median_ms": 97.49,
+      "max_ms": 161.325,
+      "samples": 3
+    },
+    "undo": {
+      "median_ms": 65.552,
+      "max_ms": 131.993,
+      "samples": 3
+    },
+    "redo": {
+      "median_ms": 69.5,
+      "max_ms": 72.881,
+      "samples": 3
+    },
+    "move_event": {
+      "median_ms": 342.995,
+      "max_ms": 366.854,
+      "samples": 3
+    },
+    "delete_event": {
+      "median_ms": 69.365,
+      "max_ms": 70.996,
+      "samples": 3
+    },
+    "edit_and_save": {
+      "median_ms": 385.473,
+      "max_ms": 422.053,
+      "samples": 3
+    },
+    "new_event_dialog": {
+      "median_ms": 67.97,
+      "max_ms": 70.264,
+      "samples": 3
+    },
+    "editor_regular_series": {
+      "median_ms": 15.537,
+      "max_ms": 17.195,
+      "samples": 3
+    },
+    "editor_custom_series": {
+      "median_ms": 4.985,
+      "max_ms": 7.476,
+      "samples": 3
+    },
+    "editor_preview_next": {
+      "median_ms": 2.698,
+      "max_ms": 3.225,
+      "samples": 3
+    },
+    "editor_preview_last": {
+      "median_ms": 2.498,
+      "max_ms": 3.482,
+      "samples": 3
+    },
+    "editor_build_events": {
+      "median_ms": 0.388,
+      "max_ms": 0.428,
+      "samples": 3
+    },
+    "date_time_picker": {
+      "median_ms": 37.162,
+      "max_ms": 39.321,
+      "samples": 3
+    },
+    "picker_change_start": {
+      "median_ms": 0.661,
+      "max_ms": 0.674,
+      "samples": 3
+    },
+    "picker_change_end": {
+      "median_ms": 0.577,
+      "max_ms": 0.61,
+      "samples": 3
+    },
+    "preferences_dialog": {
+      "median_ms": 196.015,
+      "max_ms": 212.604,
+      "samples": 3
+    },
+    "preferences_appearance": {
+      "median_ms": 16.311,
+      "max_ms": 17.974,
+      "samples": 3
+    },
+    "preferences_apply_unchanged": {
+      "median_ms": 8.029,
+      "max_ms": 8.393,
+      "samples": 3
+    },
+    "preferences_theme_warm": {
+      "median_ms": 116.395,
+      "max_ms": 135.901,
+      "samples": 3
+    },
+    "preferences_theme_neutral": {
+      "median_ms": 107.254,
+      "max_ms": 134.551,
+      "samples": 3
+    },
+    "preferences_font_120": {
+      "median_ms": 131.725,
+      "max_ms": 157.737,
+      "samples": 3
+    },
+    "preferences_font_100": {
+      "median_ms": 119.064,
+      "max_ms": 157.23,
+      "samples": 3
+    },
+    "export_ics": {
+      "median_ms": 373.762,
+      "max_ms": 373.762,
+      "samples": 1
+    },
+    "import_dialog": {
+      "median_ms": 301.101,
+      "max_ms": 301.101,
+      "samples": 1
+    },
+    "import_ready": {
+      "median_ms": 17604.396,
+      "max_ms": 17604.396,
+      "samples": 1
+    },
+    "import_next_occurrence": {
+      "median_ms": 50.478,
+      "max_ms": 53.745,
+      "samples": 3
+    },
+    "import_next_month": {
+      "median_ms": 80.714,
+      "max_ms": 80.714,
+      "samples": 1
+    },
+    "import_toggle_date": {
+      "median_ms": 14.955,
+      "max_ms": 14.955,
+      "samples": 1
+    },
+    "import_selection_ready": {
+      "median_ms": 19.969,
+      "max_ms": 19.969,
+      "samples": 1
+    },
+    "import_accept": {
+      "median_ms": 3.216,
+      "max_ms": 3.216,
+      "samples": 1
+    },
+    "import_remap": {
+      "median_ms": 215.805,
+      "max_ms": 215.805,
+      "samples": 1
+    },
+    "import_apply": {
+      "median_ms": 893.407,
+      "max_ms": 893.407,
+      "samples": 1
+    },
+    "conflict_dialog": {
+      "median_ms": 31.704,
+      "max_ms": 31.704,
+      "samples": 1
+    },
+    "conflict_next_month": {
+      "median_ms": 4.45,
+      "max_ms": 4.45,
+      "samples": 1
+    },
+    "confirm_slot": {
+      "median_ms": 72.945,
+      "max_ms": 72.945,
+      "samples": 1
+    }
+  },
+  "max_event_loop_gap_ms": {
+    "open_workspace": 133.843,
+    "day_view": 28.798,
+    "month_view": 100.344,
+    "week_view": 26.072,
+    "year_view": 622.223,
+    "year_next": 552.831,
+    "year_previous": 107.153,
+    "year_style_tints": 34.481,
+    "year_style_tracks": 29.317,
+    "year_hide_calendar": 393.186,
+    "year_show_calendar": 100.146,
+    "month_next": 100.503,
+    "month_previous": 26.339,
+    "hide_calendar": 40.885,
+    "show_calendar": 22.548,
+    "type_search": 10.085,
+    "finish_search": 109.851,
+    "search_follow": 12.181,
+    "clear_search": 9.809,
+    "selection_single": 6.891,
+    "copy": 9.525,
+    "paste_preview": 10.524,
+    "paste_confirm": 160.823,
+    "undo": 131.563,
+    "redo": 72.234,
+    "move_event": 366.1,
+    "delete_event": 70.532,
+    "edit_and_save": 421.283,
+    "new_event_dialog": 46.899,
+    "editor_regular_series": 14.812,
+    "editor_custom_series": 7.471,
+    "date_time_picker": 30.327,
+    "preferences_dialog": 195.13,
+    "preferences_appearance": 17.291,
+    "preferences_theme_warm": 134.897,
+    "preferences_theme_neutral": 133.752,
+    "preferences_font_120": 138.617,
+    "preferences_font_100": 145.888,
+    "editor_preview_last": 2.417,
+    "search_filter": 7.129,
+    "selection_all": 7.548,
+    "editor_preview_next": 2.59,
+    "picker_change_end": 0.604,
+    "export_ics": 373.503,
+    "import_dialog": 174.242,
+    "import_ready": 107.159,
+    "import_next_occurrence": 45.674,
+    "import_next_month": 68.857,
+    "import_toggle_date": 14.89,
+    "import_selection_ready": 10.709,
+    "import_accept": 3.209,
+    "import_remap": 215.791,
+    "import_apply": 891.357,
+    "conflict_dialog": 21.923,
+    "conflict_next_month": 3.828,
+    "confirm_slot": 72.358
+  },
+  "peak_rss_mib": 363.22
+}

@@ -163,8 +163,8 @@ colors and read-only access are retained. Public ICS URL subscriptions and file
 import/export remain supported. Google-style OAuth is not yet integrated.
 
 Colors use server metadata by default; manual overrides remain local and survive
-password changes or metadata refresh. A writable default calendar is stored in
-preferences.
+password changes or metadata refresh. Selecting a writable source in the sidebar
+chooses where new events are created; that selection is retained across restarts.
 
 One event master represents one UID resource. RRULE, RDATE, EXDATE and detached
 RECURRENCE-ID exceptions remain standard iCalendar. Views expand occurrences;

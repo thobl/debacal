@@ -4,9 +4,10 @@ A native Linux desktop calendar built around immediate local edits, keyboard
 navigation, interoperable recurrence, irregular event groups, and alternative time slots. See the [implementation plan](docs/PLAN.md)
 for assumptions, milestones, and open questions.
 
-This is an initial working application, with real SQLite persistence and tests.
-It is ready to try with local calendars. Nextcloud discovery is implemented; live
-CalDAV still needs provider testing. See [sync design and testing](docs/SYNC.md).
+Local editing, SQLite persistence, calendar import/export, and Nextcloud sync
+have automated coverage and live provider smoke checks. See the
+[release review](docs/RELEASE_REVIEW.md) for validation, performance results, and
+remaining limits, and [sync design and testing](docs/SYNC.md) for interoperability.
 
 ## Run
 
@@ -53,7 +54,7 @@ cat appointment.ics | debacal     # Piped contents work too
 Personal calendar and retain their own events, settings, history, sync mirrors,
 and keyring credentials. They do not copy or reuse your normal accounts or
 passwords. Their data is stored under `profiles/NAME/calendar.sqlite3` within
-the application data directory. The window title and sidebar identify the
+the application data directory. The window title identifies the
 profile. Unlike the offline disposable demo, testing profiles can connect to
 test calendar servers and sync normally. `--database` overrides a profile's
 database path; alternative databases also use separate keyring credentials.
@@ -95,9 +96,7 @@ the app normally. Interactive terminal input is left alone unless you use
 `--demo-conflict` opens an offline sample conflict: click **Review conflicts** to
 compare calendar previews and try a decision using disposable data.
 
-In the development environment used to create this app, PySide6, pytest, and
-python-dateutil were already available, but package download DNS was blocked.
-A `.venv` with system packages allows offline local/ICS use:
+Run the tests without a display, or launch a disposable demo:
 
 ```sh
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
@@ -271,6 +270,9 @@ by calendars in the same account and remain in the secure keyring.
   start, date/time formats, week numbers, visible hours, default event duration,
   and event-duration buttons. The default applies to keyboard and double-click
   timed creation; dragged ranges and existing events keep their chosen duration.
+  Duration presets count elapsed minutes. In the event dialog, `24h` means
+  24 elapsed hours and `1d` means one calendar day in the event's timezone;
+  the two differ when clocks change. Moving Start retains this choice.
   All-day creation starts with one whole day.
   The time grid still expands for events outside the usual visible hours.
   Interface labels remain in English.
@@ -535,11 +537,11 @@ The read-only bootstrap refreshes a disposable mirror, preserving SQLite and its
 pending edits. No automatic conflict winner is configured; writable conflicts
 require review. Inventory uses a full PROPFIND listing and preserves non-event
 resources such as VTODO without displaying them as events.
-Live Nextcloud verification was again blocked by sandbox DNS;
-see [the integration helper and sync implementation](docs/SYNC.md) for a reproducible
-live conflict test. The read-only audit found only the first 562 of 1,442 supplied
-export masters in the live Group cache. Current remote coverage and the cause of
-that gap remain unverified; see the audit details in the sync documentation.
+Live Nextcloud checks cover discovery, initial pull, recurring creation,
+series/occurrence edits, exclusion sync, and cleanup using a disposable test
+resource. See [the integration helper and sync implementation](docs/SYNC.md).
+The earlier Group-cache coverage gap remains a separate, unverified inventory
+question; the test account does not establish that personal calendar's coverage.
 
 ## Validation
 
@@ -565,6 +567,17 @@ compares another checkout with the same workload, and `--profile` saves cProfile
 Timing depends on the machine and Qt backend. Tests separately check bounded reads,
 layout reuse, and correct invalidation after edits, undo, and remote writes.
 
+The broader workflow benchmark also measures year view, copy/paste, moving and
+editing, undo/redo, dialogs, preferences, import previews, and conflict comparison:
+
+```sh
+.venv/bin/python scripts/benchmark_workflows.py --events 10000 --series 200 --iterations 3 --output /tmp/workflows.json
+```
+
+It uses only synthetic in-memory data with network sync disabled. The JSON includes
+each sample, median/worst timings, event-loop gaps, and peak process memory.
+Use the same script with `--source-root OTHER_CHECKOUT` for comparisons.
+
 Calendar pages and paint geometry are reused when their inputs stay unchanged.
 An event-only SQLite revision invalidates those caches across sync connections;
 visibility changes do not rebuild the event search index. Search uses a lightweight
@@ -575,13 +588,14 @@ Slot confirmation acts on release without waiting for the double-click interval.
 
 ## Remaining work
 
-* Live provider integration tests and OAuth.
+* Additional provider integration and OAuth.
 * Broader recurrence and timezone interoperability, including advanced custom rules.
   Custom non-IANA timezone definitions, detached-only imports without a master,
   EXRULE, RANGE=THISANDFUTURE and sub-minute rules currently fail explicitly.
 * Progressive handling of exceptionally large import/edit batches on the UI thread.
-* Distribution packaging, accessibility audit, event copying,
-  and automated end-to-end checks on a Linux desktop.
+* Linux distribution integration, accessibility/screen-reader validation,
+  and broader desktop/window-manager coverage. Wheel build/install and isolated
+  X11 workflow checks are included in the release review.
 
 The code separates pure domain logic (`models`, `patterns`, `layout`, `recurrence`), SQLite
 (`store`), standards/sync (`ics`, `sync`), and the Qt workspace (`ui`, `dialogs`,

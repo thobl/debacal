@@ -27,7 +27,7 @@ invitations, or reminder notifications in the initial scope.
 1. **Local-first core:** CRUD survives restart; a multi-event edit is atomic; undo
    and redo survive restart. Selective undo rejects actions whose event state has
    changed since the operation, while unrelated changes do not block it.
-2. **Calendar workspace:** day/week/month, overlap layout, calendar toggles, search,
+2. **Calendar workspace:** day/week/month/year, overlap layout, calendar toggles, search,
    create by dragging, move/resize, and configurable keyboard actions with hints.
 3. **Efficient groups:** a bounded pattern parser and visual calendar preview; atomic batch
    creation; candidate groups; choosing one removes alternatives in one undoable action.
@@ -42,18 +42,13 @@ invitations, or reminder notifications in the initial scope.
 * **Resolved:** week start and date/time display are configurable, with system
   defaults. The system timezone is used for display; recurring events retain
   their named source zone.
-* **Resolved:** custom schedules are sequential instructions after one fixed
-  initial event. `+N` defaults to weeks; `d/w/m/y` specify relative units.
-  `[HH:MM-]D.[M.[YYYY]]` supplies dates, and `HH:MM` can supply the next clock
-  alone. Omitted components choose the strictly next matching instant; full
-  dates are exact, including earlier dates. Date-only steps restore the initial
-  clock; relative steps retain the preceding clock. Calendar month/year steps
-  clip their day, and nonexistent daylight-saving times fail explicitly.
-* **Resolved:** `N*step` and `N*(sequence)` repeat instructions, with nested groups
-  and space/comma separators. The fixed event is included in the 500-event
-  budget; repeats are bounded before execution and duplicate instants are
-  deduplicated. For an initial 7 November 2026 at 09:00,
-  `13. +1 18. 2. 3.2. +2` produces seven events through 17 February 2027.
+* **Resolved:** the [sequence specification](SEQUENCES.md) is the single source
+  for syntax, evaluation, normalization, and interaction behavior. The reference
+  is explicit (`+0d` includes it), relative steps always specify `d/w/m/y`, and
+  `N*step`/`N*(sequence)` repeat instructions. Standard recurring tails use
+  `every(...)`; weekday selectors, bounds, exclusions, and coincident occurrences
+  retain distinct standard identities. Unsupported compact combinations use an
+  exact editable schedule document. There is always an authoring string.
 * **Resolved:** calendar clicks reconstruct a compact equivalent custom sequence.
   Candidate steps include partial dates, exact dates, times and relative units;
   each is checked using the original event's clock and the preceding cursor.
@@ -75,16 +70,19 @@ invitations, or reminder notifications in the initial scope.
 * **Resolved:** Nextcloud account discovery is implemented alongside generic
   CalDAV discovery. Password/app-password authentication is supported; OAuth
   remains later work. Shared account credentials now persist in the system
-  keyring. Live server testing is blocked by sandbox DNS.
+  keyring. Live Nextcloud discovery, initial pull, recurring writes, edits,
+  exclusions, and cleanup passed the final review.
 * **Resolved:** standard recurrence is preferred. Regular patterns become RRULE,
   finite irregular dates become RDATE, exclusions use EXDATE, and single-instance
   edits use RECURRENCE-ID. No import or sync horizon truncates stored rules.
-* **Resolved:** navigation badges appear only during selection. Day and typed
-  event highlights show progress; a visible selection does not recenter the view.
+* **Resolved:** event highlights show the affected selection; keyboard navigation
+  follows actual events across empty days. A visible selection does not recenter
+  the view.
 * **Resolved:** conflict notices have an in-app/desktop/both preference. Event
   reminders remain out of scope.
-* **Resolved:** regular rules, chosen dates and advanced RRULE input configure one
-  schedule model. Recurring series can also be candidate alternatives.
+* **Resolved:** regular controls and custom sequence input configure one schedule
+  model. There is no separate raw RRULE editor. Recurring series can also be
+  candidate alternatives.
 * **Resolved:** demo mode explicitly disables remote connections and offers a
   switch to the persistent workspace; Sync status exposes errors and progress.
 * Selective undo is guarded at event granularity. Field-level semantic merging is
@@ -93,21 +91,20 @@ invitations, or reminder notifications in the initial scope.
 ## Additional implemented refinements
 
 * Versioned sequence text and anchor dates survive editing, history and sync.
-  The previous parser remains available for migration only. Opening older data
-  reconstructs equivalent new instructions from its functional RRULE/RDATE dates
-  without rewriting the source; saving records the new notation. Timed dates and
-  the fixed first event are preserved, with explicit errors if a sequence cannot
-  represent unusual precision losslessly.
+  Obsolete syntax is not interpreted. Data without matching current text derives
+  a verified expression from its canonical calendar, using an exact schedule
+  document when necessary, without silently changing its events.
 * Per-resource parse/quarantine handling keeps healthy events and candidate uploads
   moving when another event is malformed.
 * Server colors are the default, with arbitrary stable manual overrides.
-* Account-level keyring credentials and writable default-calendar selection.
+* Account-level keyring credentials and creation-calendar selection in the source list.
 
 ## Later milestones
 
-Provider testing, packaged Linux distribution (e.g.
-Flatpak), accessibility audit, broader recurrence editing, network interruption
-stress tests, and performance measurements on large real-world calendars.
+Additional providers, packaged Linux desktop integration (e.g. Flatpak),
+accessibility validation, and large real-world-calendar measurements.
+The [release review](RELEASE_REVIEW.md) records completed automated/native/provider
+checks, synthetic performance baselines, and the remaining limitations.
 See [the synchronization design](SYNC.md) for the vdirsyncer evaluation and the
 opt-in Nextcloud integration test.
 
