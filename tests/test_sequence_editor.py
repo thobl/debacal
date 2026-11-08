@@ -29,7 +29,7 @@ def editor():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets = []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE), patch('debacal.ui.local_zone', return_value=ZONE):
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE), patch('debacal.ui.local_zone', return_value=ZONE):
         def create(start=START, **kwargs):
             dialog = EventDialog(store.list_calendars(), start, start + timedelta(minutes=90),
                                  preferences=Preferences(0, 'european', '24h'), **kwargs)
@@ -150,7 +150,8 @@ def test_regular_authored_sequences_use_standard_rules_and_reopen_as_text(editor
     assert len(values) == 5
     selected = values[2]
     edit = create(event=selected, series=master, edit_scope='group')
-    assert edit.repeat.currentData() == 'RDATE'
+    expected_kind = expected_rule.split(';', 1)[0].partition('=')[2]
+    assert edit.repeat.currentData() == (expected_kind if expected_kind in ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY') else 'RDATE')
     assert edit.pattern.text() == text
     assert edit.value(edit.start) == master.start
     edit.title.setText('Rename regular sequence')
@@ -171,7 +172,6 @@ def test_actual_workspace_group_edit_uses_master_reference_from_later_occurrence
     def edit(dialog):
         assert dialog.value(dialog.start) == master.start
         dialog.start.setDateTime(dialog.start.dateTime().addSecs(3600))
-        dialog.end.setDateTime(dialog.end.dateTime().addSecs(3600))
         dialog.title.setText('Moved whole sequence')
         save(dialog)
         return dialog.result()
@@ -179,6 +179,7 @@ def test_actual_workspace_group_edit_uses_master_reference_from_later_occurrence
         window.edit_event(before[-1].id, group=True)
     moved = store.get_event(master.id)
     assert moved.start == START + timedelta(hours=1)
+    assert moved.end - moved.start == master.end - master.start
     assert [value.start for value in occurrences(store, moved)] == [value.start + timedelta(hours=1) for value in before]
     reopen = create(event=occurrences(store, moved)[1], series=moved, edit_scope='group')
     assert reopen.sequence_starts() == [value.start for value in occurrences(store, moved)]
@@ -200,7 +201,7 @@ def test_all_day_sequences_and_dst_errors_are_not_silently_normalized(editor):
     gap.end.setDateTime(gap.start.dateTime().addSecs(3600))
     gap.pattern.setText('+1d')  # The next end at 02:30 falls inside the DST gap.
     gap.save()
-    assert not gap.result_events and 'clock change' in gap.error.text()
+    assert not gap.result_events and 'clocks change' in gap.error.text()
     assert not gap.preview.masters
 
 
@@ -213,7 +214,6 @@ def test_unrepresentable_imported_precision_is_retained_on_ordinary_edits(editor
     store.apply('Import precise schedule', [master])
     selected = occurrences(store, master)[1]
     dialog = create(event=selected, series=master, edit_scope='group')
-    assert 'precise times are preserved' in dialog.pattern_help.text()
     dialog.title.setText('Rename precise schedule')
     store.edit_series(dialog.edit_reference, save(dialog))
     assert [value.start for value in occurrences(store, master)] == [initial, second]
@@ -229,7 +229,6 @@ def test_stale_authoring_text_never_replaces_times_changed_by_another_client(edi
     store.apply('Import externally edited schedule', [master])
     selected = occurrences(store, master)[1]
     dialog = create(event=selected, series=master, edit_scope='group')
-    assert 'refreshed from the current calendar dates' in dialog.pattern_help.text()
     assert dialog.sequence_starts() == [START, first, second]
     extra_day = START + timedelta(days=2)
     dialog.toggle_date(extra_day.date())
@@ -237,7 +236,7 @@ def test_stale_authoring_text_never_replaces_times_changed_by_another_client(edi
     assert [value.start for value in occurrences(store, master)] == [START, first, second, extra_day]
 
 
-def test_legacy_authored_count_rule_migrates_all_dates_and_moves_without_loss(editor):
+def test_legacy_authored_count_rule_migrates_when_moved_without_losing_dates(editor):
     store, create, _ = editor
     initial = datetime(2026, 11, 9, 9, tzinfo=ZONE)
     master = Event('legacy-rule', 'local', 'Old regular custom series', initial, initial + timedelta(minutes=90),
@@ -248,12 +247,13 @@ def test_legacy_authored_count_rule_migrates_all_dates_and_moves_without_loss(ed
     dialog = create(event=selected, series=master, edit_scope='group')
     assert len(dialog.sequence_starts()) == 3
     assert 'Mo' not in dialog.pattern.text()
+    assert dialog.build_events()[0].schedule_syntax == 1
     dialog.start.setDateTime(dialog.start.dateTime().addDays(1))
-    dialog.end.setDateTime(dialog.end.dateTime().addDays(1))
     changed = save(dialog)
     store.edit_series(dialog.edit_reference, changed, replace_schedule=dialog.schedule_replacement)
     current = store.get_event(master.id)
     assert current.schedule_syntax == 2
+    assert current.end - current.start == master.end - master.start
     assert [value.start for value in occurrences(store, current)] == [
         initial + timedelta(days=1), initial + timedelta(days=15), initial + timedelta(days=29)]
     reopen = create(event=occurrences(store, current)[-1], series=current, edit_scope='group')

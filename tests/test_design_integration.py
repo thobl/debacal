@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
 from debacal.dialogs import EventDialog
+from debacal.date_time_picker import DateTimeRangePicker
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
 from debacal.preferences_dialog import PreferencesDialog
@@ -94,8 +95,12 @@ def test_event_date_popups_keep_subtle_weekend_colors(name):
         dialog = EventDialog(store.list_calendars(), START, preferences=Preferences(color_scheme=name))
         try:
             for field in (dialog.start, dialog.end, dialog.repeat_until):
+                field.picker_requested.emit()
+                picker = dialog.range_picker
+                assert isinstance(picker, DateTimeRangePicker)
                 for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
-                    assert field.calendarWidget().weekdayTextFormat(day).foreground().color().name() == scheme_for(name).weekend
+                    assert picker.calendar.weekdayTextFormat(day).foreground().color().name() == scheme_for(name).weekend
+                picker.reject()
         finally:
             dialog.close()
             dialog.deleteLater()

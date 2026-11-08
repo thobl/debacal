@@ -27,7 +27,7 @@ def editors():
     store = Store(':memory:')
     dialogs = []
     errors = []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE), \
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         def create(event=None, series=None, **kwargs):
             dialog = EventDialog(store.list_calendars(), event.start if event else START,
@@ -56,7 +56,7 @@ def test_function_keys_choose_modes_inside_text_fields_and_keep_each_draft(edito
     series = master()
     selected = expand_series(series, START, START + timedelta(days=10))[2]
     dialog = create(selected, series)
-    assert not dialog.scope.isVisible()
+    assert dialog.scope.isVisible()
     assert dialog.scope_controls.isVisible()
     dialog.title.setFocus()
     dialog.title.setText('Single draft')
@@ -99,7 +99,7 @@ def test_mode_keys_are_remappable_and_common_field_editing_stays_limited(editors
     selected = expand_series(series, START, START + timedelta(days=10))[2]
     dialog = create(selected, series, scope_bindings={'scope_all': 'Alt+A', 'scope_following': 'Alt+N'},
                     common_fields_only=True)
-    assert dialog.common_fields_help.isVisible()
+    assert not dialog.schedule_mode.isVisible()
     assert not dialog.repeat.isVisible()
     assert not dialog.pattern.isEnabled()
     dialog.title.setFocus()

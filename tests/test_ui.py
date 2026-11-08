@@ -14,6 +14,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 
 from debacal.dialogs import EventDialog
+from debacal.date_time_picker import DateTimeRangePicker
 from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, text
 from debacal.preferences import Preferences
 from debacal.series_preview import SeriesPreview
@@ -33,7 +34,7 @@ class DialogTests(unittest.TestCase):
 
     def setUp(self):
         self.store = Store(":memory:")
-        self.zone_patch = patch("debacal.dialogs.local_zone", return_value=ZONE)
+        self.zone_patch = patch("debacal.event_dialog.local_zone", return_value=ZONE)
         self.zone_patch.start()
         self.callback_errors = []
         self.exception_patch = patch("sys.excepthook", side_effect=lambda _, value, __: self.callback_errors.append(value))
@@ -91,7 +92,7 @@ class DialogTests(unittest.TestCase):
         dialog = self.dialog()
         dialog.title.setText('Possible seminar slots')
         dialog.pattern.setText('4*(+2) +3 3*+2')
-        dialog.candidate.setChecked(True)
+        dialog.schedule_mode.setCurrentData('alternatives')
         self.assertTrue(dialog.preview.masters[0].candidate)
         dialog.save()
         self.assertEqual(len(dialog.result_events), 1)
@@ -110,9 +111,10 @@ class DialogTests(unittest.TestCase):
     def test_standard_weekly_editor_creates_one_rrule_master(self):
         dialog = self.dialog()
         dialog.title.setText('Weekly project review')
-        dialog.repeat.setCurrentIndex(dialog.repeat.findData('WEEKLY'))
+        dialog.schedule_mode.setCurrentData('repeat')
+        dialog.repeat.setCurrentData('WEEKLY')
         dialog.interval.setValue(2)
-        dialog.repeat_end.setCurrentIndex(dialog.repeat_end.findData('COUNT'))
+        dialog.no_end.setChecked(False)
         dialog.repeat_count.setValue(5)
         self.assertEqual(len(dialog.preview.visible_events), 3)
         self.assertTrue(dialog.preview.masters[0].recurrence_rule)
@@ -120,21 +122,24 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertEqual(len(dialog.result_events), 1)
         master = dialog.result_events[0]
-        self.assertEqual(master.recurrence_rule, 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;COUNT=5')
+        parts = dict(part.split('=', 1) for part in master.recurrence_rule.split(';'))
+        self.assertEqual((parts['FREQ'], parts['INTERVAL'], parts['COUNT']), ('WEEKLY', '2', '5'))
         self.assertEqual(master.recurrence_dates, ())
         self.store.apply('Create weekly review', dialog.result_events)
         occurrences = self.store.query_occurrences(master.start, master.start + timedelta(days=100))
         self.assertEqual(len(occurrences), 5)
         self.assertTrue(all(event.start.hour == master.start.hour for event in occurrences))
+        self.assertTrue(all(event.start.weekday() == 2 for event in occurrences))
         self.assertEqual(occurrences[-1].start.date() - occurrences[0].start.date(), timedelta(weeks=8))
 
     def test_regular_recurrence_can_also_be_candidate_alternatives(self):
         dialog = self.dialog()
         dialog.title.setText('Choose one review date')
-        dialog.repeat.setCurrentIndex(dialog.repeat.findData('WEEKLY'))
-        dialog.repeat_end.setCurrentIndex(dialog.repeat_end.findData('COUNT'))
+        dialog.schedule_mode.setCurrentData('repeat')
+        dialog.repeat.setCurrentData('WEEKLY')
+        dialog.no_end.setChecked(False)
         dialog.repeat_count.setValue(3)
-        dialog.candidate.setChecked(True)
+        dialog.schedule_mode.setCurrentData('alternatives')
         dialog.save()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted, dialog.error.text())
         master = dialog.result_events[0]
@@ -185,13 +190,19 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(len(edit.preview.events_on(date(2026, 11, 4))), 1)
         edit.show()
         self.app.processEvents()
-        point = edit.preview.grid.cell_rect(date(2026, 11, 4)).center().toPoint()
-        QTest.mouseClick(edit.preview.grid, Qt.MouseButton.LeftButton, pos=point)
-        self.assertIn('initial event is fixed', edit.error.text())
+        # The primary occurrence can be edited using the shared picker, but it
+        # has no remove target. Cancelling leaves the source unchanged.
+        card, primary, remove = edit.preview.grid.chip_rects(date(2026, 11, 4))[0]
+        self.assertTrue(edit.preview.is_primary(primary))
+        self.assertTrue(remove.isEmpty())
+        QTest.mouseDClick(edit.preview.grid, Qt.MouseButton.LeftButton, pos=card.center().toPoint())
+        self.assertIsInstance(edit.range_picker, DateTimeRangePicker)
+        self.assertEqual(edit.range_picker.draft_start, master.start)
+        edit.range_picker.reject()
         self.assertFalse(edit.schedule_replacement)
-        point = edit.preview.grid.cell_rect(date(2026, 11, 11)).center().toPoint()
-        QTest.mouseClick(edit.preview.grid, Qt.MouseButton.LeftButton, pos=point)
-        self.assertNotIn('11.11.2026', edit.pattern.text())
+        _card, _instance, remove = edit.preview.grid.chip_rects(date(2026, 11, 11))[0]
+        QTest.mouseClick(edit.preview.grid, Qt.MouseButton.LeftButton, pos=remove.center().toPoint())
+        self.assertNotIn(date(2026, 11, 11), edit.dates())
         self.assertTrue(edit.schedule_replacement)
         edit.save()
         self.assertEqual(edit.result(), QDialog.DialogCode.Accepted, edit.error.text())
@@ -209,7 +220,11 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(dialog.repeat_until.displayFormat(), 'yyyy-MM-dd')
         for field in (dialog.start, dialog.end, dialog.repeat_until):
             with self.subTest(field=field):
-                self.assertEqual(field.calendarWidget().firstDayOfWeek(), Qt.DayOfWeek.Sunday)
+                field.picker_requested.emit()
+                picker = dialog.range_picker
+                self.assertIsInstance(picker, DateTimeRangePicker)
+                self.assertEqual(picker.calendar.firstDayOfWeek(), Qt.DayOfWeek.Sunday)
+                picker.reject()
 
     def test_invalid_pattern_cannot_be_saved(self):
         dialog = self.dialog()
@@ -248,7 +263,7 @@ class DialogTests(unittest.TestCase):
         dialog.title.setText("Impossible time")
         dialog.save()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
-        self.assertIn("clock change", dialog.error.text())
+        self.assertIn("clock", dialog.error.text())
 
     def test_original_ambiguous_dst_fold_survives_editing(self):
         start = datetime(2026, 10, 25, 2, 15, tzinfo=ZONE, fold=1)
@@ -468,7 +483,7 @@ class WorkspaceTests(unittest.TestCase):
         dialog = EventDialog(self.store.list_calendars(), datetime(2026, 11, 4, 10, tzinfo=ZONE))
         dialog.title.setText("Find a meeting slot")
         dialog.pattern.setText("2*+1d")
-        dialog.candidate.setChecked(True)
+        dialog.schedule_mode.setCurrentData('alternatives')
         dialog.save()
         self.window.apply_events("Create meeting options", dialog.result_events)
         original = self.store.list_events()

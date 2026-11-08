@@ -240,6 +240,7 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
   Linux, with `LC_ALL` taking precedence). Preferences shows the detected values.
   Appearance controls text size, week numbers across calendar views, and the usual
   visible hours; the time grid still expands for events outside those hours.
+  Events configures the duration buttons in the event editor.
   Sync groups automatic sync intervals and conflict notifications. Keyboard
   shortcuts (`F1`) lets you remap actions and selection-mode keys, with duplicate
   and ambiguous sequences rejected. Settings survive restart.
@@ -248,10 +249,12 @@ highlight. Today keeps its marker as well as the chosen weekend treatment.
 * **Event editor:** Tab/Shift+Tab move through the form; labels have Alt-key
   mnemonics. Enter saves from form fields; Notes keeps Enter for a new line, and
   Ctrl+Enter saves from anywhere. In calendar-source setup, Enter discovers a new
-  CalDAV account before saving its selected calendars. Clicking the series
-  preview switches a one-off or finite recurrence to a custom sequence, preserving
-  its existing dates; unbounded or oversized rules require an explicit finite
-  schedule before conversion.
+  CalDAV account before saving its selected calendars. Start and End accept typed
+  dates and times or open a shared month-and-time-range picker. Moving Start
+  preserves duration; setting an earlier End moves Start back by that duration.
+  Duration edits and preset buttons adjust End. All-day fields show the first and
+  last included dates. Repeat controls show synchronized count and final-date
+  fields; choose No end for an ongoing rule.
 
 ### Working with event series
 
@@ -295,11 +298,25 @@ exception content; moving also preserves their different durations.
 
 ### Irregular groups and candidate slots
 
-The event editor shows a month calendar preview with timed occurrence blocks.
-Use its month arrows to inspect the whole schedule. **Starts** and **Ends** define
-the fixed initial event; **Custom sequence** adds occurrences by following the
-instructions below. The initial event is always included, so the sequence need
-not repeat its date. Its duration applies to the additional occurrences.
+The event editor separates primary-event controls from a full-height month
+preview. **Starts**, **Ends**, and **Duration** define the primary event. Choose
+**Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
+Monthly, Yearly, and Custom controls. Alternatives are choices from which one
+event can later be confirmed.
+
+Click a preview date to add or remove an occurrence. Regular date selections
+automatically use the corresponding standard recurrence; irregular selections
+use a compact custom sequence. Unbounded or large rules retain their RRULE and
+use standard additions and exclusions. The pinned primary event is edited with
+Start and End. **Add occurrence** opens the same range picker, initially using
+the primary time and duration, so an extra occurrence can have a different time
+or duration. Occurrence navigation offers First, Previous, Next, and Last; Last
+is unavailable for an endless series. Month arrows browse without changing the
+primary event.
+
+Custom instructions add occurrences after the primary event, so its date need
+not be repeated in the sequence. Its duration applies unless an individual
+occurrence has its own range.
 
 Instructions are separated by spaces or commas. Each runs from the result of the
 previous instruction:
@@ -344,8 +361,9 @@ The text remains editable when reopening a saved custom series. Title edits
 preserve it; moving a series keeps relative text when equivalent and rewrites
 absolute instructions to reflect the actual new instants. Older syntax is never
 silently interpreted as the new language: opening it reconstructs an equivalent
-sequence from its stored standard dates, and saving records the new version.
-Opening alone does not change the saved events. Clicking preview dates adds or
+sequence from its stored standard dates. Editing that schedule or moving its
+primary date records the new version; ordinary title edits retain the original
+metadata. Clicking preview dates adds or
 removes dates and reconstructs a compact equivalent sequence. It compares short
 day/month dates, relative steps, clock changes and repeated groups, omitting a
 year whenever the shorter form selects exactly the same date. Regular gaps and
@@ -356,10 +374,10 @@ formatting until a calendar click changes the selection.
 Saving creates one undoable operation. Regular schedules use standard RRULE;
 uniform hour/minute sequences use finite `HOURLY`/`MINUTELY` rules with a count.
 Irregular schedules use standard RDATE, retaining their structure in other calendar
-clients. The unified **Schedule** control also supports daily, weekly (including
-weekday selection), monthly and yearly schedules with interval/count/end-date
-controls. **Advanced rule** exposes standard RRULE text for schedules beyond those
-controls.
+clients. The **Schedule** controls support daily, weekly, monthly and yearly
+schedules with interval/count/end-date controls. Custom's settings button exposes
+standard RRULE text for schedules beyond those controls, including multiple
+weekdays. Imported advanced rules remain intact until explicitly edited.
 
 Custom sequence definitions also synchronize between Debacal instances. The ICS
 master stores the exact expression, language version and anchor in
@@ -479,4 +497,8 @@ Slot confirmation acts on release without waiting for the double-click interval.
 
 The code separates pure domain logic (`models`, `patterns`, `layout`, `recurrence`), SQLite
 (`store`), standards/sync (`ics`, `sync`), and the Qt workspace (`ui`, `dialogs`,
-`calendar_widgets`). It has no web backend or external service requirement.
+`calendar_widgets`). Event authoring has separate modules for recurrence drafts
+(`event_schedule`), fields and range pickers (`date_time_fields`,
+`date_time_picker`), preview/navigation (`series_preview`, `preview_navigation`),
+and layout/controller (`event_dialog`). It has no web backend or external service
+requirement.

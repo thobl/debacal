@@ -37,7 +37,7 @@ def desktop():
             patch('debacal.ui.now', return_value=START), \
             patch('debacal.ui.local_zone', return_value=ZONE), \
             patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
-            patch('debacal.dialogs.local_zone', return_value=ZONE), \
+            patch('debacal.event_dialog.local_zone', return_value=ZONE), \
             patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         for identity, color in [('red', '#a62a45'), ('blue', '#335eb8'), ('target', '#ddad16')]:
             store.save_calendar(Calendar(identity, identity.title(), color))

@@ -13,6 +13,11 @@ QWidget { font-family: "Sans Serif"; font-size: 13px; color: $ink; }
 QMainWindow, QDialog { background: $background; }
 QWidget#sidebar, QWidget#sidebarShell, QWidget#sidebarFooter, QWidget#sidebarOverview { background: $sidebar; }
 QWidget#sidebarShell { border-right: 1px solid $line; }
+QWidget#eventEditorSidebar, QWidget#eventEditorBody, QWidget#eventEditorSidebarViewport,
+QScrollArea#eventEditorScroll { background: $sidebar; }
+QWidget#eventEditorSidebar { border-right: 1px solid $line; }
+QWidget#eventEditorSection { background: transparent; }
+QWidget#eventEditorPreview { background: $background; }
 QWidget#sidebarFooter { border-top: 1px solid $line; }
 QWidget#sourceSections { background: $sidebar; border-top: 1px solid $line; }
 QWidget#calendarSection, QWidget#agendaSection, QWidget#sidebarSectionHeader { background: transparent; }

@@ -351,6 +351,16 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
             )
         return value
 
+    zone = event_zone(master)
+    wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+
+    def same_duration(first, second):
+        first_wall = wall(first.end) - wall(first.start)
+        second_wall = wall(second.end) - wall(second.start)
+        return (first.all_day == second.all_day and first_wall == second_wall and
+                (first_wall > timedelta(0) or first.end.timestamp() - first.start.timestamp()
+                 == second.end.timestamp() - second.start.timestamp()))
+
     if replace_schedule:
         updated = replace(edited, id=master.id, calendar_id=master.calendar_id,
                           ical_uid=master.ical_uid, raw_ics=master.raw_ics,
@@ -363,16 +373,22 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
             duration = (updated.end.astimezone(zone).replace(tzinfo=None)
                         - updated.start.astimezone(zone).replace(tzinfo=None))
             for key, payload in master.recurrence_overrides.items():
+                replacement = edited.recurrence_overrides.get(key)
+                if replacement is not None and replacement != payload:
+                    continue
                 when = key_datetime(key, updated)
                 previous = rules.before(when, inc=True)
                 if previous is None or recurrence_key(previous, updated.all_day) != key:
                     continue
                 value = Event.from_dict(payload)
                 override_start = value.start.astimezone(zone)
-                if duration <= timedelta(0):
-                    override_end = datetime.fromtimestamp(override_start.timestamp() + updated.end.timestamp() - updated.start.timestamp(), zone)
+                own_duration = ((value.end.astimezone(zone).replace(tzinfo=None) - override_start.replace(tzinfo=None))
+                                if same_duration(edited, master) else duration)
+                duration_source = value if same_duration(edited, master) else updated
+                if own_duration <= timedelta(0):
+                    override_end = datetime.fromtimestamp(override_start.timestamp() + duration_source.end.timestamp() - duration_source.start.timestamp(), zone)
                 else:
-                    override_end = override_start + duration
+                    override_end = override_start + own_duration
                 checked_wall(override_start)
                 checked_wall(override_end)
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
@@ -381,6 +397,28 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
                                          description=updated.description, location=updated.location,
                                          all_day=updated.all_day, candidate=updated.candidate,
                                          schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
+            # New or changed detached ranges are authoritative. Retain their
+            # own ends rather than projecting the master's duration over them.
+            # Unchanged source exceptions keep the common-field projection.
+            for key, payload in edited.recurrence_overrides.items():
+                if payload == master.recurrence_overrides.get(key):
+                    continue
+                when = key_datetime(key, updated)
+                previous = rules.before(when, inc=True)
+                if previous is None or recurrence_key(previous, updated.all_day) != key:
+                    continue
+                value = Event.from_dict(payload)
+                checked_wall(value.start)
+                checked_wall(value.end)
+                overrides[key] = replace(value, id=occurrence_id(master.id, key),
+                    calendar_id=master.calendar_id, ical_uid=master.ical_uid,
+                    series_id=master.id, recurrence_id=key, timezone_id=updated.timezone_id,
+                    read_only=master.read_only, group_id=master.group_id,
+                    title=updated.title, description=updated.description, location=updated.location,
+                    candidate=updated.candidate,
+                    recurrence_rule="", recurrence_dates=(), excluded_dates=(),
+                    recurrence_overrides={}, raw_ics="", all_day=updated.all_day,
+                    schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
         return replace(updated, recurrence_overrides=overrides)
     if not edited.recurrence_rule and not edited.recurrence_dates and not edited.schedule_expression:
         single = replace(edited, id=master.id, calendar_id=master.calendar_id,
@@ -388,13 +426,13 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
                          raw_ics=master.raw_ics, ical_uid=master.ical_uid,
                          schedule_expression="", expression_anchor="", schedule_syntax=1)
         return single
-    zone = event_zone(master)
-    wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
     shift = wall(edited.start) - wall(reference.start)
-    duration = wall(edited.end) - wall(edited.start)
+    duration_changed = not same_duration(edited, reference)
+    duration_source = edited if duration_changed else master
+    duration = wall(duration_source.end) - wall(duration_source.start)
     start = checked_wall((wall(master.start) + shift).replace(tzinfo=zone))
     if duration <= timedelta(0):
-        end = datetime.fromtimestamp(start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
+        end = datetime.fromtimestamp(start.timestamp() + duration_source.end.timestamp() - duration_source.start.timestamp(), zone)
     else:
         end = start + duration
     checked_wall(end)
@@ -413,10 +451,12 @@ def updated_series(master: Event, reference: Event, edited: Event, replace_sched
         moved_key = shift_key(key)
         value = Event.from_dict(payload)
         override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone))
-        if duration <= timedelta(0):
-            override_end = datetime.fromtimestamp(override_start.timestamp() + edited.end.timestamp() - edited.start.timestamp(), zone)
+        override_duration = duration if duration_changed else wall(value.end) - wall(value.start)
+        override_source = edited if duration_changed else value
+        if override_duration <= timedelta(0):
+            override_end = datetime.fromtimestamp(override_start.timestamp() + override_source.end.timestamp() - override_source.start.timestamp(), zone)
         else:
-            override_end = override_start + duration
+            override_end = override_start + override_duration
         checked_wall(override_end)
         overrides[moved_key] = replace(value, id=occurrence_id(master.id, moved_key),
                                        start=override_start, end=override_end,

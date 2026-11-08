@@ -1,10 +1,10 @@
 """Categorized display, synchronization, and keyboard preferences."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QLocale, Signal
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout,
-    QCheckBox, QFrame, QScrollArea, QSpinBox, QTabWidget, QWidget,
+    QCheckBox, QFrame, QScrollArea, QSpinBox, QTabWidget, QWidget, QLineEdit,
 )
 
 from .appearance import stylesheet, widget_palette
@@ -13,6 +13,7 @@ from .preferences import Preferences, _system_language_locale
 from .appearance_preferences import AppearanceEditor
 from .shortcuts import KeyboardShortcutsEditor
 from .theme import scheme_for
+from .date_time_fields import parse_duration, format_duration
 
 
 class PreferencesDialog(QDialog):
@@ -85,6 +86,18 @@ class PreferencesDialog(QDialog):
                      'visible_start', 'visible_end', 'show_sidebar_title', 'sidebar_title'):
             setattr(self, name, getattr(self.appearance_editor, name))
 
+        self.events_page, events_layout, form = self.category('Events')
+        self.duration_presets = QLineEdit(', '.join(format_duration(timedelta(minutes=value))
+                                                   for value in preferences.duration_presets_minutes))
+        self.duration_presets.setAccessibleName('Duration buttons')
+        self.duration_presets.setPlaceholderText('30min, 45min, 1h')
+        form.addRow('Duration buttons', self.duration_presets)
+        note = QLabel('Separate the durations with commas. These buttons do not change the default length of a new event.')
+        note.setWordWrap(True)
+        note.setProperty('muted', True)
+        events_layout.addWidget(note)
+        events_layout.addStretch()
+
         _, sync_layout, form = self.category('Sync')
         self.auto_sync = QCheckBox('Sync automatically while the app is open')
         self.auto_sync.setChecked(preferences.auto_sync_enabled)
@@ -145,18 +158,27 @@ class PreferencesDialog(QDialog):
         return page, layout, form
 
     def set_category(self, category):
-        names = {'general': 0, 'appearance': 1, 'sync': 2, 'keyboard': 3, 'keyboard shortcuts': 3}
-        index = names.get(str(category).strip().casefold())
-        if index is None:
-            return False
-        self.tabs.setCurrentIndex(index)
-        return True
+        name = str(category).strip().casefold()
+        name = 'keyboard shortcuts' if name == 'keyboard' else name
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index).casefold() == name:
+                self.tabs.setCurrentIndex(index)
+                return True
+        return False
+
+    def duration_values(self):
+        values = [parse_duration(part) for part in self.duration_presets.text().split(',')]
+        if any(value % timedelta(minutes=1) for value in values):
+            raise ValueError('Duration buttons must use whole minutes.')
+        minutes = tuple(int(value.total_seconds() // 60) for value in values)
+        return Preferences(duration_presets_minutes=minutes).duration_presets_minutes
 
     def value(self):
         return Preferences(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
                            time_format=self.time_format.currentData(), conflict_notifications=self.conflict_notifications.currentData(),
                            auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
-                           locale_name=self.locale.currentData(), **self.appearance_editor.values())
+                           locale_name=self.locale.currentData(), duration_presets_minutes=self.duration_values(),
+                           **self.appearance_editor.values())
 
     def locale_changed(self, *_):
         preferences = Preferences(locale_name=self.locale.currentData())
@@ -179,6 +201,8 @@ class PreferencesDialog(QDialog):
         self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData('in_app'))
         self.auto_sync.setChecked(True)
         self.sync_interval.setValue(1)
+        self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value))
+                                               for value in Preferences().duration_presets_minutes))
         self.appearance_editor.set_preferences(Preferences())
         self.shortcut_editor.restore_defaults()
         self.error.clear()
@@ -187,10 +211,16 @@ class PreferencesDialog(QDialog):
         try:
             preferences = self.value()
         except ValueError as error:
-            self.tabs.setCurrentIndex(1)
-            target = self.appearance_editor.focus_invalid_field()
-            if target is not None:
-                self.tabs.widget(1).ensureWidgetVisible(target)
+            try:
+                self.duration_values()
+            except ValueError:
+                self.set_category('Events')
+                self.duration_presets.setFocus()
+            else:
+                self.tabs.setCurrentIndex(1)
+                target = self.appearance_editor.focus_invalid_field()
+                if target is not None:
+                    self.tabs.widget(1).ensureWidgetVisible(target)
             self.error.setText(str(error))
             return False
         try:

@@ -16,6 +16,8 @@ from debacal import calendar_widgets
 from debacal.calendar_widgets import AllDayCanvas, CalendarCanvas, DayHeader, MonthCanvas, paint_colors
 from debacal.calendar_appearance import CalendarDateGrid
 from debacal.dialogs import EventDialog
+from debacal.date_time_fields import DateTimeField
+from debacal.date_time_picker import DateTimeRangePicker
 from debacal.mini_calendar import MiniCalendar
 from debacal.preferences import Preferences
 from debacal.models import Event
@@ -130,8 +132,20 @@ def test_selected_weekend_today_in_native_overview_and_date_popups_retains_its_t
     overview.setSelectedDate(QDate(2026, 11, 7))
     dialog = EventDialog([], INSTANT, preferences=preferences)
     widgets.append(dialog)
+    calendars = [overview.calendar]
+    # Both endpoints and recurrence limits use the same production picker.
+    # Inspect the calendars users actually open, rather than hidden spinbox
+    # popups belonging to the previous editor.
+    for field in (dialog.start, dialog.end, dialog.repeat_until):
+        assert isinstance(field, DateTimeField)
+        field.picker_requested.emit()
+        picker = dialog.range_picker
+        assert isinstance(picker, DateTimeRangePicker)
+        widgets.append(picker)
+        calendars.append(picker.calendar)
+        picker.reject()
     scheme = scheme_for(preferences)
-    for calendar in (overview.calendar, dialog.start.calendarWidget(), dialog.end.calendarWidget(), dialog.repeat_until.calendarWidget()):
+    for calendar in calendars:
         assert isinstance(calendar, CalendarDateGrid)
         calendar.setCurrentPage(2026, 11)
         calendar.setSelectedDate(QDate(2026, 11, 7))

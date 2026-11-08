@@ -37,7 +37,7 @@ def workspace():
                    recurrence_rule='FREQ=WEEKLY;BYDAY=MO;COUNT=5')
     store.apply('Create baseline', [master])
     errors, windows = [], []
-    with patch('debacal.ui.local_zone', return_value=ZONE), patch('debacal.dialogs.local_zone', return_value=ZONE), \
+    with patch('debacal.ui.local_zone', return_value=ZONE), patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         window = MainWindow(store, enable_sync=False)

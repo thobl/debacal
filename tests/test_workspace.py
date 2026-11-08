@@ -154,7 +154,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
             return dialog.result()
         with patch.object(EventDialog, 'exec', save_dialog), \
                 patch('debacal.ui.local_zone', return_value=ZONE), \
-                patch('debacal.dialogs.local_zone', return_value=ZONE):
+                patch('debacal.event_dialog.local_zone', return_value=ZONE):
             self.window.edit_event(selected.id, group=True)
         moved = self.store.get_event(later.id).start.astimezone(ZONE)
         self.assertEqual(moved.date(), date(2026, 11, 9))
@@ -177,7 +177,7 @@ class WorkspaceRegressionTests(unittest.TestCase):
 
         with patch.object(EventDialog, 'exec', new=save_dialog), \
                 patch('debacal.ui.local_zone', return_value=ZONE), \
-                patch('debacal.dialogs.local_zone', return_value=ZONE):
+                patch('debacal.event_dialog.local_zone', return_value=ZONE):
             self.window.edit_event(event_id, group=group)
         return scopes
 

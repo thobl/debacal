@@ -8,7 +8,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -48,7 +48,7 @@ def editors():
     app = QApplication.instance() or QApplication([])
     widgets = []
     store = Store(':memory:')
-    with patch('debacal.dialogs.local_zone', return_value=UTC), \
+    with patch('debacal.event_dialog.local_zone', return_value=UTC), \
          patch('debacal.series_preview.local_zone', return_value=UTC), \
          patch('debacal.calendar_widgets.local_zone', return_value=UTC):
         def create(master=None, *, selected=None, scope='group', start=START):
@@ -67,7 +67,9 @@ def editors():
             app.processEvents()
             assert dialog.preview.date_editing
             rect = dialog.preview.grid.cell_rect(day)
-            QTest.mouseClick(dialog.preview.grid, Qt.MouseButton.LeftButton, pos=rect.center().toPoint())
+            # Date headings toggle the day; occurrence cards select that slot.
+            point = QPoint(round(rect.center().x()), round(rect.top() + 10))
+            QTest.mouseClick(dialog.preview.grid, Qt.MouseButton.LeftButton, pos=point)
             app.processEvents()
 
         yield store, create, click
@@ -93,11 +95,10 @@ def test_title_only_edit_keeps_literal_timezone_anchor_and_dst_instants(editors,
     original = instants(base_schedule_starts(master))
     dialog = create(master, selected=occurrences(master)[-1])
     assert dialog.pattern.text() == text
-    assert not dialog._sequence_reencode and not dialog.schedule_replacement
+    assert not dialog.schedule_replacement
     assert dialog.value(dialog.start) == master.start.astimezone(UTC)
     assert dialog.start.dateTime().toPython().hour == 8
-    assert 'Sequence dates and times use Europe/Berlin' in dialog.pattern_help.text()
-    assert 'calendar show UTC' in dialog.pattern_help.text()
+    assert dialog.sequence_zone() == BERLIN
     dialog.title.setText('Renamed')
     store.edit_series(dialog.edit_reference, save(dialog), replace_schedule=dialog.schedule_replacement)
     changed = store.get_event(master.id)
@@ -137,7 +138,7 @@ def test_previous_display_day_anchor_and_clicks_keep_source_clock(editors):
     assert dialog.pattern.text() == master.schedule_expression
     assert dialog.preview.anchor_dates == {date(2026, 11, 6)}
     click(dialog, date(2026, 11, 6))
-    assert 'initial event is fixed' in dialog.error.text()
+    assert instants(dialog.sequence_starts()) == instants(base_schedule_starts(master))
     assert dialog.pattern.text() == master.schedule_expression
     # The original 00:30 authoring clock appears on the preceding UTC date.
     click(dialog, date(2026, 11, 10))
@@ -186,6 +187,27 @@ def test_calendar_click_rejects_nonexistent_original_clock_without_rewriting_tex
     assert instants(dialog.sequence_starts()) == instants(base_schedule_starts(master))
 
 
+def test_extra_occurrence_pickers_use_displayed_day_and_clock(editors):
+    _, create, _ = editors
+    initial = datetime(2026, 11, 7, 0, 30, tzinfo=BERLIN)
+    master = authored('1:30 +1d', initial)
+    values = occurrences(master)
+    dialog = create(master)
+    dialog._preview_selected(values[0])
+    dialog.add_occurrence()
+    adding = dialog.range_picker
+    assert adding.draft_start == initial.astimezone(UTC)
+    assert adding.draft_start.date() == date(2026, 11, 6)
+    assert adding.draft_start.hour == 23 and adding.draft_start.minute == 30
+    adding.reject()
+    dialog.edit_occurrence(values[1])
+    editing = dialog.range_picker
+    assert editing.draft_start == values[1].start.astimezone(UTC)
+    assert editing.draft_start.hour == 0 and editing.draft_start.minute == 30
+    assert editing.draft_end == values[1].end.astimezone(UTC)
+    editing.reject()
+
+
 def test_scope_drafts_keep_origin_zone_and_each_literal(editors):
     _, create, _ = editors
     master = authored('  4*+2  ')
@@ -219,7 +241,6 @@ def test_all_day_imported_dates_do_not_follow_timezone_date_conversion(editors):
     dialog = create(master)
     assert dialog.start.date().toPython() == initial.date()
     assert dialog.pattern.text() == source.schedule_expression
-    assert 'Sequence dates and times use' not in dialog.pattern_help.text()
     click(dialog, date(2026, 11, 5))
     changed = save(dialog)
     assert changed.all_day
@@ -255,7 +276,6 @@ def test_new_custom_and_imported_unannotated_dates_use_local_display_zone(editor
         assert dialog.sequence_zone() == UTC
         assert dialog.sequence_starts()[1].hour == 10
         assert dialog.sequence_starts()[1].tzinfo == UTC
-        assert 'Sequence dates and times use' not in dialog.pattern_help.text()
 
 
 def test_saved_500_event_bound_and_retyped_overflow_still_apply(editors):

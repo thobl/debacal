@@ -66,7 +66,8 @@ class ConflictDialog(QDialog):
             preview = SeriesPreview()
             preview.set_events([event] if event else [], preferences)
             for control in (preview.previous_button, preview.next_button, preview.first_button,
-                            preview.month_label):
+                            preview.previous_occurrence_button, preview.next_occurrence_button,
+                            preview.last_button, preview.position_label, preview.month_label):
                 control.hide()
             column.addWidget(preview, 1)
             columns.addLayout(column, 1)

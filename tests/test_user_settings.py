@@ -26,7 +26,7 @@ def desktop():
     app = QApplication.instance() or QApplication([])
     windows = []
     with Store(':memory:') as store:
-        with patch('debacal.dialogs.local_zone', return_value=ZONE):
+        with patch('debacal.event_dialog.local_zone', return_value=ZONE):
             yield store, windows
         for window in reversed(windows):
             window.close()
@@ -87,9 +87,15 @@ def test_legacy_custom_dates_reopen_as_equivalent_new_language(desktop, authored
     assert 'Mo' not in dialog.pattern.text()
     assert '+2' in dialog.pattern.text()
     assert dialog.dates() == dates
+    # Opening old data displays the current language without rewriting it.
+    preserved = dialog.build_events()[0]
+    assert preserved.schedule_syntax == master.schedule_syntax
+    assert preserved.schedule_expression == master.schedule_expression
+    # An explicit configuration edit adopts the current language on save.
+    dialog.pattern.setText(' ' + dialog.pattern.text() + ' ')
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
-    store.edit_series(dialog.edit_reference, dialog.result_events[0])
+    store.edit_series(dialog.edit_reference, dialog.result_events[0], replace_schedule=dialog.schedule_replacement)
     migrated = store.get_event(master.id)
     assert migrated.schedule_syntax == 2
     assert [value.date() for value in expand_sequence(migrated.schedule_expression, migrated.start)] == dates
@@ -113,12 +119,12 @@ def test_one_date_pattern_can_be_edited_and_moved_without_losing_its_language(de
     assert edit.pattern.text() == '4.11.2026'
     edit.title.setText('Moved custom slot')
     edit.start.setDateTime(edit.start.dateTime().addDays(1))
-    edit.end.setDateTime(edit.end.dateTime().addDays(1))
     edit.save()
     assert edit.result() == QDialog.DialogCode.Accepted, edit.error.text()
     store.edit_series(edit.edit_reference, edit.result_events[0], replace_schedule=edit.schedule_replacement)
     changed = store.get_event(master.id)
     assert changed.start.date() == master.start.date() + timedelta(days=1)
+    assert changed.end - changed.start == master.end - master.start
     assert 'Mo' not in changed.schedule_expression
     assert expand_pattern(changed.schedule_expression, datetime.fromisoformat(changed.expression_anchor).date()) == [changed.start.date()]
 

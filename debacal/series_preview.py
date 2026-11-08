@@ -1,103 +1,250 @@
-"""A compact, interactive month preview of a series or candidate time slots."""
+"""Visible-month occurrence preview with calendar and series navigation."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from .calendar_widgets import at, text, display_scale, paint_colors, WEEKDAY_SIZE
+from .calendar_appearance import weekend_fill, weekend_text
+from .calendar_widgets import WEEKDAY_SIZE, display_scale, text
 from .event_style import event_colors
+from .icons import icon
+from .models import Event
 from .preferences import Preferences
-from .calendar_appearance import weekend_text, weekend_fill
-from .recurrence import expand_events, key_datetime, recurrence_key, recurrence_set, overlaps
+from .preview_navigation import PreviewNavigation
+from .recurrence import expand_events, key_datetime, occurrence, recurrence_key
+from .theme import scheme_for
 from .timeutil import local_zone, now
 
 
-class SeriesPreview(QWidget):
-    """Expand only the displayed month; rebuilding editor values keeps its page.
+def _start(event):
+    return event.start if event.all_day else event.start.astimezone(local_zone())
 
-    ``date_toggled`` requests an edit from the owner; the owner decides whether
-    to add an RDATE or EXDATE, then calls ``set_events`` with the new values.
-    The preview never mutates the supplied event objects.
+
+def _end(event):
+    return event.end if event.all_day else event.end.astimezone(local_zone())
+
+
+def _endpoint_icon(color, last=False):
+    pixels = QPixmap(40, 40)
+    pixels.setDevicePixelRatio(2)
+    pixels.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixels)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    bar, edge, point = (15, 7, 12) if last else (5, 13, 8)
+    painter.drawLine(QPointF(bar, 5), QPointF(bar, 15))
+    painter.drawLine(QPointF(edge, 5), QPointF(point, 10))
+    painter.drawLine(QPointF(point, 10), QPointF(edge, 15))
+    painter.end()
+    return QIcon(pixels)
+
+
+class SeriesPreview(QWidget):
+    """Expand only the visible month and request edits from the owning editor.
+
+    Primary event fields remain independent of preview selection. Occurrence
+    navigation is resolved on demand, never by expanding an infinite schedule.
     """
     date_toggled = Signal(object)
     date_clicked = Signal(object)
+    occurrence_selected = Signal(object)
+    occurrence_edit_requested = Signal(object)
+    occurrence_remove_requested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.preferences = Preferences()
-        self.masters = []
+        self.masters, self.visible_events = [], []
         self.calendar_colors = {}
-        self.visible_events = []
         self.current_month = now().date().replace(day=1)
         self.grid_start = self.preferences.week_start(self.current_month)
         self.date_editing = False
         self.error = ''
         self.total_occurrences = None
-        self._initialized = False
-        self._by_day = {}
         self.anchor_dates, self.added_dates, self.excluded_dates = set(), set(), set()
-        self.setMinimumHeight(325)
+        self._primary = self._selected = None
+        self._following_primary = True
+        self._explicit_primary = self._initialized = self._laying_out = False
+        self._by_day, self._week_heights = {}, []
+        self._navigation = PreviewNavigation([])
+        self._navigation_failure = ''
+        self._reveal_id = None
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(self._reveal_selected)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(5)
-        toolbar = QHBoxLayout()
-        self.previous_button = QPushButton('‹')
-        self.previous_button.setToolTip('Previous month')
-        self.previous_button.setFixedWidth(32)
-        self.previous_button.setStyleSheet('padding: 3px;')
-        self.next_button = QPushButton('›')
-        self.next_button.setToolTip('Next month')
-        self.next_button.setFixedWidth(32)
-        self.next_button.setStyleSheet('padding: 3px;')
+        months = QHBoxLayout()
+        months.setSpacing(4)
+        self.previous_button = self._button('previous', 'Previous month', lambda: self.navigate_month(-1))
+        self.next_button = self._button('next', 'Next month', lambda: self.navigate_month(1))
         self.month_label = QLabel()
+        self.month_label.setObjectName('sidebarSectionHeading')
         self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.first_button = QPushButton('First date')
-        self.previous_button.clicked.connect(lambda: self.navigate_month(-1))
-        self.next_button.clicked.connect(lambda: self.navigate_month(1))
-        self.first_button.clicked.connect(self.show_first_date)
-        toolbar.addWidget(self.previous_button)
-        toolbar.addWidget(self.month_label, 1)
-        toolbar.addWidget(self.next_button)
-        toolbar.addWidget(self.first_button)
-        outer.addLayout(toolbar)
+        months.addWidget(self.previous_button)
+        months.addWidget(self.month_label, 1)
+        months.addWidget(self.next_button)
+        outer.addLayout(months)
+        self.scroll = QScrollArea()
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.verticalScrollBar().rangeChanged.connect(self._reserve_scrollbar)
+        self.scroll.viewport().installEventFilter(self)
         self.grid = _PreviewGrid(self)
-        outer.addWidget(self.grid, 1)
+        self.scroll.setWidget(self.grid)
+        outer.addWidget(self.scroll, 1)
+        navigation = QHBoxLayout()
+        navigation.setSpacing(3)
+        self.first_button = self._button('first', 'Primary event', self.show_first_date)
+        self.previous_occurrence_button = self._button('previous', 'Previous occurrence', lambda: self.navigate_occurrence(-1))
+        self.next_occurrence_button = self._button('next', 'Next occurrence', lambda: self.navigate_occurrence(1))
+        self.last_button = self._button('last', 'Last occurrence', self.show_last_date)
+        self.position_label = QLabel()
+        self.position_label.setProperty('muted', True)
+        self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        navigation.addWidget(self.first_button)
+        navigation.addWidget(self.previous_occurrence_button)
+        navigation.addWidget(self.position_label, 1)
+        navigation.addWidget(self.next_occurrence_button)
+        navigation.addWidget(self.last_button)
+        outer.addLayout(navigation)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.summary.setProperty('muted', True)
         outer.addWidget(self.summary)
-        self.instructions = QLabel()
-        self.instructions.setWordWrap(True)
-        self.instructions.setProperty('muted', True)
-        outer.addWidget(self.instructions)
+        self.setMinimumHeight(310)
         self._rebuild()
 
+    def _button(self, glyph, caption, callback):
+        button = QPushButton()
+        button.setProperty('iconOnly', True)
+        button.setProperty('previewGlyph', glyph)
+        button.setAccessibleName(caption)
+        button.setToolTip(caption)
+        button.setAutoDefault(False)
+        button.clicked.connect(lambda _checked=False: callback())
+        return button
+
+    @property
+    def primary(self):
+        return self._primary
+
+    @property
+    def selected_event(self):
+        return self._selected
+
+    @property
+    def selected_id(self):
+        return self._selected.id if self._selected is not None else None
+
+    def set_primary(self, event):
+        followed_primary = self._following_primary or self._selected is None or self.is_primary(self._selected)
+        self._explicit_primary = event is not None
+        self._primary = event
+        self.anchor_dates = {_start(event).date()} if event else set()
+        if followed_primary:
+            self._selected = self._primary_occurrence()
+        self._following_primary = followed_primary
+        self._update_navigation()
+        self.grid.update()
+
     def set_events(self, masters_or_events, preferences=None, calendars=None):
-        """Replace events, retaining source colors unless new calendars are supplied."""
+        previous = self._selected
+        followed_primary = self._following_primary or previous is None or self.is_primary(previous)
         self.masters = list(masters_or_events)
         if preferences is not None:
             self.preferences = preferences
         if calendars is not None:
             self.calendar_colors = {calendar.id: calendar.color for calendar in calendars}
+        if not self._explicit_primary:
+            self._primary = self.masters[0] if self.masters else None
         if self.masters and not self._initialized:
-            self.current_month = min(event.start.astimezone(local_zone()).date() for event in self.masters).replace(day=1)
+            self.current_month = min(_start(event).date() for event in self.masters).replace(day=1)
             self._initialized = True
+        self._navigation = PreviewNavigation(self.masters)
+        self._navigation_failure = ''
         self._rebuild()
+        if previous:
+            current = next((item for item in self.visible_events if item.id == previous.id), None)
+            if current is None:
+                current = next((item for item in self.visible_events
+                                if item.start.timestamp() == previous.start.timestamp()
+                                and item.calendar_id == previous.calendar_id), None)
+            self._selected = current or self._primary_occurrence()
+        else:
+            self._selected = self._primary_occurrence()
+        self._following_primary = followed_primary
+        self._update_navigation()
 
     def enable_date_editing(self, enabled):
         self.date_editing = bool(enabled)
         self.grid.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
-        self._update_instructions()
+        self.grid.update()
+
+    def set_selected_occurrence(self, event_or_id):
+        if isinstance(event_or_id, Event):
+            self._selected = event_or_id
+        elif event_or_id is None:
+            self._selected = None
+        else:
+            self._selected = next((item for item in [*self.visible_events, *self.masters]
+                                   if item.id == event_or_id), self._selected)
+        self._following_primary = self._selected is None or self.is_primary(self._selected)
+        self._update_navigation()
+        self.grid.update()
+
+    def is_primary(self, event):
+        if self._primary is None:
+            return False
+        primary = self._primary
+        root = primary.series_id or primary.id.split('::occurrence::', 1)[0]
+        item_root = event.series_id or event.id.split('::occurrence::', 1)[0]
+        same_source = item_root == root
+        if not same_source and len(self.masters) == 1:
+            same_source = item_root == self.masters[0].id and event.calendar_id == primary.calendar_id
+        same_start = (_start(event).date() == _start(primary).date() if primary.all_day and event.all_day
+                      else event.start.timestamp() == primary.start.timestamp())
+        master = next((item for item in self.masters if item.id == item_root), None)
+        same_nominal = (master is None or not master.recurring
+                        or event.recurrence_id == self._primary_key(master))
+        return same_source and same_start and same_nominal
+
+    def _primary_key(self, master):
+        """Resolve the prototype identity even when a rule starts after its RDATE."""
+        first = recurrence_key(master.start, master.all_day)
+        if self._primary is None:
+            return first
+        actual = self._primary.start.timestamp()
+        key = self._primary.recurrence_id
+        if key and (key in master.recurrence_dates or key in master.recurrence_overrides):
+            candidate = occurrence(master, key_datetime(key, master), key)
+            if candidate.start.timestamp() == actual:
+                return key
+        return first
+
+    def _primary_occurrence(self):
+        if self._primary is None:
+            return None
+        current = next((event for event in self.visible_events if self.is_primary(event)), None)
+        if current:
+            return current
+        for master in self.masters:
+            key = self._primary_key(master) if master.recurring else ''
+            candidate = occurrence(master, key_datetime(key, master), key) if key else master
+            if self.is_primary(candidate):
+                return candidate
+        return occurrence(self._primary, self._primary.start) if self._primary.recurring else self._primary
 
     def navigate_month(self, delta):
-        value = self.current_month.year * 12 + self.current_month.month - 1 + delta
-        year, month = divmod(value, 12)
-        if not 1 <= year <= 9999:
-            return
-        self.show_month(date(year, month + 1, 1))
+        index = self.current_month.year * 12 + self.current_month.month - 1 + delta
+        year, month = divmod(index, 12)
+        if 1 <= year <= 9999:
+            self.show_month(date(year, month + 1, 1))
 
     def show_month(self, day):
         self.current_month = day.replace(day=1)
@@ -105,139 +252,308 @@ class SeriesPreview(QWidget):
         self._rebuild()
 
     def show_first_date(self):
-        if self.masters:
-            self.show_month(min(event.start.astimezone(local_zone()).date() for event in self.masters))
+        if self._primary is not None:
+            self.show_month(_start(self._primary).date())
+            self._activate(self._primary_occurrence())
+
+    def show_event(self, event_or_id):
+        event = event_or_id if isinstance(event_or_id, Event) else next(
+            (item for item in [*self.visible_events, *self.masters] if item.id == event_or_id), self._selected)
+        if event is not None:
+            self.show_month(_start(event).date())
+            self._reveal_id = event.id
+            self._reveal_timer.start(0)
+
+    def _reveal_selected(self):
+        event = next((item for item in self.visible_events if item.id == self._reveal_id), None)
+        if event is not None:
+            rect = next((rect for rect, item, _remove in self.grid.chip_rects(_start(event).date()) if item.id == event.id),
+                        self.grid.cell_rect(_start(event).date()))
+            self.scroll.ensureVisible(round(rect.center().x()), round(rect.center().y()), 0, round(rect.height() / 2 + 5))
+
+    def _activate(self, event):
+        if event is not None:
+            self.set_selected_occurrence(event)
+            self.show_event(event)
+            self.occurrence_selected.emit(event)
+
+    def show_last_date(self):
+        if not self._navigation.bounded or not self.masters:
+            return
+        try:
+            self._activate(self._navigation.last())
+        except (ValueError, OverflowError) as error:
+            self._navigation_failure = str(error)
+            self.last_button.setToolTip(str(error))
+            self.last_button.setEnabled(False)
+
+    def navigate_occurrence(self, direction):
+        reference = self._selected or self._primary_occurrence()
+        if reference is not None:
+            try:
+                self._activate(self._navigation.adjacent(reference, direction))
+            except (ValueError, OverflowError) as error:
+                button = self.next_occurrence_button if direction > 0 else self.previous_occurrence_button
+                button.setToolTip(str(error))
 
     def events_on(self, day):
         return self._by_day.get(day, [])
 
-    def _update_instructions(self):
-        self.instructions.setText('Click a date to add or remove an occurrence.' if self.date_editing else '')
-        self.instructions.setVisible(self.date_editing)
-
     def _rebuild(self):
-        self.grid_start = self.preferences.week_start(self.current_month)
+        ordinal = self.current_month.toordinal() - (self.current_month.weekday() - self.preferences.first_weekday) % 7
+        self.grid_start = date.fromordinal(max(1, ordinal))
         self.month_label.setText(self.preferences.format_month(self.current_month))
-        scale = display_scale(self)
-        self.setMinimumHeight(round(325 * scale))
-        self.grid.header_height = round(23 * scale)
-        self.grid.setMinimumHeight(round(235 * scale))
-        self.error = ''
-        self.total_occurrences = None
-        self.anchor_dates, self.added_dates, self.excluded_dates = set(), set(), set()
+        self.error, self.total_occurrences = '', None
+        self.anchor_dates = {_start(self._primary).date()} if self._primary else set()
+        self.added_dates, self.excluded_dates = set(), set()
         try:
             for master in self.masters:
-                self.anchor_dates.add(master.start.astimezone(local_zone()).date())
-                self.added_dates.update(key_datetime(key, master).astimezone(local_zone()).date() for key in master.recurrence_dates)
-                self.excluded_dates.update(key_datetime(key, master).astimezone(local_zone()).date() for key in master.excluded_dates)
-            self.visible_events = expand_events(self.masters, at(self.grid_start), at(self.grid_start + timedelta(days=42)), limit=2000)
-            if self.masters and not any(master.recurrence_rule for master in self.masters):
-                self.total_occurrences = sum(len(
-                    {recurrence_key(value, master.all_day) for value in recurrence_set(master)}
-                    | (set(master.recurrence_overrides) - set(master.excluded_dates))) for master in self.masters)
-        except (ValueError, OverflowError) as exc:
+                for key in master.recurrence_dates:
+                    value = key_datetime(key, master)
+                    self.added_dates.add(value.date() if master.all_day else value.astimezone(local_zone()).date())
+                for key in master.excluded_dates:
+                    value = key_datetime(key, master)
+                    self.excluded_dates.add(value.date() if master.all_day else value.astimezone(local_zone()).date())
+            last = date.fromordinal(min(date.max.toordinal(), self.grid_start.toordinal() + 42))
+            begin = datetime.combine(self.grid_start, time.min, local_zone())
+            end = datetime.combine(last, time.max if last == date.max else time.min, local_zone())
+            self.visible_events = expand_events(self.masters, begin, end, limit=2000)
+            self.total_occurrences = self._navigation.explicit_count()
+        except (ValueError, OverflowError) as error:
             self.visible_events = []
-            self.error = str(exc)
+            self.error = str(error)
         self._by_day = {}
-        for offset in range(42):
-            day = self.grid_start + timedelta(days=offset)
-            start, end = at(day), at(day + timedelta(days=1))
-            self._by_day[day] = [event for event in self.visible_events if overlaps(event, start, end)]
-        count = sum(event.start.astimezone(local_zone()).year == self.current_month.year
-                    and event.start.astimezone(local_zone()).month == self.current_month.month for event in self.visible_events)
+        for item in self.visible_events:
+            begin, finish = _start(item), _end(item)
+            last_day = finish.date() if finish.timestamp() == begin.timestamp() else (finish - timedelta(microseconds=1)).date()
+            first = max(self.grid_start.toordinal(), begin.date().toordinal())
+            last = min(date.max.toordinal(), self.grid_start.toordinal() + 41, last_day.toordinal())
+            for ordinal in range(first, last + 1):
+                self._by_day.setdefault(date.fromordinal(ordinal), []).append(item)
+        count = sum(_start(event).date().replace(day=1) == self.current_month for event in self.visible_events)
         number = f'{count} of {self.total_occurrences}' if self.total_occurrences is not None else str(count)
-        self.summary.setText('Preview unavailable: ' + self.error if self.error else
-                             number + ' occurrence' + ('' if count == 1 and self.total_occurrences in (None, 1) else 's')
-                             + ' this month · use ‹ › to inspect other months')
-        self.first_button.setEnabled(bool(self.masters))
-        self._update_instructions()
+        self.summary.setText('Preview unavailable: ' + self.error if self.error else number +
+                             (' occurrence' if count == 1 and self.total_occurrences in (None, 1) else ' occurrences') + ' this month')
+        scale, colors = display_scale(self), scheme_for(self.preferences)
+        for button in self.findChildren(QPushButton):
+            glyph = button.property('previewGlyph')
+            if glyph:
+                button.setIcon(_endpoint_icon(colors.accent, glyph == 'last') if glyph in ('first', 'last') else icon(glyph, colors.accent))
+                button.setIconSize(QSize(round(18 * scale), round(18 * scale)))
+                button.setFixedSize(round(30 * scale), round(30 * scale))
+        self.previous_button.setEnabled(self.current_month > date.min)
+        self.next_button.setEnabled(self.current_month < date(9999, 12, 1))
+        self._layout_grid()
+        self._reserve_scrollbar(self.scroll.verticalScrollBar().minimum(), self.scroll.verticalScrollBar().maximum())
+        self._update_navigation()
         self.grid.update()
+
+    def _update_navigation(self):
+        selected = self._selected or self._primary_occurrence()
+        ready = bool(self.masters) and not self.error
+        self.first_button.setEnabled(ready)
+        self.last_button.setEnabled(ready and self._navigation.bounded and not self._navigation_failure)
+        self.last_button.setToolTip(self._navigation_failure or ('Last occurrence' if self._navigation.bounded else 'This series has no last occurrence.'))
+        self.previous_occurrence_button.setEnabled(ready)
+        self.next_occurrence_button.setEnabled(ready)
+        if self.total_occurrences is not None and self.total_occurrences <= 1:
+            self.previous_occurrence_button.setEnabled(False)
+            self.next_occurrence_button.setEnabled(False)
+        if selected:
+            value = _start(selected)
+            self.position_label.setText(self.preferences.format_date(value.date()) +
+                                        ('' if selected.all_day else ' · ' + self.preferences.format_time(value)))
+        else:
+            self.position_label.clear()
+        values = self._navigation._finite
+        if values is not None and selected:
+            index = next((index for index, item in enumerate(values) if item.id == selected.id), -1)
+            self.previous_occurrence_button.setEnabled(ready and index > 0)
+            self.next_occurrence_button.setEnabled(ready and 0 <= index < len(values) - 1)
+
+    def _layout_grid(self, height=None):
+        if self._laying_out or not hasattr(self, 'grid'):
+            return
+        self._laying_out = True
+        try:
+            scale = display_scale(self)
+            self.grid.header_height = round(23 * scale)
+            available = self.scroll.viewport().height() if height is None else height
+            base = max(40 * scale, (available - self.grid.header_height) / 6)
+            self._week_heights = []
+            for week in range(6):
+                amounts = [len(self.events_on(self._day(week * 7 + day))) for day in range(7)]
+                self._week_heights.append(max(base, (21 + 16 * max(amounts, default=0)) * scale))
+            self.grid.setFixedHeight(round(self.grid.header_height + sum(self._week_heights)))
+        finally:
+            self._laying_out = False
+
+    def _day(self, offset):
+        ordinal = self.grid_start.toordinal() + offset
+        return date.fromordinal(ordinal) if ordinal <= date.max.toordinal() else None
+
+    def _reserve_scrollbar(self, minimum, maximum):
+        reserve = max(0, self.scroll.verticalScrollBar().sizeHint().width()) if maximum <= minimum else 0
+        self.scroll.setViewportMargins(0, 0, reserve, 0)
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._layout_grid(event.size().height())
+            self._reserve_scrollbar(self.scroll.verticalScrollBar().minimum(), self.scroll.verticalScrollBar().maximum())
+        return super().eventFilter(watched, event)
 
 
 class _PreviewGrid(QWidget):
-    header_height = 23
-
     def __init__(self, preview):
         super().__init__(preview)
         self.preview = preview
-        self.setMinimumHeight(235)
+        self.header_height = 23
+        self.focus_day = preview.current_month
+        self.focus_entry = None
+        self.keyboard_focus = False
         self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName('Occurrence preview')
 
     def cell_rect(self, day):
+        if day is None:
+            return QRectF()
         offset = (day - self.preview.grid_start).days
         if not 0 <= offset < 42:
             return QRectF()
-        width, height = self.width() / 7, (self.height() - self.header_height) / 6
-        return QRectF((offset % 7) * width, self.header_height + (offset // 7) * height, width, height)
+        week, column = divmod(offset, 7)
+        width = self.width() / 7
+        return QRectF(column * width, self.header_height + sum(self.preview._week_heights[:week]),
+                      width, self.preview._week_heights[week])
 
     def date_at(self, point):
-        if point.y() < self.header_height or not self.rect().contains(point.toPoint() if hasattr(point, 'toPoint') else point):
+        if point.y() < self.header_height or point.x() < 0 or point.x() >= self.width():
             return None
-        width, height = self.width() / 7, (self.height() - self.header_height) / 6
-        offset = min(5, int((point.y() - self.header_height) / height)) * 7 + min(6, int(point.x() / width))
-        return self.preview.grid_start + timedelta(days=offset)
+        top = self.header_height
+        for week, height in enumerate(self.preview._week_heights):
+            if top <= point.y() < top + height:
+                return self.preview._day(week * 7 + min(6, int(point.x() / (self.width() / 7))))
+            top += height
+        return None
+
+    def chip_rects(self, day):
+        cell = self.cell_rect(day)
+        if cell.isEmpty():
+            return []
+        scale, values = display_scale(self.preview), []
+        for index, item in enumerate(self.preview.events_on(day)):
+            rect = QRectF(cell.left() + 3 * scale, cell.top() + 21 * scale + index * 16 * scale,
+                          cell.width() - 6 * scale, 14 * scale)
+            remove = QRectF(rect.right() - 13 * scale, rect.top(), 13 * scale, rect.height()) if self.preview.date_editing and not self.preview.is_primary(item) else QRectF()
+            values.append((rect, item, remove))
+        return values
 
     def paintEvent(self, _):
         preview = self.preview
+        colors = scheme_for(preview.preferences)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        colors = paint_colors(self)
-        painter.fillRect(self.rect(), colors.background)
+        painter.fillRect(self.rect(), QColor(colors.background))
+        scale = display_scale(preview)
         width = self.width() / 7
-        scale = display_scale(self)
         for index in range(7):
-            day = preview.grid_start + timedelta(days=index)
-            shade = weekend_fill(day, preview.preferences, colors)
-            if shade is not None:
-                painter.fillRect(QRectF(index * width, 0, width, self.header_height), shade)
-            text(painter, QRectF(index * width, 0, width, self.header_height),
-                 preview.preferences.weekday_name(day).upper(), weekend_text(day, preview.preferences, colors, colors.muted),
-                 WEEKDAY_SIZE, True, Qt.AlignmentFlag.AlignCenter)
+            day = preview._day(index)
+            if day is not None:
+                shade = weekend_fill(day, preview.preferences, colors)
+                if shade:
+                    painter.fillRect(QRectF(index * width, 0, width, self.header_height), QColor(shade))
+                text(painter, QRectF(index * width, 0, width, self.header_height),
+                     preview.preferences.weekday_name(day).upper(),
+                     QColor(weekend_text(day, preview.preferences, colors, colors.muted)), WEEKDAY_SIZE,
+                     True, Qt.AlignmentFlag.AlignCenter)
         for offset in range(42):
-            day = preview.grid_start + timedelta(days=offset)
-            rect = self.cell_rect(day)
-            events = preview.events_on(day)
+            day = preview._day(offset)
+            if day is None:
+                continue
+            rect, events = self.cell_rect(day), preview.events_on(day)
             outside = day.month != preview.current_month.month
             if outside:
-                painter.fillRect(rect, colors.outside_month)
+                painter.fillRect(rect, QColor(colors.outside_month))
             shade = weekend_fill(day, preview.preferences, colors)
-            if shade is not None:
-                painter.fillRect(rect, shade)
-            painter.setPen(QPen(colors.line, 1))
+            if shade:
+                painter.fillRect(rect, QColor(shade))
             painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(colors.line), .8 * scale))
             painter.drawRect(rect)
-            anchor = day in preview.anchor_dates
-            text(painter, QRectF(rect.x() + 5, rect.y() + 1, rect.width() - 10, 19 * scale),
-                 str(day.day), weekend_text(day, preview.preferences, colors,
-                                            colors.muted if outside else colors.accent if events else colors.ink), 9, anchor)
-            capacity = max(1, int((rect.height() - 22 * scale) / (16 * scale)))
-            for index, event in enumerate(events[:capacity]):
-                event_rect = QRectF(rect.x() + 3, rect.y() + 21 * scale + index * 16 * scale, rect.width() - 6, 14 * scale)
-                source = preview.calendar_colors.get(event.calendar_id, colors.accent)
-                style = event_colors(source, preview, alpha=38 if event.candidate else 52)
-                painter.setPen(QPen(QColor(style.outline), 1,
-                                     Qt.PenStyle.DashLine if event.candidate else Qt.PenStyle.SolidLine))
+            ordinary = colors.muted if outside else colors.accent if events else colors.ink
+            text(painter, QRectF(rect.left() + 5 * scale, rect.top() + scale, rect.width() - 10 * scale, 19 * scale),
+                 str(day.day), QColor(weekend_text(day, preview.preferences, colors, ordinary)), 9,
+                 day in preview.anchor_dates)
+            for card, item, remove in self.chip_rects(day):
+                source = preview.calendar_colors.get(item.calendar_id, colors.accent)
+                style = event_colors(source, preview, alpha=38 if item.candidate else 52)
+                selected = item.id == preview.selected_id
+                edge = QColor(style.selected_outline if selected else style.outline)
+                painter.setPen(QPen(edge, 2 * scale if selected else scale,
+                                     Qt.PenStyle.DashLine if item.candidate else Qt.PenStyle.SolidLine))
                 painter.setBrush(QColor(style.fill))
-                painter.drawRoundedRect(event_rect, 3, 3)
-                label = 'All day' if event.all_day else preview.preferences.format_time(event.start.astimezone(local_zone()))
+                painter.drawRoundedRect(card, 3 * scale, 3 * scale)
+                left = 4 * scale
+                if preview.is_primary(item) and _start(item).date() == day:
+                    painter.setPen(QPen(edge, scale))
+                    painter.setBrush(edge)
+                    center = QPointF(card.left() + 3 * scale, card.center().y() - scale)
+                    painter.drawEllipse(center, 1.5 * scale, 1.5 * scale)
+                    painter.drawLine(center, QPointF(center.x(), center.y() + 5 * scale))
+                    left = 11 * scale
+                begin, end = _start(item), _end(item)
+                if item.all_day:
+                    caption = '◇'
+                elif begin.date() == day:
+                    caption = preview.preferences.format_time(begin) + (' →' if end.date() > day else '')
+                else:
+                    caption = '→ ' + preview.preferences.format_time(end) if end.date() == day else '→'
+                content = card.adjusted(left, 0, -14 * scale if not remove.isEmpty() else -2 * scale, 0)
                 painter.save()
-                painter.setClipRect(event_rect)
-                text(painter, event_rect, label, QColor(style.ink), 7, False, Qt.AlignmentFlag.AlignCenter)
+                painter.setClipRect(content)
+                text(painter, content, caption, QColor(style.ink), 7, False,
+                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 painter.restore()
-            if len(events) > capacity:
-                text(painter, QRectF(rect.right() - 47 * scale, rect.y() + 1, 44 * scale, 19 * scale),
-                     str(len(events) - capacity) + ' more', colors.muted, 7, align=Qt.AlignmentFlag.AlignRight)
+                if not remove.isEmpty():
+                    center, half = remove.center(), 2.5 * scale
+                    painter.setPen(QPen(QColor(style.muted), scale))
+                    painter.drawLine(QPointF(center.x() - half, center.y() - half), QPointF(center.x() + half, center.y() + half))
+                    painter.drawLine(QPointF(center.x() - half, center.y() + half), QPointF(center.x() + half, center.y() - half))
+            if self.hasFocus() and self.keyboard_focus and day == self.focus_day:
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor(colors.focus), scale, Qt.PenStyle.DotLine))
+                painter.drawRect(rect.adjusted(2, 2, -2, -2))
         painter.end()
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         day = self.date_at(event.position())
-        if day is not None:
-            self.preview.date_clicked.emit(day)
-            if self.preview.date_editing:
-                self.preview.date_toggled.emit(day)
+        if day is None:
+            return
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.keyboard_focus = False
+        self.focus_day, self.focus_entry = day, None
+        self.preview.date_clicked.emit(day)
+        for rect, item, remove in self.chip_rects(day):
+            if not remove.isEmpty() and remove.contains(event.position()):
+                self.preview.occurrence_remove_requested.emit(item)
+                return
+            if rect.contains(event.position()):
+                self.focus_entry = item
+                self.preview._activate(item)
+                return
+        if self.preview.date_editing:
+            self.preview.date_toggled.emit(day)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            day = self.date_at(event.position())
+            if day is not None:
+                for rect, item, remove in self.chip_rects(day):
+                    if rect.contains(event.position()) and not remove.contains(event.position()):
+                        self.preview.occurrence_edit_requested.emit(item)
+                        return
 
     def mouseMoveEvent(self, event):
         day = self.date_at(event.position())
@@ -245,9 +561,51 @@ class _PreviewGrid(QWidget):
             self.setToolTip('')
             return
         preferences = self.preview.preferences
-        lines = [preferences.format_date(day, weekday=True)]
-        for item in self.preview.events_on(day)[:10]:
-            lines.append(preferences.format_time(item.start.astimezone(local_zone())) + ' · ' + item.title)
-        if day in self.preview.excluded_dates:
-            lines.append('This date is excluded from the series.')
-        self.setToolTip('\n'.join(lines))
+        for rect, item, remove in self.chip_rects(day):
+            if remove.contains(event.position()):
+                self.setToolTip('Remove ' + preferences.format_time(_start(item)))
+                return
+            if rect.contains(event.position()):
+                begin, end = _start(item), _end(item)
+                when = preferences.format_date(begin.date(), weekday=True)
+                if not item.all_day:
+                    when += ' · ' + preferences.format_time(begin) + '–' + preferences.format_time(end)
+                if end.date() != begin.date():
+                    when += ' · ' + preferences.format_date(end.date())
+                self.setToolTip(('Primary event\n' if self.preview.is_primary(item) else '') + item.title + '\n' + when)
+                return
+        self.setToolTip(preferences.format_date(day, weekday=True))
+
+    def keyPressEvent(self, event):
+        self.keyboard_focus = True
+        shifts = {Qt.Key.Key_Left: -1, Qt.Key.Key_Right: 1, Qt.Key.Key_Up: -7, Qt.Key.Key_Down: 7}
+        if event.key() in shifts:
+            ordinal = self.focus_day.toordinal() + shifts[event.key()]
+            if 1 <= ordinal <= date.max.toordinal():
+                self.focus_day = date.fromordinal(ordinal)
+                self.focus_entry = None
+                if self.focus_day.replace(day=1) != self.preview.current_month:
+                    self.preview.show_month(self.focus_day)
+                rect = self.cell_rect(self.focus_day)
+                self.preview.scroll.ensureVisible(round(rect.center().x()), round(rect.center().y()), 0, 20)
+                self.update()
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if self.focus_entry:
+                self.preview._activate(self.focus_entry)
+            elif self.preview.date_editing:
+                self.preview.date_toggled.emit(self.focus_day)
+        elif event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.focus_entry:
+            if self.preview.date_editing and not self.preview.is_primary(self.focus_entry):
+                self.preview.occurrence_remove_requested.emit(self.focus_entry)
+        else:
+            super().keyPressEvent(event)
+
+    def focusInEvent(self, event):
+        self.keyboard_focus = event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                                                Qt.FocusReason.ShortcutFocusReason)
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self.update()
+        super().focusOutEvent(event)

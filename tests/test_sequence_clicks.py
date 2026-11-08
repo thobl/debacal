@@ -27,7 +27,7 @@ def editors():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets, errors = [], []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE), patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE), patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
         def create(start=START, event=None, series=None, edit_scope='single'):
             reference = series or event
             if reference:

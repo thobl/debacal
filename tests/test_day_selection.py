@@ -29,7 +29,7 @@ def workspace():
     app = QApplication.instance() or QApplication([])
     callback_errors = []
     with patch("debacal.ui.local_zone", return_value=ZONE), \
-            patch("debacal.dialogs.local_zone", return_value=ZONE), \
+            patch("debacal.event_dialog.local_zone", return_value=ZONE), \
             patch("debacal.calendar_widgets.local_zone", return_value=ZONE), \
             patch("debacal.ui.now", return_value=FIXED_NOW), \
             patch("debacal.calendar_widgets.now", return_value=FIXED_NOW), \

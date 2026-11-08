@@ -31,7 +31,7 @@ def workspace():
     with patch('debacal.ui.local_zone', return_value=ZONE), \
          patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('debacal.placement.local_zone', return_value=ZONE), \
-         patch('debacal.dialogs.local_zone', return_value=ZONE), \
+         patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
         window = MainWindow(store, enable_sync=False)
         window.resize(1500, 1050)

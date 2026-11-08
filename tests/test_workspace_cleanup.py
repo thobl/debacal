@@ -14,6 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from debacal.dialogs import EventDialog
+from debacal.date_time_picker import DateTimeRangePicker
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
 from debacal.preferences_dialog import PreferencesDialog
@@ -157,7 +158,11 @@ def test_event_editor_date_popups_follow_chosen_date_language(workspace):
     try:
         for field in (dialog.start, dialog.end, dialog.repeat_until):
             assert field.locale().name() == 'en_GB'
-            assert field.calendarWidget().locale().name() == 'en_GB'
+            field.picker_requested.emit()
+            picker = dialog.range_picker
+            assert isinstance(picker, DateTimeRangePicker)
+            assert picker.calendar.locale().name() == 'en_GB'
+            picker.reject()
     finally:
         dialog.close()
 

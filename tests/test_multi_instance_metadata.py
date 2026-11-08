@@ -67,7 +67,7 @@ def workspaces(tmp_path):
     app = QApplication.instance() or QApplication([])
     cli = FakeCLI()
     instances, dialogs = [], []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE):
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE):
         for name in ('installation-a', 'installation-b'):
             store = Store(tmp_path / (name + '.sqlite'))
             calendar = Calendar(name + '-calendar', 'Shared test calendar', '#123456', kind='caldav',
@@ -107,7 +107,7 @@ def save(dialog):
 def create(instance, editor, literal, *, candidate=False, start=START):
     dialog = editor(instance, start=start)
     dialog.pattern.setText(literal)
-    dialog.candidate.setChecked(candidate)
+    dialog.schedule_mode.setCurrentData('alternatives' if candidate else 'repeat')
     master = save(dialog)
     instance.store.apply('Create custom schedule', [master])
     return master
@@ -137,7 +137,7 @@ def test_custom_configuration_roundtrips_bidirectionally_across_installations(wo
     assert imported.calendar_id == b.calendar.id != original.calendar_id
     assert imported.id != original.id
     assert_definition(imported, original)
-    with patch('debacal.dialogs.local_zone', return_value=display_zone):
+    with patch('debacal.event_dialog.local_zone', return_value=display_zone):
         reopened = editor(b, imported)
         assert reopened.pattern.text() == literal
         assert instants(reopened.sequence_starts()) == instants(base_schedule_starts(original))
@@ -175,7 +175,7 @@ def test_text_only_configuration_change_is_published_without_changing_standard_d
     a.sync()
     b.sync()
     imported = b.resource(original.ical_uid)
-    with patch('debacal.dialogs.local_zone', return_value=display_zone):
+    with patch('debacal.event_dialog.local_zone', return_value=display_zone):
         dialog = editor(b, imported)
         literal = '  4*(+2)  '
         dialog.pattern.setText(literal)
@@ -201,7 +201,7 @@ def test_other_machine_previous_display_date_preserves_original_fixed_anchor(wor
     a.sync()
     b.sync()
     imported = b.resource(original.ical_uid)
-    with patch('debacal.dialogs.local_zone', return_value=ZoneInfo('UTC')):
+    with patch('debacal.event_dialog.local_zone', return_value=ZoneInfo('UTC')):
         dialog = editor(b, imported)
         assert dialog.start.date().toPython() == initial.date() - timedelta(days=1)
         assert dialog.pattern.text() == literal

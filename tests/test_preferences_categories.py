@@ -84,11 +84,11 @@ def test_loader_restores_valid_late_hour_pair_and_falls_back_for_invalid_setting
 
 def test_dialog_has_categories_and_updates_date_language_preview(desktop):
     widget = dialog(desktop, bindings=BINDINGS, default_bindings=BINDINGS)
-    assert [widget.tabs.tabText(index) for index in range(widget.tabs.count())] == ['General', 'Appearance', 'Sync', 'Keyboard shortcuts']
+    assert [widget.tabs.tabText(index) for index in range(widget.tabs.count())] == ['General', 'Appearance', 'Events', 'Sync', 'Keyboard shortcuts']
     widget.locale.setCurrentIndex(widget.locale.findData('de_DE'))
     assert 'Mittwoch' in widget.preview.text() and 'Montag' in widget.preview.text()
     assert widget.week_start.itemText(widget.week_start.findData(0)) == 'Montag'
-    assert widget.set_category('KEYBOARD') and widget.tabs.currentIndex() == 3
+    assert widget.set_category('KEYBOARD') and widget.tabs.currentIndex() == 4
     assert widget.set_category('Appearance') and widget.tabs.currentIndex() == 1
     assert not widget.set_category('unknown')
 
@@ -104,7 +104,7 @@ def test_preferences_and_shortcuts_are_validated_and_saved_together(desktop):
     widget.save()
     assert widget.result() != QDialog.DialogCode.Accepted
     assert widget.result_preferences == original
-    assert widget.tabs.currentIndex() == 3 and 'unique' in widget.error.text()
+    assert widget.tabs.currentIndex() == 4 and 'unique' in widget.error.text()
     widget.shortcut_fields['scope_all'].setKeySequence('F6')
     widget.save()
     assert widget.result() == QDialog.DialogCode.Accepted

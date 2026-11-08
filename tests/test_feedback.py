@@ -112,18 +112,18 @@ def test_desktop_conflicts_fall_back_to_in_app_when_unavailable(workspace):
     assert not window.warning_button.isHidden()
 
 
-def test_weekday_selection_uses_a_matching_first_occurrence(workspace):
+def test_weekly_schedule_uses_the_chosen_primary_weekday(workspace):
     _, store = workspace
     start = datetime(2026, 11, 4, 10, tzinfo=timezone.utc)  # Wednesday
     dialog = EventDialog(store.list_calendars(), start)
     try:
         dialog.title.setText('Friday seminar')
-        dialog.repeat.setCurrentIndex(dialog.repeat.findData('WEEKLY'))
-        for index, box in enumerate(dialog.weekdays):
-            box.setChecked(index == 4)
+        dialog.start.setDateTime(dialog.start.dateTime().addDays(2))
+        dialog.schedule_mode.setCurrentData('repeat')
+        dialog.repeat.setCurrentData('WEEKLY')
         event = dialog.build_events()[0]
         assert event.start.weekday() == 4
-        assert 'BYDAY=FR' in event.recurrence_rule
+        assert 'FREQ=WEEKLY' in event.recurrence_rule
         store.apply('Create', [event])
         occurrences = store.query_occurrences(event.start, event.start + timedelta(days=30))
         assert all(occurrence.start.weekday() == 4 for occurrence in occurrences)

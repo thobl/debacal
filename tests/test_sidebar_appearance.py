@@ -3,13 +3,14 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QDate, QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QApplication, QDateEdit
+from PySide6.QtWidgets import QApplication
 
-from debacal.dialogs import _style_date_popup
+from debacal.date_time_picker import DateTimeRangePicker
 from debacal.preferences import Preferences
 from debacal.store import Store
 from debacal.theme import scheme_for
@@ -67,11 +68,10 @@ def test_sidebar_and_native_date_cells_share_surface_after_theme_changes(workspa
         for day in (Qt.DayOfWeek.Monday, Qt.DayOfWeek.Sunday):
             assert calendar.weekdayTextFormat(day).background().color() == QColor(colors.sidebar)
         # Sidebar styling must not recolor date popups used in event editors.
-        field = QDateEdit(window)
-        field.setCalendarPopup(True)
-        _style_date_popup(field, preferences)
-        assert cell_background(field.calendarWidget()) == QColor(colors.background)
-        field.deleteLater()
+        start = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
+        picker = DateTimeRangePicker(start, start + timedelta(hours=1), preferences=preferences, parent=window)
+        assert cell_background(picker.calendar) == QColor(colors.background)
+        picker.deleteLater()
 
 
 @pytest.mark.parametrize('mode', ['light', 'dark'])

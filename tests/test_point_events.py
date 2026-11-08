@@ -86,7 +86,7 @@ class PointViewTests(unittest.TestCase):
         self.exception_patch.start()
         self.canvas_zone = patch('debacal.calendar_widgets.local_zone', return_value=ZONE)
         self.preview_zone = patch('debacal.series_preview.local_zone', return_value=ZONE)
-        self.dialog_zone = patch('debacal.dialogs.local_zone', return_value=ZONE)
+        self.dialog_zone = patch('debacal.event_dialog.local_zone', return_value=ZONE)
         self.canvas_zone.start()
         self.preview_zone.start()
         self.dialog_zone.start()

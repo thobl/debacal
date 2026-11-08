@@ -29,7 +29,7 @@ def editors():
     app = QApplication.instance() or QApplication([])
     store = Store(':memory:')
     widgets = []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE):
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE):
         def create(master=None, selected=None, **kwargs):
             dialog = EventDialog(store.list_calendars(), selected.start if selected else START,
                                  event=selected, series=master, **kwargs)
@@ -128,6 +128,29 @@ def test_future_weekly_off_rule_rdate_anchor_is_not_shifted_by_title_edit(editor
     assert [value.start for value in occurrences(future)] == expected
 
 
+def test_future_off_rule_rdate_is_pinned_and_uses_primary_picker_after_a_move(editors):
+    _, _, _, create = editors
+    master = replace(sample(), recurrence_rule='FREQ=WEEKLY;BYDAY=WE;COUNT=5',
+                     recurrence_dates=(recurrence_key(START + timedelta(days=2)),))
+    selected = occurrences(master)[1]
+    dialog = create(master, selected, edit_scope='future')
+    projected = occurrences(dialog.preview.masters[0])
+    pinned = [value for value in projected if dialog.preview.is_primary(value)]
+    assert len(pinned) == 1 and pinned[0].recurrence_id == selected.recurrence_id
+    dialog.preview.first_button.click()
+    assert dialog.preview.selected_event.start == selected.start
+    dialog.edit_occurrence(pinned[0])
+    picker = dialog.range_picker
+    assert picker.endpoint == 'start' and picker.windowTitle() != 'Edit occurrence'
+    moved_start = selected.start + timedelta(hours=2)
+    picker.set_start(moved_start)
+    picker.accept()
+    assert dialog.value(dialog.start) == moved_start
+    projected = occurrences(dialog.preview.masters[0])
+    pinned = [value for value in projected if dialog.preview.is_primary(value)]
+    assert len(pinned) == 1 and pinned[0].start == moved_start
+
+
 def test_future_moved_detached_occurrence_uses_nominal_cutoff_and_actual_fields(editors):
     _, store, _, create = editors
     master = sample()
@@ -147,6 +170,37 @@ def test_future_moved_detached_occurrence_uses_nominal_cutoff_and_actual_fields(
     store.edit_future(selected, edited, expected_master=master)
     future = next(value for value in store.list_events() if value.id != master.id)
     assert [value.start for value in occurrences(future)] == expected
+
+
+@pytest.mark.parametrize(('displacement', 'duration'), [(timedelta(days=10), timedelta(hours=1)),
+                                                     (timedelta(), timedelta(hours=3))])
+def test_future_graphical_addition_from_moved_exception_keeps_existing_tail_dates(editors, displacement, duration):
+    _, store, _, create = editors
+    master = sample()
+    store.apply('Create', [master])
+    nominal = occurrences(master)[2]
+    moved_start = nominal.start + displacement
+    moved = replace(nominal, start=moved_start, end=moved_start + duration)
+    store.edit_occurrence(nominal, moved)
+    master = store.get_event(master.id)
+    selected = next(value for value in occurrences(master) if value.recurrence_id == nominal.recurrence_id)
+    dialog = create(master, selected, edit_scope='future')
+    added = START + timedelta(days=20)
+    expected = sorted([START + timedelta(days=3), START + timedelta(days=4), moved.start, added])
+    dialog.toggle_date(added.date())
+    assert not dialog.error.text()
+    previewed = occurrences(dialog.preview.masters[0])
+    assert [value.start for value in previewed] == expected
+    assert all(value.end - value.start == (duration if value.start == moved.start else timedelta(hours=1)) for value in previewed)
+    assert dialog.value(dialog.start) == moved.start
+    assert dialog.value(dialog.end) == moved.end
+    assert [value.start for value in previewed if dialog.preview.is_primary(value)] == [moved.start]
+    edited = dialog.build_events()[0]
+    store.edit_future(selected, edited, replace_schedule=dialog.schedule_replacement, expected_master=master)
+    future = next(value for value in store.list_events() if value.id != master.id)
+    persisted = occurrences(future)
+    assert [(value.start, value.end) for value in persisted] == [(value.start, value.end) for value in previewed]
+    assert [value.start for value in occurrences(store.get_event(master.id))] == [START, START + timedelta(days=1)]
 
 
 def test_unsupported_future_partition_retains_previous_scope_and_draft(editors):
@@ -193,8 +247,8 @@ def test_scope_shortcut_is_configurable_and_one_off_does_not_cycle(editors):
     dialog = create(master, occurrences(master)[1], scope_shortcut='Alt+X',
                     scope_modifiers={'all': 'Meta', 'following': 'Alt'})
     assert dialog.scope_shortcut.key().toString() == 'Alt+X'
-    assert 'Meta' in dialog.scope.itemText(dialog.scope.findData('group'))
-    assert 'Alt' in dialog.scope.itemText(dialog.scope.findData('future'))
+    assert 'F3' in dialog.scope.buttons['group'].toolTip()
+    assert 'F4' in dialog.scope.buttons['future'].toolTip()
 
 
 @pytest.mark.parametrize(('other', 'message'), [('Ctrl+E', 'unique'), ('Shift+C', 'unique'),

@@ -30,7 +30,7 @@ CALENDARS = [Calendar('violet', 'Community', '#9457b5'), Calendar('gold', 'Perso
 def desktop():
     app = QApplication.instance() or QApplication([])
     owned, errors = [], []
-    with patch('debacal.dialogs.local_zone', return_value=ZONE), \
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('debacal.series_preview.local_zone', return_value=ZONE), \
          patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _, error, __: errors.append(error)):
@@ -52,8 +52,9 @@ def desktop():
 
 
 def chip_pixel(preview, day):
-    rect = preview.grid.cell_rect(day)
-    point = QPoint(round(rect.left() + 9), round(rect.top() + 25))
+    rect = preview.grid.chip_rects(day)[0][0]
+    # Sample the unpainted card interior, clear of the clock, primary pin and ×.
+    point = QPoint(round(rect.right() - 6), round(rect.top() + 3))
     return preview.grid.grab().toImage().pixelColor(point)
 
 
@@ -74,7 +75,7 @@ def test_calendar_choice_updates_color_and_target_for_current_and_clicked_dates(
     QTest.mouseClick(dialog.preview.grid, Qt.MouseButton.LeftButton,
                      pos=dialog.preview.grid.cell_rect(added).center().toPoint())
     app.processEvents()
-    assert dialog.repeat.currentData() == 'RDATE'
+    assert dialog.repeat.currentData() == 'DAILY'  # Two dates become a regular six-day interval.
     assert len(dialog.preview.events_on(added)) == 1
     assert chip_pixel(dialog.preview, added) == QColor(event_colors(CALENDARS[0].color, preferences).fill)
 
@@ -109,7 +110,7 @@ def test_date_markers_are_replaced_by_actual_occurrences_without_losing_exclusio
         pixels = preview.grid.grab().toImage()
     labels = [call.args[2] for call in draw.call_args_list]
     assert not {'+', '×', '●', 'skipped'}.intersection(labels)
-    assert 'Added date' not in preview.instructions.text() and 'Skipped date' not in preview.instructions.text()
+    assert 'Added date' not in preview.summary.text() and 'Skipped date' not in preview.summary.text()
     skipped = START.date() + timedelta(days=1)
     blank = preview.grid.cell_rect(skipped)
     assert pixels.pixelColor(round(blank.left() + 9), round(blank.top() + 25)) == QColor('#ffffff')

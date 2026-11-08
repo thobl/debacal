@@ -12,7 +12,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from debacal.dialogs import CalendarDialog, EventDialog, ShortcutsDialog
 from debacal.discovery import DiscoveredCalendar
@@ -32,7 +32,7 @@ def desktop():
     app = QApplication.instance() or QApplication([])
     widgets, errors = [], []
     store = Store(':memory:')
-    with patch('debacal.dialogs.local_zone', return_value=ZONE), \
+    with patch('debacal.event_dialog.local_zone', return_value=ZONE), \
          patch('debacal.series_preview.local_zone', return_value=ZONE), \
          patch('debacal.calendar_widgets.local_zone', return_value=ZONE), \
          patch('sys.excepthook', side_effect=lambda _type, value, _tb: errors.append(value)):
@@ -79,24 +79,25 @@ def utc(starts):
 
 
 def test_event_tab_order_mnemonics_and_plain_title_field(desktop):
-    app, _, _, create, _ = desktop
+    _, _, _, create, _ = desktop
     dialog = create()
     assert dialog.title.placeholderText() == '' and dialog.title.hasFocus()
-    QTest.keyClick(dialog.title, Qt.Key.Key_Tab)
-    assert dialog.calendar.hasFocus()
+    dialog.calendar.setFocus()
     QTest.keyClick(dialog.calendar, Qt.Key.Key_Tab)
-    assert dialog.start.hasFocus()
-    dialog.location.setFocus()
-    QTest.keyClick(dialog.location, Qt.Key.Key_Tab)
-    assert dialog.description.hasFocus()
-    QTest.keyClick(dialog.description, Qt.Key.Key_Tab)
-    assert dialog.repeat.hasFocus()
-    QTest.keyClick(dialog.repeat, Qt.Key.Key_Backtab)
-    assert dialog.description.hasFocus()
+    assert dialog.title.hasFocus()
+    for before, after in ((dialog.title, dialog.location), (dialog.location, dialog.all_day),
+                          (dialog.all_day, dialog.start), (dialog.start, dialog.end),
+                          (dialog.end, dialog.duration)):
+        QTest.keyClick(before, Qt.Key.Key_Tab)
+        assert after.hasFocus()
+    QTest.keyClick(dialog.duration, Qt.Key.Key_Backtab)
+    assert dialog.end.hasFocus()
+    dialog.description.setFocus()
     QTest.keyClick(dialog.description, Qt.Key.Key_L, Qt.KeyboardModifier.AltModifier)
     assert dialog.location.hasFocus()
-    assert dialog.form.labelForField(dialog.title).buddy() is dialog.title
-    assert dialog.form.labelForField(dialog.repeat).buddy() is dialog.repeat
+    labels = {label.buddy(): label for label in dialog.findChildren(QLabel) if label.buddy()}
+    assert '&Title' in labels[dialog.title].text()
+    assert '&Location' in labels[dialog.location].text()
 
 
 def test_enter_saves_form_inputs_but_notes_enter_inserts_newline_and_ctrl_enter_saves(desktop):
@@ -137,7 +138,7 @@ def test_focused_preview_button_uses_enter_without_saving_the_event(desktop):
     assert dialog.result() == QDialog.DialogCode.Rejected
 
 
-def test_save_focuses_the_invalid_title_end_or_sequence_field(desktop):
+def test_save_focuses_the_invalid_title_datetime_duration_or_sequence_field(desktop):
     _, _, _, create, _ = desktop
     title = create()
     title.title.clear()
@@ -145,20 +146,42 @@ def test_save_focuses_the_invalid_title_end_or_sequence_field(desktop):
     title.save()
     assert title.title.hasFocus() and 'title' in title.error.text()
     end = create()
-    end.end.setDateTime(end.start.dateTime().addSecs(-60))
+    end.end.setText('not a date')
+    end.title.setFocus()
     end.save()
-    assert end.end.hasFocus() and 'End' in end.error.text()
+    assert end.end.hasFocus() and end.error.text()
+    duration = create()
+    duration.duration.setText('0min')
+    duration.title.setFocus()
+    duration.save()
+    assert duration.duration.hasFocus() and duration.error.text()
     sequence = create()
+    sequence.schedule_mode.setCurrentData('repeat')
+    sequence.repeat.setCurrentData('RDATE')
     sequence.pattern.setText('3*(+2')
     sequence.title.setFocus()
     sequence.save()
     assert sequence.pattern.hasFocus() and 'closing' in sequence.error.text()
     rule = create()
-    rule.repeat.setCurrentIndex(rule.repeat.findData('CUSTOM'))
+    rule.schedule_mode.setCurrentData('repeat')
+    rule.show_advanced_rule()
     rule.custom_rule.setText('FREQ=UNKNOWN')
     rule.title.setFocus()
     rule.save()
     assert rule.custom_rule.hasFocus() and rule.error.text()
+
+
+def test_entering_an_earlier_end_moves_the_start_and_preserves_duration(desktop):
+    _, _, _, create, _ = desktop
+    dialog = create()
+    dialog.end.setText('4.11.2026 8:30')
+    field = dialog.end.lineEdit()
+    field.setFocus()
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
+    result = dialog.result_events[0]
+    assert result.start == START - timedelta(minutes=90)
+    assert result.end == START - timedelta(minutes=30)
 
 
 def test_remapped_ctrl_enter_mode_has_priority_over_optional_save_shortcut(desktop):
@@ -171,17 +194,19 @@ def test_remapped_ctrl_enter_mode_has_priority_over_optional_save_shortcut(deskt
     assert dialog.result() == QDialog.DialogCode.Rejected
 
 
-def test_clicking_once_preview_adds_a_date_and_switches_to_custom_sequence(desktop):
+def test_clicking_once_preview_adds_a_date_and_detects_a_regular_sequence(desktop):
     _, _, _, create, click = desktop
     dialog = create()
-    assert dialog.repeat.currentData() == ''
+    assert dialog.schedule_mode.currentData() == 'single'
     click(dialog, START.date() + timedelta(days=3))
-    assert dialog.repeat.currentData() == 'RDATE'
+    assert dialog.schedule_mode.currentData() == 'repeat'
+    assert dialog.repeat.currentData() == 'DAILY'
+    assert dialog.interval.value() == 3 and dialog.repeat_count.value() == 2
     assert dialog.sequence_starts() == [START, START + timedelta(days=3)]
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
-    assert dialog.result_events[0].schedule_syntax == 2
-    assert dialog.result_events[0].schedule_expression
+    assert utc(value.start for value in expand_series(dialog.result_events[0], *BOUNDS)) == utc([START, START + timedelta(days=3)])
+    assert dialog.result_events[0].recurrence_rule
 
 
 def test_finite_standard_preview_conversion_preserves_base_dates_exclusions_and_exception_start(desktop):
@@ -199,7 +224,9 @@ def test_finite_standard_preview_conversion_preserves_base_dates_exclusions_and_
     extra = START + timedelta(days=3)
     click(dialog, extra.date())
     assert dialog.repeat.currentData() == 'RDATE' and dialog.schedule_replacement
-    assert utc(dialog.sequence_starts()) == utc([*starts, extra])
+    # The editable custom sequence contains actual dates, excluding the deleted
+    # occurrence; exception identities must still survive the conversion.
+    assert utc(dialog.sequence_starts()) == utc([value for value in starts if recurrence_key(value) not in source.excluded_dates] + [extra])
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
     store.edit_series(dialog.edit_reference, dialog.result_events[0], replace_schedule=dialog.schedule_replacement)
@@ -209,15 +236,24 @@ def test_finite_standard_preview_conversion_preserves_base_dates_exclusions_and_
     assert utc(value.start for value in expand_series(changed, *BOUNDS)) == before | utc([extra])
 
 
-@pytest.mark.parametrize('rule,expected', [('FREQ=WEEKLY', 'unbounded'), ('FREQ=WEEKLY;COUNT=501', '500')])
-def test_unbounded_and_over_limit_preview_clicks_never_truncate_a_regular_schedule(desktop, rule, expected):
-    _, _, _, create, click = desktop
+@pytest.mark.parametrize('rule', ['FREQ=WEEKLY', 'FREQ=WEEKLY;COUNT=501'])
+def test_unbounded_and_large_preview_clicks_preserve_the_rule_and_add_a_date(desktop, rule):
+    _, store, _, create, click = desktop
     source = master(rule)
+    store.apply('Create', [source])
     original = source.to_dict()
     dialog = create(source)
-    click(dialog, START.date() + timedelta(days=3))
-    assert dialog.repeat.currentData() == 'WEEKLY'
-    assert dialog.pattern.text() == '' and expected in dialog.error.text()
+    extra = START + timedelta(days=3)
+    click(dialog, extra.date())
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
+    result = dialog.result_events[0]
+    assert result.recurrence_rule == source.recurrence_rule
+    assert recurrence_key(extra) in result.recurrence_dates
+    store.edit_series(dialog.edit_reference, result, replace_schedule=dialog.schedule_replacement)
+    saved = store.get_event(source.id)
+    assert utc(value.start for value in expand_series(saved, *BOUNDS)) == (
+        utc(value.start for value in expand_series(source, *BOUNDS)) | utc([extra]))
     assert source.to_dict() == original
 
 

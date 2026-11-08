@@ -54,6 +54,7 @@ class Preferences:
     weekend_style: str = 'text'
     show_sidebar_title: bool = True
     sidebar_title: str = 'debacal'
+    duration_presets_minutes: tuple[int, ...] = (30, 45, 60)
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -99,6 +100,12 @@ class Preferences:
         if (not isinstance(self.sidebar_title, str) or not self.sidebar_title.strip()
                 or len(self.sidebar_title) > 120 or '\n' in self.sidebar_title or '\r' in self.sidebar_title):
             raise ValueError('Choose a sidebar title of 1 to 120 characters on one line.')
+        presets = self.duration_presets_minutes
+        if (not isinstance(presets, (tuple, list)) or not 1 <= len(presets) <= 6
+                or any(type(value) is not int or not 1 <= value <= 10080 for value in presets)
+                or len(set(presets)) != len(presets)):
+            raise ValueError('Choose one to six different duration buttons between 1 minute and 7 days.')
+        object.__setattr__(self, 'duration_presets_minutes', tuple(presets))
 
     def qt_locale(self) -> QLocale:
         """Locale for date names, independent of regional formatting preferences."""
