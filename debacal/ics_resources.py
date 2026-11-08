@@ -658,7 +658,91 @@ def _patch_block(block, event, uid, recurrence_id=""):
     return [*result, *_known_lines(event, uid, recurrence_id), "END:VEVENT"]
 
 
-def serialize_resource(event):
+def _timezone_span(event):
+    return (date(max(1, min(1970, event.start.year - 1)), 1, 1),
+            date(min(9999, max(2101, event.end.year + 2)), 1, 1))
+
+
+def _timezone_signature(block):
+    """Compare observance structure, ignoring descriptive timezone metadata.
+
+    Retain the component nesting: moving an offset between DAYLIGHT/STANDARD
+    observances must never be mistaken for an equivalent definition.
+    """
+    stack = []
+    for line in block:
+        left, _, value = line.partition(':')
+        key = left.split(';', 1)[0].upper()
+        if key == 'BEGIN':
+            stack.append([value.upper(), [], []])
+        elif key == 'END':
+            name, properties, children = stack.pop()
+            node = name, tuple(sorted(properties)), tuple(sorted(children))
+            if stack:
+                stack[-1][2].append(node)
+            else:
+                return node
+        elif key not in {'COMMENT', 'LAST-MODIFIED', 'TZURL'}:
+            if key == 'RRULE':
+                value = ';'.join(sorted(value.upper().split(';')))
+            elif key == 'RDATE':
+                value = ','.join(sorted(value.split(',')))
+            # Parameter values can be case-sensitive even though property
+            # names are not. Be conservative for unrecognized extensions.
+            _, separator, parameters = left.partition(';')
+            stack[-1][1].append((key + separator + parameters, value))
+    raise ValueError('Incomplete timezone definition.')
+
+
+def _generated_timezone_coverage(block):
+    """Recognize retained generated zones by content, never by a comment alone."""
+    # Imported blocks are untrusted and can be large. Cache only ordinary
+    # definitions so a few unusual exports cannot retain their entire payloads.
+    if sum(len(line) for line in block) > 65_536:
+        return None
+    return _cached_generated_timezone_coverage(block)
+
+
+@lru_cache(maxsize=64)
+def _cached_generated_timezone_coverage(block):
+    identifier = fallback.text(_property_of(block, 'TZID') or '')
+    claims = [match.groups() for line in block if (match := re.fullmatch(
+        r'COMMENT:This timezone only works from (\d{4}-\d\d-\d\d) to (\d{4}-\d\d-\d\d)\.', line))]
+    if len(claims) != 1:
+        return None
+    try:
+        first, last = map(date.fromisoformat, claims[0])
+        if last <= first or (last.year, last.month, last.day) > (first.year + 512, first.month, first.day):
+            return None
+        if _timezone_signature(block) == _timezone_signature(_timezone_definition(identifier, first, last)):
+            return first, last
+    except (ValueError, KeyError, ImportError):
+        pass
+    return None
+
+
+def _unique_timezones(blocks):
+    """One unambiguous definition per TZID in a complete calendar object."""
+    result, known = [], {}
+    for block in blocks:
+        if block[0] == 'BEGIN:VTIMEZONE':
+            identifier = fallback.text(_property_of(block, 'TZID') or '')
+            if not identifier:
+                raise ValueError('A timezone definition is missing its TZID.')
+            signature = _timezone_signature(block)
+            if identifier in known:
+                if known[identifier] != signature:
+                    # Never guess which imported offset rules should win.
+                    # Separate resources remain valid sync/export units.
+                    raise ValueError(f'Incompatible timezone definitions for {identifier!r}. '
+                                     'Export the affected calendars separately.')
+                continue
+            known[identifier] = signature
+        result.append(block)
+    return result
+
+
+def serialize_resource(event, *, timezone_spans=None):
     from .ics import local_timezone
     raw = event.raw_ics
     header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
@@ -675,14 +759,19 @@ def serialize_resource(event):
     if len(masters) > 1:
         raise ValueError("An event resource contains more than one master.")
     result = [b for b in blocks if b[0] != "BEGIN:VEVENT"]
+    if timezone_spans:
+        for index, block in enumerate(result):
+            if block[0] == 'BEGIN:VTIMEZONE' and _generated_timezone_coverage(tuple(block)) is not None:
+                identifier = fallback.text(_property_of(block, 'TZID') or '')
+                if identifier in timezone_spans:
+                    result[index] = _timezone_definition(identifier, *timezone_spans[identifier])
     if _named_start(event):
-        existing_ids = {fallback.text(line.partition(":")[2]) for block in result if block[0] == "BEGIN:VTIMEZONE"
-                        for line in block if line.startswith("TZID:")}
+        existing_ids = {fallback.text(_property_of(block, 'TZID') or '')
+                        for block in result if block[0] == 'BEGIN:VTIMEZONE'}
         if event.timezone_id not in existing_ids:
             # Maintained timezone generation is cached. Its documented range
             # covers 1970–2100 and extends to encompass historical event starts.
-            first_date = date(max(1, min(1970, event.start.year - 1)), 1, 1)
-            last_date = date(min(9999, max(2101, event.end.year + 2)), 1, 1)
+            first_date, last_date = (timezone_spans or {}).get(event.timezone_id, _timezone_span(event))
             result.insert(0, _timezone_definition(event.timezone_id, first_date, last_date))
     result.append(_patch_block(masters[0] if masters else ["BEGIN:VEVENT", "END:VEVENT"], event, uid))
     for key, payload in sorted(event.recurrence_overrides.items()):
@@ -705,7 +794,8 @@ def serialize_resource(event):
     for key in set(detached) - event.recurrence_overrides.keys():
         if key in event.excluded_dates and any(line == "STATUS:CANCELLED" for line in detached[key]):
             result.append(detached[key])
-    return fallback.folded(["BEGIN:VCALENDAR", *header, *(line for block in result for line in block), "END:VCALENDAR"])
+    return fallback.folded(["BEGIN:VCALENDAR", *header,
+                            *(line for block in _unique_timezones(result) for line in block), "END:VCALENDAR"])
 
 
 def export(events):
@@ -714,18 +804,29 @@ def export(events):
         # A single UID is also the sync transport's resource format. Preserve
         # imported calendar-level metadata when creating a split or a copy.
         return serialize_resource(events[0])
-    components, seen_timezones = [], set()
+    # Generate each named zone once over the union of required coverage. Block
+    # equality alone cannot consolidate the same zone generated for two eras.
+    spans = {}
     for event in events:
-        _, blocks = _blocks(serialize_resource(event))
-        for block in blocks:
-            if block[0] == "BEGIN:VTIMEZONE":
-                identity = tuple(block)
-                if identity in seen_timezones:
+        if _named_start(event):
+            first, last = _timezone_span(event)
+            previous = spans.get(event.timezone_id, (first, last))
+            spans[event.timezone_id] = min(first, previous[0]), max(last, previous[1])
+        if event.raw_ics:
+            for block in _blocks(event.raw_ics)[1]:
+                if block[0] != 'BEGIN:VTIMEZONE':
                     continue
-                seen_timezones.add(identity)
-            components.extend(block)
+                coverage = _generated_timezone_coverage(tuple(block))
+                if coverage is not None:
+                    identifier = fallback.text(_property_of(block, 'TZID') or '')
+                    previous = spans.get(identifier, coverage)
+                    spans[identifier] = min(coverage[0], previous[0]), max(coverage[1], previous[1])
+    components = []
+    for event in events:
+        _, blocks = _blocks(serialize_resource(event, timezone_spans=spans))
+        components.extend(blocks)
     return fallback.folded(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN",
-                            *components, "END:VCALENDAR"])
+                            *(line for block in _unique_timezones(components) for line in block), "END:VCALENDAR"])
 
 
 def patch(data, event):
