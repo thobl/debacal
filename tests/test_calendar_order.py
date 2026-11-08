@@ -133,7 +133,7 @@ class Enter(QDragEnterEvent):
     def __init__(self, source, point):
         mime = QMimeData()
         mime.setData(CALENDAR_ORDER_MIME, source.calendar.id.encode())
-        super().__init__(QPointF(point), Qt.DropAction.MoveAction, mime,
+        super().__init__(QPoint(point), Qt.DropAction.MoveAction, mime,
                          Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
         self._source, self._mime = source, mime
 
