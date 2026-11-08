@@ -52,6 +52,8 @@ DEFAULT_BINDINGS = {
     'select_up': 'Up', 'select_down': 'Down',
 } | DEFAULT_MODE_BINDINGS | DEFAULT_DIALOG_BINDINGS
 EVENT_MIME = 'application/x-debacal-events+json'
+RANGE_CACHE_EVENT_LIMIT = 50_000
+RANGE_CACHE_PAGE_LIMIT = 8
 
 
 class MainWindow(WorkspaceChrome, QMainWindow):
@@ -303,12 +305,17 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._range_cache.move_to_end(cached_key)
                 return [event for event in cached_events if event.calendar_id in selected]
         events = self.store.query_occurrences(begin, end, identifiers)
-        # Bound both page count and occurrence count: a dense calendar should
-        # not retain arbitrarily many old pages or visibility combinations.
-        if len(events) <= 50_000:
-            self._range_cache[key] = tuple(events)
-            while len(self._range_cache) > 8 or sum(map(len, self._range_cache.values())) > 50_000:
-                self._range_cache.popitem(last=False)
+        # Keep a dense current page too: these Event objects already belong
+        # to the displayed view. Re-decoding it for each preference or source
+        # toggle is expensive. An oversized page lives alone and is evicted
+        # as soon as another window is cached; ordinary pages share the budget.
+        if len(events) > RANGE_CACHE_EVENT_LIMIT:
+            self._range_cache.clear()
+        self._range_cache[key] = tuple(events)
+        while len(self._range_cache) > 1 and (
+                len(self._range_cache) > RANGE_CACHE_PAGE_LIMIT
+                or sum(map(len, self._range_cache.values())) > RANGE_CACHE_EVENT_LIMIT):
+            self._range_cache.popitem(last=False)
         return events
 
     def update_hints(self):

@@ -125,6 +125,35 @@ def test_visibility_cache_does_not_reuse_a_different_date_window(desktop):
         assert all(event.calendar_id == 'local' for event in window.visible_events)
 
 
+def test_dense_current_page_is_reused_but_does_not_accumulate_old_pages(desktop):
+    _, window, store = desktop
+    window.set_view('month')
+    days, calendars, revision = window.dates(), store.list_calendars(), store.events_revision()
+    window._range_cache.clear()
+    # Exercise the real cache boundary with a small, readable fixture.
+    with patch('debacal.ui.RANGE_CACHE_EVENT_LIMIT', 10), \
+            patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
+        dense = window.query_view_events(days, calendars, revision)
+        assert len(dense) > 10
+        assert window.query_view_events(days, calendars, revision) == dense
+        local_only = [replace(calendar, visible=calendar.id == 'local') for calendar in calendars]
+        assert window.query_view_events(days, local_only, revision) == [
+            event for event in dense if event.calendar_id == 'local']
+        assert queries.call_count == 1
+        assert len(window._range_cache) == 1
+        narrow = window.query_view_events([START.date()], calendars, revision)
+        assert len(narrow) <= 10
+        assert list(window._range_cache.values()) == [tuple(narrow)]
+        assert window.query_view_events(days, calendars, revision) == dense
+        assert queries.call_count == 3
+        assert list(window._range_cache.values()) == [tuple(dense)]
+        original = store.get_event('event-1')
+        store.apply('Rename', [replace(original, title='Changed in dense page')])
+        window.refresh()
+        assert queries.call_count == 4
+        assert any(event.title == 'Changed in dense page' for event in window.visible_events)
+
+
 def test_remote_connection_changes_invalidate_cached_pages(tmp_path):
     app = QApplication.instance() or QApplication([])
     with Store(tmp_path / 'calendar.sqlite3') as store:

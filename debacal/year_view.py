@@ -65,6 +65,7 @@ class YearView(QWidget):
         self._selected_summaries = []
         self._preview_summaries = []
         self._geometry_key = None
+        self._data_inputs = None
         self._day_rects = {}
         self._month_rects = {}
         self._week_rects = {}
@@ -178,6 +179,21 @@ class YearView(QWidget):
         return result
 
     def set_data(self, year, events, calendars):
+        # Query pages reuse frozen Event values. Retain one shallow input
+        # snapshot, including filtered sources, so appearance-only refreshes
+        # need neither rebuild intervals nor discard valid grid geometry.
+        events, calendars = tuple(events), tuple(calendars)
+        zone = local_zone()
+        inputs = year, events, calendars, zone
+        previous = self._data_inputs
+        # Value equality can equate distinct repeated-hour instants; require
+        # the unchanged Event objects supplied by the occurrence-page cache.
+        if (type(year) is int and previous is not None and year == previous[0]
+                and calendars == previous[2] and zone == previous[3]
+                and len(events) == len(previous[1])
+                and all(current is old for current, old in zip(events, previous[1]))):
+            return
+        self._data_inputs = None
         self._set_year(year)
         self.events = list(events)
         self.calendars = {value.id: value for value in calendars}
@@ -188,7 +204,6 @@ class YearView(QWidget):
         self._event_map = {value.id: value for value in self.events}
         self._intervals = {}
         values = []
-        zone = local_zone()
         for position, event in enumerate(self.events):
             interval = self._event_interval(event, zone)
             if interval is not None:
@@ -200,6 +215,7 @@ class YearView(QWidget):
                              for summary in self._summaries]
         self._update_selected()
         self._update_preview()
+        self._data_inputs = inputs
         self._geometry_key = None
         self.updateGeometry()
         self.update()

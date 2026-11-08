@@ -50,6 +50,90 @@ def summary(view, day):
     return view._summaries[(day - date(view.year, 1, 1)).days]
 
 
+def test_unchanged_inputs_reuse_indexes_across_style_changes_and_keep_selection_preview(view):
+    values = [event(), event('hidden', calendar_id='hidden')]
+    sources = [Calendar('local', 'Local', '#123456'), Calendar('hidden', 'Hidden', '#789abc', visible=False)]
+    view.set_data(2026, values, sources)
+    view.set_selection({'event'})
+    preview = event('preview', start=START + timedelta(days=1), end=START + timedelta(days=1, hours=1))
+    view.set_preview([preview])
+    view.day_rect(DAY)
+    original = view._summaries, view._selected_summaries, view._preview_summaries, view._geometry_key
+    style = 'tracks' if view.preferences.year_view_style == 'tints' else 'tints'
+    view.set_preferences(replace(view.preferences, year_view_style=style))
+    with patch.object(view, '_event_interval', side_effect=AssertionError('Unchanged data must reuse intervals')), \
+         patch.object(view, '_summarize', side_effect=AssertionError('Unchanged data must reuse summaries')):
+        view.set_data(2026, iter(values), iter(sources))
+    assert view._summaries is original[0]
+    assert view._selected_summaries is original[1]
+    assert view._preview_summaries is original[2]
+    assert view._geometry_key == original[3]
+    assert view.preview_events == [preview] and view.selected_ids == {'event'}
+    assert [value.id for value in view.events] == ['event']
+    view.set_selection(set())
+    view.set_preview([])
+    view.set_data(2026, values, sources)
+    assert not any(view._selected_summaries) and not any(view._preview_summaries)
+
+
+def test_input_list_mutations_and_replaced_event_values_invalidate_year_data(view):
+    values = [event('first')]
+    view.set_data(2026, values, [])
+    values.append(event('second'))
+    view.set_data(2026, values, [])
+    assert summary(view, DAY)['local'][0] == 2
+    values[0] = replace(values[0], title='Updated after initial display')
+    view.set_data(2026, values, [])
+    assert view._event_map['first'].title == values[0].title
+    values.reverse()
+    view.set_data(2026, values, [])
+    assert summary(view, DAY)['local'][1] == 'second'
+
+
+def test_equal_wall_clocks_with_changed_fold_replace_the_cached_event_value(view):
+    start = datetime(2026, 10, 25, 2, 10, tzinfo=ZONE, fold=0)
+    end = datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=0)
+    original = Event('fold', 'local', 'Repeated hour', start, end)
+    changed = replace(original, start=start.replace(fold=1), end=end.replace(fold=1))
+    assert original == changed  # datetime equality alone ignores these instants.
+    view.set_data(2026, [original], [])
+    view.set_data(2026, [changed], [])
+    assert view._event_map['fold'] is changed
+    assert view.events_on_day(start.date())[0].start.timestamp() == changed.start.timestamp()
+
+
+def test_calendar_sequence_and_properties_invalidate_year_data(view):
+    values = [event('first', calendar_id='first'), event('second', calendar_id='second')]
+    first, second = Calendar('first', 'First', '#123456'), Calendar('second', 'Second', '#789abc')
+    view.set_data(2026, values, [first, second])
+    index = (DAY - date(2026, 1, 1)).days
+    assert view._day_sources[index] == ('first', 'second')
+    view.set_data(2026, values, [second, first])
+    assert view._day_sources[index] == ('second', 'first')
+    recolored = replace(second, color='#ab3456', name='Renamed')
+    view.set_data(2026, values, [recolored, first])
+    assert view.calendars['second'] == recolored
+    for inactive in (replace(recolored, visible=False), replace(recolored, enabled=False)):
+        view.set_data(2026, values, [inactive, first])
+        assert view._day_sources[index] == ('first',)
+        assert 'second' not in view._event_map
+    view.set_data(2026, values, [recolored, first])
+    assert view._day_sources[index] == ('second', 'first')
+
+
+def test_local_zone_changes_invalidate_timed_day_indexes_but_keep_floating_dates(view):
+    start = datetime(2026, 11, 4, 0, 30, tzinfo=timezone.utc)
+    values = [Event('timed', 'local', 'Timed', start, start + timedelta(hours=1)),
+              Event('date', 'local', 'Date', start.replace(hour=0, minute=0),
+                    start.replace(hour=0, minute=0) + timedelta(days=1), all_day=True)]
+    view.set_data(2026, values, [])
+    assert summary(view, DAY)['local'][0] == 2
+    with patch('debacal.year_view.local_zone', return_value=ZoneInfo('America/Los_Angeles')):
+        view.set_data(2026, values, [])
+        assert summary(view, DAY)['local'][0] == 1
+        assert [value.id for value in view.events_on_day(DAY - timedelta(days=1))] == ['timed']
+
+
 def test_twelve_month_grid_reflows_and_tracks_leap_days(view):
     assert len(view._month_rects) == 12 and len(view._day_rects) == 365
     assert view.month_rect(1).top() == view.month_rect(4).top()
