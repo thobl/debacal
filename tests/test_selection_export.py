@@ -40,8 +40,12 @@ def test_two_selected_occurrences_roundtrip_as_two_independent_events_with_stabl
         store.apply_remote([master])
         before = database_state(store)
         exported = export_selection(store, [first, second], 'single')
-        assert exported == export_selection(store, [first, second], 'single')
         parsed = parse_ics(exported, 'imported')
+        repeated = parse_ics(export_selection(store, [first, second], 'single'), 'imported')
+        # DTSTAMP may advance between exports; resource identity and content
+        # must remain stable even across a wall-clock second boundary.
+        assert [event.ical_uid for event in repeated] == [event.ical_uid for event in parsed]
+        assert signature(repeated) == signature(parsed)
         assert len(parsed) == 2 and all(not event.recurring for event in parsed)
         assert len({event.ical_uid for event in parsed}) == 2
         assert master.ical_uid not in {event.ical_uid for event in parsed}

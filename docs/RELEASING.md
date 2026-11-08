@@ -34,6 +34,11 @@ git notes --ref=debacal-releases show 'v0.1.0^{commit}'
 
 That receipt records the release URL, published state and assets after a
 successful publication. It is an ordinary Git note, not application data.
+Main-branch check results and concise failure logs use the separate
+`refs/notes/debacal-checks` ref; fetch it and run
+`git notes --ref=debacal-checks show HEAD` to inspect a private CI failure
+without copying the entire job log. CI stops after five failures and uses
+short tracebacks. Runner filesystem paths in receipts are normalized.
 Never move a published version tag or replace published release files; fix
 problems in a new version. A failed draft can be completed by rerunning the
 workflow. The workflow refuses to overwrite an already published release.

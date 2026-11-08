@@ -200,10 +200,20 @@ The README is now a short introduction with synthetic screenshots; the detailed
 reference lives in the [user guide](USER_GUIDE.md). The project uses 0BSD.
 
 The Arch recipe was built with makepkg without installing it system-wide.
-Its real check phase ran against the extracted release archive: **2,942 tests
-and 169 subtests passed; 5 maintainer-tool tests were skipped** because those
-tools are intentionally outside the source archive. The recipe's documented
-local-IPC exclusions applied; the complete workspace suite covers those tests.
+A validation run against the extracted release archive passed **2,942 tests
+and 169 subtests; 5 maintainer-tool tests were skipped** because those tools
+are intentionally outside the source archive. Local-IPC tests were excluded
+from that validation run; the complete workspace suite covers them.
+Ordinary package installation now runs a short offline smoke check, including
+CLI startup, desktop-file validation, and rendering the demo. The complete
+suite remains available with `DEBACAL_FULL_CHECK=1` and runs in release CI.
+CI also exposed test fixtures that assumed the host used Berlin time. The
+fixtures now state their display zone, and all-day roundtrips compare floating
+calendar dates while timed events still compare exact instants. A separate
+export assertion now checks stable UIDs and event content instead of requiring
+an export-time DTSTAMP to remain unchanged across a clock-second boundary.
+The corrected tests were checked in UTC and Berlin. CI uses short tracebacks
+and stops after five failures to keep diagnostics manageable.
 Package contents, Python launcher, desktop entry, icon and license were checked,
 and the packaged application launched with a disposable demo profile.
 

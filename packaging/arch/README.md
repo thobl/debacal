@@ -27,15 +27,22 @@ Secure password storage needs an unlocked Secret Service provider (such as
 GNOME Keyring or KeePassXC), or KWallet with `python-dbus`. These are optional;
 without one, Debacal can use account passwords for the current session.
 
-The default package checks use Qt's offscreen backend and leave out the three
-test files requiring local IPC sockets. To run those too on an ordinary host:
+The default package check is a short, offline smoke test: it validates the
+desktop entry, checks command-line help, and opens a disposable demonstration
+calendar with Qt's offscreen backend to verify a workspace screenshot. It does
+not run the full development test suite or require pytest. Test data and runtime
+files are isolated under makepkg's source tree.
+
+Maintainers can additionally run the full test suite, including local IPC tests,
+on a host that permits local sockets. Install `python-pytest` version 9 or newer
+first, then enable it explicitly:
 
 ```sh
+sudo pacman -S python-pytest
 DEBACAL_FULL_CHECK=1 makepkg -s
 ```
 
-Use `makepkg -si --nocheck` to skip tests. That also avoids installing the test
-dependency. Test data is disposable and isolated under makepkg's source tree.
+Use `makepkg -si --nocheck` to skip package checks.
 
 For an offline build, put the matching `debacal-0.1.0.tar.gz` source asset beside
 `PKGBUILD`; makepkg will verify and use it without downloading it again. The

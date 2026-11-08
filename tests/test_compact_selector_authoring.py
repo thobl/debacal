@@ -95,7 +95,10 @@ def test_multiweekday_dates_with_exclusions_and_an_added_time_keep_exact_meaning
     assert expression_matches(event, view.expression)
     rebuilt = expression_event(event, view.expression)
     assert starts(rebuilt) == starts(event)
-    assert starts(parse_ics(export_ics([rebuilt]), 'local')[0]) == starts(event)
+    restored = parse_ics(export_ics([rebuilt]), 'local')[0]
+    # ICS DATE values preserve floating calendar dates, not the exporting zone.
+    assert [recurrence_key(value, restored.all_day) for value in starts(restored)] == [
+        recurrence_key(value, event.all_day) for value in starts(event)]
 
 
 @pytest.mark.parametrize('kind', ['weekly', 'monthly'])

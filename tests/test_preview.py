@@ -28,6 +28,9 @@ class PreviewTests(unittest.TestCase):
 
     def setUp(self):
         self.widgets = []
+        self.zone_patch = patch('debacal.series_preview.local_zone', return_value=ZONE)
+        self.zone_patch.start()
+        self.addCleanup(self.zone_patch.stop)
         self.callback_errors = []
         self.exception_patch = patch('sys.excepthook', side_effect=lambda _, value, __: self.callback_errors.append(value))
         self.exception_patch.start()

@@ -34,7 +34,8 @@ def settle(app):
 
 
 @pytest.fixture
-def desktop():
+def desktop(monkeypatch):
+    monkeypatch.setattr('debacal.series_preview.local_zone', lambda: ZONE)
     app = QApplication.instance() or QApplication([])
     owned = []
     def make(events):

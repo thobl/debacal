@@ -58,6 +58,12 @@ def instances(event):
     return expand_event(event, event.start - timedelta(days=1), event.start + timedelta(days=40))
 
 
+def ranges(event):
+    # All-day ranges are floating dates; timed ranges retain their exact instants.
+    return [(value.all_day, recurrence_key(value.start, value.all_day),
+             recurrence_key(value.end, value.all_day), value.title) for value in instances(event)]
+
+
 @pytest.mark.parametrize('all_day', [False, True])
 @pytest.mark.parametrize('reopen', [False, True])
 @pytest.mark.parametrize('detached', [False, True])
@@ -108,5 +114,4 @@ def test_changing_regular_interval_after_tail_deletions_keeps_the_visible_count(
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted, dialog.error.text()
     restored = parse_ics(export_ics([edited]), 'local')[0]
-    assert [(value.start, value.end, value.title) for value in instances(restored)] == [
-        (value.start, value.end, value.title) for value in instances(edited)]
+    assert ranges(restored) == ranges(edited)

@@ -431,11 +431,11 @@ class CanvasTests(unittest.TestCase):
         overflow = QPoint(month.week_gutter + 30, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=overflow)
         self.assertEqual(create_spy.count(), 1)
-        self.assertEqual(create_spy.at(0)[0], datetime(2026, 11, 2, 9, tzinfo=local_zone()))
+        self.assertEqual(create_spy.at(0)[0], datetime(2026, 11, 2, 9, tzinfo=ZONE))
         empty = QPoint(month.week_gutter + 170, int(28 + day_height + 85))
         QTest.mouseDClick(month, Qt.MouseButton.LeftButton, pos=empty)
         self.assertEqual(create_spy.count(), 2)
-        self.assertEqual(create_spy.at(1)[0], datetime(2026, 11, 3, 9, tzinfo=local_zone()))
+        self.assertEqual(create_spy.at(1)[0], datetime(2026, 11, 3, 9, tzinfo=ZONE))
         self.assertEqual(open_spy.count(), 0)
 
     def test_month_headers_follow_actual_week_order_and_display_preferences(self):

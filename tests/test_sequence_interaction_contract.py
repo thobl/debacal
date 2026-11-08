@@ -79,7 +79,8 @@ def source(text=TEXT, *, all_day=False):
 
 
 def starts(values):
-    return [item.start.astimezone(timezone.utc) for item in values]
+    return [item.start.date() if item.all_day else item.start.astimezone(timezone.utc)
+            for item in values]
 
 
 def visible(masters):
@@ -158,7 +159,8 @@ def test_rigid_translation_preserves_equivalent_definition_through_each_creation
     changed = next(item for item in store.list_events() if item.id != master.id) if copying else store.get_event(master.id)
     assert changed.schedule_expression == text
     assert expression_matches(changed, text)
-    assert starts(visible([changed])) == [value.astimezone(timezone.utc) for value in expected]
+    assert starts(visible([changed])) == [
+        value.date() if master.all_day else value.astimezone(timezone.utc) for value in expected]
     if copying:
         assert store.get_event(master.id) == master and changed.ical_uid != master.ical_uid
     assert len(store.history()) == 2
