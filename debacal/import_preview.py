@@ -231,6 +231,7 @@ class ImportPreview(QWidget):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self.current_month = now().date().replace(day=1)
+        self._requested_month = None
         self._first_date = None
         self._calendars = []
         self._loading = False
@@ -298,6 +299,8 @@ class ImportPreview(QWidget):
 
     def set_events(self, month, events, calendars):
         self.current_month = month.replace(day=1)
+        if self._requested_month == self.current_month:
+            self._requested_month = None
         events = list(events)
         self._calendars = [calendars] if isinstance(calendars, Calendar) else list(calendars)
         previous = self._focused_event
@@ -378,14 +381,14 @@ class ImportPreview(QWidget):
         self._first_date = day
         self._update_navigation()
 
-    def set_loading(self, loading):
+    def set_loading(self, loading, *, retain_page=False):
         self._loading = bool(loading)
         self.canvas.setEnabled(not self._loading)
         for button in (self.all_button, self.none_button, self.month_button):
             button.setEnabled(not self._loading)
-        if loading:
+        if loading and not retain_page:
             self.set_message('Preparing preview…')
-        else:
+        elif not loading:
             self.set_message('')
 
     def set_message(self, message):
@@ -393,6 +396,7 @@ class ImportPreview(QWidget):
         self.message.setVisible(bool(message))
 
     def set_error(self, message):
+        self.cancel_month_request()
         self.set_loading(False)
         self.set_events(self.current_month, (), self._calendars)
         self.set_message(message)
@@ -401,11 +405,20 @@ class ImportPreview(QWidget):
         month = day.replace(day=1)
         if not date(2, 1, 1) <= month <= date(9998, 12, 1):
             return
-        self.set_events(month, (), self._calendars)
+        if month == self._requested_month:
+            return
+        # Keep the completed page intact while the owner expands a new month.
+        # Cached replacements arrive immediately; uncached ones must not paint
+        # an empty calendar or shrink the canvas for a transient loading label.
+        self._requested_month = month
         self.month_requested.emit(month)
 
+    def cancel_month_request(self):
+        self._requested_month = None
+
     def navigate_month(self, delta):
-        value = self.current_month.year * 12 + self.current_month.month - 1 + delta
+        current = self._requested_month or self.current_month
+        value = current.year * 12 + current.month - 1 + delta
         year, month = divmod(value, 12)
         if 2 <= year <= 9998:
             self.show_month(date(year, month + 1, 1))

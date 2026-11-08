@@ -19,6 +19,7 @@ from .credentials import account_key
 from .discovery import discover_calendars
 from .models import Calendar
 from .preferences import Preferences
+from .theme import scheme_for
 
 
 CALENDAR_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -473,15 +474,25 @@ class CalendarSourcesEditor(QWidget):
                 self._applied_passwords[account] = password
                 changed = True
         self._originals = {calendar.id: calendar for calendar in self.store.list_calendars(include_disabled=True)}
-        self._drafts = dict(self._originals)
-        self._rebuild()
+        if self._drafts != self._originals:
+            self._drafts = dict(self._originals)
+            self._rebuild()
         if changed:
             self.changed.emit()
         return changed
 
     def set_preferences(self, preferences):
+        previous = self.preferences
         self.preferences = preferences
-        self._rebuild()
+        if ((scheme_for(previous), previous.font_scale, previous.corner_style)
+                == (scheme_for(preferences), preferences.font_scale, preferences.corner_style)):
+            return
+        # Native text/fonts inherit the dialog stylesheet. Only the painted
+        # swatches need refreshing; keep the tree, selection and editor intact.
+        for identity, item in self._items.items():
+            item.setIcon(0, calendar_color_icon(self._drafts[identity].color, preferences))
+        if self._selected in self._drafts:
+            self.color_button.setIcon(calendar_color_icon(self._drafts[self._selected].color, preferences))
 
     def finish(self):
         self._active = False

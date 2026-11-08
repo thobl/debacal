@@ -88,8 +88,8 @@ def test_preview_navigation_requests_only_visible_month_and_handles_empty_pages(
     requested = QSignalSpy(preview.month_requested)
     QTest.mouseClick(preview.next_button, Qt.MouseButton.LeftButton)
     assert requested.at(0) == [date(2026, 12, 1)]
-    assert preview.current_month == date(2026, 12, 1) and preview.canvas.events == []
-    assert preview.month_label.text() == 'December 2026'
+    assert preview.current_month == MONTH and preview.canvas.events == [event()]
+    assert preview.month_label.text() == 'November 2026'
     preview.set_loading(True)
     assert not preview.canvas.isEnabled() and preview.previous_button.isEnabled()
     QTest.mouseClick(preview.first_button, Qt.MouseButton.LeftButton)

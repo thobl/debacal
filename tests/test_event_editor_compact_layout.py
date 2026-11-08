@@ -7,7 +7,9 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
+from PySide6.QtGui import QScreen
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
 from debacal.event_dialog import EventDialog
@@ -24,7 +26,7 @@ def editor_factory():
     app = QApplication.instance() or QApplication([])
     owned = []
     with patch('debacal.event_dialog.local_zone', return_value=ZONE):
-        def create(scale=100):
+        def create(scale=100, *, default_size=False):
             source = Event('one', 'work', 'Appointment', START, START + timedelta(hours=1))
             dialog = EventDialog(
                 [Calendar('work', 'Work', '#587c67'), Calendar('personal', 'Personal', '#a66a46')],
@@ -32,7 +34,8 @@ def editor_factory():
                 preferences=Preferences(date_format='european', font_scale=scale),
                 scope_bindings={'scope_single': 'F5', 'scope_all': 'F6', 'scope_following': 'F7'})
             owned.append(dialog)
-            dialog.resize(1080, 900)
+            if not default_size:
+                dialog.resize(1080, 900)
             dialog.show()
             for _ in range(5):
                 app.processEvents()
@@ -88,3 +91,42 @@ def test_add_occurrence_stays_beside_schedule_mode_and_preview_heading_follows_n
     label, next_button = dialog.preview.month_label, dialog.preview.next_button
     assert label.alignment() & Qt.AlignmentFlag.AlignLeft
     assert label.geometry().left() > next_button.geometry().right()
+
+
+@pytest.mark.parametrize('scale', [80, 100, 140])
+def test_picker_buttons_are_inside_their_input_and_reserve_text_space(editor_factory, scale):
+    dialog = editor_factory(scale)
+    dialog.schedule_mode.setCurrentData('repeat')
+    QApplication.processEvents()
+    for field in (dialog.start, dialog.end, dialog.repeat_until):
+        assert field.button.parentWidget() is field.lineEdit()
+        assert field.lineEdit().rect().contains(field.button.geometry())
+        assert field.lineEdit().textMargins().right() >= field.button.width()
+        QTest.mouseClick(field.button, Qt.MouseButton.LeftButton)
+        assert dialog.range_picker is not None and dialog.range_picker.isVisible()
+        dialog.range_picker.reject()
+
+
+def test_embedded_picker_commits_pending_keyboard_date_and_keeps_duration(editor_factory):
+    dialog = editor_factory()
+    dialog.start.setText('10.11.2026 9:5')
+    QTest.mouseClick(dialog.start.button, Qt.MouseButton.LeftButton)
+    assert dialog.start.value() == START.replace(day=10, minute=5)
+    assert dialog.end.value() - dialog.start.value() == timedelta(hours=1)
+    assert dialog.range_picker.draft_start == dialog.start.value()
+    dialog.range_picker.reject()
+
+
+@pytest.mark.parametrize('scale', [80, 100, 140])
+def test_default_editor_has_compact_notes_and_actions_below_the_right_preview(editor_factory, scale):
+    with patch.object(QScreen, 'availableGeometry', return_value=QRect(0, 0, 1920, 1080)):
+        dialog = editor_factory(scale, default_size=True)
+    assert dialog.preview.width() >= dialog.preview.height() * .8
+    assert dialog.description.height() <= round(100 * scale / 100)
+    assert dialog.preview_column.isAncestorOf(dialog.buttons)
+    assert not dialog.sidebar.isAncestorOf(dialog.buttons)
+    assert dialog.save_button.mapTo(dialog, QPoint()).x() > dialog.sidebar.width()
+    height = dialog.description.height()
+    dialog.resize(dialog.width(), dialog.height() + 180)
+    QApplication.processEvents()
+    assert dialog.description.height() == height

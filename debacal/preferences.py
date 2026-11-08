@@ -38,7 +38,7 @@ class Preferences:
     time_format: str = 'system'
     conflict_notifications: str = 'in_app'
     auto_sync_enabled: bool = True
-    sync_interval_minutes: int = 1
+    sync_interval_minutes: int = 5
     locale_name: str = 'system'
     font_scale: int = 100
     show_week_numbers: bool = True

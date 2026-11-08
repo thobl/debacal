@@ -54,7 +54,9 @@ def paint_day_presence(painter, rect, source_colors, preferences, colors, *, sty
             _overflow(painter, badge, overflow, preferences, colors, scale)
         number = area.adjusted(0, -2 * scale, 0, (-9 if overflow else -3) * scale)
     else:
-        number = QRectF(rect.x() + 3 * scale, rect.y() + scale, 15 * scale, 12 * scale)
+        # Reserve a complete two-digit label, including the selected bold
+        # weight. The caller fits numbers instead of replacing them with ….
+        number = QRectF(rect.x() + 3 * scale, rect.y(), min(22 * scale, rect.width() - 6 * scale), 14 * scale)
         area = rect.adjusted(4 * scale, 15 * scale, -4 * scale, -2 * scale)
         maximum = max(1, min(4, int((area.height() + scale) / (4 * scale))))
         # On the narrowest two-column layout, keep the first calendar colors
@@ -75,5 +77,7 @@ def paint_day_presence(painter, rect, source_colors, preferences, colors, *, sty
                            rect.right() - area.right() - 2 * scale, 9 * scale)
                      if narrow else QRectF(rect.right() - 14 * scale, rect.y() + scale, 14 * scale, 10 * scale))
             _overflow(painter, badge, overflow, preferences, colors, scale)
+            if not narrow:
+                number.setRight(min(number.right(), badge.left() - scale))
     painter.restore()
     return number

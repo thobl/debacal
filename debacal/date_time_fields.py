@@ -7,7 +7,7 @@ import re
 import warnings
 
 from dateutil.parser import UnknownTimezoneWarning, parse as parse_date
-from PySide6.QtCore import QDate, QDateTime, QLocale, QTime, QTimeZone, Signal
+from PySide6.QtCore import QDate, QDateTime, QEvent, QLocale, QTime, QTimeZone, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
 from .buttons import icon_button
@@ -153,16 +153,33 @@ class DateTimeField(QWidget):
         self._display_format = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
         self.edit = QLineEdit(self)
-        self.button = icon_button('day', 'Choose date and time', preferences=self.preferences, parent=self)
+        self.button = icon_button('day', 'Choose date and time', preferences=self.preferences, parent=self.edit, size=26)
+        self.button.setObjectName('dateTimePickerButton')
         self.button.clicked.connect(self.picker_requested.emit)
         self.edit.editingFinished.connect(self.editingFinished.emit)
         self.edit.textChanged.connect(lambda _text: self.edit.setProperty('invalid', False))
         layout.addWidget(self.edit, 1)
-        layout.addWidget(self.button)
+        self.edit.installEventFilter(self)
+        self._place_picker()
         self.setFocusProxy(self.edit)
         self._format()
+
+    def _place_picker(self):
+        scale = self.preferences.font_scale / 100
+        inset = max(2, round(2 * scale))
+        height = max(1, min(round(28 * scale), self.edit.height() - 2 * inset))
+        width = max(round(22 * scale), min(round(28 * scale), height + round(4 * scale)))
+        self.button.setFixedSize(width, height)
+        self.button.move(self.edit.width() - width - inset, (self.edit.height() - height) // 2)
+        self.edit.setTextMargins(0, 0, width + inset, 0)
+        self.button.raise_()
+
+    def eventFilter(self, watched, event):
+        if watched is self.edit and event.type() in (QEvent.Type.Resize, QEvent.Type.StyleChange):
+            self._place_picker()
+        return super().eventFilter(watched, event)
 
     def _format(self):
         if self._display_format:
@@ -237,7 +254,9 @@ class DateTimeField(QWidget):
     def setAllDay(self, enabled):
         self._all_day = bool(enabled)
         self._display_format = None
-        self.button.setToolTip('Choose date' if enabled else 'Choose date and time')
+        caption = 'Choose date' if enabled else 'Choose date and time'
+        self.button.setToolTip(caption)
+        self.button.setAccessibleName(caption)
         self._format()
 
     def isAllDay(self):

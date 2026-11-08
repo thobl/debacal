@@ -423,7 +423,7 @@ class ImportDialog(FormDialog):
         if page is not None:
             self._show_page(page)
             return
-        self.preview.set_loading(True)
+        self.preview.set_loading(True, retain_page=True)
         self._page_future = self._executor.submit(self.prepared_import.month_page,
                                                   self._requested_month, self.preferences)
         self._preview_timer.start()
@@ -505,6 +505,8 @@ class ImportDialog(FormDialog):
 
     def _preview_failed(self, error):
         self.preview_ready = True
+        self._requested_month = self._page.month if self._page is not None else None
+        self.preview.cancel_month_request()
         self.preview.set_loading(False)
         self.preview.set_message('Preview unavailable.')
         self.error.setText(str(error))

@@ -305,7 +305,7 @@ class PreferencesDialog(QDialog):
 
     def _set_style(self, preferences):
         colors = scheme_for(preferences)
-        self.setStyleSheet(stylesheet(preferences.font_scale, preferences) + f'''
+        style = stylesheet(preferences.font_scale, preferences) + f'''
             QWidget#preferencesSidebar, QListWidget#preferencesCategories {{ background: {colors.sidebar}; }}
             QWidget#preferencesSidebar {{ border-right: 1px solid {colors.line}; }}
             QListWidget#preferencesCategories {{ border: none; border-radius: 0; outline: 0; }}
@@ -313,8 +313,10 @@ class PreferencesDialog(QDialog):
             QListWidget#preferencesCategories::item:selected {{ background: {colors.selection}; color: {colors.ink};
                 border-left: 3px solid {colors.accent}; font-weight: 600; }}
             QListWidget#preferencesCategories::item:hover:!selected {{ background: {colors.hover}; }}
-        ''')
-        self._align_calendar_labels()
+        '''
+        if style != self.styleSheet():
+            self.setStyleSheet(style)
+            self._align_calendar_labels()
 
     def set_category(self, category):
         name = str(category).strip().casefold()
@@ -378,7 +380,7 @@ class PreferencesDialog(QDialog):
             field.setCurrentIndex(0)
         self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData('in_app'))
         self.auto_sync.setChecked(True)
-        self.sync_interval.setValue(1)
+        self.sync_interval.setValue(Preferences().sync_interval_minutes)
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(Preferences().visible_start_hour)
         self.visible_end.setValue(Preferences().visible_end_hour)
@@ -449,7 +451,9 @@ class PreferencesDialog(QDialog):
             self.setLocale(preferences.qt_locale())
             self._set_style(preferences)
             self._resize_sidebar()
-            self.setPalette(widget_palette(preferences))
+            palette = widget_palette(preferences)
+            if palette != self.palette():
+                self.setPalette(palette)
             self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
             if self.source_editor is not None:
                 self.source_editor.set_preferences(preferences)

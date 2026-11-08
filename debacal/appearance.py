@@ -45,6 +45,10 @@ QPushButton[iconOnly="true"]:pressed, QPushButton[iconOnly="true"]:checked { bac
 QPushButton[iconOnly="true"][keyboardFocus="true"]:focus { border-color: $focus; }
 QPushButton[compactIcon="true"] { padding: 1px; border-color: transparent; }
 QPushButton[compactIcon="true"][keyboardFocus="true"]:focus { border-color: $focus; }
+QPushButton#dateTimePickerButton { padding: 0px; border: 1px solid transparent; background: transparent; }
+QPushButton#dateTimePickerButton:hover { background: $hover; }
+QPushButton#dateTimePickerButton:pressed { background: $selection; }
+QPushButton#dateTimePickerButton[keyboardFocus="true"]:focus { border-color: $focus; }
 QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox, QKeySequenceEdit {
     background: $panel; color: $ink; border: 1px solid $control_edge; border-radius: 4px; padding: 6px;
     selection-background-color: $selection; selection-color: $ink;

@@ -184,9 +184,14 @@ class MiniCalendar(QWidget):
         self.preferences = preferences
         self.calendar.preferences = preferences
         locale = preferences.qt_locale()
+        colors = scheme_for(preferences)
+        key = (colors, preferences.font_scale, preferences.font_family, preferences.corner_style,
+               preferences.weekend_style, locale.name(), preferences.first_weekday, preferences.show_week_numbers)
+        if key == getattr(self, '_preferences_key', None):
+            return
+        self._preferences_key = key
         self.setLocale(locale)
         self.calendar.setLocale(locale)
-        colors = scheme_for(preferences)
         surface = getattr(colors, self.calendar.surface_role)
         scale = preferences.font_scale / 100
         self.calendar.setStyleSheet(f'''

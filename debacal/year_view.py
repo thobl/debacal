@@ -8,7 +8,7 @@ import calendar
 import math
 
 from PySide6.QtCore import Qt, QRectF, QSize, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
@@ -18,6 +18,7 @@ from .theme import corner_radius
 from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
 from .year_presence import paint_day_presence
+from .calendar_choice import calendar_color_icon
 
 
 class YearView(QWidget):
@@ -47,6 +48,9 @@ class YearView(QWidget):
         self.events = []
         self.calendars = {}
         self._source_order = {}
+        self._day_sources = []
+        self._fonts = {}
+        self._number_fonts = {}
         self.selected_ids = set()
         self.selected_id = None
         self.selected_day = None
@@ -91,14 +95,27 @@ class YearView(QWidget):
         self._hover_week = None
 
     def set_preferences(self, preferences):
+        previous = self.preferences
+        if preferences == previous and hasattr(self, '_label_language'):
+            return
         self.preferences = preferences
-        self._month_names = [preferences.month_name(month) for month in range(1, 13)]
-        self._weekday_names = [preferences.weekday_name((preferences.first_weekday + offset) % 7)
-                               for offset in range(7)]
-        self._geometry_key = None
-        self._hover_week = None
-        self.setMinimumWidth(math.ceil((2 * 165 + 3 * 12) * self.scale))
-        self.updateGeometry()
+        language = preferences.qt_locale().name(), preferences.first_weekday
+        if language != getattr(self, '_label_language', None):
+            self._label_language = language
+            self._month_names = [preferences.month_name(month) for month in range(1, 13)]
+            self._weekday_names = [preferences.weekday_name((preferences.first_weekday + offset) % 7)
+                                   for offset in range(7)]
+        if (previous.font_scale, previous.font_family) != (preferences.font_scale, preferences.font_family):
+            self._fonts.clear()
+            self._number_fonts.clear()
+        geometry = (preferences.font_scale, preferences.font_family, preferences.first_weekday,
+                    preferences.locale_name, preferences.show_week_numbers)
+        if geometry != getattr(self, '_preference_geometry', None):
+            self._preference_geometry = geometry
+            self._geometry_key = None
+            self._hover_week = None
+            self.setMinimumWidth(math.ceil((2 * 165 + 3 * 12) * self.scale))
+            self.updateGeometry()
         self.update()
 
     def _columns(self, width):
@@ -119,13 +136,13 @@ class YearView(QWidget):
         width = math.ceil(1000 * self.scale)
         return QSize(width, self.heightForWidth(width))
 
-    def _event_interval(self, event):
+    def _event_interval(self, event, zone=None):
         if event.all_day:
             first, last = event.start.date().toordinal(), event.end.date().toordinal()
             if last == first:
                 last += 1
         else:
-            zone = local_zone()
+            zone = zone or local_zone()
             first = event.start.astimezone(zone).date().toordinal()
             if event.end.timestamp() == event.start.timestamp():
                 last = first + 1
@@ -171,12 +188,16 @@ class YearView(QWidget):
         self._event_map = {value.id: value for value in self.events}
         self._intervals = {}
         values = []
+        zone = local_zone()
         for position, event in enumerate(self.events):
-            interval = self._event_interval(event)
+            interval = self._event_interval(event, zone)
             if interval is not None:
                 self._intervals[event.id] = interval
                 values.append((position, event, interval))
         self._summaries = self._summarize(values)
+        self._day_sources = [tuple(sorted(summary, key=lambda identity:
+                             (self._source_order.get(identity, len(self._source_order)), identity)))
+                             for summary in self._summaries]
         self._update_selected()
         self._update_preview()
         self._geometry_key = None
@@ -191,7 +212,6 @@ class YearView(QWidget):
         if self.selected_id not in identifiers:
             self.selected_id = next(iter(sorted(identifiers)), None)
         self._update_selected()
-        self._geometry_key = None
         self.update()
 
     def _update_selected(self):
@@ -200,6 +220,8 @@ class YearView(QWidget):
             for position, identity in enumerate(sorted(self.selected_ids)) if identity in self._intervals)
 
     def set_selected_day(self, day):
+        if day == self.selected_day:
+            return
         self.selected_day = day
         self.update()
 
@@ -210,21 +232,27 @@ class YearView(QWidget):
         pass
 
     def set_creation_calendar(self, calendar):
+        if calendar == self.creation_calendar:
+            return
         self.creation_calendar = calendar
         self.update()
 
     def set_preview(self, events):
-        self.preview_events = list(events)
+        events = list(events)
+        if events == self.preview_events:
+            return
+        self.preview_events = events
         self._update_preview()
         self.update()
 
     def _update_preview(self):
+        zone = local_zone()
         self._preview_summaries = self._summarize(
             (position, event, interval) for position, event in enumerate(self.preview_events)
-            if (interval := self._event_interval(event)) is not None)
+            if (interval := self._event_interval(event, zone)) is not None)
 
     def _ensure_geometry(self):
-        key = (self.width(), self.height(), self.year, self.preferences)
+        key = (self.width(), self.height(), self.year, self._preference_geometry)
         if key == self._geometry_key:
             return
         self._geometry_key = key
@@ -311,10 +339,9 @@ class YearView(QWidget):
     def calendars_on_day(self, day):
         """Distinct active sources, in the same order as the calendar list."""
         offset = (day - self._first).days
-        if not 0 <= offset < len(self._summaries):
+        if not 0 <= offset < len(self._day_sources):
             return ()
-        return tuple(sorted(self._summaries[offset],
-                            key=lambda identity: (self._source_order.get(identity, len(self._source_order)), identity)))
+        return self._day_sources[offset]
 
     def _day_tooltip(self, day):
         heading = '<b>' + escape(self.preferences.format_date(day, weekday=True)) + '</b>'
@@ -327,10 +354,33 @@ class YearView(QWidget):
                         + ('event' if count == 1 else 'events'))
         return heading + ('<br>' + '<br>'.join(rows) if rows else '')
 
-    def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter):
-        painter.setFont(ui_font(self.preferences, size, bold))
+    def _font(self, size, bold):
+        key = size, bold
+        if key not in self._fonts:
+            self._fonts[key] = ui_font(self.preferences, size, bold)
+        return self._fonts[key]
+
+    def _number_font(self, rect, size, bold):
+        key = round(rect.width(), 2), round(rect.height(), 2), size, bold
+        if key not in self._number_fonts:
+            font = QFont(self._font(size, bold))
+            metrics = QFontMetricsF(font)
+            label_width = max(metrics.horizontalAdvance(str(day)) for day in range(1, 32))
+            factor = min(1, rect.width() / max(1, label_width),
+                         rect.height() / max(1, metrics.height()))
+            if factor < 1:
+                font.setPointSizeF(max(5 * self.scale, font.pointSizeF() * factor))
+            if len(self._number_fonts) >= 128:
+                self._number_fonts.clear()
+            self._number_fonts[key] = font
+        return self._number_fonts[key]
+
+    def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter,
+              *, number=False):
+        painter.setFont(self._number_font(rect, size, bold) if number else self._font(size, bold))
         painter.setPen(color if color is not None else paint_colors(self).ink)
-        painter.drawText(rect, alignment, painter.fontMetrics().elidedText(value, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))))
+        painter.drawText(rect, alignment, value if number else
+                         painter.fontMetrics().elidedText(value, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))))
 
     def paintEvent(self, event):
         self._ensure_geometry()
@@ -399,7 +449,8 @@ class YearView(QWidget):
                 painter.drawRoundedRect(indicator, corner_radius(self, 4) * scale, corner_radius(self, 4) * scale)
             self._text(painter, number_rect, str(day.day),
                        weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink),
-                       8, selected or day == today)
+                       10 if self.preferences.year_view_style == 'tints' else 8, selected or day == today,
+                       number=True)
         painter.end()
 
     def _select_event(self, identity, modifiers):
@@ -496,9 +547,16 @@ class YearView(QWidget):
             self.day_selected.emit(day)
         if values:
             menu.addSeparator()
+            source_icons = {}
             for value in values:
-                label = ('All day' if value.all_day else self.preferences.format_time(value.start.astimezone(local_zone()))) + ' · ' + value.title
-                action = menu.addAction(label.replace('&', '&&'))
+                source = self.calendars.get(value.calendar_id)
+                source_name = source.name if source else value.calendar_id
+                label = ('All day' if value.all_day else self.preferences.format_time(value.start.astimezone(local_zone())))
+                label += ' · ' + source_name + ' · ' + value.title
+                if value.calendar_id not in source_icons:
+                    color = source.color if source else paint_colors(self).muted
+                    source_icons[value.calendar_id] = calendar_color_icon(color, self.preferences)
+                action = menu.addAction(source_icons[value.calendar_id], label.replace('&', '&&'))
                 action.triggered.connect(lambda _checked=False, identity=value.id: self._select_event(identity, Qt.KeyboardModifier.NoModifier))
             total = sum(count for count, _identity in self._summaries[(day - self._first).days].values())
             if total > len(values):

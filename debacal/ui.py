@@ -96,6 +96,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_index = None
         self._events_revision = None
         self._range_cache = OrderedDict()
+        self._surface_data_key = None
         self._filter_masters = {}
         self._navigation_sources = None
         self._navigation_sources_key = None
@@ -235,13 +236,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             widget.set_preferences(self.preferences)
             widget.set_selected_day(self.selected_day)
         self.header.update()
-        if self.view == 'year':
-            self.year.set_data(self.anchor.year, self.visible_events, cals)
-        else:
-            self.canvas.set_data(days[:7], self.visible_events, cals)
-            self.all_day_canvas.set_data(days[:7], self.visible_events, cals)
+        self.update_surface_data(days, cals, revision)
+        if self.view != 'year':
             self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
-            self.month.set_data(days[0], self.anchor.month, self.visible_events, cals)
         self.results.update_context(cals, self.preferences)
         self.results.set_range(at(days[0]), at(days[-1] + timedelta(days=1)))
         self.stack.setCurrentIndex({'day': 0, 'week': 0, 'month': 1, 'year': 2}[self.view])
@@ -262,6 +259,23 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if not self._revealing_search_result:
             self.run_search()
         self.update_sync_status()
+
+    def update_surface_data(self, days, calendars, revision):
+        """Reuse indexed occurrences when only presentation preferences change."""
+        query = self.search.text().strip() if self.filter_search.isChecked() else ''
+        key = (self.view, self.anchor.month if self.view == 'month' else None, tuple(days), tuple(calendars),
+               revision, query, local_zone())
+        if key == self._surface_data_key:
+            return False
+        if self.view == 'year':
+            self.year.set_data(self.anchor.year, self.visible_events, calendars)
+        else:
+            self.canvas.set_data(days[:7], self.visible_events, calendars)
+            self.all_day_canvas.set_data(days[:7], self.visible_events, calendars)
+            self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
+            self.month.set_data(days[0], self.anchor.month, self.visible_events, calendars)
+        self._surface_data_key = key
+        return True
 
     def query_view_events(self, days, calendars, revision):
         identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
@@ -327,17 +341,31 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def apply_preferences(self, preferences, bindings):
         """Apply dialog choices once, shared by live Apply and Save."""
-        if preferences == self.preferences and bindings == self.bindings:
+        bindings = normalize_bindings(bindings)
+        previous = self.preferences
+        preferences_changed = preferences != previous
+        bindings_changed = bindings != self.bindings
+        if not preferences_changed and not bindings_changed:
             return False
         self.preferences = preferences
-        self.preferences.save(self.store)
-        self.bindings = normalize_bindings(bindings)
-        self.store.set_setting('keybindings', self.bindings)
-        self.install_mode_shortcuts()
-        self.setLocale(self.preferences.qt_locale())
-        self.setPalette(widget_palette(self.preferences))
-        self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
-        self.configure_auto_sync()
+        if preferences_changed:
+            self.preferences.save(self.store)
+        if bindings_changed:
+            self.bindings = bindings
+            self.store.set_setting('keybindings', self.bindings)
+            self.install_mode_shortcuts()
+        locale = self.preferences.qt_locale()
+        if locale != self.locale():
+            self.setLocale(locale)
+        palette = widget_palette(self.preferences)
+        if palette != self.palette():
+            self.setPalette(palette)
+        style = stylesheet(self.preferences.font_scale, self.preferences)
+        if style != self.styleSheet():
+            self.setStyleSheet(style)
+        if ((previous.auto_sync_enabled, previous.sync_interval_minutes)
+                != (preferences.auto_sync_enabled, preferences.sync_interval_minutes)):
+            self.configure_auto_sync()
         self.refresh(calendars=True)
         return True
 
@@ -1158,13 +1186,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self.visible_events = events
         cals, days = self.store.list_calendars(), self.dates()
-        if self.view == 'year':
-            self.year.set_data(self.anchor.year, events, cals)
-        else:
-            self.canvas.set_data(days[:7], events, cals)
-            self.all_day_canvas.set_data(days[:7], events, cals)
-            self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
-            self.month.set_data(days[0], self.anchor.month, events, cals)
+        self.update_surface_data(days, cals, self.store.events_revision())
         self.sync_selection()
         self.render_placement()
         self.fit_calendar()

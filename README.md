@@ -180,7 +180,8 @@ by calendars in the same account and remain in the secure keyring.
   date; double-click it to create an all-day event.
   Click a week number to open that week. Week numbers appear by default in
   Month and Day/Week views too, and can be switched off in Calendar preferences.
-  Right-click a day to inspect its events or open Day view. Search and paste
+  Right-click a day to inspect its events, including calendar names and color
+  swatches, or open Day view. Search and paste
   previews work in Year view too; small windows scroll the overview.
   Individual event actions are available from the day's context menu or a
   detailed view. The original [design studies](design/2026-11-year-overview/index.html)
@@ -297,7 +298,9 @@ by calendars in the same account and remain in the secure keyring.
   mnemonics. Enter saves from form fields; Notes keeps Enter for a new line, and
   Ctrl+Enter saves from anywhere. In calendar-source setup, Enter discovers a new
   CalDAV account before saving its selected calendars. Start and End accept typed
-  dates and times or open a shared month-and-time-range picker. Moving Start
+  dates and times or open a shared month-and-time-range picker from the button
+  inside each field. The editor keeps Notes compact and Save/Cancel beneath the
+  wider preview on the right. Moving Start
   preserves duration; setting an earlier End moves Start back by that duration.
   The time strip labels both endpoints and brackets the duration. During a drag,
   an outline retains the original range beside the live time and duration. Its
@@ -540,7 +543,7 @@ an unrestricted custom color or switch back to the server color. Password-only
 edits preserve both the current color and the override preference.
 
 Automatic syncing defaults to an attempt about 1.5 seconds after startup, then
-every minute while the app is open. Preferences can pause it or change the
+every five minutes while the app is open. Preferences can pause it or change the
 interval; pausing also suppresses the startup attempt. **Sync** / `Ctrl+R` still
 works manually. Offline changes
 stay in a transactional outbox. Calendar toggles use only local data. Individual

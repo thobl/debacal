@@ -1,5 +1,6 @@
 """On-demand occurrence navigation, independent of the visible preview month."""
 from datetime import datetime, time, timedelta, timezone
+from bisect import bisect_left, bisect_right
 from itertools import islice
 
 from .recurrence import canonical_rule, event_zone, expand_series, key_datetime, normalized_rule, occurrence, occurrence_id, recurrence_key, recurrence_set
@@ -14,9 +15,13 @@ class PreviewNavigation:
         self.masters = []
         self._signature = None
         self._finite = None
+        self._finite_records = None
         self._positions = None
         self._positions_checked = False
         self._known_positions = {}
+        self._plain = {}
+        self._plain_records = ()
+        self._recurring = ()
         self.rebind(masters)
 
     def rebind(self, masters):
@@ -27,11 +32,15 @@ class PreviewNavigation:
                            tuple(sorted((key, value.get('start')) for key, value in item.recurrence_overrides.items())))
                           for item in masters)
         self._finite = None
+        self._finite_records = None
         if signature != self._signature:
             self._positions = None
             self._positions_checked = False
             self._known_positions = {}
         self._signature, self.masters = signature, masters
+        self._plain = {item.id: item for item in masters if not item.recurring}
+        self._plain_records = tuple(sorted((item.start.timestamp(), item.id) for item in self._plain.values()))
+        self._recurring = tuple(item for item in masters if item.recurring)
 
     def _position_budget(self, master):
         if not master.recurrence_rule:
@@ -55,20 +64,22 @@ class PreviewNavigation:
         if self._positions_checked:
             return self._positions
         self._positions_checked = True
-        if not self.bounded or any(not self._position_budget(item) for item in self.masters):
+        if not self._recurring:
+            self._positions = self._plain_records
+            return self._positions
+        if not self.bounded or any(not self._position_budget(item) for item in self._recurring):
             return None
-        positions = {}
-        for master in self.masters:
-            if not master.recurring:
-                positions[master.id] = master.start.timestamp()
-                continue
+        positions = {identity: timestamp for timestamp, identity in self._plain_records}
+        generated = 0
+        for master in self._recurring:
             if not master.recurrence_rule:
                 keys = {recurrence_key(master.start, master.all_day), *master.recurrence_dates,
                         *master.recurrence_overrides} - set(master.excluded_dates)
             else:
                 keys = set()
-                for index, value in enumerate(islice(recurrence_set(master), POSITION_LIMIT + 1)):
-                    if index == POSITION_LIMIT:
+                for value in islice(recurrence_set(master), POSITION_LIMIT + 1):
+                    generated += 1
+                    if generated > POSITION_LIMIT:
                         return None
                     keys.add(recurrence_key(value, master.all_day))
                 keys.update(set(master.recurrence_overrides) - set(master.excluded_dates))
@@ -90,12 +101,13 @@ class PreviewNavigation:
         retain a known ordinal as the user navigates an unbounded series.
         """
         if self._finite is not None:
-            records = [(item.start.timestamp(), item.id) for item in self._finite]
+            records = self._finite_records
         else:
             records = self._position_records()
         if records is not None:
-            index = next((index + 1 for index, (_stamp, key) in enumerate(records) if key == reference.id), None)
-            return index, len(records)
+            key = reference.start.timestamp(), reference.id
+            index = bisect_left(records, key)
+            return (index + 1 if index < len(records) and records[index] == key else None), len(records)
         if reference.id in self._known_positions:
             return self._known_positions[reference.id], None
         if len(self.masters) == 1:
@@ -109,7 +121,7 @@ class PreviewNavigation:
     @property
     def bounded(self):
         return all(not item.recurrence_rule or {'COUNT', 'UNTIL'} & normalized_rule(item.recurrence_rule, item).keys()
-                   for item in self.masters)
+                   for item in self._recurring)
 
     def explicit_count(self):
         """Count RDATE-only schedules without constructing offscreen events."""
@@ -148,6 +160,7 @@ class PreviewNavigation:
                     item = occurrence(master, key_datetime(key, master), key)
                     values[item.id] = item
         self._finite = sorted(values.values(), key=lambda item: (item.start.timestamp(), item.id))
+        self._finite_records = [(item.start.timestamp(), item.id) for item in self._finite]
         return self._finite
 
     def _simple_last(self, master):
@@ -204,6 +217,8 @@ class PreviewNavigation:
     def last(self):
         if not self.bounded or not self.masters:
             return None
+        if not self._recurring:
+            return self._plain[self._plain_records[-1][1]] if self._plain_records else None
         values = [self._simple_last(master) for master in self.masters]
         if all(item is not None for item in values):
             return max(values, key=lambda item: item.start.timestamp())
@@ -213,17 +228,14 @@ class PreviewNavigation:
     def adjacent(self, reference, direction):
         key = reference.start.timestamp(), reference.id
         if self._finite is not None:
-            eligible = [item for item in self._finite if ((item.start.timestamp(), item.id) > key if direction > 0
-                                                         else (item.start.timestamp(), item.id) < key)]
-            return eligible[0] if direction > 0 and eligible else eligible[-1] if eligible else None
+            index = bisect_right(self._finite_records, key) if direction > 0 else bisect_left(self._finite_records, key) - 1
+            return self._finite[index] if 0 <= index < len(self._finite) else None
         candidates = []
+        index = bisect_right(self._plain_records, key) if direction > 0 else bisect_left(self._plain_records, key) - 1
+        if 0 <= index < len(self._plain_records):
+            candidates.append(self._plain[self._plain_records[index][1]])
         boundary = reference.start
-        for master in self.masters:
-            if not master.recurring:
-                item_key = master.start.timestamp(), master.id
-                if (item_key > key if direction > 0 else item_key < key):
-                    candidates.append(master)
-                continue
+        for master in self._recurring:
             for days in (32, 128, 512, 2048, 8192, 32768, 131072, 524288):
                 try:
                     start = boundary if direction > 0 else boundary - timedelta(days=days)

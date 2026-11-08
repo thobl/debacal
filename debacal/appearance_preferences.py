@@ -131,7 +131,8 @@ def _sample(painter, rect, kind, value, preferences):
             painter.fillRect(cell, QColor(colors.panel))
             number = paint_day_presence(painter, cell, sources[:index + 1], preferences, colors,
                                        style=value, scale=1)
-            _label(painter, number, str(8 + index), colors.ink, 9, align=Qt.AlignmentFlag.AlignCenter)
+            _label(painter, number, str(8 + index), colors.ink, 11 if value == 'tints' else 9,
+                   align=Qt.AlignmentFlag.AlignCenter)
     painter.restore()
 
 

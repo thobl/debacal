@@ -272,7 +272,8 @@ def test_context_menu_keeps_ampersands_literal_in_event_titles(view):
     context = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, view.mapToGlobal(point))
     with patch('debacal.year_view.QMenu') as constructor:
         view.contextMenuEvent(context)
-    labels = [call.args[0] for call in constructor.return_value.addAction.call_args_list]
+    labels = [next(value for value in call.args if isinstance(value, str))
+              for call in constructor.return_value.addAction.call_args_list]
     assert any(label.endswith('Research && Development &&&& Design') for label in labels)
 
 
@@ -290,7 +291,8 @@ def test_day_context_lists_explicit_events_without_choosing_one_from_a_calendar_
     with patch('debacal.year_view.QMenu') as constructor:
         view.contextMenuEvent(context)
         constructor.assert_called_once_with(view)
-        labels = [call.args[0] for call in constructor.return_value.addAction.call_args_list]
+        labels = [next(value for value in call.args if isinstance(value, str))
+                  for call in constructor.return_value.addAction.call_args_list]
         assert labels[0] == 'Open day'
         assert any(first.title in label for label in labels[1:])
         assert not contexts and not day_changes and not selections

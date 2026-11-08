@@ -118,7 +118,7 @@ def test_automatic_sync_can_be_paused_and_manual_sync_still_works(app):
         try:
             window.configure_auto_sync()
             assert window.sync_timer.isActive()
-            assert window.sync_timer.interval() == 60_000
+            assert window.sync_timer.interval() == 5 * 60_000
             window.startup_sync()
             engine.sync_now.assert_called_once()
             engine.reset_mock()
