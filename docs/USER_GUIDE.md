@@ -170,6 +170,8 @@ by calendars in the same account and remain in the secure keyring.
   day-column boundaries and weekday labels, including reserved scrollbar space;
   hiding week numbers keeps the empty gutter to preserve that alignment.
   Click the mini calendar to jump.
+  In Day/Week/Month view, an accent border marks today; a filled date header
+  marks the selected action date. Selection leaves the day body unchanged.
 * **Year overview:** twelve month cards summarize which visible calendars have
   events each day. Calendar tracks show broad color bars beneath each date;
   Tinted day cells show soft color segments with solid edges. Each calendar
@@ -231,7 +233,9 @@ by calendars in the same account and remain in the secure keyring.
   align with the search field. Repeating series expand using the disclosure at
   the right of their card; dated occurrences are indented below it, with bounded
   **More…** pages: infinite series show ten
-  dates per page, finite schedules show 100. A series root selects the whole
+  dates per page, finite schedules show 100. At the paging cap, navigate the
+  calendar and choose **Show dates near current view** to inspect another range.
+  A series root selects the whole
   series; a dated child selects only that occurrence, even when the calendar is
   in all-events mode. Their row highlights are independent. Ctrl+click combines
   roots and children with those meanings. Up/Down transfers focus to the results
@@ -378,10 +382,10 @@ move/split behavior, correctness checks, and the operation test coverage.
 The event editor separates reference-range controls from a full-height month
 preview. Inline **Start**, **End**, and **Duration** fields define that range.
 When editing, compact scope buttons in the heading use the main view's icons and
-shortcuts. Choose **Single**, **Repeat**, or **Alternatives**; the latter two share Daily, Weekly,
+shortcuts. Choose **One event**, **Repeating**, or **Alternative dates**; the latter two share Daily, Weekly,
 Monthly, Yearly, and Custom controls. Alternatives are choices from which one
 event can later be confirmed. Frequency choices use icons with tooltips; the
-separate **+** beside Single/Repeat/Alternatives adds an occurrence with its own
+separate **+** beside the schedule modes adds an occurrence with its own
 date and time.
 
 Choosing a regular frequency from Custom starts a clean regular pattern,

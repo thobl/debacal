@@ -30,12 +30,16 @@ def main():
     parser.add_argument('--events', type=int, default=10000)
     parser.add_argument('--series', type=int, default=200)
     parser.add_argument('--iterations', type=int, default=3)
+    parser.add_argument('--width', type=int, default=1400)
+    parser.add_argument('--height', type=int, default=900)
     parser.add_argument('--source-root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--output', type=Path)
     parser.add_argument('--profile', type=Path)
     args = parser.parse_args()
     if args.events < 1 or args.series < 1 or args.iterations < 1:
         parser.error('Event counts and iterations must be positive.')
+    if args.width < 1 or args.height < 1:
+        parser.error('Window dimensions must be positive.')
     sys.path.insert(0, str(args.source_root.resolve()))
 
     from PySide6 import __version__ as qt_version
@@ -151,10 +155,14 @@ def main():
         with patch('debacal.ui.now', return_value=start), patch('sys.excepthook', side_effect=record_error):
             def open_workspace():
                 value = MainWindow(store, enable_sync=False)
+                # Compare identical geometry even when initial screen fitting
+                # differs between checkouts or offscreen platform defaults.
+                value.resize(args.width, args.height)
                 value.go_date(start.date())
                 value.show()
                 return value
             window = measure('open_workspace', open_workspace)
+            initial_window_size = [window.width(), window.height()]
             calendars = store.list_calendars()
             for iteration in range(args.iterations):
                 for view in ('day', 'month', 'week', 'year'):
@@ -326,7 +334,8 @@ def main():
     summary = {name: {'median_ms': round(statistics.median(samples), 3),
                       'max_ms': max(samples), 'samples': len(samples)} for name, samples in timings.items()}
     report = {'environment': {'python': platform.python_version(), 'qt': qt_version,
-                             'backend': app.platformName(), 'profiled': bool(profile)},
+                             'backend': app.platformName(), 'profiled': bool(profile),
+                             'initial_window_size': initial_window_size},
               'ordinary_events': args.events, 'weekly_series': args.series, 'candidate_dates': 500,
               'iterations': args.iterations, 'import_resources': len(import_events),
               'milliseconds': timings, 'summary': summary,

@@ -1,0 +1,20 @@
+{
+  "python": "3.14.9",
+  "repeats": 3,
+  "cases": [
+    {
+      "case": "hourly",
+      "status": "ok",
+      "events": 24,
+      "median_ms": 401.211,
+      "min_ms": 399.366,
+      "max_ms": 405.378,
+      "iterator_candidates": 235312
+    },
+    {
+      "case": "dense_daily",
+      "status": "timeout",
+      "timeout_seconds": 5.0
+    }
+  ]
+}

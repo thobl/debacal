@@ -129,22 +129,11 @@ at that UID rather than aborting the calendar. Structural corruption is reported
 rather than being mistaken for an empty calendar. A fixed resource is retried on
 the next sync and removed from quarantine when it becomes valid.
 
-The optional `large-calendar.ics` is used as a local regression fixture when
-present. This private calendar file is excluded from version control. It contains
-1,638 event components and 1,442 UID masters. The previously
-failing UNTIL rule now parses, and a candidate upload is tested beside the entire
-collection and beside intentionally invalid resources. Tests never alter the
-provided file or publish its contents.
-
-A read-only audit on 5 November 2026 found 562 masters in the live Group cache, matching exactly the
-first 562 masters of that export; 880 export masters were absent from the cache.
-For November 2026, the export expands to 73 occurrences and the cached subset to
-23. Independent recurrence expansion agrees with the export. This establishes a
-coverage gap before display, but does not establish the current remote inventory:
-the export may contain resources changed or deleted since it was taken. DNS
-failure prevented a fresh server comparison, so the cause of the prefix gap
-remains unverified. The inventory change above must be checked against a live
-server before claiming that it restores those 880 resources.
+Bulk-import and sync regressions use generated calendars, including recurring
+masters, detached occurrences, candidate slots, invalid neighbors, and resources
+with conflicting native identities. They run without personal calendar files or
+server credentials. An export is not an authoritative current server inventory:
+resources may have changed or been deleted since it was taken.
 
 ## Discovery and recurring resources
 
@@ -152,8 +141,8 @@ The final review on 8 November 2026 verified discovery and initial pull against
 the supplied Nextcloud test account using the default vdirsyncer backend. A
 uniquely identified recurring test resource also passed creation, series and
 occurrence edits, EXDATE synchronization, deletion, and verified cleanup. This
-establishes provider connectivity and the tested write path; it does not resolve
-the separate historical Group-cache inventory question above. No account
+establishes provider connectivity and the tested write path; it does not establish
+complete coverage of every provider or account. No account
 credentials or calendar contents are included in the review artifacts.
 
 Add calendar accepts a Nextcloud server/account URL or a direct CalDAV collection.

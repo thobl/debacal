@@ -1,5 +1,13 @@
 # Release review — 8 November 2026
 
+This is a record of the release-preparation checks, not a guarantee of complete
+correctness. An independent review subsequently found gaps in global sync
+ownership checks, recurrence equivalence, duration projection, floating dates,
+and repeated-hour gestures/layout. The follow-up tests cover those concrete
+boundaries; the earlier broad preservation statements below describe only the
+tested cases. See the [follow-up](REVIEW_FOLLOWUP.md) for the concrete fixes and
+regression boundaries. Remaining performance and accessibility limits are listed below.
+
 This review covers recurrence and storage integrity, selection operations,
 startup/import delivery, sync recovery, dialogs, preferences, visual consistency,
 and desktop performance. All benchmarks use synthetic calendars. Live provider
@@ -169,8 +177,7 @@ checks also passed.
 Live Nextcloud checks passed discovery, initial pull, recurring create/read,
 series and occurrence edits, exclusion sync, deletion, and verified cleanup
 through the application's default vdirsyncer bridge. This does not establish
-coverage of the older personal Group-calendar audit documented in
-[SYNC.md](SYNC.md).
+complete account inventory coverage or correctness for every provider.
 
 Dense-year loading remains the main measured UI limitation: about
 0.60 seconds for the normal benchmark and 1.99 seconds in the stress run;
@@ -187,9 +194,9 @@ handling that commit remains a performance improvement for future work.
 System-keyring locked/unlocked behavior and screen-reader operation still need
 manual validation on target desktops. X11 smoke coverage does not establish
 Wayland or every window manager's behavior. OAuth, unsupported advanced calendar
-features, and additional providers remain outside the verified scope. A wholly
-skipped civil date (such as 30 December 2011 in Pacific/Apia) is not supported as
-a standalone all-day range; ordinary midnight clock gaps are covered. A Linux
+features, and additional providers remain outside the verified scope. Floating
+all-day regressions now include midnight gaps and a wholly skipped civil date;
+timed values still require real local clocks. A Linux
 desktop launcher, Arch build recipe, release wheel/source packages, and 0BSD
 license were added during release preparation after this review. See the
 [installation guide](INSTALL.md) for current packaging.
