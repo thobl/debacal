@@ -1,6 +1,7 @@
 """Selection export is scoped, independent, metadata-preserving and read-only."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import json
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,7 +11,7 @@ from debacal.models import Calendar, Event
 from debacal.recurrence import expand_events, occurrence, recurrence_key
 from debacal.selection import capture_selection
 from debacal.selection_export import export_selection, selection_events
-from debacal.store import Store, HistoryConflict
+from debacal.store import EventOwnershipConflict, Store, HistoryConflict
 
 ZONE = ZoneInfo('Europe/Berlin')
 START = datetime(2026, 11, 2, 9, tzinfo=ZONE)
@@ -257,7 +258,16 @@ def test_empty_stale_and_duplicate_uid_sources_fail_without_writes():
             export_selection(store, [replace(master, title='Stale')], 'single')
         assert database_state(store) == before
         other = replace(master, id='another', title='Different resource')
-        store.apply_remote([other])
+        with pytest.raises(EventOwnershipConflict, match='UID'):
+            store.apply_remote([other])
+        assert database_state(store) == before
+        store.apply_remote([replace(other, ical_uid='another@example.invalid')])
+        # Simulate a legacy/corrupt row predating ownership enforcement. The
+        # normal write API must refuse this state, and export must still catch
+        # it when reading an older database rather than merging the resources.
+        with store._transaction():
+            store.connection.execute('UPDATE events SET data=? WHERE id=?',
+                                     (json.dumps(other.to_dict()), other.id))
         before = database_state(store)
         with pytest.raises(ValueError, match='share an iCalendar UID'):
             export_selection(store, [master, other], 'group')

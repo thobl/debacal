@@ -307,10 +307,10 @@ def test_confirm_recurring_candidate_removes_group_choices_but_preserves_confirm
     with Store(tmp_path / "db") as store:
         store.save_calendar(Calendar("other", "Other", "#123456"))
         source = master(candidate=True, group_id="options")
-        second_series = replace(source, id="second-series", start=source.start + timedelta(hours=2),
+        second_series = replace(source, id="second-series", ical_uid="second-series", start=source.start + timedelta(hours=2),
                                 end=source.end + timedelta(hours=2))
-        ordinary = replace(source, id="ordinary", recurrence_rule="")
-        confirmed = replace(ordinary, id="confirmed", candidate=False)
+        ordinary = replace(source, id="ordinary", ical_uid="ordinary", recurrence_rule="")
+        confirmed = replace(ordinary, id="confirmed", ical_uid="confirmed", candidate=False)
         other_calendar = replace(ordinary, id="other-calendar", calendar_id="other")
         original = [source, second_series, ordinary, confirmed, other_calendar]
         store.apply("Create choices", original)

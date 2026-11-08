@@ -20,10 +20,18 @@ from .schedule_replacement import ScheduleReplacement
 
 
 _EVENT_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.ical_uid'),''),id) ELSE id END"
+_SYNC_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.base_payload.event.ical_uid'),''),json_extract(data,'$.base_payload.event.id')) END"
+_EVENT_ALL_DAY_SQL = "CASE WHEN json_valid(data) THEN COALESCE(json_extract(data,'$.all_day'),0) ELSE 0 END"
+_EVENT_START_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.start'),1,10) END"
+_EVENT_END_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.end'),1,10) END"
 
 
 class HistoryConflict(ValueError):
     """The operation's events have changed since it was performed."""
+
+
+class EventOwnershipConflict(ValueError):
+    """A resource claims an ID or UID already owned by another resource."""
 
 
 class Store:
@@ -119,6 +127,10 @@ class Store:
                     self.set_setting("event_search_index_v1", True)
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_calendar_recurring_end ON events(calendar_id,recurring,end,start)")
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_calendar_uid ON events(calendar_id,({_EVENT_UID_SQL}))")
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_all_day_dates ON events(({_EVENT_END_DATE_SQL}),({_EVENT_START_DATE_SQL})) WHERE ({_EVENT_ALL_DAY_SQL})=1")
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_all_day_recurring_dates ON events(recurring,({_EVENT_END_DATE_SQL}),({_EVENT_START_DATE_SQL})) WHERE ({_EVENT_ALL_DAY_SQL})=1")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS sync_metadata_event ON sync_metadata(event_id)")
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS sync_metadata_calendar_uid ON sync_metadata(calendar_id,({_SYNC_UID_SQL}))")
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_groups ON events(calendar_id,group_id,start,end,id) WHERE group_id IS NOT NULL")
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_candidates ON events(calendar_id,group_id) WHERE candidate=1")
             self.connection.execute("CREATE INDEX IF NOT EXISTS outbox_calendar ON outbox(calendar_id,id)")
@@ -441,6 +453,51 @@ class Store:
             self.apply(f'Import {len(accepted.events)} event(s)', accepted.events)
         return accepted
 
+    def refresh_subscription(self, report, calendar_id: str):
+        """Apply a complete feed inventory without surrendering existing owners.
+
+        The last ownership check, removal of vanished resources, quarantine,
+        and writes share one SQLite transaction across all Store connections.
+        An invalid resource protects its previously cached UID from deletion.
+        """
+        from .ics_resources import ParseReport, RejectedResource, ResourceIssue, reject_duplicate_identities
+        from .import_preparation import reidentify_imports
+
+        if any(event.calendar_id != calendar_id for event in report.events):
+            raise EventOwnershipConflict('Subscription resources must belong to their calendar.')
+        with self._transaction():
+            previous = self.list_events(calendar_ids=[calendar_id])
+            original_ids = {event.id for event in report.events}
+            accepted = reidentify_imports(report, existing_events=previous)
+            accepted = reject_duplicate_identities(accepted,
+                existing_events=self.get_events(event.id for event in accepted.events))
+            events, issues, rejected = [], list(accepted.issues), list(accepted.rejected)
+            for event in accepted.events:
+                try:
+                    self._assert_identity_owner(event.id, calendar_id, event.ical_uid)
+                except EventOwnershipConflict as error:
+                    resource_id = hashlib.sha256(event.ical_uid.encode()).hexdigest()[:12]
+                    issues.append(ResourceIssue(resource_id, str(error)))
+                    rejected.append(RejectedResource(event.ical_uid, event.raw_ics, resource_id, str(error)))
+                else:
+                    events.append(event)
+            accepted = ParseReport(tuple(events), tuple(issues), tuple(rejected))
+            ids = {event.id for event in events}
+            rejected_uids = {resource.uid for resource in rejected}
+            rejected_ids = original_ids - ids
+            protected = {event.id for event in previous
+                         if event.ical_uid in rejected_uids or event.id in rejected_ids}
+            delete_ids = {event.id for event in previous} - ids - protected if '' not in rejected_uids else set()
+            self.apply_remote(events, delete_ids, calendar_id=calendar_id,
+                              expected_uids={event.id: event.ical_uid for event in previous})
+            for resource in rejected:
+                self.set_quarantined_resource(calendar_id, resource.resource_id, resource.raw_ics, resource.reason)
+            rejected_keys = {resource.resource_id for resource in rejected}
+            for old in self.list_quarantined_resources(calendar_id):
+                if old['resource_id'] not in rejected_keys:
+                    self.delete_quarantined_resource(calendar_id, old['resource_id'])
+        return accepted
+
     @staticmethod
     def _search_projection(value: Event | dict[str, Any]) -> str:
         if isinstance(value, Event):
@@ -493,14 +550,9 @@ class Store:
         calendar_ids: Iterable[str] | None = None,
     ) -> list[Event]:
         clauses, params = [], []
-        if start is not None:
-            self._validate_datetime(start)
-            clauses.append("end >= ? AND (end > ? OR end = start)")
-            params.extend((start.timestamp(), start.timestamp()))
-        if end is not None:
-            self._validate_datetime(end)
-            clauses.append("start < ?")
-            params.append(end.timestamp())
+        if start is not None or end is not None:
+            clause, params = self._range_clause(start, end)
+            clauses.append(clause)
         if calendar_ids is not None:
             ids = list(calendar_ids)
             if not ids:
@@ -514,6 +566,44 @@ class Store:
         with self._lock:
             return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
 
+    @classmethod
+    def _range_clause(cls, start, end, *, all_day=None):
+        """SQL candidate overlap: instants for timed events, dates for all-day."""
+        timed, floating, timed_params, date_params = [], [], [], []
+        if start is not None:
+            cls._validate_datetime(start)
+            timed.append('end>=? AND (end>? OR end=start)')
+            timed_params.extend((start.timestamp(), start.timestamp()))
+            floating.append(f'({_EVENT_END_DATE_SQL})>?')
+            date_params.append(start.date().isoformat())
+        if end is not None:
+            cls._validate_datetime(end)
+            timed.append('start<?')
+            timed_params.append(end.timestamp())
+            # A query ending partway through a date includes that date;
+            # midnight is the exclusive boundary of the previous date.
+            operator = '<=' if any((end.hour, end.minute, end.second, end.microsecond)) else '<'
+            floating.append(f'({_EVENT_START_DATE_SQL}){operator}?')
+            date_params.append(end.date().isoformat())
+        if start is not None and end is not None and end.timestamp() <= start.timestamp():
+            timed.append('0')
+        timed_clause = f'(({_EVENT_ALL_DAY_SQL})=0 AND {" AND ".join(timed)})'
+        date_clause = f'(({_EVENT_ALL_DAY_SQL})=1 AND {" AND ".join(floating)})'
+        if all_day is not None:
+            return (date_clause, date_params) if all_day else (timed_clause, timed_params)
+        return f'({timed_clause} OR {date_clause})', timed_params + date_params
+
+    @staticmethod
+    def _floating_timestamp(value: str, zone) -> float:
+        return datetime.fromisoformat(value[:10]).replace(tzinfo=zone).timestamp()
+
+    @classmethod
+    def _occurrence_order(cls, event, zone):
+        if event.all_day:
+            return (cls._floating_timestamp(event.start.date().isoformat(), zone),
+                    cls._floating_timestamp(event.end.date().isoformat(), zone), event.id)
+        return event.start.timestamp(), event.end.timestamp(), event.id
+
     def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
         """Load a legacy group without decoding unrelated calendar resources."""
         if not group_id:
@@ -524,41 +614,69 @@ class Store:
                 (calendar_id, group_id),
             )]
 
-    def query_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None) -> list[Event]:
-        """Query a view without materializing a series into stored events."""
+    def query_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
+                          *, issues: list | None = None) -> list[Event]:
+        """Project a view; optionally isolate and report over-budget sources.
+
+        Without ``issues`` a projection limit raises as before. With a list,
+        append ``(master, error)`` for each omitted source while keeping all
+        healthy output. A source is never silently or partially truncated.
+        """
         from .recurrence import expand_events_safe
         self._validate_datetime(start)
         self._validate_datetime(end)
-        if end.timestamp() <= start.timestamp():
+        if end.timestamp() <= start.timestamp() and end.date() <= start.date():
             raise ValueError("Occurrence range end must follow its start.")
         ids = list(calendar_ids) if calendar_ids is not None else None
         if ids == []:
             return []
         ordinary, masters = self._occurrence_sources(start, end, ids)
-        events, failures = expand_events_safe(ordinary + masters, start, end)
+        events, failures = expand_events_safe(ordinary + masters, start, end, range_issues=issues)
         self._quarantine_expansion_failures(failures)
         return events
 
     def _occurrence_sources(self, start: datetime, end: datetime, ids: list[str] | None,
                             ordinary_limit: int | None = None) -> tuple[list[Event], list[Event]]:
-        ordinary_query = "SELECT data FROM events WHERE recurring=0 AND end>=? AND (end>? OR end=start) AND start<?"
-        ordinary_params = [start.timestamp(), start.timestamp(), end.timestamp()]
         query, params = "SELECT data FROM events WHERE recurring=1", []
+        condition = ''
         if ids is not None:
             condition = " AND calendar_id IN (" + ",".join("?" for _ in ids) + ")"
-            ordinary_query += condition
-            ordinary_params.extend(ids)
             query += condition
             params.extend(ids)
-        if ordinary_limit is not None:
-            ordinary_query += " ORDER BY start,end,id LIMIT ?"
-            ordinary_params.append(ordinary_limit)
         with self._lock:
             own_transaction = not self.connection.in_transaction
             if own_transaction:
                 self.connection.execute("BEGIN")
             try:
-                ordinary = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(ordinary_query, ordinary_params)]
+                ordinary, rows = [], []
+                # Separate indexed searches keep the timed range selective;
+                # combining date and epoch conditions with OR scans every
+                # ordinary event when SQLite chooses its recurring index.
+                for all_day in (False, True):
+                    overlap, candidate_params = self._range_clause(start, end, all_day=all_day)
+                    projection = 'data'
+                    if ordinary_limit is not None:
+                        projection += ',start,end,id'
+                        if all_day:
+                            projection += (f',({_EVENT_START_DATE_SQL}) AS date_start,'
+                                           f'({_EVENT_END_DATE_SQL}) AS date_end')
+                    candidate_query = f'SELECT {projection} FROM events WHERE recurring=0 AND {overlap}{condition}'
+                    candidate_params.extend(ids or ())
+                    if ordinary_limit is None:
+                        ordinary.extend(Event.from_dict(json.loads(row['data'])) for row
+                                        in self.connection.execute(candidate_query, candidate_params))
+                    else:
+                        order = 'date_start,date_end,id' if all_day else 'start,end,id'
+                        rows.extend((all_day, row) for row in self.connection.execute(
+                            candidate_query + f' ORDER BY {order} LIMIT ?', [*candidate_params, ordinary_limit]))
+                if ordinary_limit is not None:
+                    def order(value):
+                        all_day, row = value
+                        return ((self._floating_timestamp(row['date_start'], start.tzinfo),
+                                 self._floating_timestamp(row['date_end'], start.tzinfo), row['id']) if all_day
+                                else (row['start'], row['end'], row['id']))
+                    ordinary = [Event.from_dict(json.loads(row['data'])) for _all_day, row
+                                in sorted(rows, key=order)[:ordinary_limit]]
                 masters = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
             finally:
                 if own_transaction:
@@ -571,12 +689,12 @@ class Store:
             self.set_quarantined_resource(master.calendar_id, resource_id, master.raw_ics or '', str(error))
 
     def upcoming_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
-                             *, limit: int = 10) -> list[Event]:
+                             *, limit: int = 10, issues: list | None = None) -> list[Event]:
         """Return only the earliest overlapping events, without expanding a full view."""
-        from .recurrence import RecurrenceError, expand_series
+        from .recurrence import RecurrenceError, RecurrenceRangeError, expand_series
         self._validate_datetime(start)
         self._validate_datetime(end)
-        if end.timestamp() <= start.timestamp():
+        if end.timestamp() <= start.timestamp() and end.date() <= start.date():
             raise ValueError("Occurrence range end must follow its start.")
         if type(limit) is not int or limit < 0:
             raise ValueError("The upcoming event limit must be a nonnegative integer.")
@@ -584,7 +702,7 @@ class Store:
         if not limit or ids == []:
             return []
         result, masters = self._occurrence_sources(start, end, ids, ordinary_limit=limit)
-        key = lambda event: (event.start.timestamp(), event.end.timestamp(), event.id)
+        key = lambda event: self._occurrence_order(event, start.tzinfo)
         failures = []
         for master in masters:
             try:
@@ -592,11 +710,15 @@ class Store:
                 if len(result) >= limit:
                     # Later starts cannot enter the current top N. Keep a tiny
                     # exclusive interval for equal-start ties and ongoing events.
-                    cutoff = min(end.timestamp(), max(start.timestamp(), result[-1].start.timestamp()) + 0.000001)
+                    cutoff = min(end.timestamp(), max(start.timestamp(), key(result[-1])[0]) + 0.000001)
                     if cutoff > start.timestamp():
                         upper = datetime.fromtimestamp(cutoff, end.tzinfo)
                 result.extend(expand_series(master, start, upper, limit=limit, truncate=True))
                 result = sorted(result, key=key)[:limit]
+            except RecurrenceRangeError as error:
+                if issues is None:
+                    raise
+                issues.append((master, error))
             except (ValueError, TypeError, OverflowError, KeyError):
                 failures.append((master, RecurrenceError("Unsupported or invalid recurrence rule.")))
         self._quarantine_expansion_failures(failures)
@@ -1068,6 +1190,7 @@ class Store:
         if event.recurring:
             from .recurrence import recurrence_set
             recurrence_set(event)
+        self._assert_identity_owner(event.id, event.calendar_id, event.ical_uid)
         self.connection.execute(
             """INSERT INTO events(id,calendar_id,start,end,data,recurring,group_id,candidate,search_text) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET calendar_id=excluded.calendar_id,
@@ -1076,6 +1199,51 @@ class Store:
             (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), self._json(event.to_dict()),
              event.recurring, event.group_id, event.candidate, self._search_projection(event)),
         )
+
+    def _assert_identity_owner(self, event_id: str, calendar_id: str, uid: str | None = None) -> None:
+        """Check the global ID and calendar-scoped UID under the write lock.
+
+        Native X-properties are untrusted transport metadata. Tombstones retain
+        ownership until their queued deletion and sync state have been cleared.
+        Callers must hold a transaction when checking before a mutation.
+        """
+        owner = self.connection.execute(
+            f"SELECT calendar_id,({_EVENT_UID_SQL}) AS uid FROM events WHERE id=?", (event_id,)).fetchone()
+        if owner and (owner['calendar_id'] != calendar_id or uid is not None and owner['uid'] != uid):
+            raise EventOwnershipConflict('This X-DEBACAL-ID belongs to another calendar resource; the existing event was preserved.')
+        pending = self.connection.execute('SELECT calendar_id,payload FROM outbox WHERE event_id=?', (event_id,)).fetchone()
+        if pending:
+            payload = json.loads(pending['payload']) if pending['payload'] else {}
+            pending_uid = payload.get('ical_uid') or payload.get('id')
+            if pending['calendar_id'] != calendar_id or uid is not None and pending_uid and pending_uid != uid:
+                raise EventOwnershipConflict('This X-DEBACAL-ID belongs to another pending resource; its change was preserved.')
+        for row in self.connection.execute('SELECT calendar_id,data FROM sync_metadata WHERE event_id=?', (event_id,)):
+            state = json.loads(row['data'])
+            original = (state.get('base_payload') or {}).get('event') or {}
+            original_uid = original.get('ical_uid') or original.get('id')
+            if row['calendar_id'] != calendar_id or uid is not None and original_uid and original_uid != uid:
+                raise EventOwnershipConflict('This X-DEBACAL-ID belongs to another synchronized resource; its identity was preserved.')
+        if uid is not None:
+            other = self.connection.execute(
+                f"SELECT id FROM events WHERE calendar_id=? AND ({_EVENT_UID_SQL})=? AND id<>? LIMIT 1",
+                (calendar_id, uid, event_id)).fetchone()
+            if other:
+                raise EventOwnershipConflict('This event UID already belongs to another event in this calendar; the existing event was preserved.')
+            reserved = self.connection.execute(
+                f"SELECT event_id FROM sync_metadata WHERE calendar_id=? AND ({_SYNC_UID_SQL})=? AND event_id<>? LIMIT 1",
+                (calendar_id, uid, event_id)).fetchone()
+            if reserved:
+                raise EventOwnershipConflict('This event UID belongs to another synchronized resource; its pending state was preserved.')
+
+    def _assert_remote_owners(self, upserts, delete_ids, calendar_id=None, expected_uids=None):
+        if calendar_id is not None and any(event.calendar_id != calendar_id for event in upserts):
+            raise EventOwnershipConflict('Remote replacements must belong to the synchronized calendar.')
+        for event in upserts:
+            self._assert_identity_owner(event.id, event.calendar_id, event.ical_uid)
+        for event_id in delete_ids:
+            if calendar_id is None:
+                raise ValueError('Remote deletions require their calendar identity.')
+            self._assert_identity_owner(event_id, calendar_id, (expected_uids or {}).get(event_id))
 
     def _snapshot(self, ids: Iterable[str]) -> dict[str, dict[str, Any] | None]:
         result: dict[str, dict[str, Any] | None] = dict.fromkeys(ids)
@@ -1368,12 +1536,14 @@ class Store:
         with self._transaction():
             self.connection.execute("DELETE FROM outbox WHERE id=?", (change_id,))
 
-    def apply_remote(self, upserts: Iterable[Event] = (), delete_ids: Iterable[str] = ()) -> None:
+    def apply_remote(self, upserts: Iterable[Event] = (), delete_ids: Iterable[str] = (), *,
+                     calendar_id: str | None = None, expected_uids: dict[str, str] | None = None) -> None:
         upserts, delete_ids = list(upserts), list(delete_ids)
         ids = [event.id for event in upserts] + delete_ids
         if len(ids) != len(set(ids)):
             raise ValueError("An event may appear only once in a remote update.")
         with self._transaction():
+            self._assert_remote_owners(upserts, delete_ids, calendar_id, expected_uids)
             if self._pending_rows(ids):
                 raise HistoryConflict("Remote changes conflict with pending local edits.")
             self._restore({event.id: event.to_dict() for event in upserts} | {event_id: None for event_id in delete_ids}, enqueue=False)
@@ -1400,6 +1570,8 @@ class Store:
         with self._transaction():
             if self.get_event(event_id) != expected:
                 raise HistoryConflict("This event changed after the conflict was reviewed. Review it again.")
+            self._assert_remote_owners(upserts, delete_ids, calendar_id,
+                                       {event_id: expected.ical_uid} if expected else None)
             pending = self._pending_rows([event_id, *ids])
             reviewed = set(reviewed_change_ids)
             current = {change["id"] for change in pending
@@ -1440,6 +1612,10 @@ class Store:
             if data is None:
                 self.connection.execute("DELETE FROM sync_metadata WHERE calendar_id=? AND event_id=?", (calendar_id, event_id))
             else:
+                source = (data.get('base_payload') or {}).get('event') or {}
+                if source.get('id', event_id) != event_id or source.get('calendar_id', calendar_id) != calendar_id:
+                    raise EventOwnershipConflict('The sync state does not belong to this calendar resource.')
+                self._assert_identity_owner(event_id, calendar_id, source.get('ical_uid') or source.get('id'))
                 self.connection.execute(
                     "INSERT INTO sync_metadata(calendar_id,event_id,data) VALUES (?,?,?) ON CONFLICT(calendar_id,event_id) DO UPDATE SET data=excluded.data",
                     (calendar_id, event_id, self._json(data)),

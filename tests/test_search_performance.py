@@ -61,7 +61,7 @@ class ProjectionStore:
     def query_occurrences(self, *args, **kwargs):
         raise AssertionError('Agenda must not expand its complete date range.')
 
-    def upcoming_occurrences(self, start, end, calendars, *, limit):
+    def upcoming_occurrences(self, start, end, calendars, *, limit, issues=None):
         self.upcoming_reads.append((start, end, tuple(calendars), limit))
         return sorted((value for value in self.events.values() if value.calendar_id in calendars
                        and overlaps(value, start, end)), key=lambda value: (value.start, value.end, value.id))[:limit]

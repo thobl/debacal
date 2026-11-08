@@ -26,7 +26,7 @@ from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
 from .ics_resources import ParseReport, ResourceIssue, RejectedResource, _safe_reason, reject_duplicate_identities
 from .import_sources import MAX_IMPORT_BYTES
 from .models import Calendar, Event
-from .store import HistoryConflict, Store
+from .store import EventOwnershipConflict, HistoryConflict, Store
 
 
 def _digest(value: str | bytes) -> str:
@@ -480,10 +480,17 @@ class VdirsyncerBackend:
                 event = self._state_event(state)
                 if event:
                     id_by_uid[event.ical_uid] = state["event_id"]
-            remote, identity_issues, identity_protected = self._identify_inventory(remote, id_by_uid, existing)
+            owners = existing + store.get_events(event.id for event, _data in remote.values())
+            remote, identity_issues, identity_protected = self._identify_inventory(remote, id_by_uid, owners)
             protected_uids.update(identity_protected)
             issues.extend(ResourceIssue(item.resource_id, item.reason) for item in identity_issues)
             self._quarantine(store, calendar.id, path, identity_issues)
+            def ownership_issue(event, data, error):
+                resource_id = _digest(event.ical_uid)[:12]
+                issues.append(ResourceIssue(resource_id, str(error)))
+                protected_uids.add(event.ical_uid)
+                self._quarantine(store, calendar.id, path,
+                                 (RejectedResource(event.ical_uid, data or '', resource_id, str(error)),))
             changes = list(store.pending_changes(calendar.id))
             if calendar.read_only and changes:
                 raise ValueError("This calendar is read-only. Pending local changes cannot be uploaded; review its access settings.")
@@ -530,6 +537,9 @@ class VdirsyncerBackend:
                         staged.pop(uid)
                     elif marker.get("choice") == "local":
                         continue  # The hook revalidates actual server values before resolving.
+                except EventOwnershipConflict as error:
+                    ownership_issue(current or local or base, data or (local.raw_ics if local else ''), error)
+                    staged.pop(uid, None)
                 except HistoryConflict:
                     issues.append(ResourceIssue(_digest(uid)[:12], "A newer local edit was retained for the next sync."))
                 except (ValueError, TypeError, KeyError, OverflowError) as exc:
@@ -547,9 +557,12 @@ class VdirsyncerBackend:
                 if uid in pending_uids:
                     continue
                 try:
-                    store.apply_remote(upserts=[event])
-                    self._record(store, calendar.id, event, data)
+                    with store._transaction():
+                        store.apply_remote(upserts=[event], calendar_id=calendar.id)
+                        self._record(store, calendar.id, event, data)
                     received += 1
+                except EventOwnershipConflict as error:
+                    ownership_issue(event, data, error)
                 except HistoryConflict:
                     pass
             remote_ids = {event.id for event, _ in remote.values()}
@@ -559,8 +572,15 @@ class VdirsyncerBackend:
                 protected = mirror_report.unknown_uid or (previous is not None and previous.ical_uid in protected_uids)
                 if not protected and event_id not in remote_ids and event_id not in pending_ids:
                     try:
-                        store.apply_remote(delete_ids=[event_id])
-                        store.delete_sync_state(calendar.id, event_id)
+                        with store._transaction():
+                            store.apply_remote(delete_ids=[event_id], calendar_id=calendar.id,
+                                               expected_uids={event_id: previous.ical_uid} if previous else None)
+                            store.delete_sync_state(calendar.id, event_id)
+                    except EventOwnershipConflict as error:
+                        if previous:
+                            ownership_issue(previous, (state.get('base_payload') or {}).get('ics', ''), error)
+                        else:
+                            issues.append(ResourceIssue(_digest(event_id)[:12], str(error)))
                     except HistoryConflict:
                         pass
             conflicts = self._conflicts(path, calendar.id, id_by_uid)
@@ -590,8 +610,10 @@ class VdirsyncerBackend:
             }))
             code, output = self._run(calendar, path, password, pull=False, force_delete=force_delete)
             final_report = self._mirror_report(working, calendar.id)
+            owners = store.list_events(calendar_ids=[calendar.id]) + store.get_events(
+                event.id for event, _data in final_report.items.values())
             final, identity_issues, identity_protected = self._identify_inventory(
-                final_report.items, id_by_uid, store.list_events(calendar_ids=[calendar.id]))
+                final_report.items, id_by_uid, owners)
             final_protected = {item.uid for item in final_report.rejected} | identity_protected
             issues.extend(ResourceIssue(item.resource_id, item.reason) for item in final_report.rejected)
             issues.extend(ResourceIssue(item.resource_id, item.reason) for item in identity_issues)
@@ -614,7 +636,11 @@ class VdirsyncerBackend:
                     continue
                 if actual:
                     actual = self._identify(actual, change["event_id"])
-                    self._record(store, calendar.id, actual, actual_data)
+                    try:
+                        self._record(store, calendar.id, actual, actual_data)
+                    except EventOwnershipConflict as error:
+                        ownership_issue(actual, actual_data, error)
+                        continue
                 else:
                     store.delete_sync_state(calendar.id, change["event_id"])
                 store.acknowledge_change(change["id"])
@@ -628,8 +654,11 @@ class VdirsyncerBackend:
                     continue
                 event = self._identify(event, id_by_uid.get(uid, event.id))
                 try:
-                    store.apply_remote(upserts=[event])
-                    self._record(store, calendar.id, event, data)
+                    with store._transaction():
+                        store.apply_remote(upserts=[event], calendar_id=calendar.id)
+                        self._record(store, calendar.id, event, data)
+                except EventOwnershipConflict as error:
+                    ownership_issue(event, data, error)
                 except HistoryConflict:
                     pass
             for uid in remote.keys() - final.keys() - staged.keys() - final_protected:
@@ -637,8 +666,12 @@ class VdirsyncerBackend:
                     continue
                 event_id = remote[uid][0].id
                 try:
-                    store.apply_remote(delete_ids=[event_id])
-                    store.delete_sync_state(calendar.id, event_id)
+                    with store._transaction():
+                        store.apply_remote(delete_ids=[event_id], calendar_id=calendar.id,
+                                           expected_uids={event_id: uid})
+                        store.delete_sync_state(calendar.id, event_id)
+                except EventOwnershipConflict as error:
+                    ownership_issue(remote[uid][0], remote[uid][1], error)
                 except HistoryConflict:
                     pass
             return finish(received, sent, self._conflicts(path, calendar.id, id_by_uid))

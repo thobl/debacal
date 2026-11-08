@@ -103,7 +103,7 @@ def test_projection_tracks_remote_writes_conflict_acceptance_and_other_connectio
         worker.accept_remote("remote", initial.id, edited, reviewed, upserts=[accepted])
         assert index(store)[initial.id] == ("remote", "server accepted  shared place")
         assert store.events_revision() > first_revision
-        worker.apply_remote(delete_ids=[initial.id])
+        worker.apply_remote(delete_ids=[initial.id], calendar_id='remote')
         assert store.event_search_index() == []
     with Store(path) as reopened:
         assert reopened.event_search_index() == []

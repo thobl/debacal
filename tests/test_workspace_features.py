@@ -136,8 +136,8 @@ def test_year_shortcut_leap_year_navigation_drilldown_and_creation(desktop):
 def test_year_day_indicators_do_not_select_events_and_search_follows_other_year(desktop):
     app, window, store = desktop
     a = Event('a', 'local', 'First', START, START + timedelta(hours=1))
-    b = replace(a, id='b', title='Second', start=START + timedelta(days=2), end=START + timedelta(days=2, hours=1))
-    future = replace(a, id='future', title='Next year', start=START.replace(year=2027), end=(START + timedelta(hours=1)).replace(year=2027))
+    b = replace(a, id='b', ical_uid='b', title='Second', start=START + timedelta(days=2), end=START + timedelta(days=2, hours=1))
+    future = replace(a, id='future', ical_uid='future', title='Next year', start=START.replace(year=2027), end=(START + timedelta(hours=1)).replace(year=2027))
     store.apply('Create', [a, b, future])
     window.refresh()
     window.set_view('year')

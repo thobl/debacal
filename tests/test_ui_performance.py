@@ -246,7 +246,7 @@ def test_move_and_edit_load_only_selected_resources(desktop):
 def test_editor_snapshot_still_detects_group_members_added_during_dialog(desktop):
     _, window, store = desktop
     source = Event('group-source', 'local', 'Original', START, START + timedelta(hours=1), group_id='linked')
-    added = replace(source, id='group-added', title='Added while editing')
+    added = replace(source, id='group-added', ical_uid='group-added', title='Added while editing')
     store.apply_remote([source])
     window.refresh()
     window.select_event(source.id)

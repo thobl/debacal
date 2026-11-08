@@ -14,7 +14,7 @@ from debacal.models import Calendar, Event
 from debacal.recurrence import occurrence, occurrence_id, recurrence_key
 from debacal.schedule_authoring import expression_matches
 from debacal.sequence_document import document_expression
-from debacal.store import HistoryConflict, Store, _EVENT_UID_SQL
+from debacal.store import EventOwnershipConflict, Store, _EVENT_UID_SQL
 
 
 START = datetime(2026, 11, 10, 9, tzinfo=timezone.utc)
@@ -114,9 +114,9 @@ def test_import_ownership_check_and_write_block_a_concurrent_sync_upsert(tmp_pat
         assert report.events == (incoming,)
         assert store.get_event(incoming.id) == incoming
         assert len(store.history()) == 1
-        # Once the import commits, its outbox protects it from the server
-        # update until the real sync/conflict workflow reviews that change.
-        with pytest.raises(HistoryConflict, match='pending local edits'):
+        # Once the import commits, its identity protects it from the different
+        # UID arriving at the same native ID; pending edits remain untouched.
+        with pytest.raises(EventOwnershipConflict, match='X-DEBACAL-ID'):
             syncing.apply_remote([remote])
         store.undo()
         assert store.get_event(incoming.id) is None

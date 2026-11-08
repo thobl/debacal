@@ -95,7 +95,7 @@ def test_filtered_series_can_show_override_only_or_entire_matching_master(deskto
 def test_filter_clears_hidden_selection_so_delete_cannot_remove_an_unseen_event(desktop):
     window, store, _ = desktop
     hidden = Event('hidden', 'local', 'Other event', START, START + timedelta(hours=1))
-    shown = replace(hidden, id='shown', title='Match')
+    shown = replace(hidden, id='shown', ical_uid='shown', title='Match')
     store.apply('Create', [hidden, shown])
     window.refresh()
     window.select_event(hidden.id)

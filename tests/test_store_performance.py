@@ -27,6 +27,49 @@ def remote_calendar(identifier="remote"):
     return Calendar(identifier, "Synthetic remote", "#123456", kind="caldav")
 
 
+def test_optional_projection_issues_preserve_healthy_calendars_without_truncating_dense_series():
+    dense = event('dense', recurrence_rule='FREQ=HOURLY;COUNT=10001')
+    healthy = event('healthy', recurrence_rule='FREQ=DAILY;COUNT=3')
+    other = event('other', calendar_id='other')
+    end = START + timedelta(days=500)
+    with Store(':memory:') as store:
+        store.save_calendar(Calendar('other', 'Other calendar', '#123456'))
+        store.apply_remote([dense, healthy, other])
+        with pytest.raises(RecurrenceRangeError):
+            store.query_occurrences(START, end)
+        issues = []
+        found = store.query_occurrences(START, end, issues=issues)
+        assert {item.series_id or item.id for item in found} == {healthy.id, other.id}
+        assert len(found) == 4
+        assert len(issues) == 1 and issues[0][0] == dense
+        assert isinstance(issues[0][1], RecurrenceRangeError)
+        assert 'smaller date range' in str(issues[0][1])
+        assert store.get_event(dense.id) == dense
+        assert not store.list_quarantined_resources()
+
+
+def test_upcoming_projection_budget_is_reported_instead_of_quarantining_valid_sources():
+    from debacal.recurrence import expand_series
+    expensive = event('expensive', recurrence_rule='FREQ=HOURLY')
+    healthy = event('healthy', recurrence_rule='FREQ=DAILY;COUNT=3')
+    def project(master, *args, **kwargs):
+        if master.id == expensive.id:
+            raise RecurrenceRangeError('Projection budget exceeded. Choose a smaller date range.')
+        return expand_series(master, *args, **kwargs)
+    with Store(':memory:') as store:
+        store.apply_remote([expensive, healthy])
+        with patch('debacal.recurrence.expand_series', side_effect=project):
+            with pytest.raises(RecurrenceRangeError):
+                store.upcoming_occurrences(START, START + timedelta(days=7))
+            issues = []
+            found = store.upcoming_occurrences(START, START + timedelta(days=7), issues=issues)
+        assert len(found) == 3 and {item.series_id for item in found} == {healthy.id}
+        assert len(issues) == 1 and issues[0][0] == expensive
+        assert isinstance(issues[0][1], RecurrenceRangeError)
+        assert not store.list_quarantined_resources()
+        assert store.get_event(expensive.id) == expensive
+
+
 def test_event_revision_is_cross_connection_transactional_and_event_only(tmp_path):
     path = tmp_path / "calendar.sqlite"
     with Store(path) as store, Store(path) as worker:

@@ -8,6 +8,7 @@ retained for targeted interoperability tests and explicit integrations.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 from concurrent.futures import Future
 from queue import Queue
 from threading import Event as ThreadEvent, Lock, Thread
@@ -16,10 +17,9 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
-from .ics_resources import reject_duplicate_identities
 from .credentials import CredentialStore, CredentialError, account_key
 from .models import Calendar, Event
-from .store import HistoryConflict, Store
+from .store import EventOwnershipConflict, HistoryConflict, Store
 
 
 @dataclass(frozen=True)
@@ -317,25 +317,10 @@ class SyncEngine:
         if len(data) > 10 * 1024 * 1024:
             raise ValueError("The subscription exceeds the 10 MiB import limit.")
         report = parse_ics_report(data, calendar.id)
-        previous = store.list_events(calendar_ids=[calendar.id])
-        original_ids = {event.id for event in report.events}
-        report = reject_duplicate_identities(report, existing_events=previous)
-        events = report.events
-        ids = {e.id for e in events}
-        rejected_ids = original_ids - ids
-        rejected_uids = {resource.uid for resource in report.rejected}
-        protected = {event.id for event in previous if event.ical_uid in rejected_uids or event.id in rejected_ids}
-        delete_ids = {event.id for event in previous} - ids - protected if "" not in rejected_uids else set()
-        store.apply_remote(upserts=events, delete_ids=delete_ids)
-        rejected_ids = {resource.resource_id for resource in report.rejected}
-        for resource in report.rejected:
-            store.set_quarantined_resource(calendar.id, resource.resource_id, resource.raw_ics, resource.reason)
-        for old in store.list_quarantined_resources(calendar.id):
-            if old["resource_id"] not in rejected_ids:
-                store.delete_quarantined_resource(calendar.id, old["resource_id"])
+        report = store.refresh_subscription(report, calendar.id)
         for issue in report.issues:
             self._emit("issue", f"{calendar.name}: resource {issue.resource_id}: {issue.reason}", calendar.id)
-        self._emit("updated", f"{calendar.name}: {len(events)} events refreshed.", calendar.id)
+        self._emit("updated", f"{calendar.name}: {len(report.events)} events refreshed.", calendar.id)
 
     def _password(self, calendar):
         if not calendar.username:
@@ -383,6 +368,11 @@ class SyncEngine:
         store.set_sync_state(calendar_id, event.id, resource.href, resource.etag,
                              {"event": event.to_dict(), "ics": resource.data})
 
+    def _ownership_issue(self, store, calendar, event, raw, error):
+        resource_id = hashlib.sha256((event.ical_uid or event.id).encode()).hexdigest()[:12]
+        store.set_quarantined_resource(calendar.id, resource_id, raw or '', str(error))
+        self._emit('issue', f'{calendar.name}: resource {resource_id}: {error}', calendar.id)
+
     def _conflict(self, calendar, event_id, local, remote, reason, *, href="", remote_events=None):
         with self._lock:
             existing = next((c for c in self._conflicts.values()
@@ -424,23 +414,42 @@ class SyncEngine:
                         raise ValueError("The server returned duplicate event identities; synchronization was stopped safely.")
                     remote[event.id] = (event, resource)
             changes = {c["event_id"]: c for c in store.pending_changes(calendar.id)}
+            blocked_ids = set()
             for event_id, (event, resource) in remote.items():
+                try:
+                    with store._transaction():
+                        store._assert_identity_owner(event.id, calendar.id, event.ical_uid)
+                except EventOwnershipConflict as error:
+                    self._ownership_issue(store, calendar, event, resource.data, error)
+                    blocked_ids.add(event_id)
+                    continue
                 if event_id in changes:
                     continue
                 if event_id in states and states[event_id]["etag"] == resource.etag and store.get_event(event_id):
                     continue  # Do not mutate local/history snapshots for our own unchanged upload.
                 try:
-                    store.apply_remote(upserts=[event])
+                    with store._transaction():
+                        store.apply_remote(upserts=[event], calendar_id=calendar.id)
+                        self._record(store, calendar.id, event, resource)
+                except EventOwnershipConflict as error:
+                    self._ownership_issue(store, calendar, event, resource.data, error)
+                    continue
                 except HistoryConflict:
                     continue  # A newer local edit appeared while the network was busy.
-                self._record(store, calendar.id, event, resource)
             for event_id in states.keys() - remote.keys() - changes.keys():
                 try:
-                    store.apply_remote(delete_ids=[event_id])
-                    store.delete_sync_state(calendar.id, event_id)
+                    prior = (states[event_id].get('base_payload') or {}).get('event') or {}
+                    with store._transaction():
+                        store.apply_remote(delete_ids=[event_id], calendar_id=calendar.id,
+                                           expected_uids={event_id: prior.get('ical_uid') or prior.get('id')})
+                        store.delete_sync_state(calendar.id, event_id)
+                except EventOwnershipConflict as error:
+                    self._emit('issue', f'{calendar.name}: {error}', calendar.id)
                 except HistoryConflict:
                     pass
             for event_id, change in changes.items():
+                if event_id in blocked_ids:
+                    continue
                 with self._lock:
                     blocked = any(c.event_id == event_id and c.calendar_id == calendar.id
                                   for c in self._conflicts.values())
@@ -505,6 +514,16 @@ class SyncEngine:
             remote_event = next((e for e in matches if e.id == conflict.event_id), matches[0] if matches else None)
             changes = [c for c in store.pending_changes(calendar.id) if c["event_id"] == conflict.event_id]
             local_event = store.get_event(conflict.event_id)
+            try:
+                with store._transaction():
+                    store._assert_identity_owner(conflict.event_id, calendar.id,
+                                                 local_event.ical_uid if local_event else None)
+                    store._assert_remote_owners(matches, [], calendar.id)
+            except EventOwnershipConflict as error:
+                source = remote_event or local_event or conflict.remote or conflict.local
+                if source:
+                    self._ownership_issue(store, calendar, source, resource.data if resource else '', error)
+                return
             if local_event != conflict.local or tuple(matches) != conflict.remote_events:
                 refreshed = replace(conflict, local=local_event, remote=remote_event,
                                     remote_events=tuple(matches),
