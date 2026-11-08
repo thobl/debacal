@@ -45,7 +45,12 @@ def authoring_event(event, authoring_zone=None):
 
 
 def simplified_rule(event):
-    """Remove only constraints exactly equal to the DTSTART defaults."""
+    """Remove only clauses whose absence has the same DTSTART default.
+
+    Matching DTSTART alone does not prove redundancy: BYHOUR filters an
+    hourly rule, and BYDAY changes an implicit monthly day into all matching
+    weekdays. Keep interacting selectors unless their default is certain.
+    """
     parts = normalized_rule(event.recurrence_rule, event)
     if parts.get('FREQ') in {'DAILY', 'MONTHLY', 'YEARLY'} and 'BYWEEKNO' not in parts:
         # A first weekday affects weekly periods or week-number selection;
@@ -58,14 +63,24 @@ def simplified_rule(event):
     if parts.get('INTERVAL') == '1':
         parts.pop('INTERVAL')
     anchor = authoring_anchor(event)
-    defaults = {'BYHOUR': anchor.hour, 'BYMINUTE': anchor.minute, 'BYSECOND': anchor.second}
-    if parts.get('FREQ') in ('MONTHLY', 'YEARLY'):
-        defaults['BYMONTHDAY'] = anchor.day
-    if parts.get('FREQ') == 'YEARLY':
-        defaults['BYMONTH'] = anchor.month
+    frequency = parts.get('FREQ')
+    defaults = {}
+    if frequency in {'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'}:
+        defaults['BYHOUR'] = anchor.hour
+    if frequency in {'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'}:
+        defaults['BYMINUTE'] = anchor.minute
+    if frequency in {'MINUTELY', 'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'}:
+        defaults['BYSECOND'] = anchor.second
+    day_selectors = {'BYDAY', 'BYYEARDAY', 'BYWEEKNO', 'BYEASTER'}
+    if not parts.keys() & day_selectors:
+        if frequency == 'MONTHLY' or (frequency == 'YEARLY' and 'BYMONTH' in parts):
+            defaults['BYMONTHDAY'] = anchor.day
     for name, value in defaults.items():
         if parts.get(name) == str(value):
             parts.pop(name)
+    if (frequency == 'YEARLY' and not parts.keys() & (day_selectors | {'BYMONTHDAY'})
+            and parts.get('BYMONTH') == str(anchor.month)):
+        parts.pop('BYMONTH')
     return ';'.join(f'{name}={value}' for name, value in sorted(parts.items()))
 
 
@@ -175,7 +190,7 @@ def displayed_schedule(event):
             raise RecurrenceError('Occurrences with different all-day settings keep their standard exceptions; a single sequence cannot describe them.')
         if item.all_day and (item.start.time() != time.min or item.end.time() != time.min):
             raise RecurrenceError('All-day exceptions with explicit clocks retain their complete scheduling document.')
-        if not _valid_wall(item.start):
+        if not item.all_day and not _valid_wall(item.start):
             raise RecurrenceError('An occurrence uses a nonexistent local time. Its standard exception is preserved.')
         nominal.add(key)
         actual.append(recurrence_key(item.start, event.all_day))
@@ -210,7 +225,9 @@ def canonical_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     for key, payload in event.recurrence_overrides.items():
         if key not in event.excluded_dates:
             item = Event.from_dict(payload)
-            values.append(item.start.astimezone(authoring_zone or event_zone(event)))
+            zone = authoring_zone or event_zone(event)
+            values.append(datetime.combine(item.start.date(), time.min, zone) if item.all_day
+                          else item.start.astimezone(zone))
             if len(values) > limit:
                 raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences.')
     anchor_key = recurrence_key(authoring_anchor(event, authoring_zone), event.all_day)
@@ -402,7 +419,8 @@ def _tail_expression(event, *, authoring_zone=None):
                 # underlying rule instances precede this tail cursor. A
                 # bounded source consumes only its remaining COUNT here.
                 trial_tail = expression_for_regular(**options, count=1)
-                trial = compile_sequence((reconstruct_sequence([candidate], anchor=anchor, prefer_dates=False) + ' ' + trial_tail).strip(), anchor, all_day=event.all_day)
+                trial = compile_sequence((reconstruct_sequence([candidate], anchor=anchor, prefer_dates=False,
+                    all_day=event.all_day) + ' ' + trial_tail).strip(), anchor, all_day=event.all_day)
             except PatternError:
                 continue
             if _rule_shape(replace(authoring_event(event, anchor.tzinfo), recurrence_rule=trial.recurrence_rule)) == _rule_shape(event):
@@ -429,7 +447,7 @@ def _tail_expression(event, *, authoring_zone=None):
     # still put the cursor at the first unaffected tail member.
     # A jump into an ongoing regular tail describes that tail's phase, rather
     # than an arbitrary list of dates, so retain compact offset instructions.
-    prefix = reconstruct_sequence(ordered, anchor=anchor, prefer_dates=False)
+    prefix = reconstruct_sequence(ordered, anchor=anchor, prefer_dates=False, all_day=event.all_day)
     result = (prefix + ' ' + tail).strip()
     if not expression_matches(event, result, authoring_zone=anchor.tzinfo):
         raise RecurrenceError('This recurrence cannot be represented by a complete custom sequence. Its rule is preserved.')
@@ -473,12 +491,14 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
             prefix.append(cursor)
             if len(prefix) > DEFAULT_LIMIT:
                 raise RecurrenceError('The coincident prefix exceeds the compact authoring limit.')
-            text = reconstruct_sequence(prefix, anchor=authoring_anchor(event, authoring_zone), prefer_dates=False)
+            text = reconstruct_sequence(prefix, anchor=authoring_anchor(event, authoring_zone),
+                                        prefer_dates=False, all_day=event.all_day)
             expression = text + ' ' + expression[expression.lower().rfind('every('):]
             values = None
         else:
             values = canonical_starts(event, authoring_zone=authoring_zone)
-            expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone))
+            expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone),
+                                              all_day=event.all_day)
         if not expression_matches(event, expression, authoring_zone=authoring_zone):
             raise RecurrenceError('The compact occurrence sequence could not retain its multiplicities.')
         return SequenceAuthoring(expression, values, unbounded)
@@ -521,7 +541,7 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
         if not expression_matches(event, expression, authoring_zone=authoring_zone):
             raise
         return SequenceAuthoring(expression, None, False)
-    expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone))
+    expression = reconstruct_sequence(values, anchor=authoring_anchor(event, authoring_zone), all_day=event.all_day)
     regular = RegularSchedule.from_rule(displayed.recurrence_rule, authoring_anchor(displayed),
                                         all_day=displayed.all_day)
     if regular is not None and regular.count is not None and regular.count > 1:

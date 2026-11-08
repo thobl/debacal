@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from heapq import merge
+from math import gcd
 from typing import Iterable
 from urllib.parse import quote, unquote
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from dateutil.rrule import rruleset, rrulestr
 from .models import Event
 from .event_duration import add_elapsed, elapsed_duration, end_for, parse_duration_spec, same_duration
 from .schedule_replacement import ScheduleReplacement
+from .recurrence_budget import BoundedRule
 
 
 MAX_MINUTELY_COUNT = 10000
@@ -260,37 +262,125 @@ def canonical_rule(rule: str, master: Event) -> str:
     return ";".join(parts)
 
 
-def _seek_rule(rule: str, start: datetime, after: datetime | None) -> tuple[str, datetime]:
-    """Skip whole simple periods without changing the rule's local phase.
+_STATIC_PERIOD_FIELDS = {'FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST', 'BYDAY',
+                         'BYHOUR', 'BYMINUTE', 'BYSECOND', 'BYSETPOS'}
+_WEEKDAY_NAMES = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
 
-    dateutil starts iteration at DTSTART even for xafter(). Calendar rules with
-    count-sensitive filters or complex month/year constraints retain that exact
-    path; plain daily/weekly schedules can start close to the requested window.
+
+def _static_periods(parts):
+    return (parts.get('FREQ') in {'HOURLY', 'DAILY', 'WEEKLY'}
+            and not parts.keys() - _STATIC_PERIOD_FIELDS
+            and all(day in _WEEKDAY_NAMES for day in parts.get('BYDAY', '').split(',') if day))
+
+
+def _seek_rule(rule: str, start: datetime, after: datetime | None) -> tuple[str, datetime]:
+    """Seek static clock/weekday periods while preserving phase and COUNT.
+
+    Complete daily/weekly clock sets repeat identically each period. Hourly
+    clock and weekday filters repeat after at most 168 phase positions. Count
+    those cycles arithmetically, including the partial original and replacement
+    periods, rather than asking dateutil to enumerate invisible history.
     """
-    if after is None:
-        return rule, start
     parts = dict(piece.split("=", 1) for piece in rule.split(";"))
-    if set(parts) - {"FREQ", "INTERVAL", "COUNT", "UNTIL", "WKST", "BYDAY"}:
+    if not _static_periods(parts):
         return rule, start
     frequency = parts.get("FREQ")
-    if frequency not in {"DAILY", "WEEKLY"}:
+    weekdays = _WEEKDAY_NAMES
+    selected_days = parts.get('BYDAY', '').split(',') if parts.get('BYDAY') else None
+    if selected_days is not None and any(day not in weekdays for day in selected_days):
         return rule, start
-    if "COUNT" in parts and "BYDAY" in parts:
-        weekday = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")[start.weekday()]
-        if frequency != "WEEKLY" or parts["BYDAY"] != weekday:
-            return rule, start
+    days = {weekdays.index(day) for day in selected_days} if selected_days else set(range(7))
     interval = int(parts.get("INTERVAL", "1"))
-    period_days = interval * (7 if frequency == "WEEKLY" else 1)
+    hours = sorted({int(value) for value in parts.get('BYHOUR', str(start.hour)).split(',')})
+    minutes = sorted({int(value) for value in parts.get('BYMINUTE', str(start.minute)).split(',')})
+    seconds = sorted({int(value) for value in parts.get('BYSECOND', str(start.second)).split(',')})
+    clock_hours = [start.hour] if frequency == 'HOURLY' else hours
+    clock_size = len(clock_hours) * len(minutes) * len(seconds)
+    before = (sum(hour < start.hour for hour in clock_hours) * len(minutes) * len(seconds)
+              + (sum(minute < start.minute for minute in minutes) * len(seconds)
+                 + (sum(second < start.second for second in seconds) if start.minute in minutes else 0)
+                 if start.hour in clock_hours else 0))
+
+    def positions(size):
+        if 'BYSETPOS' not in parts:
+            return size, None
+        selected = {value - 1 if value > 0 else size + value
+                    for value in map(int, parts['BYSETPOS'].split(','))}
+        selected = {value for value in selected if 0 <= value < size}
+        return len(selected), selected
+
+    if frequency == 'WEEKLY':
+        multiplicity, _ = positions(clock_size * (len(days) if selected_days else 1))
+        pattern = [True]
+        partial = 0  # The reference's weekday and clock repeat unchanged.
+    else:
+        multiplicity, selected_positions = positions(clock_size)
+        partial = before if selected_positions is None else sum(value < before for value in selected_positions)
+        cycle = (168 if frequency == 'HOURLY' else 7)
+        allowed_hours = set(hours) if 'BYHOUR' in parts else set(range(24))
+        pattern = []
+        for index in range(cycle // gcd(cycle, interval)):
+            phase = ((start.weekday() * 24 + start.hour + index * interval) % 168
+                     if frequency == 'HOURLY' else (start.weekday() + index * interval) % 7)
+            pattern.append(phase // 24 in days and phase % 24 in allowed_hours
+                           if frequency == 'HOURLY' else phase in days)
+    if not multiplicity or not any(pattern):
+        return '', start  # An empty static selector set is provably empty.
+    if after is None:
+        return rule, start
+    unit = timedelta(hours=1) if frequency == 'HOURLY' else timedelta(days=7 if frequency == 'WEEKLY' else 1)
     elapsed = after.astimezone(start.tzinfo).replace(tzinfo=None) - start.replace(tzinfo=None)
-    skipped = max(0, elapsed.days // period_days - 1)
+    skipped = max(0, elapsed // (unit * interval) - 1)
     if not skipped:
         return rule, start
     if "COUNT" in parts:
-        remaining = int(parts["COUNT"]) - skipped
+        rounds, remainder = divmod(skipped, len(pattern))
+        full_periods = rounds * sum(pattern) + sum(pattern[:remainder])
+        consumed = full_periods * multiplicity - partial * pattern[0] + partial * pattern[remainder]
+        remaining = int(parts["COUNT"]) - consumed
         if remaining <= 0:
             return "", start
         parts["COUNT"] = str(remaining)
-    return ";".join(f"{key}={value}" for key, value in parts.items()), start + timedelta(days=period_days * skipped)
+    return ";".join(f"{key}={value}" for key, value in parts.items()), start + unit * (interval * skipped)
+
+
+class _FloatingDateSet:
+    """Dateutil operations on floating dates, independent of local UTC offsets."""
+    def __init__(self, rules, zone):
+        self.rules, self.zone = rules, zone
+
+    def _restore(self, value):
+        return value.replace(tzinfo=self.zone) if value is not None else None
+
+    def __iter__(self):
+        return (self._restore(value) for value in self.rules)
+
+    def __getitem__(self, index):
+        value = self.rules[index]
+        return [self._restore(item) for item in value] if isinstance(value, list) else self._restore(value)
+
+    def before(self, value, inc=False):
+        return self._restore(self.rules.before(value.replace(tzinfo=timezone.utc, fold=0), inc=inc))
+
+    def after(self, value, inc=False):
+        return self._restore(self.rules.after(value.replace(tzinfo=timezone.utc, fold=0), inc=inc))
+
+    def between(self, after, before, inc=False, count=1):
+        return [self._restore(value) for value in self.rules.between(
+            after.replace(tzinfo=timezone.utc, fold=0), before.replace(tzinfo=timezone.utc, fold=0),
+            inc=inc, count=count)]
+
+    def xafter(self, value, count=None, inc=False):
+        return (self._restore(item) for item in self.rules.xafter(
+            value.replace(tzinfo=timezone.utc, fold=0), count=count, inc=inc))
+
+    def count(self):
+        return self.rules.count()
+
+
+def _floating_master(master):
+    return replace(master, start=datetime.combine(master.start.date(), time.min, timezone.utc),
+                   end=datetime.combine(master.end.date(), time.min, timezone.utc), timezone_id='UTC')
 
 
 def recurrence_set(master: Event, *, after: datetime | None = None):
@@ -300,10 +390,16 @@ def recurrence_set(master: Event, *, after: datetime | None = None):
     callers inspecting recurrence history should omit it. RDATE and EXDATE
     remain unchanged, including explicitly added dates before DTSTART.
     """
+    if master.all_day:
+        if after is not None and (after.tzinfo is None or after.utcoffset() is None):
+            raise ValueError('The recurrence boundary must include a timezone.')
+        boundary = after.replace(tzinfo=timezone.utc, fold=0) if after is not None else None
+        return _FloatingDateSet(_recurrence_set(_floating_master(master), after=boundary), event_zone(master))
     return _recurrence_set(master, after=after)
 
 
-def _recurrence_set(master: Event, *, after: datetime | None = None, include_dates: bool = True):
+def _recurrence_set(master: Event, *, after: datetime | None = None, include_dates: bool = True,
+                    work_limit=None):
     if after is not None and (after.tzinfo is None or after.utcoffset() is None):
         raise ValueError("The recurrence boundary must include a timezone.")
     rules = rruleset()
@@ -343,7 +439,9 @@ def _recurrence_set(master: Event, *, after: datetime | None = None, include_dat
             parsed = rrulestr(rule, dtstart=start)
             sought_rule, sought_start = _seek_rule(rule, start, after)
             if sought_rule:
-                rules.rrule(parsed if sought_start == start else rrulestr(sought_rule, dtstart=sought_start))
+                projected = parsed if sought_start == start else rrulestr(sought_rule, dtstart=sought_start)
+                rules.rrule(BoundedRule(projected, RecurrenceRangeError,
+                                       calendar_periods=not _static_periods(fields), limit=work_limit))
         except (ValueError, TypeError, OverflowError) as exc:
             raise RecurrenceError(f"Invalid recurrence rule: {exc}") from exc
     if include_dates:
@@ -478,12 +576,12 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
         if tail:
             old_compiled = compile_sequence(text, previous, all_day=master.all_day)
             from .patterns import shift_unbounded_expression
-            shifted, _ = shift_unbounded_expression(text, previous, current)
+            shifted, _ = shift_unbounded_expression(text, previous, current, all_day=master.all_day)
             new_compiled = compile_sequence(shifted, current, all_day=master.all_day)
             old, new = old_compiled.prefix_starts, new_compiled.prefix_starts
         else:
-            old = expand_sequence(text, previous)
-            new = expand_sequence(text, current)
+            old = expand_sequence(text, previous, all_day=master.all_day)
+            new = expand_sequence(text, current, all_day=master.all_day)
     except PatternError as error:
         raise RecurrenceError(str(error)) from error
     old_keys = [recurrence_key(value, master.all_day) for value in old]
@@ -707,7 +805,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
     Both previews and persisted edits use this same rule/exception projection.
     """
     def checked_wall(value):
-        if not _valid_wall_time(value):
+        if not edited.all_day and not _valid_wall_time(value):
             raise RecurrenceError(
                 "This move would use a local time that does not exist because of a daylight-saving transition. "
                 "Choose another time."
@@ -818,7 +916,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
             if actual_mapping is not None:
                 text = master.schedule_expression
                 if sequence_tail(text):
-                    text, _ = shift_unbounded_expression(text, previous_anchor, start)
+                    text, _ = shift_unbounded_expression(text, previous_anchor, start, all_day=master.all_day)
                 new_compiled = compile_sequence(text, start, all_day=master.all_day)
                 projected = reanchor_compiled_multiset(master, old_compiled, new_compiled,
                                                        start, end, actual_mapping)
@@ -861,7 +959,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
         # anchor also preserves its EXDATE when the program omits +0d.
         text = master.schedule_expression
         if sequence_tail(text):
-            text, _ = shift_unbounded_expression(text, master.start.astimezone(zone), start)
+            text, _ = shift_unbounded_expression(text, master.start.astimezone(zone), start, all_day=master.all_day)
             projected_expression = text
         compiled = compile_sequence(text, start, all_day=edited.all_day)
         fields = compiled.fields
@@ -885,7 +983,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 if expression_matches(master, master.schedule_expression, authoring_zone=zone):
                     try:
                         shifted_authoring = shift_unbounded_expression(master.schedule_expression,
-                            author_start, author_moved)
+                            author_start, author_moved, all_day=master.all_day)
                         compiled = compile_sequence(shifted_authoring[0], author_moved,
                                                     all_day=edited.all_day)
                     except PatternError as error:
@@ -979,6 +1077,10 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
 
 def overlaps(event: Event, start: datetime, end: datetime) -> bool:
     """Include point events at a range's start, preserving its exclusive end."""
+    if event.all_day:
+        begins_before_end = (event.start.date() < end.date()
+                             or event.start.date() == end.date() and end.time() != time.min)
+        return begins_before_end and event.end.date() > start.date()
     event_start, event_end = event.start.timestamp(), event.end.timestamp()
     if event_start == event_end:
         return start.timestamp() <= event_start < end.timestamp()
@@ -987,16 +1089,30 @@ def overlaps(event: Event, start: datetime, end: datetime) -> bool:
 
 def expand_series(master: Event, start: datetime, end: datetime, *, limit: int = 10000,
                   truncate: bool = False) -> list[Event]:
-    if start.tzinfo is None or end.tzinfo is None or end.timestamp() <= start.timestamp():
+    aware = start.tzinfo is not None and end.tzinfo is not None
+    ordered = aware and (end.replace(tzinfo=None) > start.replace(tzinfo=None) if master.all_day
+                         else end.timestamp() > start.timestamp())
+    if not ordered:
         raise ValueError("Occurrence range must have timezone-aware, ordered boundaries.")
     if truncate and limit <= 0:
         return []
     if not master.recurring:
         return [master] if overlaps(master, start, end) else []
-    zone = event_zone(master)
+    generation_master = _floating_master(master) if master.all_day else master
+    zone = event_zone(generation_master)
+    view_end = end.replace(tzinfo=timezone.utc, fold=0) if master.all_day else end
+
+    def order_value(item, endpoint='start'):
+        value = getattr(item, endpoint)
+        if master.all_day:
+            local = value if item.all_day else value.astimezone(start.tzinfo)
+            midnight = datetime.combine(local.date(), time.min, start.tzinfo)
+            return local.date().toordinal(), 0 if item.all_day else value.timestamp() - midnight.timestamp()
+        return value.timestamp()
+
     try:
         if master.all_day:
-            lower = start.astimezone(zone) - (master.end.replace(tzinfo=None) - master.start.replace(tzinfo=None))
+            lower = start.replace(tzinfo=timezone.utc, fold=0) - (generation_master.end - generation_master.start)
         elif master.duration_spec:
             days, seconds = parse_duration_spec(master.duration_spec)
             # Nominal day ends can normalize forward through a clock gap.
@@ -1022,8 +1138,8 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         # a repeated hour that can put fold=1 before an earlier UTC fold=0 date.
         # Merge UTC-sorted finite dates with the rule's valid chronological
         # stream so both the exclusive range boundary and top-N stop are safe.
-        rules = _recurrence_set(master, after=lower, include_dates=False)
-        initial = master.start.astimezone(zone)
+        rules = _recurrence_set(generation_master, after=lower, include_dates=False)
+        initial = generation_master.start.astimezone(zone)
         if initial.fold and master.recurrence_rule and (lower is None or initial.timestamp() >= lower.timestamp()):
             # Keep dateutil's existing rule-owned DTSTART deduplication. Its
             # generated anchor uses fold=0, even when DTSTART carries fold=1;
@@ -1031,7 +1147,7 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
             anchor = rules.before(initial, inc=True)
             if anchor is not None and anchor.replace(tzinfo=None) == initial.replace(tzinfo=None):
                 initial = anchor
-        explicit = [initial, *(key_datetime(key, master) for key in master.recurrence_dates)]
+        explicit = [initial, *(key_datetime(key, generation_master) for key in master.recurrence_dates)]
         explicit.sort(key=lambda value: value.timestamp())
         finite = (value for value in explicit if lower is None or value.timestamp() >= lower.timestamp())
         # A different-zone boundary makes dateutil compare instants rather
@@ -1040,17 +1156,19 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         generated = rules if lower is None else rules.xafter(lower.astimezone(timezone.utc), inc=True)
         regular = normalize_recurrence_stream(generated, all_day=master.all_day)
         for generated in merge(finite, regular, key=lambda value: value.timestamp()):
-            if generated.timestamp() >= end.timestamp():
+            if generated.timestamp() >= view_end.timestamp():
                 break
             if truncate and len(result) >= limit:
-                earliest = sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))[:limit]
+                earliest = sorted(result.values(), key=lambda item: (order_value(item), order_value(item, 'end'), item.id))[:limit]
                 result = {item.id: item for item in earliest}
-                if generated.timestamp() > earliest[-1].start.timestamp():
+                cursor_order = (generated.date().toordinal(), 0) if master.all_day else generated.timestamp()
+                if cursor_order > order_value(earliest[-1]):
                     break
             key = recurrence_key(generated, master.all_day)
             if key in master.recurrence_overrides or key in excluded:
                 continue
-            item = occurrence(master, generated, key)
+            actual = datetime.combine(generated.date(), time.min, event_zone(master)) if master.all_day else generated
+            item = occurrence(master, actual, key)
             if overlaps(item, start, end):
                 result[item.id] = item
             if not truncate and len(result) > limit:
@@ -1059,8 +1177,8 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         raise RecurrenceError(f"Could not expand recurrence: {exc}") from exc
     if not truncate and len(result) > limit:
         raise RecurrenceRangeError(f"This range exceeds {limit:,} occurrences. Choose a smaller date range.")
-    values = sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id)
-                    if truncate else (item.start.timestamp(), item.id))
+    values = sorted(result.values(), key=lambda item: (order_value(item), order_value(item, 'end'), item.id)
+                    if truncate else (order_value(item), item.id))
     return values[:limit] if truncate else values
 
 
@@ -1073,7 +1191,8 @@ def expand_events(events: Iterable[Event], start: datetime, end: datetime, *, li
     return sorted(result, key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))
 
 
-def expand_events_safe(events: Iterable[Event], start: datetime, end: datetime, *, limit: int = 10000):
+def expand_events_safe(events: Iterable[Event], start: datetime, end: datetime, *, limit: int = 10000,
+                       range_issues=None):
     """Isolate malformed resources; guard each valid resource independently.
 
     A broad view may contain many independent daily series. Their aggregate
@@ -1084,8 +1203,10 @@ def expand_events_safe(events: Iterable[Event], start: datetime, end: datetime, 
     for master in events:
         try:
             result.extend(expand_series(master, start, end, limit=limit))
-        except RecurrenceRangeError:
-            raise
+        except RecurrenceRangeError as error:
+            if range_issues is None:
+                raise
+            range_issues.append((master, error))
         except (ValueError, TypeError, OverflowError, KeyError) as exc:
             issues.append((master, RecurrenceError("Unsupported or invalid recurrence rule.")))
     return sorted(result, key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id)), tuple(issues)

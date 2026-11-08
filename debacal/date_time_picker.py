@@ -29,6 +29,13 @@ def range_duration(start, end, *, all_day=False):
     return end.replace(tzinfo=None) - start.replace(tzinfo=None) if all_day else elapsed_duration(start, end)
 
 
+def validate_range_order(start, end, *, all_day=False, allow_point=False):
+    """Check floating range order separately from timed instant order."""
+    duration = range_duration(start, end, all_day=all_day)
+    if duration < timedelta(0) or (duration == timedelta(0) and not allow_point):
+        raise ValueError('The end must be after the start.')
+
+
 def relocate_range(start, end, target, *, endpoint='start', all_day=False, duration_spec='', duration_zone=None):
     """Retain floating days, explicit nominal days, or exact elapsed time."""
     if all_day:
@@ -68,8 +75,7 @@ class DateTimeRangePicker(QDialog):
         # editable without inventing an end, while ordinary range drafts still
         # require a positive duration.
         self._allow_point = not all_day and end.timestamp() == start.timestamp()
-        if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not self._allow_point):
-            raise ValueError('The end must be after the start.')
+        validate_range_order(start, end, all_day=all_day, allow_point=self._allow_point)
         self.preferences = preferences or Preferences()
         self.endpoint, self.all_day = endpoint, bool(all_day)
         self.duration_spec = normalized_spec(duration_spec) if not all_day else ''
@@ -213,8 +219,7 @@ class DateTimeRangePicker(QDialog):
             spec = normalized_spec(duration_spec) if not self.all_day else ''
             validate_datetime(start, all_day=self.all_day)
             validate_datetime(end, all_day=self.all_day)
-            if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not self._allow_point):
-                raise ValueError('The end must be after the start.')
+            validate_range_order(start, end, all_day=self.all_day, allow_point=self._allow_point)
             if self.all_day and (start.time() != time.min or end.time() != time.min):
                 raise ValueError('All-day events use whole calendar dates.')
         except (ValueError, OverflowError) as exc:
@@ -242,7 +247,7 @@ class DateTimeRangePicker(QDialog):
         """Keep the duration and move Start when an earlier End is selected."""
         start = self.draft_start if start is None else start
         end = self.draft_end if end is None else end
-        if value.timestamp() <= start.timestamp():
+        if range_duration(start, value, all_day=self.all_day) <= timedelta(0):
             return self.relocate(start, end, value, endpoint='end')
         return start, value
 
@@ -542,9 +547,7 @@ class TimeRangeStrip(QWidget):
     def _valid_preview(self, draft):
         validate_datetime(draft[0], all_day=self.picker.all_day)
         validate_datetime(draft[1], all_day=self.picker.all_day)
-        if (draft[1].timestamp() < draft[0].timestamp()
-                or (draft[1].timestamp() == draft[0].timestamp() and not self.picker._allow_point)):
-            raise ValueError('The end must be after the start.')
+        validate_range_order(*draft, all_day=self.picker.all_day, allow_point=self.picker._allow_point)
         return draft
 
     def _set_preview(self, calculate):

@@ -90,7 +90,8 @@ class PreviewNavigation:
                 keys.update(set(master.recurrence_overrides) - set(master.excluded_dates))
             for key in keys:
                 nominal = key_datetime(key, master)
-                if nominal.astimezone(timezone.utc).astimezone(nominal.tzinfo).replace(tzinfo=None) != nominal.replace(tzinfo=None):
+                if (not master.all_day and
+                        nominal.astimezone(timezone.utc).astimezone(nominal.tzinfo).replace(tzinfo=None) != nominal.replace(tzinfo=None)):
                     continue
                 actual = (datetime.fromisoformat(master.recurrence_overrides[key]['start'])
                           if key in master.recurrence_overrides else nominal)
@@ -143,7 +144,8 @@ class PreviewNavigation:
                     *master.recurrence_overrides} - set(master.excluded_dates)
             for key in keys:
                 value = key_datetime(key, master)
-                if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) == value.replace(tzinfo=None):
+                if (master.all_day or
+                        value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) == value.replace(tzinfo=None)):
                     identifiers.add((master.id, key))
         return len(identifiers)
 
@@ -205,7 +207,8 @@ class PreviewNavigation:
             latest = None
             for key in keys:
                 value = key_datetime(key, master)
-                if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None):
+                if (not master.all_day and
+                        value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None)):
                     continue
                 if key in master.recurrence_overrides:
                     value = occurrence(master, value, key).start

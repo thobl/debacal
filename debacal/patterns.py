@@ -10,7 +10,7 @@ preferred day across consecutive month/year steps.
 from __future__ import annotations
 
 from calendar import monthrange
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from math import gcd
 import re
@@ -691,13 +691,25 @@ def _absolute(step, previous, anchor):
     raise PatternError('No next matching date exists within the supported years 1–9999.')
 
 
-def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMIT) -> list[datetime]:
+def _floating_cursor(value):
+    """Evaluate a DATE using a neutral clock, even when local midnight is absent."""
+    _aware(value)
+    if value.time() != time.min:
+        raise PatternError('Time entries require a timed event.')
+    return value.replace(tzinfo=timezone.utc, fold=0)
+
+
+def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMIT,
+                    *, all_day=False) -> list[datetime]:
     """Return emitted occurrences, retaining coincident starts in instruction order.
 
     The instruction budget includes every expanded step, even a repeated date
     even at a repeated start. Full dates are exact; partial dates and clocks
     advance. Zero relative offsets explicitly emit the existing cursor.
     """
+    if all_day:
+        values = expand_sequence(expression, _floating_cursor(anchor), limit)
+        return [_floating_cursor(value).replace(tzinfo=anchor.tzinfo) for value in values]
     _check_limit(limit)
     _aware(anchor)
     _validate_wall(anchor)
@@ -707,15 +719,14 @@ def expand_sequence(expression: str, anchor: datetime, limit: int = DEFAULT_LIMI
             raise PatternError('An indefinite sequence has no finite list of events. Browse its occurrences in the preview.')
         compiled = compile_sequence(expression, anchor, limit=limit)
         from dateutil.rrule import rrulestr
-        from .recurrence import normalize_recurrence_time
+        from .recurrence import normalize_recurrence_stream
         rule = compiled.recurrence_rule
         # Timed expansion uses aware local clocks. Stored all-day rules still
         # use DATE UNTIL, but this entry point expands a timed prototype.
         result = list(compiled.prefix_starts)
         result.extend(compiled.tail_prelude)
         shared = bool(result and _instant(result[-1]) == _instant(compiled.tail_start))
-        for value in rrulestr(rule, dtstart=anchor) if rule else ():
-            value = normalize_recurrence_time(value)
+        for value in normalize_recurrence_stream(rrulestr(rule, dtstart=anchor) if rule else ()):
             if _instant(value) < _instant(compiled.tail_start):
                 continue
             if _instant(value).isoformat() in compiled.excluded_dates:
@@ -880,6 +891,15 @@ def compile_sequence(expression: str, anchor: datetime, *, all_day=False,
     finite tails. COUNT counts tail occurrences including its cursor; UNTIL is
     an inclusive local calendar date and does not restrict the finite prefix.
     """
+    if all_day:
+        floating = _floating_cursor(anchor)
+        if anchor.tzinfo is not timezone.utc:
+            compiled = compile_sequence(expression, floating, all_day=True, limit=limit)
+            restore = lambda value: value.replace(tzinfo=anchor.tzinfo)
+            return replace(compiled, prefix_starts=tuple(map(restore, compiled.prefix_starts)),
+                           tail_start=restore(compiled.tail_start),
+                           duplicate_starts=tuple(map(restore, compiled.duplicate_starts)),
+                           tail_prelude=tuple(map(restore, compiled.tail_prelude)))
     tail = sequence_tail(expression)
     from dateutil.rrule import rrulestr
     from .recurrence import normalize_recurrence_time
@@ -1104,12 +1124,15 @@ def serialize_sequence(starts: Iterable[datetime], *, anchor=None) -> str:
     return _serialize(starts, False, anchor)
 
 
-def shift_unbounded_expression(expression: str, previous: datetime, current: datetime) -> tuple[str, str]:
+def shift_unbounded_expression(expression: str, previous: datetime, current: datetime,
+                               *, all_day=False) -> tuple[str, str]:
     """Move a regular tail and prefix, retaining count or shifting its end date.
 
     The name is retained for callers of the original unbounded-only helper;
     bounded every(...) uses exactly the same movement semantics.
     """
+    if all_day:
+        return shift_unbounded_expression(expression, _floating_cursor(previous), _floating_cursor(current))
     tail = sequence_tail(expression)
     if tail is None:
         raise PatternError('A regular every(...) tail is required.')
@@ -1460,8 +1483,12 @@ def simplify_sequence(starts: Iterable[datetime], *, anchor=None, prefer_dates=T
     return expression
 
 
-def reconstruct_sequence(starts: Iterable[datetime], *, anchor=None, prefer_dates=True) -> str:
+def reconstruct_sequence(starts: Iterable[datetime], *, anchor=None, prefer_dates=True,
+                         all_day=False) -> str:
     """Equivalent short instructions for a finite occurrence set."""
+    if all_day:
+        starts = [_floating_cursor(value) for value in starts]
+        anchor = _floating_cursor(anchor) if anchor is not None else None
     return simplify_sequence(starts, anchor=anchor, prefer_dates=prefer_dates)
 
 

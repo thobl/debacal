@@ -291,7 +291,9 @@ class RegularSchedule:
                     return None
                 allowed |= clamp_keys
             elif kind == 'YEARLY' and 'BYMONTHDAY' in parts:
-                if parts.get('BYMONTH', str(start.month)) != str(start.month):
+                # Without BYMONTH, a yearly BYMONTHDAY selects that day in
+                # every month, rather than DTSTART's single annual month.
+                if parts.get('BYMONTH') != str(start.month):
                     return None
                 allowed.add('BYMONTH')
             if kind not in REGULAR_KINDS or parts.keys() - allowed:
@@ -301,7 +303,12 @@ class RegularSchedule:
             rule_options = dict(clamp=clamp, preferred_day=preferred_day, selectors=selectors, week_start=week_start,
                                 overflow=overflow, range_span=range_span)
             base_rule = _parts(kind, interval, days, start=start, **rule_options)
-            if (days or selectors or preferred_day is not None) and rrulestr(base_rule, dtstart=start).after(start, inc=True) != start:
+            if overflow:
+                regenerated = dict(part.split('=', 1) for part in base_rule.split(';'))
+                if any(parts.get(name) != regenerated.get(name)
+                       for name in ('BYMONTHDAY', 'BYSETPOS', 'BYMONTH')):
+                    return None
+            if (days or selectors or preferred_day is not None or overflow) and rrulestr(base_rule, dtstart=start).after(start, inc=True) != start:
                 # DTSTART is still a set member in the calendar model. A rule
                 # beginning on a different weekday has an extra prototype and
                 # cannot truthfully use controls whose count includes it.

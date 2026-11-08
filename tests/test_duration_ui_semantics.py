@@ -61,29 +61,201 @@ def test_written_duration_units_distinguish_calendar_days_and_elapsed_hours(text
     assert actual == spec and duration == timedelta(seconds=seconds)
 
 
+@pytest.mark.parametrize('month,day,count,crossing_day', [(3, 1, 40, 28), (10, 1, 40, 24)])
+@pytest.mark.parametrize('existing', [False, True])
+def test_schedule_document_duration_updates_controls_save_reopen_and_dst_projection(
+        desktop, month, day, count, crossing_day, existing):
+    start = datetime(2026, month, day, 9, tzinfo=ZONE)
+    source = Event('document', 'local', 'Document duration', start, start + timedelta(days=1))
+    value = editor(desktop, source if existing else None, start=start)
+    value.pattern.setText(f'schedule{{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT={count}"}}')
+    assert not value.error.text(), value.error.text()
+    assert value.duration_spec == 'P1D' and value.duration.text() == '1d'
+    assert value.value(value.end) == start + timedelta(days=1)
+    value.save()
+    assert value.result() == QDialog.DialogCode.Accepted, value.error.text()
+    saved, = value.result_events
+    assert saved.duration_spec == 'P1D'
+    reopened = editor(desktop, saved)
+    assert reopened.duration_spec == 'P1D' and reopened.duration.text() == '1d'
+    restored, = reopened.build_events()
+    query = start.replace(day=crossing_day)
+    item, = expand_event(restored, query, query + timedelta(days=1))
+    assert item.start.hour == item.end.hour == 9
+    assert elapsed_duration(item.start, item.end) == timedelta(hours=23 if month == 3 else 25)
+
+
+@pytest.mark.parametrize('month,crossing_day', [(3, 28), (10, 24)])
+def test_schedule_document_can_remove_nominal_duration_without_changing_primary_range(desktop, month, crossing_day):
+    start = datetime(2026, month, 1, 9, tzinfo=ZONE)
+    source = Event('document', 'local', 'Document duration', start, start + timedelta(days=1),
+                   duration_spec='P1D', recurrence_rule='FREQ=DAILY;COUNT=40')
+    value = editor(desktop, source)
+    value.pattern.setText('schedule{"rule":"FREQ=DAILY;COUNT=40"}')
+    assert value.duration_spec == '' and value.duration.text() == '24h'
+    saved, = value.build_events()
+    assert saved.duration_spec == ''
+    restored, = editor(desktop, saved).build_events()
+    query = start.replace(day=crossing_day)
+    item, = expand_event(restored, query, query + timedelta(days=1))
+    assert elapsed_duration(item.start, item.end) == timedelta(hours=24)
+    assert item.end.hour == (10 if month == 3 else 8)
+
+
+def test_invalid_document_keeps_last_valid_duration_and_range(desktop):
+    start = datetime(2026, 10, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    value.pattern.setText('schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}')
+    before = value.value(value.start), value.value(value.end), value.duration_spec
+    value.pattern.setText('schedule{"duration_spec":"P2D","rule":false}')
+    assert (value.value(value.start), value.value(value.end), value.duration_spec) == before
+    with pytest.raises(ValueError):
+        value.build_events()
+
+
+def test_duration_control_can_replace_document_nominal_intent_without_reintroducing_it_on_reopen(desktop):
+    start = datetime(2026, 10, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    value.pattern.setText('schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}')
+    value.duration.setText('24h')
+    value.duration.editingFinished.emit()
+    value.pattern.editingFinished.emit()
+    assert value.duration_spec == ''
+    saved, = value.build_events()
+    assert saved.duration_spec == ''
+    reopened = editor(desktop, saved)
+    assert reopened.duration_spec == ''
+    saved_again, = reopened.build_events()
+    assert saved_again.duration_spec == ''
+    query = start.replace(day=24)
+    item, = expand_event(saved_again, query, query + timedelta(days=1))
+    assert item.end.hour == 8
+
+
+@pytest.mark.parametrize('month,crossing_day', [(3, 28), (10, 24)])
+@pytest.mark.parametrize('method,hours', [('duration', 24), ('end', 25), ('picker', 26)])
+@pytest.mark.parametrize('existing', [False, True])
+def test_control_range_edits_update_document_before_revisiting_its_text(
+        desktop, month, crossing_day, method, hours, existing):
+    start = datetime(2026, month, 1, 9, tzinfo=ZONE)
+    source = Event('document', 'local', 'Document', start, start + timedelta(days=1))
+    value = editor(desktop, source if existing else None, start=start)
+    value.pattern.setText('schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}')
+    if method == 'duration':
+        value.duration.setText('24h')
+        value.duration.editingFinished.emit()
+    elif method == 'end':
+        value.end.set_value(add_elapsed(start, timedelta(hours=hours)))
+        value.end.editingFinished.emit()
+    else:
+        value._accept_primary_range(start, add_elapsed(start, timedelta(hours=hours)), '')
+    assert not value.error.text(), value.error.text()
+    assert 'duration_spec' not in value.pattern.text()
+    for _ in range(2):
+        value.pattern.editingFinished.emit()
+        assert value.duration_spec == ''
+        assert elapsed_duration(value.value(value.start), value.value(value.end)) == timedelta(hours=hours)
+    saved, = value.build_events()
+    reopened = editor(desktop, saved)
+    reopened.pattern.editingFinished.emit()
+    restored, = reopened.build_events()
+    query = start.replace(day=crossing_day)
+    item, = [item for item in expand_event(restored, query, query + timedelta(days=1))
+             if item.start.date() == query.date()]
+    assert elapsed_duration(item.start, item.end) == timedelta(hours=hours)
+
+
+@pytest.mark.parametrize('month,crossing_day,hours', [(3, 28, 47), (10, 24, 49)])
+def test_duration_control_adds_nominal_intent_to_a_document_before_text_revisit(desktop, month, crossing_day, hours):
+    start = datetime(2026, month, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    value.pattern.setText('schedule{"rule":"FREQ=DAILY;COUNT=40"}')
+    value.duration.setText('2d')
+    value.duration.editingFinished.emit()
+    assert 'P2D' in value.pattern.text()
+    value.pattern.editingFinished.emit()
+    assert value.duration_spec == 'P2D'
+    saved, = value.build_events()
+    assert saved.duration_spec == 'P2D'
+    query = start.replace(day=crossing_day)
+    item, = [item for item in expand_event(saved, query, query + timedelta(days=1))
+             if item.start.date() == query.date()]
+    assert item.start.hour == item.end.hour == 9
+    assert elapsed_duration(item.start, item.end) == timedelta(hours=hours)
+
+
+def test_unchanged_range_leaves_document_text_cursor_and_undo_history_alone(desktop):
+    start = datetime(2026, 10, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    text = 'schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}'
+    value.pattern.setText(text)
+    value.pattern.setCursorPosition(12)
+    with patch.object(value.pattern, 'setText', wraps=value.pattern.setText) as rewritten:
+        value._set_range(value.value(value.start), value.value(value.end), duration_spec=value.duration_spec)
+        assert not rewritten.called
+    assert value.pattern.text() == text and value.pattern.cursorPosition() == 12
+
+
+def test_range_control_does_not_replace_pending_invalid_document_text_or_valid_draft(desktop):
+    start = datetime(2026, 10, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    value.pattern.setText('schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}')
+    valid_expression = value._draft.expression
+    valid_master = value._draft._edited_master
+    pending = 'schedule{"duration_spec":"P2D","rule":false}'
+    value.pattern.setText(pending)
+    value.duration.setText('24h')
+    value.duration.editingFinished.emit()
+    assert value.pattern.text() == pending
+    assert value._draft.expression == valid_expression
+    assert value._draft._edited_master == valid_master
+    with pytest.raises(ValueError):
+        value.build_events()
+
+
+def test_pending_document_projection_uses_its_own_duration_without_mutating_editor_controls(desktop):
+    start = datetime(2026, 10, 1, 9, tzinfo=ZONE)
+    value = editor(desktop, start=start)
+    value.schedule_mode.setCurrentData('repeat')
+    value.repeat.setCurrentData('RDATE')
+    value.pattern.blockSignals(True)
+    value.pattern.setText('schedule{"duration_spec":"P1D","rule":"FREQ=DAILY;COUNT=40"}')
+    value.pattern.blockSignals(False)
+    before = value.value(value.end), value.duration_spec
+    saved, = value.build_events()
+    assert saved.duration_spec == 'P1D' and saved.end == start + timedelta(days=1)
+    assert (value.value(value.end), value.duration_spec) == before
+
+
 def test_exact_twenty_four_hours_and_nominal_day_have_distinct_field_captions():
     start = datetime(2027, 3, 27, 9, tzinfo=ZONE)
     assert format_event_duration(start, add_elapsed(start, timedelta(hours=24))) == '24h'
     assert format_event_duration(start, add_duration(start, 'P1D'), duration_spec='P1D') == '1d'
 
 
-def test_floating_all_day_date_can_start_on_a_missing_local_midnight(desktop):
+@pytest.mark.parametrize('zone_name,parts', [('America/Sao_Paulo', (2018, 11, 4)),
+    ('Africa/Cairo', (2026, 4, 24)), ('Pacific/Apia', (2011, 12, 30))])
+def test_floating_all_day_date_can_start_on_a_missing_local_midnight(desktop, zone_name, parts):
     _, owned = desktop
-    zone = ZoneInfo('America/Sao_Paulo')
-    start = datetime(2018, 11, 4, tzinfo=zone)
-    end = datetime(2018, 11, 5, tzinfo=zone)
+    zone = ZoneInfo(zone_name)
+    start = datetime(*parts, tzinfo=zone)
+    end = start + timedelta(days=1)
     field = DateTimeField(PREFERENCES)
     owned.append(field)
     field.setAllDay(True)
     field.set_value(start)
     assert field.value().date() == start.date()
-    assert parse_datetime('4.11.2018', PREFERENCES, start, all_day=True).date() == start.date()
+    date_text = f'{start.day}.{start.month}.{start.year}'
+    assert parse_datetime(date_text, PREFERENCES, start, all_day=True).date() == start.date()
     with pytest.raises(ValueError, match='clocks change'):
-        parse_datetime('4.11.2018 00:00', PREFERENCES, start)
+        parse_datetime(date_text + ' 00:00', PREFERENCES, start)
     picker = DateTimeRangePicker(start, end, preferences=PREFERENCES, all_day=True)
     owned.append(picker)
     picker.accept()
     assert picker.result() == QDialog.DialogCode.Accepted
+    assert picker.duration == timedelta(days=1)
+    assert picker.set_start(end)
+    assert picker.draft_end.date() == (end + timedelta(days=1)).date()
     assert picker.duration == timedelta(days=1)
     source = Event('floating', 'local', 'A floating date', start, end, all_day=True)
     value = editor(desktop, source)
@@ -91,6 +263,23 @@ def test_floating_all_day_date_can_start_on_a_missing_local_midnight(desktop):
     assert value.result() == QDialog.DialogCode.Accepted, value.error.text()
     saved, = value.result_events
     assert saved.start.date() == start.date() and saved.end.date() == end.date()
+
+
+def test_save_detects_typed_all_day_date_change_even_when_two_midnights_share_an_instant(desktop):
+    zone = ZoneInfo('Pacific/Apia')
+    start = datetime(2011, 12, 30, tzinfo=zone)
+    source = Event('floating', 'local', 'A floating date', start, start + timedelta(days=1), all_day=True)
+    value = editor(desktop, source, display_zone=zone)
+    value.start.blockSignals(True)
+    value.start.set_value(start + timedelta(days=1))
+    value.start.blockSignals(False)
+    # Save can precede editingFinished. These different floating dates have
+    # equal timestamps, so instant-only change detection would leave End stale.
+    value.save()
+    assert value.result() == QDialog.DialogCode.Accepted, value.error.text()
+    saved, = value.result_events
+    assert saved.start.date() == (start + timedelta(days=1)).date()
+    assert saved.end.date() == (start + timedelta(days=2)).date()
 
 
 def test_new_event_default_duration_crosses_dst_as_elapsed_minutes(desktop):

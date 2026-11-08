@@ -197,7 +197,7 @@ def test_moving_policy_series_keeps_detached_range_at_its_original_identity(tmp_
             # 28 and a date prefix. Moving its whole two-day range to Feb 28
             # cannot fit while preserving that fixed tail cursor.
             history = store.history()
-            with pytest.raises(RecurrenceError, match='change that day or move only this event'):
+            with pytest.raises(RecurrenceError, match='move only this event|Update its rule explicitly'):
                 store.edit_future(selected, edited, expected_master=original, preserve_exceptions=True)
             assert store.list_events() == [original]
             assert store.history() == history

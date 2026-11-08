@@ -109,9 +109,9 @@ class Event:
                 raise ValueError("A custom schedule anchor must be a valid ISO date.") from exc
         if any(value.tzinfo is None or value.utcoffset() is None for value in (self.start, self.end)):
             raise ValueError("Event start and end must include a timezone.")
-        if self.end.timestamp() < self.start.timestamp():
+        if not self.all_day and self.end.timestamp() < self.start.timestamp():
             raise ValueError("The end must not be before the start.")
-        if self.all_day and self.end.timestamp() == self.start.timestamp():
+        if self.all_day and self.end.replace(tzinfo=None) <= self.start.replace(tzinfo=None):
             raise ValueError("All-day events must end after the start date.")
         if not self.ical_uid:
             object.__setattr__(self, "ical_uid", self.id)

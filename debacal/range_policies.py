@@ -284,7 +284,10 @@ def iter_cut_ranges(master: Event) -> Iterator[tuple[str, datetime, datetime]]:
     from .recurrence import (_recurrence_set, normalize_recurrence_stream,
                              recurrence_key)
     skip = set(master.excluded_dates) | set(master.recurrence_dates) | set(master.recurrence_overrides)
-    rules = _recurrence_set(master, include_dates=False)
+    # Export intentionally streams the complete four-digit calendar horizon.
+    # At most 119,988 monthly periods exist; views retain the smaller default
+    # budget, and the ICS range adapter separately caps exported exceptions.
+    rules = _recurrence_set(master, include_dates=False, work_limit=120000)
     for start in normalize_recurrence_stream(rules, all_day=master.all_day):
         key = recurrence_key(start, master.all_day)
         if key in skip:

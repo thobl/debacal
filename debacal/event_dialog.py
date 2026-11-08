@@ -21,7 +21,7 @@ from .calendar_choice import CalendarChoice
 from .choice_control import ChoiceControl
 from .date_time_fields import (DateTimeField, format_duration, format_event_duration,
                                parse_event_duration, validate_datetime)
-from .date_time_picker import DateTimeRangePicker, range_duration, relocate_range
+from .date_time_picker import DateTimeRangePicker, range_duration, relocate_range, validate_range_order
 from .event_duration import add_duration, add_elapsed, end_for, normalized_spec
 from .dialog_base import FormDialog, dialog_buttons
 from .event_schedule import ScheduleDraft, count_to_until, until_to_count
@@ -317,8 +317,9 @@ class EventDialog(FormDialog):
         self._divider(sections)
         self.schedule_section, scheduling = self._section(sections)
         scheduling.addWidget(self._heading('Schedule'))
-        self.schedule_mode = ChoiceControl([('Single', 'single'), ('Repeat', 'repeat'), ('Alternatives', 'alternatives')], self.preferences,
+        self.schedule_mode = ChoiceControl([('One event', 'single'), ('Repeating', 'repeat'), ('Alternative dates', 'alternatives')], self.preferences,
                                           icons={'single': 'single', 'repeat': 'series', 'alternatives': 'alternatives'})
+        self.schedule_mode.buttons['alternatives'].setToolTip('Alternative dates — confirming one removes the other choices.')
         self.schedule_mode_row = QHBoxLayout()
         self.schedule_mode_row.setContentsMargins(0, 0, 0, 0)
         self.schedule_mode_row.setSpacing(round(14 * scale))
@@ -647,10 +648,14 @@ class EventDialog(FormDialog):
         finally:
             self._loading = was_loading
 
-        if (not was_loading and hasattr(self, '_draft') and self._draft.range_policy is not None
-                and self.pattern.text() == self._draft.expression):
-            self._draft.refresh_range_policy(start, end, all_day=self.all_day.isChecked())
-            self._sync_schedule_controls()
+        if (not was_loading and hasattr(self, '_draft') and self.pattern.text() == self._draft.expression):
+            committed = self._draft.commit_reference_range(start, end, all_day=self.all_day.isChecked(),
+                                                          duration_spec=self.duration_spec)
+            if self._draft.range_policy is not None:
+                self._draft.refresh_range_policy(start, end, all_day=self.all_day.isChecked())
+                committed = True
+            if committed:
+                self._sync_schedule_controls()
 
     def value(self, field):
         self._validation_field = field
@@ -688,8 +693,9 @@ class EventDialog(FormDialog):
         def change():
             end = self.value(self.end)
             start = self.value(self.start)
-            changed = end.timestamp() != self._last_end.timestamp()
-            if end.timestamp() <= start.timestamp():
+            changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if self.all_day.isChecked()
+                       else end.timestamp() != self._last_end.timestamp())
+            if range_duration(start, end, all_day=self.all_day.isChecked()) <= timedelta(0):
                 start = self._relocate_range(end, endpoint='end')[0]
             self._set_range(start, end, duration_spec='' if changed else self.duration_spec)
             self._sync_ending()
@@ -1079,7 +1085,9 @@ class EventDialog(FormDialog):
             draft = deepcopy(self._draft)
             start, end = self.value(self.start), self.value(self.end)
             if self.pattern.text() != draft.expression:
-                draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(), detect=False)
+                self._read_expression(draft, detect=False)
+                self._adopt_expression_duration(draft)
+                end = self.value(self.end)
             draft.set_range_policy(policy, start, end, all_day=self.all_day.isChecked())
             self._draft = draft
             self._schedule_error = None
@@ -1100,8 +1108,8 @@ class EventDialog(FormDialog):
             self._loading = False
         def change():
             draft = deepcopy(self._draft)
-            draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked(),
-                                 detect=not self.pattern.hasFocus())
+            self._read_expression(draft, detect=not self.pattern.hasFocus())
+            self._adopt_expression_duration(draft)
             self._draft = draft
             self._schedule_error = None
             was_loading, self._loading = self._loading, True
@@ -1119,12 +1127,45 @@ class EventDialog(FormDialog):
         if not self._loading and self._draft.kind == 'custom':
             def finish():
                 draft = deepcopy(self._draft)
-                draft.set_expression(self.pattern.text(), self.value(self.start), all_day=self.all_day.isChecked())
+                self._read_expression(draft)
+                self._adopt_expression_duration(draft)
                 self._draft = draft
                 self._sync_schedule_controls()
                 self._remember_custom()
                 self._update_preview()
             self._report(finish, self.pattern)
+
+    def _prototype(self, start, end, *, duration_spec=None, duration_zone=None):
+        """One range/content projection for text validation and event creation."""
+        spec = self.duration_spec if duration_spec is None else duration_spec
+        zone = duration_zone or self.duration_zone
+        return Event(self.original.id if self.original else self._new_id,
+            self.calendar.currentData() or 'local', self.title.text().strip() or 'Untitled event',
+            start.astimezone(zone) if spec else start, end.astimezone(zone) if spec else end,
+            location=self.location.text(), description=self.description.toPlainText(),
+            all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives',
+            duration_spec=spec, timezone_id=getattr(zone, 'key', '') if spec else '')
+
+    def _read_expression(self, draft, *, detect=True):
+        start, end = self.value(self.start), self.value(self.end)
+        prototype = self._prototype(start, end)
+        self._validation_field = self.pattern
+        draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(),
+                             detect=detect, prototype=prototype)
+
+    def _adopt_expression_duration(self, draft):
+        start = self.value(self.start)
+        state = draft.document_duration(start)
+        if state is not None:
+            end, spec, zone = state
+            # _set_range can refresh controls, so commit the already validated
+            # document and its duration as one state change under the load guard.
+            was_loading, self._loading = self._loading, True
+            try:
+                self.duration_zone = zone
+                self._set_range(start, end, duration_spec=spec)
+            finally:
+                self._loading = was_loading
 
     def sequence_starts(self):
         return self._draft.starts(self.value(self.start), all_day=self.all_day.isChecked())
@@ -1135,11 +1176,14 @@ class EventDialog(FormDialog):
 
     def build_events(self):
         start, end = self.value(self.start), self.value(self.end)
+        duration_spec, duration_zone = self.duration_spec, self.duration_zone
         point = (self.original and self.original.start.timestamp() == self.original.end.timestamp()
                  and not self.all_day.isChecked())
-        if end.timestamp() < start.timestamp() or (end.timestamp() == start.timestamp() and not point):
+        try:
+            validate_range_order(start, end, all_day=self.all_day.isChecked(), allow_point=bool(point))
+        except ValueError:
             self._validation_field = self.end
-            raise ValueError('The end must be after the start.')
+            raise
         source = self.schedule_source()
         draft = self._draft
         single = self.has_group and self.scope.currentData() == 'single'
@@ -1152,21 +1196,15 @@ class EventDialog(FormDialog):
                 # Previewing or validating pending text is a pure projection.
                 # Only the explicit editor handlers commit a new draft.
                 draft = deepcopy(draft)
-                draft.set_expression(self.pattern.text(), start, all_day=self.all_day.isChecked(), detect=not self.pattern.hasFocus())
+                self._read_expression(draft, detect=not self.pattern.hasFocus())
+                state = draft.document_duration(start)
+                if state is not None:
+                    end, duration_spec, duration_zone = state
         if single:
             fields = ScheduleDraft.from_event().fields(start, all_day=self.all_day.isChecked())
         else:
             self._validation_field = self.pattern
-            prototype_start = start.astimezone(self.duration_zone) if self.duration_spec else start
-            prototype_end = end.astimezone(self.duration_zone) if self.duration_spec else end
-            prototype = Event(self.original.id if self.original else self._new_id,
-                              self.calendar.currentData() or 'local',
-                              self.title.text().strip() or 'Untitled event', prototype_start, prototype_end,
-                              location=self.location.text(), description=self.description.toPlainText(),
-                              all_day=self.all_day.isChecked(),
-                              candidate=self.schedule_mode.currentData() == 'alternatives',
-                              duration_spec=self.duration_spec,
-                              timezone_id=getattr(self.duration_zone, 'key', '') if self.duration_spec else '')
+            prototype = self._prototype(start, end, duration_spec=duration_spec, duration_zone=duration_zone)
             fields = draft.fields(start, end, all_day=self.all_day.isChecked(), prototype=prototype)
         self.schedule_replacement = bool(self.series and self.scope.currentData() != 'single' and
             (draft.configuration_changed or (source and source.recurring and draft.kind == 'once')))
@@ -1174,16 +1212,16 @@ class EventDialog(FormDialog):
             self.schedule_replacement = ScheduleReplacement.RESET
         stored_start, stored_end = ((start, end) if single else
                                    draft.primary_range(start, end, all_day=self.all_day.isChecked(),
-                                                       duration_spec=self.duration_spec))
-        if self.duration_spec:
-            stored_start, stored_end = stored_start.astimezone(self.duration_zone), stored_end.astimezone(self.duration_zone)
+                                                       duration_spec=duration_spec))
+        if duration_spec:
+            stored_start, stored_end = stored_start.astimezone(duration_zone), stored_end.astimezone(duration_zone)
         values = dict(id=self.original.id if self.original else self._new_id,
                       calendar_id=self.calendar.currentData() or 'local', title=self.title.text().strip() or 'Untitled event',
                       start=stored_start, end=stored_end, location=self.location.text(), description=self.description.toPlainText(),
                       all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives', **fields)
-        values['duration_spec'] = self.duration_spec
-        if self.duration_spec:
-            values['timezone_id'] = getattr(self.duration_zone, 'key', '')
+        values['duration_spec'] = duration_spec
+        if duration_spec:
+            values['timezone_id'] = getattr(duration_zone, 'key', '')
         event = replace(self.original, **values) if self.original else Event(**values)
         if self.original is None and self.series is None and event.recurrence_overrides:
             # A new draft has shared content controls and individual ranges.
@@ -1468,12 +1506,15 @@ class EventDialog(FormDialog):
     def _commit_pending_range(self):
         """Reconcile typed values even when Return saves before focus changes."""
         start, end = self.value(self.start), self.value(self.end)
-        start_changed = (start.timestamp() != self._last_start.timestamp() or
+        all_day = self.all_day.isChecked()
+        start_changed = ((start.replace(tzinfo=None) != self._last_start.replace(tzinfo=None)) if all_day else
+                         start.timestamp() != self._last_start.timestamp() or
                          self._range_needs_repair and start.replace(tzinfo=None) != self._last_start.replace(tzinfo=None))
-        end_changed = end.timestamp() != self._last_end.timestamp()
+        end_changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if all_day else
+                       end.timestamp() != self._last_end.timestamp())
         if start_changed and not end_changed:
             end = self._relocate_range(start)[1]
-        elif end_changed and end.timestamp() <= start.timestamp():
+        elif end_changed and range_duration(start, end, all_day=all_day) <= timedelta(0):
             start = self._relocate_range(end, endpoint='end')[0]
         spec = '' if end_changed else self.duration_spec
         previous_duration = self._duration_caption()

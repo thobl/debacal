@@ -255,6 +255,11 @@ After `schedule` comes strict JSON, with these optional fields:
 | `range_policy` | Optional `"cut"` for derived month-boundary ends; absent/empty keeps ordinary durations. |
 | `duration_spec` | Optional nominal timed duration, e.g. `"P1D"`; absent/empty retains exact elapsed duration. Also allowed on a moved range. |
 
+Entering a document in the editor commits its duration together with the
+schedule: a nominal duration adjusts the reference end, and removing it keeps
+the current endpoints as an exact elapsed range. The duration field immediately
+shows that choice. Invalid text leaves the last valid schedule and range intact.
+
 Missing fields mean empty fields. `schedule{}` follows the standard DTSTART
 default and means the reference alone; `none` excludes it. Generation uses
 canonical key/list ordering. Matching user text retains its whitespace.
