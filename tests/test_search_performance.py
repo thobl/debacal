@@ -187,20 +187,20 @@ def test_expanded_dates_keep_context_selection_and_pages_after_navigation_and_in
     parent = panel.item(0)
     parent.setExpanded(True)
     panel.load_more(parent)
-    child = parent.child(150)
+    child = parent.child(15)
     identifier = panel.event_id(child)
     panel.setCurrentItem(child)
     panel.set_row_selection({identifier})
     panel.set_range(context + timedelta(days=200), context + timedelta(days=207))
     panel.populate('proj')
     assert panel.item(0) is parent and panel.currentItem() is child
-    assert panel.result_event(identifier).start == context + timedelta(days=150)
+    assert panel.result_event(identifier).start == context + timedelta(days=15)
     panel.invalidate()
     panel.populate('proj')
-    assert panel.item(0).isExpanded() and panel.item(0).childCount() == 201
+    assert panel.item(0).isExpanded() and panel.item(0).childCount() == 21
     assert panel.selected_row_ids() == {identifier}
     assert panel.event_id(panel.currentItem()) == identifier
-    assert panel.result_event(identifier).start == context + timedelta(days=150)
+    assert panel.result_event(identifier).start == context + timedelta(days=15)
 
 
 @pytest.mark.parametrize('agenda', [False, True])

@@ -144,10 +144,10 @@ def test_explicit_row_selection_survives_repopulate_and_ordinary_root_is_single(
 
 @pytest.mark.parametrize(('rule', 'size'), [
     ('FREQ=DAILY', 10), ('FREQ=WEEKLY;INTERVAL=2', 10),
-    ('FREQ=DAILY;COUNT=250', 100), ('FREQ=DAILY;UNTIL=20271104T080000Z', 100),
-    ('freq=monthly;count=200', 100), ('', 100),
+    ('FREQ=DAILY;COUNT=250', 10), ('FREQ=DAILY;UNTIL=20271104T080000Z', 10),
+    ('freq=monthly;count=200', 10), ('', 10),
 ])
-def test_page_size_distinguishes_open_ended_rules_from_finite_resources(rule, size):
+def test_page_size_is_identical_for_open_ended_and_finite_resources(rule, size):
     assert page_size(master(rule)) == size
 
 
@@ -172,13 +172,15 @@ def test_infinite_pages_load_ten_more_without_mutating_the_resource(workspace):
     assert store.history() == previous_history and store.pending_changes() == previous_pending
 
 
-def test_finite_rdate_resource_keeps_hundred_row_page(workspace):
+def test_finite_rdate_resource_uses_ten_date_pages_through_its_final_page(workspace):
     _, store, panel = workspace
-    source = replace(master(''), recurrence_dates=tuple(recurrence_key(START + timedelta(days=day)) for day in range(1, 125)))
+    source = replace(master(''), recurrence_dates=tuple(recurrence_key(START + timedelta(days=day)) for day in range(1, 25)))
     store.apply('Create', [source])
     panel.populate('needle')
     parent = panel.item(0)
     parent.setExpanded(True)
-    assert len(children(panel, parent)) == 100
+    assert len(children(panel, parent)) == 10
     panel.load_more(parent)
-    assert len(children(panel, parent)) == 125
+    assert len(children(panel, parent)) == 20
+    panel.load_more(parent)
+    assert len(children(panel, parent)) == 25 and parent.childCount() == 25

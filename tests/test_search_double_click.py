@@ -150,11 +150,11 @@ def test_double_click_more_dates_loads_one_page_without_editing_a_replacement_ro
     parent = window.results.row_item(source.id)
     parent.setExpanded(True)
     QApplication.processEvents()
-    footer = parent.child(100)
+    footer = parent.child(10)
     window.results.scrollToItem(footer)
     QApplication.processEvents()
     point = window.results.visualItemRect(footer).center()
     QTest.mouseClick(window.results.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(window.results.viewport(), Qt.MouseButton.LeftButton, pos=point)
-    assert parent.childCount() == 201
+    assert parent.childCount() == 21
     assert not dialogs

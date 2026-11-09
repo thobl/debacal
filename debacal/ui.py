@@ -1931,6 +1931,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if text_focus:
             return super().eventFilter(obj, event)
         action = self.match_shortcut(event)
+        if (focus is self.results and self.results.is_paging_action(self.results.currentItem())
+                and action in ('edit_event', 'delete_event', 'copy_event')):
+            return True
         actions = {
             'new_event': self.create_event, 'edit_event': self.edit_event,
             'preferences': self.show_preferences,

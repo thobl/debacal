@@ -29,8 +29,7 @@ MASTER_ROLE = SUBTITLE_ROLE + 2
 MORE_ROLE = SUBTITLE_ROLE + 3
 EVENT_ROLE = SUBTITLE_ROLE + 4
 ROW_SCOPE_ROLE = SUBTITLE_ROLE + 5
-PAGE_SIZE = 100
-INFINITE_PAGE_SIZE = 10
+PAGE_SIZE = 10
 MAX_PAGES = 10
 CONTEXT_SCAN_LIMIT = 5000
 
@@ -50,11 +49,9 @@ def event_matches_query(event: Event, query: str, master: Event | None = None) -
     return not query or query in event_search_text(event) or (master is not None and query in event_search_text(master))
 
 
-def page_size(master):
-    """Keep an open-ended resource compact without shrinking finite pages."""
-    fields = {piece.partition('=')[0].strip().upper().removeprefix('RRULE:')
-              for piece in master.recurrence_rule.split(';')}
-    return PAGE_SIZE if not master.recurrence_rule or fields & {'COUNT', 'UNTIL'} else INFINITE_PAGE_SIZE
+def page_size(_master):
+    """Use the same bounded occurrence pages for every resource."""
+    return PAGE_SIZE
 
 
 def impossible_monthday_filter(rule):
@@ -93,8 +90,8 @@ class _ResultItem(QTreeWidgetItem):
 class SearchPanel(QTreeWidget):
     """One parent per matching resource; dated instances load on expansion.
 
-    Finite pages contain at most 100 rows, open-ended pages ten, with ten pages
-    per resource. Selecting a resource row means its complete series; a dated
+    Pages contain at most ten rows, with ten pages per resource.
+    Selecting a resource row means its complete series; a dated
     child is an independent single-event row. Seeking the
     current view inspects at most 5,000 nominal starts; very old dense series
     fall back to their beginning rather than scanning an unbounded history.
@@ -151,6 +148,7 @@ class SearchPanel(QTreeWidget):
         self._updating = False
         self._mouse_selecting = False
         self._auxiliary_press = None
+        self._paging_anchor_id = None
         self.currentItemChanged.connect(self._current_changed)
         self.itemExpanded.connect(self._expanded_item)
         self.itemCollapsed.connect(self._collapsed_item)
@@ -263,7 +261,7 @@ class SearchPanel(QTreeWidget):
             self.setCurrentItem(None)
 
     def cycle(self, direction):
-        rows = [item for item in self._visible_rows() if self.event_id(item)]
+        rows = [item for item in self._visible_rows() if self.event_id(item) or self.is_paging_action(item)]
         if not rows:
             return None
         current = self.currentItem()
@@ -271,6 +269,8 @@ class SearchPanel(QTreeWidget):
         item = rows[(index + direction) % len(rows)]
         if item is current:
             self._current_changed(item, item)
+        elif self.is_paging_action(item):
+            self.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
         else:
             self.setCurrentItem(item)
         self.scrollToItem(item)
@@ -663,15 +663,15 @@ class SearchPanel(QTreeWidget):
         return self.preferences.format_date(local.date(), weekday=True) + (
             ' · all day' if event.all_day else ' · ' + self.preferences.format_time(local))
 
-    def _placeholder(self, parent, title, subtitle='', *, more=False):
+    def _placeholder(self, parent, title, subtitle='', *, more=False, tooltip=''):
         item = _ResultItem([title])
         item.setData(SUBTITLE_ROLE, subtitle)
         item.setData(MORE_ROLE, more)
         item.setData(Qt.ItemDataRole.AccessibleTextRole, title)
         item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, subtitle)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        item.setToolTip(0, tooltip)
         if not more:
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
         if parent is None:
             self.addTopLevelItem(item)
         else:
@@ -762,20 +762,37 @@ class SearchPanel(QTreeWidget):
         if not state['finished']:
             state['iterator'] = chain(values[size:], state['iterator'])
             if state['pages'] < MAX_PAGES:
-                self._placeholder(item, 'More dates…', f'{state["pages"] * size:,} dates shown', more=True)
+                self._placeholder(item, 'More dates…', f'{state["pages"] * size:,} dates shown', more=True,
+                    tooltip=f'Load the next {size} dates (Enter). After {MAX_PAGES * size} dates, '
+                            'this control can restart near the calendar’s current view.')
             else:
                 self._placeholder(item, 'Show dates near current view',
-                                  f'{state["pages"] * size:,} dates shown', more='rebase')
+                    f'{state["pages"] * size:,} dates shown', more='rebase',
+                    tooltip=f'Choose a date range in the calendar, then activate this row (Enter) '
+                            f'to show {size} dates near that view. Other series keep their dates.')
         if remember:
             self._pages[master_id] = state['pages']
 
     def load_more(self, item):
         """Load a bounded page or explicitly restart near the visible calendar."""
-        if item is not None:
+        if item is None:
+            return
+        paging_focus = self.is_paging_action(self.currentItem())
+        anchor_id = self._paging_anchor_id
+        blocked = self.blockSignals(True)
+        try:
             if item.data(MORE_ROLE) == 'rebase':
                 self.show_dates_near_view(item.parent())
             else:
                 self._load_page(item.parent() if item.data(MORE_ROLE) is True else item)
+            if paging_focus:
+                # The old footer becomes the first newly loaded date. Keep
+                # the last event selection unchanged; Down can now reach that
+                # new date without treating page loading as event selection.
+                anchor = self._items_by_id.get(anchor_id)
+                self.setCurrentItem(anchor, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+        finally:
+            self.blockSignals(blocked)
 
     def show_dates_near_view(self, item):
         if item is None or item.data(MASTER_ROLE) not in self._masters:
@@ -809,7 +826,9 @@ class SearchPanel(QTreeWidget):
     def _collapsed_item(self, item):
         self._expanded.discard(item.data(MASTER_ROLE))
 
-    def _current_changed(self, current, _previous):
+    def _current_changed(self, current, previous):
+        if self.is_paging_action(current):
+            self._paging_anchor_id = self.event_id(previous) or self._paging_anchor_id
         if not self._updating and not self._mouse_selecting and self.event_id(current):
             self.result_selected.emit(self.event_id(current), QApplication.keyboardModifiers())
 
@@ -818,6 +837,18 @@ class SearchPanel(QTreeWidget):
             self.load_more(item)
         elif identifier := self.event_id(item):
             self.activated.emit(identifier)
+
+    def keyPressEvent(self, event):
+        if not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier:
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                self.cycle(-1 if event.key() == Qt.Key.Key_Up else 1)
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.is_paging_action(self.currentItem()):
+                self.load_more(self.currentItem())
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def disclosure_rect(self, item):
         """Return a visible series row's fold control in viewport coordinates."""
