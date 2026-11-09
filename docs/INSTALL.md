@@ -21,8 +21,8 @@ makepkg -p PKGBUILD.local -si
 
 This includes local source edits. To build the published release instead, use
 plain `makepkg -si` in that directory, or download
-`debacal-0.1.1-arch.tar.gz` from the
-[release](https://github.com/thobl/debacal/releases/tag/v0.1.1), extract it,
+`debacal-0.1.2-arch.tar.gz` from the
+[release](https://github.com/thobl/debacal/releases/tag/v0.1.2), extract it,
 review `PKGBUILD`, then run `makepkg -si` in the extracted directory.
 The release recipe downloads and verifies the matching source archive. Missing
 dependencies are installed using pacman; the build itself uses system Python
@@ -45,15 +45,15 @@ plain `makepkg -sif` there still builds the published release. The `-f` option
 allows rebuilding when a package file already exists.
 
 Restart Debacal with your usual profile after installation. Profiles, settings
-and stored passwords are retained. Each release uses a new source filename;
-cached `0.1.0` archives do not conflict with the `0.1.1` source.
+and stored passwords are retained. Each release uses a new source filename,
+so cached archives from older versions remain distinct.
 
 ## Other Linux distributions
 
 Install pipx using your distribution's package manager, then:
 
 ```sh
-pipx install https://github.com/thobl/debacal/releases/download/v0.1.1/debacal-0.1.1-py3-none-any.whl
+pipx install https://github.com/thobl/debacal/releases/download/v0.1.2/debacal-0.1.2-py3-none-any.whl
 debacal
 ```
 

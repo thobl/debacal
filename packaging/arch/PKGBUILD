@@ -1,6 +1,6 @@
 # Maintainer: thobl (https://github.com/thobl)
 pkgname=debacal
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Local-first desktop calendar with CalDAV sync and flexible event series'
 arch=('any')
@@ -9,7 +9,7 @@ license=('0BSD')
 depends=(
   'python>=3.11'
   'pyside6>=6.7' 'pyside6<7'
-  'python-icalendar>=6' 'python-icalendar<8'
+  'python-icalendar>=6.3' 'python-icalendar<8'
   'python-caldav>=2' 'python-caldav<4'
   'vdirsyncer>=0.21' 'vdirsyncer<0.22'
   'python-dateutil>=2.9' 'python-dateutil<3'
@@ -25,7 +25,7 @@ optdepends=(
 )
 source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 # Filled from the final release source archive; this recipe is excluded from it.
-sha256sums=('2c06bec35f574fa484aea25b7fca6a0564447a9dcf98c7bd07a0fbb8e71de394')
+sha256sums=('a9320e39c4e896c5a8b151ccc5311dcd4163c29202bf54ff2caf5e59187fb75d')
 
 build() {
   cd "${srcdir}/${pkgname}-${pkgver}"
