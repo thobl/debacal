@@ -61,17 +61,19 @@ def day_number_rect(left, width, scale):
     return QRectF(left + 11, 28 * scale, width - 20, math.ceil(28 * scale))
 
 
-def paint_day_state(painter, header, day_box, day, selected, today, widget):
-    """Use one visual language: selected header fill and today's square border."""
+def paint_day_state(painter, header, day, selected, today, widget, *, show_selection=True, tall=False):
+    """Keep date selection quiet and mark today with a shared text caption."""
     scale = display_scale(widget)
     colors = paint_colors(widget)
     painter.save()
-    if day == selected:
+    if show_selection and day == selected:
         painter.fillRect(header, colors.date_selection)
     if day == today:
-        painter.setPen(QPen(colors.accent, 2 * scale))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(day_box.adjusted(scale, scale, -scale, -scale))
+        label = (QRectF(header.left() + 8, header.bottom() - 18 * scale,
+                        header.width() - 18, 16 * scale) if tall
+                 else header.adjusted(8, 0, -8, 0))
+        text(painter, label, 'TODAY', colors.weekend, 7,
+             align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     painter.restore()
 
 
@@ -99,10 +101,10 @@ def _scheme_colors(scheme):
     colors = SimpleNamespace(**{key: QColor(getattr(scheme, key)) for key in (
         'background', 'panel', 'ink', 'muted', 'accent', 'weekend', 'line',
         'control_surface', 'selection', 'selection_edge', 'now', 'outside_month', 'weekend_background', 'on_accent')})
-    # A selected date must stand apart from adjacent-month shading. Reuse the
-    # palette's own selection shades so custom/light/dark themes remain coherent.
+    # Selection is a light hint at the date header, derived from the active
+    # theme rather than introducing another accent or filling a day column.
     colors.date_selection = QColor(*(
-        (first + second + 1) // 2 for first, second in zip(colors.selection.getRgb()[:3], colors.selection_edge.getRgb()[:3])))
+        (first + second + 1) // 2 for first, second in zip(colors.background.getRgb()[:3], colors.selection.getRgb()[:3])))
     return colors
 
 
@@ -381,7 +383,8 @@ class DayHeader(QWidget):
             if shade is not None:
                 p.fillRect(QRectF(x, 0, w, self.height()), shade)
             header = QRectF(x, 0, w, self.height())
-            paint_day_state(p, header, header, day, self.selected_day, current_day, self)
+            paint_day_state(p, header, day, self.selected_day, current_day, self,
+                            show_selection=len(self.days) > 1, tall=True)
             day_color = weekend_text(day, self.preferences, colors,
                                      colors.accent if today else colors.muted)
             text(p, weekday_label_rect(x, w, scale), self.preferences.weekday_name(day).upper(), day_color, WEEKDAY_SIZE, True)
@@ -575,10 +578,11 @@ class CalendarCanvas(QWidget):
         return QRectF(rect.right() - (3 + trailing) * scale - size,
                       rect.top() + 2 * scale, size, size)
 
-    def paint_confirmation(self, painter, rect, item):
+    def paint_confirmation(self, painter, rect, item, *, record=True):
         if rect is None:
             return
-        self.confirm_hits.append((rect, item.id))
+        if record:
+            self.confirm_hits.append((rect, item.id))
         colors = paint_colors(self)
         painter.setPen(QPen(colors.accent, 1.2))
         painter.setBrush(colors.panel)
@@ -1337,11 +1341,16 @@ class MonthCanvas(QWidget):
         self.data_changed()
         self.update()
 
-    def _paint_month_event(self, painter, rect, item, *, preview=False, before=False, after=False):
+    def _paint_month_event(self, painter, rect, item, *, preview=False, before=False, after=False,
+                           muted=False, record_confirmation=True):
         color = self.calendars[item.calendar_id].color if item.calendar_id in self.calendars else scheme_for(self).accent
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
+        muted = muted and not selected and not preview
+        colors = paint_colors(self)
+        if muted:
+            color = colors.muted.name()
         confirm = self.confirmation_rect(rect, item, preview, trailing=18 if after else 0)
-        style = event_colors(color, self, alpha=45 if preview else 40)
+        style = event_colors(color, self, alpha=22 if muted else 45 if preview else 40)
         edge = QColor(style.selected_outline if selected else style.outline)
         painter.setPen(QPen(edge, 2 if selected or preview else 1,
                             Qt.PenStyle.DashLine if preview or item.candidate else Qt.PenStyle.SolidLine)
@@ -1351,7 +1360,7 @@ class MonthCanvas(QWidget):
         primary = selected and self.is_primary_selected(item.id)
         if primary:
             painter.fillRect(QRectF(rect.left() + 3, rect.top() + 4, 3, rect.height() - 8), edge)
-        ink = QColor(style.ink)
+        ink = QColor(source_outline(colors.muted.name(), style.fill, 4.5) if muted else style.ink)
         if before:
             text(painter, QRectF(rect.left() + 7, rect.top(), 12, rect.height()), '‹', ink, 10, True)
         if after:
@@ -1361,10 +1370,10 @@ class MonthCanvas(QWidget):
         if confirm is not None:
             label_rect.setRight(confirm.left() - 4 * display_scale(self))
         painter.save()
-        painter.setClipRect(label_rect)
+        painter.setClipRect(label_rect, Qt.ClipOperation.IntersectClip)
         text(painter, label_rect, label, ink, 8)
         painter.restore()
-        self.paint_confirmation(painter, confirm, item)
+        self.paint_confirmation(painter, confirm, item, record=record_confirmation)
 
     def month_row_metrics(self):
         scale = display_scale(self)
@@ -1491,18 +1500,17 @@ class MonthCanvas(QWidget):
             day = self.start + timedelta(days=index)
             x, y = gutter + (index % 7) * width, self.header_height + (index // 7) * height
             rect = QRectF(x, y, width, height)
-            if day.month != self.month:
-                p.fillRect(rect, colors.outside_month)
             shade = weekend_fill(day, self.preferences, colors)
             if shade is not None:
                 p.fillRect(rect, shade)
             paint_day_state(p, QRectF(x, y, width, self.month_row_metrics()[0]),
-                            rect, day, self.selected_day, today, self)
+                            day, self.selected_day, today, self)
             p.setPen(QPen(colors.line, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
             number = QRectF(x + 10, y + 3 * scale, width - 18, day_label_height)
             text(p, number, str(day.day),
+                 colors.muted if day.month != self.month else
                  weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink), 10, True)
         p.setPen(QPen(colors.line, 1))
         for index in range(8):
@@ -1513,7 +1521,24 @@ class MonthCanvas(QWidget):
         for command in commands:
             if command[0] == 'event':
                 _kind, rect, item, preview, before, after = command
-                self._paint_month_event(p, rect, item, preview=preview, before=before, after=after)
+                row = min(5, max(0, int((rect.center().y() - self.header_height) / height)))
+                first_column = max(0, int((rect.left() - gutter) / width))
+                last_column = min(6, int((rect.right() - gutter) / width))
+                outside = [column for column in range(first_column, last_column + 1)
+                           if (self.start + timedelta(days=row * 7 + column)).month != self.month]
+                muted = bool(outside) and len(outside) == last_column - first_column + 1
+                self._paint_month_event(p, rect, item, preview=preview, before=before, after=after, muted=muted)
+                selected = item.id in self.selected_ids or item.id == self.selected_id
+                if outside and not muted and not preview and not selected:
+                    # Retain one connected bar and hit target across a month
+                    # boundary; only its outside-month portion is de-emphasized.
+                    for column in outside:
+                        p.save()
+                        p.setClipRect(QRectF(gutter + column * width, self.header_height + row * height,
+                                            width, height), Qt.ClipOperation.IntersectClip)
+                        self._paint_month_event(p, rect, item, before=before, after=after,
+                                                muted=True, record_confirmation=False)
+                        p.restore()
             else:
                 _kind, rect, label, size, align = command
                 text(p, rect, label, colors.muted, size, align=align)

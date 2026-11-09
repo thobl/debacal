@@ -258,7 +258,7 @@ def test_header_action_date_background_stays_in_its_header_and_coexists_with_tod
     selected = widget.grab().toImage()
     assert selected != original
     width = (widget.width() - widget.gutter) / 7
-    # Other headers remain unchanged, including today's outline when another
+    # Other headers remain unchanged, including today's label when another
     # date is chosen. The canvas below is a separate unaffected surface.
     left = int(widget.gutter + day_index * width) - 1
     right = int(widget.gutter + (day_index + 1) * width) + 2
@@ -268,7 +268,7 @@ def test_header_action_date_background_stays_in_its_header_and_coexists_with_tod
 
 
 @pytest.mark.parametrize('day_index', [1, 3])
-def test_month_action_date_header_preserves_today_border_and_event_area(surfaces, day_index):
+def test_month_action_date_header_preserves_today_label_and_event_area(surfaces, day_index):
     _, make = surfaces
     widget = make('month')
     original = widget.grab().toImage()
@@ -280,7 +280,7 @@ def test_month_action_date_header_preserves_today_border_and_event_area(surfaces
         0, body_top, widget.width(), widget.height() - body_top)
 
 
-def test_week_selected_header_fills_its_box_and_today_uses_a_border(surfaces):
+def test_week_selected_header_has_a_quiet_fill_and_today_has_no_border(surfaces):
     _, make = surfaces
     widget = make('header')
     colors = paint_colors(widget)
@@ -292,10 +292,10 @@ def test_week_selected_header_fills_its_box_and_today_uses_a_border(surfaces):
         assert image.pixelColor(round(x), round(y)) == colors.date_selection
     today_left = widget.gutter + 3 * width
     assert image.pixelColor(round(today_left + .8 * width), widget.height() - 8) == colors.background
-    assert image.pixelColor(round(today_left + 1), 40) not in (colors.line, colors.background)
+    assert image.pixelColor(round(today_left + 1), 40) == colors.background
 
 
-def test_month_today_border_and_selected_header_are_distinct_from_outside_month(surfaces):
+def test_month_date_selection_stays_in_header_and_adjacent_cells_have_no_fill(surfaces):
     _, make = surfaces
     widget = make('month')
     colors = paint_colors(widget)
@@ -306,12 +306,10 @@ def test_month_today_border_and_selected_header_are_distinct_from_outside_month(
     def pixel(column, row, horizontal=.6, vertical=.5):
         return image.pixelColor(round(widget.week_gutter + (column + horizontal) * width),
                                 round(widget.header_height + (row + vertical) * height))
-    assert pixel(3, 0) == colors.background  # Today is a border, not a cell fill.
-    assert pixel(3, 5) == colors.outside_month
+    assert pixel(3, 0) == colors.background
+    assert pixel(3, 5) == colors.background
     assert image.pixelColor(round(widget.week_gutter + 1.6 * width), widget.header_height + 8) == colors.date_selection
     assert pixel(1, 0) == colors.background  # Selection stays in the header.
-    edge = image.pixelColor(round(widget.week_gutter + 3 * width + 1), round(widget.header_height + height / 2))
-    assert edge != colors.line and edge != colors.background
 
 
 def test_selected_adjacent_month_date_uses_the_same_header_tint_without_changing_its_body(surfaces):
@@ -327,8 +325,8 @@ def test_selected_adjacent_month_date_uses_the_same_header_tint_without_changing
     x = round(widget.week_gutter + 1.6 * width)
     y = widget.header_height + 5 * height
     assert image.pixelColor(x, round(y + 8)) == colors.date_selection
-    assert image.pixelColor(x, round(y + height / 2)) == colors.outside_month
-    assert colors.date_selection != colors.outside_month
+    assert image.pixelColor(x, round(y + height / 2)) == colors.background
+    assert colors.date_selection != colors.background
 
 
 @pytest.mark.parametrize('kind', ['timed', 'month', 'all-day'])

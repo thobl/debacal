@@ -392,8 +392,12 @@ class YearView(QWidget):
         return self._number_fonts[key]
 
     def _text(self, painter, rect, value, color=None, size=9, bold=False, alignment=Qt.AlignmentFlag.AlignCenter,
-              *, number=False):
-        painter.setFont(self._number_font(rect, size, bold) if number else self._font(size, bold))
+              *, number=False, underline=False):
+        font = self._number_font(rect, size, bold) if number else self._font(size, bold)
+        if underline:
+            font = QFont(font)
+            font.setUnderline(True)
+        painter.setFont(font)
         painter.setPen(color if color is not None else paint_colors(self).ink)
         painter.drawText(rect, alignment, value if number else
                          painter.fontMetrics().elidedText(value, Qt.TextElideMode.ElideRight, max(0, int(rect.width()))))
@@ -448,11 +452,9 @@ class YearView(QWidget):
             identities = self.calendars_on_day(day)
             sources = [self.calendars[identity].color if identity in self.calendars else colors.muted for identity in identities]
             number_rect = paint_day_presence(painter, rect, sources, self.preferences, colors)
-            if day == self.selected_day or selected or preview or day == today:
+            if day == self.selected_day or selected or preview:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 pen = QPen(colors.line, 1.5 * scale)
-                if day == today:
-                    pen = QPen(colors.accent, 1.5 * scale)
                 if preview:
                     identity = min(self._preview_summaries[offset])
                     source = self.calendars.get(identity)
@@ -466,7 +468,7 @@ class YearView(QWidget):
             self._text(painter, number_rect, str(day.day),
                        weekend_text(day, self.preferences, colors, colors.accent if day == today else colors.ink),
                        10 if self.preferences.year_view_style == 'tints' else 8, selected or day == today,
-                       number=True)
+                       number=True, underline=day == today)
         painter.end()
 
     def _select_event(self, identity, modifiers):

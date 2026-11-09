@@ -170,8 +170,10 @@ by calendars in the same account and remain in the secure keyring.
   day-column boundaries and weekday labels, including reserved scrollbar space;
   hiding week numbers keeps the empty gutter to preserve that alignment.
   Click the mini calendar to jump.
-  In Day/Week/Month view, an accent border marks today; a filled date header
-  marks the selected action date. Selection leaves the day body unchanged.
+  In Day/Week/Month view, a small **TODAY** label marks the current date.
+  Week and Month use a light header tint for the selected action date;
+  Day omits this redundant selection cue. Adjacent-month dates and events
+  are muted instead of shading their cells.
 * **Year overview:** twelve month cards summarize which visible calendars have
   events each day. Calendar tracks show broad color bars beneath each date;
   Tinted day cells show soft color segments with solid edges. Each calendar
@@ -179,6 +181,7 @@ by calendars in the same account and remain in the secure keyring.
   Busy days show +N for additional calendars; hovering shows all calendar names
   and event counts. Click a month heading to open Month view. A day selects its
   date; double-click it to create an all-day event.
+  Today is bold and underlined; the selection keeps its separate marker.
   Click a week number to open that week. Week numbers appear by default in
   Month and Day/Week views too, and can be switched off in Calendar preferences.
   Right-click a day to inspect its events, including calendar names and color
@@ -232,15 +235,17 @@ by calendars in the same account and remain in the secure keyring.
   and calendar color; the calendar name is in the tooltip. Top-level results
   align with the search field. Repeating series expand using the disclosure at
   the right of their card; dated occurrences are indented below it, with bounded
-  **More…** pages: infinite series show ten
-  dates per page, finite schedules show 100. At the paging cap, navigate the
-  calendar and choose **Show dates near current view** to inspect another range.
+  **More dates…** pages of ten dates for both finite and infinite series.
+  Up/Down can focus this row; Enter loads the next page while retaining the
+  event selection. After 100 displayed dates, navigate the calendar and choose
+  **Show dates near current view** at the bottom of the expanded series to
+  inspect another range.
   A series root selects the whole
   series; a dated child selects only that occurrence, even when the calendar is
   in all-events mode. Their row highlights are independent. Ctrl+click combines
   roots and children with those meanings. Up/Down transfers focus to the results
   so Delete, copy and edit act on that selection. The query stays open while
-  browsing. Enter returns focus to the calendar; Escape clears search and
+  browsing. Enter activates the focused result or paging action; Escape clears search and
   restores the next ten events from visible calendars over the next 30 days.
   Search and upcoming events share a sidebar panel, so searching does not resize
   the calendar. The funnel beside the search field optionally filters the main
@@ -382,8 +387,8 @@ move/split behavior, correctness checks, and the operation test coverage.
 The event editor separates reference-range controls from a full-height month
 preview. Inline **Start**, **End**, and **Duration** fields define that range.
 When editing, compact scope buttons in the heading use the main view's icons and
-shortcuts. Choose **One event**, **Repeating**, or **Alternative dates**; the latter two share Daily, Weekly,
-Monthly, Yearly, and Custom controls. Alternatives are choices from which one
+shortcuts. Under Schedule, choose **Single**, **Series**, or **Choices**; the latter
+two share Daily, Weekly, Monthly, Yearly, and Custom controls. Choices are alternative dates from which one
 event can later be confirmed. Frequency choices use icons with tooltips; the
 separate **+** beside the schedule modes adds an occurrence with its own
 date and time.

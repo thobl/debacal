@@ -112,7 +112,7 @@ def test_weekend_background_is_consistent_in_header_timed_all_day_month_and_year
     image = month.grab().toImage()
     width = (month.width() - month.week_gutter) / 7
     height = (month.height() - month.header_height) / 6
-    # Today uses an accent border; its interior retains the chosen weekend
+    # Today's label leaves its interior with the chosen weekend
     # treatment instead of sharing the selected date's background cue.
     weekend = QPoint(round(month.week_gutter + 5.5 * width), round(month.header_height + height - 5))
     assert image.pixelColor(weekend) == QColor(scheme.weekend_background if style == 'background' else scheme.background)
