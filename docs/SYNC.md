@@ -10,7 +10,8 @@ filesystem/CalDAV pairs, password commands and conflict command hooks.
 
 The Python CalDAV transport remains an explicit diagnostic/test path; it is not
 silently substituted when vdirsyncer is unavailable. Account discovery uses
-python-caldav with a generic read-only DAV fallback.
+python-caldav with a generic read-only DAV fallback, including when the library
+or one of its lazily loaded dependencies is unavailable.
 
 Install or update the project dependencies and use the persistent workspace:
 

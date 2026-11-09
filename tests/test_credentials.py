@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from debacal.credentials import CredentialStore, CredentialError, SERVICE, account_key
-from debacal.discovery import DiscoveredCalendar
+from debacal.discovery import DiscoveredCalendar, discover_calendars
 from debacal.models import Calendar
 from debacal.store import Store
 from debacal.sync import SyncEngine
@@ -244,6 +244,33 @@ def test_account_metadata_refreshes_once_and_preserves_manual_color(tmp_path):
         assert store.get_calendar("work").color == "#aabbcc"
         assert store.get_calendar("personal").server_color == "#ccbbaa"
         assert store.get_calendar("personal").color == "#123456"
+    finally:
+        close_engine(store, engine)
+
+
+def test_incomplete_caldav_install_keeps_account_metadata_and_sync_working(tmp_path, monkeypatch):
+    def missing_client(**_kwargs):
+        raise ModuleNotFoundError("No module named 'calendaring_config'", name='calendaring_config')
+    monkeypatch.setitem(sys.modules, 'caldav', SimpleNamespace(DAVClient=missing_client))
+    calls = []
+    def fallback(*args):
+        calls.append(args)
+        return [DiscoveredCalendar('Work', calendar().url, '#aabbcc'),
+                DiscoveredCalendar('Personal', calendar('personal').url, '#ccbbaa')]
+    monkeypatch.setattr('debacal.discovery._fallback_discover', fallback)
+    store, _, credentials, bridge, engine = setup_engine(tmp_path, metadata=discover_calendars)
+    try:
+        store.save_calendar(replace(store.get_calendar('work'), name='My work', name_alias='My work'))
+        credentials.set_session(calendar(), 'example-secret')
+        messages = synchronize(engine)
+        assert len(calls) == 1
+        assert not any(item.kind in {'issue', 'error'} for item in messages)
+        assert len(bridge.calls) == 2
+        assert messages[-1].message == 'All connected calendars synced.'
+        work, personal = store.get_calendar('work'), store.get_calendar('personal')
+        assert work.name == 'My work' and work.server_name == 'Work'
+        assert work.color == '#aabbcc'
+        assert personal.color == '#123456' and personal.server_color == '#ccbbaa'
     finally:
         close_engine(store, engine)
 

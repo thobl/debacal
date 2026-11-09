@@ -1,8 +1,13 @@
+import sys
+from pathlib import Path
+import runpy
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 from xml.etree import ElementTree as ET
 
 import pytest
 
-from debacal.discovery import DiscoveryError, _fallback_discover, discover_calendars
+from debacal.discovery import DiscoveredCalendar, DiscoveryError, _fallback_discover, discover_calendars
 
 
 def response(href, props):
@@ -55,8 +60,6 @@ def test_failed_discovery_does_not_echo_credentials():
 
 
 def test_installed_caldav_discovery_preserves_metadata_and_rejects_foreign_origins(monkeypatch):
-    import sys
-    from types import SimpleNamespace
     calendars = [SimpleNamespace(url="https://cloud.test/calendars/shared/")]
     closed = []
     class Client:
@@ -81,3 +84,64 @@ def test_installed_caldav_discovery_preserves_metadata_and_rejects_foreign_origi
     calendars[0].url = "https://other.test/calendar/"
     with pytest.raises(DiscoveryError, match="another origin"):
         discover_calendars("https://cloud.test", "unused", "unused")
+
+
+@pytest.mark.parametrize('failure', ['import', 'lazy_attribute', 'constructor'])
+def test_missing_caldav_dependency_uses_read_only_discovery(monkeypatch, failure):
+    expected = [DiscoveredCalendar('Shared', 'https://cloud.test/calendars/shared/')]
+    fallback = Mock(return_value=expected)
+    monkeypatch.setattr('debacal.discovery._fallback_discover', fallback)
+
+    def missing_dependency(*args, **kwargs):
+        raise ModuleNotFoundError("No module named 'calendaring_config'", name='calendaring_config')
+
+    if failure == 'import':
+        library = None
+    elif failure == 'lazy_attribute':
+        class LazyLibrary(ModuleType):
+            def __getattr__(self, name):
+                if name == 'DAVClient':
+                    return missing_dependency()
+                raise AttributeError(name)
+        library = LazyLibrary('caldav')
+    else:
+        library = SimpleNamespace(DAVClient=missing_dependency)
+    monkeypatch.setitem(sys.modules, 'caldav', library)
+
+    assert discover_calendars('cloud.test', 'synthetic-user', 'unused') is expected
+    fallback.assert_called_once_with('https://cloud.test', 'synthetic-user', 'unused')
+
+
+@pytest.mark.parametrize('fallback_fails', [False, True])
+def test_caldav_client_closes_when_lazy_discovery_dependency_fails(monkeypatch, fallback_fails):
+    client = Mock()
+    client.principal.side_effect = ModuleNotFoundError("No module named 'calendaring_config'")
+    monkeypatch.setitem(sys.modules, 'caldav', SimpleNamespace(DAVClient=Mock(return_value=client)))
+    expected = [DiscoveredCalendar('Shared', 'https://cloud.test/calendars/shared/')]
+    fallback = Mock(side_effect=DiscoveryError('Unavailable') if fallback_fails else None, return_value=expected)
+    monkeypatch.setattr('debacal.discovery._fallback_discover', fallback)
+
+    if fallback_fails:
+        with pytest.raises(DiscoveryError, match='Unavailable'):
+            discover_calendars('https://cloud.test', '', '')
+    else:
+        assert discover_calendars('https://cloud.test', '', '') is expected
+    client.close.assert_called_once_with()
+
+
+def test_non_import_constructor_failure_is_not_hidden_by_discovery_fallback(monkeypatch):
+    constructor = Mock(side_effect=ValueError('Invalid client configuration'))
+    monkeypatch.setitem(sys.modules, 'caldav', SimpleNamespace(DAVClient=constructor))
+    fallback = Mock()
+    monkeypatch.setattr('debacal.discovery._fallback_discover', fallback)
+
+    with pytest.raises(ValueError, match='Invalid client configuration'):
+        discover_calendars('https://cloud.test', '', '')
+    fallback.assert_not_called()
+
+
+@pytest.mark.parametrize('missing_library', [False, True])
+def test_offline_package_discovery_check(monkeypatch, missing_library):
+    if missing_library:
+        monkeypatch.setitem(sys.modules, 'caldav', None)
+    runpy.run_path(str(Path(__file__).with_name('check_discovery_runtime.py')), run_name='__main__')

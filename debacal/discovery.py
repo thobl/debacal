@@ -177,9 +177,11 @@ def discover_calendars(server_url: str, username: str, password: str) -> list[Di
     server_url = _validated_url(server_url)
     try:
         import caldav
+        # python-caldav loads DAVClient lazily. Missing optional/transitive
+        # modules can therefore surface here rather than at the import above.
+        client = caldav.DAVClient(url=server_url, username=username, password=password, timeout=15)
     except ImportError:
         return _fallback_discover(server_url, username, password)
-    client = caldav.DAVClient(url=server_url, username=username, password=password, timeout=15)
     try:
         principal = client.principal()
         calendars = principal.calendars()

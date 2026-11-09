@@ -1,7 +1,7 @@
 pkgbase = debacal
 	pkgdesc = Local-first desktop calendar with CalDAV sync and flexible event series
 	pkgver = 0.1.0
-	pkgrel = 3
+	pkgrel = 4
 	url = https://github.com/thobl/debacal
 	arch = any
 	license = 0BSD
@@ -28,6 +28,6 @@ pkgbase = debacal
 	optdepends = kwallet: secure password storage in Plasma
 	optdepends = python-dbus: KWallet keyring backend support
 	source = debacal-0.1.0.tar.gz::https://github.com/thobl/debacal/releases/download/v0.1.0/debacal-0.1.0.tar.gz
-	sha256sums = 6a87c60842ac1a455cc92d4fbdd2b6b9e6df4677457d85b5d4a43aa59e2c15e6
+	sha256sums = 51691afa038afac50c31b131530c5833df7136189dec6c07ed5954b43ffd0799
 
 pkgname = debacal

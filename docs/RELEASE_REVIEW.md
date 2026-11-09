@@ -256,5 +256,15 @@ release `0.1.0-2`. The version tag remains `v0.1.0`.
 The subsequent packaging update adds `PKGBUILD.local` for building checkout
 edits through the shared package steps. Eighteen packaging/publication checks
 passed, along with isolated checkout and standalone release package builds.
-The current Arch package release is `0.1.0-3`; source, wheel and recipe bundle
+Arch package release `0.1.0-3`, its source, wheel and recipe bundle
 reproduced byte-for-byte, and the wheel launched outside the checkout.
+
+The installed Arch CalDAV library also exposed a missing transitive dependency
+during lazy client loading. Discovery now uses the existing read-only DAV
+fallback in that case, including account color refresh. Package release
+`0.1.0-4` adds an offline discovery smoke check with the package interpreter;
+it passes both with the missing system dependency and with complete project
+dependencies. The repaired Arch package built and passed its normal checks.
+The full suite passed **3,284 tests and 169 subtests** with the installed Python,
+using offscreen Fusion and disabling desktop theme/shortcut overrides for the
+test baseline. The system CalDAV dependency remained missing throughout.

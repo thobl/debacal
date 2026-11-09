@@ -42,7 +42,8 @@ GNOME Keyring or KeePassXC), or KWallet with `python-dbus`. These are optional;
 without one, Debacal can use account passwords for the current session.
 
 The default package check is a short, offline smoke test: it validates the
-desktop entry, checks command-line help, and opens a disposable demonstration
+desktop entry, checks command-line help and discovery with the installed Python
+dependencies, and opens a disposable demonstration
 calendar with Qt's offscreen backend to verify a workspace screenshot. It does
 not run the full development test suite or require pytest. Test data and runtime
 files are isolated under makepkg's source tree.
