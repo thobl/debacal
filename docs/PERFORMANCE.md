@@ -128,6 +128,60 @@ Older reports in `docs/benchmarks` describe the previous warm/synthetic-in-memor
 methodology. They remain historical observations and are not evidence of the
 first-visit latency target.
 
+### Synchronization contention
+
+Calendar navigation can remain fast while a UI write stalls: WAL readers see the
+last committed data, but SQLite permits only one writer. Previously, hiding a
+calendar acquired `BEGIN IMMEDIATE` on the same database used by synchronization.
+Its five-second busy timeout ran on the Qt thread. Event operations, preferences,
+copy preparation and some read-time repair paths could acquire that lock too.
+
+The GUI connection now has a zero busy timeout. Profile UI choices use a small
+separate database, including calendar visibility, order, selected creation
+calendar, preferences and shortcuts. Calendar data mutations use one command
+boundary: a free writer can commit immediately; a busy writer queues the captured
+operation on a dedicated connection. Accepted commands stay ordered, queued user
+writes receive priority between sync transactions, and completion/error callbacks
+run on Qt. Closing waits for accepted saves and imports to finish. A delayed
+completion refreshes data without restoring an obsolete selection or view.
+
+Copy/export/drag preparation use read-only snapshots. Foreground queries never
+repair prepared records or persist diagnostics synchronously; a worker does
+that work while the GUI retains its previous coherent index. These changes do
+not add date-window result caching.
+
+```sh
+.venv/bin/python scripts/benchmark_toggle_latency.py --events 60 --series 20 --finite 3 --iterations 6 --writer-hold-ms 1000 --contention-every 2 --max-ms 100 --output /tmp/toggle-lock.json
+```
+
+This diagnostic visits unique week/month windows and records every jump, hide
+and show, inclusive stage timings, SQL intervals, GC pauses and Qt settling. A
+synthetic background connection deliberately holds the canonical writer lock.
+`writer_active_after_action` distinguishes completing before the lock is released
+from simply waiting for it. `--max-ms` bounds every hide/show sample. Tests also
+hold that lock while creating, editing, moving, deleting, confirming candidates,
+importing, undoing/redoing, saving source settings and preparing copies; Qt timers
+and unrelated view controls must continue before the writer is released.
+
+With 60 ordinary resources, 20 recurring series and 3 finite sets, six unique
+jumps included three one-second held-writer transactions. Maximum hide latency
+fell from **1,044.690 ms to 15.008 ms**. All three contended hides now completed
+while the writer was still held; previously all waited for its release. On the
+slowest baseline hide, the range query took 0.396 ms and visibility persistence
+took 1,030.062 ms. The lock, rather than range lookup or garbage collection,
+accounted for the stall. This small fixture isolates contention; it is not a
+large-calendar throughput result.
+
+Raw reports: [held writer before](benchmarks/toggle-contention-before.json),
+[held writer after](benchmarks/toggle-contention-after.json).
+
+A separate final guard used 3,000 ordinary resources, 1,200 recurring series and
+120 finite sets, twelve unique jumps and six one-second held writers. Maximum
+jump/hide/show times were **53.447 / 40.783 / 51.073 ms**; every contended hide
+completed before its writer was released. All toggles passed the 100 ms limit.
+The [larger held-writer report](benchmarks/toggle-contention-scaled.json) records
+every request and stage. No tests or other benchmarks ran alongside this guard.
+
 ## Range-index baseline before startup optimization
 
 The same twelve unrelated day/week/month requests ran against `8d8da99` and the

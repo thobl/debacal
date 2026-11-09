@@ -1,0 +1,1910 @@
+{
+  "records": [
+    {
+      "iteration": 0,
+      "view": "week",
+      "start": "2024-06-22T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.074,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.385,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.187,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.04,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.012,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.262,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.86,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.131,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.068,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.097,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.501,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.703,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.149,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 7.038,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 4.751,
+          "max_ms": 2.396,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.23,
+          "max_ms": 1.64,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.047,
+      "settle_ms": 7.66,
+      "elapsed_ms": 14.71,
+      "occurrences": 1,
+      "slow": false
+    },
+    {
+      "iteration": 0,
+      "view": "week",
+      "start": "2024-06-22T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-0",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.054,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.154,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 1030.567,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.626,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.229,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.055,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.019,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.341,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 3.076,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.215,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.099,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.108,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.549,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.775,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.156,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 9.119,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 1030.057,
+          "max_ms": 1030.057,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 6.183,
+          "max_ms": 2.961,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.025,
+          "max_ms": 0.025,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.045,
+          "max_ms": 0.045,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 3.305,
+          "max_ms": 1.667,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 1039.707,
+      "writer_active_after_action": false,
+      "settle_ms": 4.926,
+      "elapsed_ms": 1044.638,
+      "occurrences": 1,
+      "slow": true
+    },
+    {
+      "iteration": 0,
+      "view": "week",
+      "start": "2024-06-22T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-0",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.019,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.164,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.197,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.329,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.077,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.018,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.007,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.115,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.629,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.112,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.068,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.158,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.789,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 2.09,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.177,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.293,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.017,
+          "max_ms": 0.017,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.909,
+          "max_ms": 1.57,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.012,
+          "max_ms": 0.012,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.024,
+          "max_ms": 0.024,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.443,
+          "max_ms": 1.827,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 6.496,
+      "writer_active_after_action": false,
+      "settle_ms": 5.985,
+      "elapsed_ms": 12.487,
+      "occurrences": 1,
+      "slow": false
+    },
+    {
+      "iteration": 1,
+      "view": "month",
+      "start": "2028-11-29T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.103,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.751,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.137,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.034,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.015,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.214,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.98,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.168,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.111,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.621,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.861,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.186,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 8.036,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 5.143,
+          "max_ms": 2.47,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.006,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.809,
+          "max_ms": 2.092,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 8.048,
+      "writer_active_after_action": false,
+      "settle_ms": 9.13,
+      "elapsed_ms": 17.182,
+      "occurrences": 8,
+      "slow": false
+    },
+    {
+      "iteration": 1,
+      "view": "month",
+      "start": "2028-11-29T00:00:00+00:00",
+      "calendar": "cal-1",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.02,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.089,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.198,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.337,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.088,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.019,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.023,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.152,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.725,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.105,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.092,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.308,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.953,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.141,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 5.112,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.022,
+          "max_ms": 0.022,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.625,
+          "max_ms": 1.662,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.012,
+          "max_ms": 0.012,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.024,
+          "max_ms": 0.024,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 1.557,
+          "max_ms": 0.85,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 5.315,
+      "writer_active_after_action": false,
+      "settle_ms": 7.69,
+      "elapsed_ms": 13.011,
+      "occurrences": 2,
+      "slow": false
+    },
+    {
+      "iteration": 1,
+      "view": "month",
+      "start": "2028-11-29T00:00:00+00:00",
+      "calendar": "cal-1",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.023,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.105,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.298,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.584,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.097,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.02,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.019,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.155,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.648,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.083,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.004,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.121,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.513,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.62,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.156,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.312,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.02,
+          "max_ms": 0.02,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.959,
+          "max_ms": 1.64,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.014,
+          "max_ms": 0.014,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.028,
+          "max_ms": 0.028,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.447,
+          "max_ms": 1.502,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 6.628,
+      "writer_active_after_action": false,
+      "settle_ms": 7.146,
+      "elapsed_ms": 13.777,
+      "occurrences": 8,
+      "slow": false
+    },
+    {
+      "iteration": 2,
+      "view": "week",
+      "start": "2027-07-16T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.202,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.378,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.102,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.02,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.025,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.162,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.657,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.096,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.063,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.141,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 1.145,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.671,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.281,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 7.577,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 4.968,
+          "max_ms": 2.328,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.01,
+          "max_ms": 0.008,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.512,
+          "max_ms": 1.256,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.586,
+      "writer_active_after_action": false,
+      "settle_ms": 7.919,
+      "elapsed_ms": 15.509,
+      "occurrences": 1,
+      "slow": false
+    },
+    {
+      "iteration": 2,
+      "view": "week",
+      "start": "2027-07-16T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-2",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.027,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.128,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 1030.062,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.396,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.106,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.023,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.008,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.154,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 2.287,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.144,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.087,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.115,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.562,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 2.273,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.365,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 7.857,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 1029.764,
+          "max_ms": 1029.764,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 4.894,
+          "max_ms": 2.225,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.019,
+          "max_ms": 0.019,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.043,
+          "max_ms": 0.043,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 3.076,
+          "max_ms": 2.151,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 1037.931,
+      "writer_active_after_action": false,
+      "settle_ms": 6.756,
+      "elapsed_ms": 1044.69,
+      "occurrences": 1,
+      "slow": true
+    },
+    {
+      "iteration": 2,
+      "view": "week",
+      "start": "2027-07-16T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-2",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.02,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.117,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.246,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.373,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.092,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.021,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.008,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.137,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.631,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.1,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.067,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.104,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.686,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.794,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.148,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.655,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.023,
+          "max_ms": 0.023,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 4.354,
+          "max_ms": 2.075,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.016,
+          "max_ms": 0.016,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.036,
+          "max_ms": 0.036,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.402,
+          "max_ms": 1.672,
+          "calls": 2
+        }
+      },
+      "gc": [
+        {
+          "generation": 0,
+          "ms": 0.192,
+          "collected": 524
+        }
+      ],
+      "action_ms": 6.906,
+      "writer_active_after_action": false,
+      "settle_ms": 4.566,
+      "elapsed_ms": 11.474,
+      "occurrences": 1,
+      "slow": false
+    },
+    {
+      "iteration": 3,
+      "view": "month",
+      "start": "2025-02-27T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.093,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.497,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.106,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.027,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.008,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.156,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.747,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.109,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.001,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.118,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.624,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.899,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.367,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.994,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 4.793,
+          "max_ms": 2.274,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.006,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.055,
+          "max_ms": 1.314,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.004,
+      "writer_active_after_action": false,
+      "settle_ms": 9.455,
+      "elapsed_ms": 16.468,
+      "occurrences": 7,
+      "slow": false
+    },
+    {
+      "iteration": 3,
+      "view": "month",
+      "start": "2025-02-27T00:00:00+00:00",
+      "calendar": "cal-3",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.022,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.101,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.241,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.325,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.097,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.022,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.028,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.171,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.803,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.251,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.005,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.102,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.339,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.387,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.159,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.85,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.023,
+          "max_ms": 0.023,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 4.935,
+          "max_ms": 2.457,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.016,
+          "max_ms": 0.016,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.034,
+          "max_ms": 0.034,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.001,
+          "max_ms": 1.261,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.097,
+      "writer_active_after_action": false,
+      "settle_ms": 5.52,
+      "elapsed_ms": 12.62,
+      "occurrences": 6,
+      "slow": false
+    },
+    {
+      "iteration": 3,
+      "view": "month",
+      "start": "2025-02-27T00:00:00+00:00",
+      "calendar": "cal-3",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.021,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.112,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.235,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.506,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.088,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.02,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.025,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.152,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.646,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.1,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.089,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.495,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 1.642,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.198,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 5.934,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.021,
+          "max_ms": 0.021,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.636,
+          "max_ms": 1.58,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.015,
+          "max_ms": 0.015,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.046,
+          "max_ms": 0.046,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.366,
+          "max_ms": 1.504,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 6.173,
+      "writer_active_after_action": false,
+      "settle_ms": 6.27,
+      "elapsed_ms": 12.448,
+      "occurrences": 7,
+      "slow": false
+    },
+    {
+      "iteration": 4,
+      "view": "week",
+      "start": "2028-10-17T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.089,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.452,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.145,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.021,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.038,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.219,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.879,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.116,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.105,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.099,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.505,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.702,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.144,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 7.228,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 4.672,
+          "max_ms": 2.256,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.489,
+          "max_ms": 1.907,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.238,
+      "writer_active_after_action": false,
+      "settle_ms": 6.382,
+      "elapsed_ms": 13.623,
+      "occurrences": 4,
+      "slow": false
+    },
+    {
+      "iteration": 4,
+      "view": "week",
+      "start": "2028-10-17T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-4",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.052,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.154,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 1030.197,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.452,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.171,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.026,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.008,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.23,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.887,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.126,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.11,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.103,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.488,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.862,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.151,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 6.081,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 1029.785,
+          "max_ms": 1029.785,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 4.498,
+          "max_ms": 1.812,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.028,
+          "max_ms": 0.028,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.054,
+          "max_ms": 0.054,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.004,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 1.856,
+          "max_ms": 1.102,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 1036.29,
+      "writer_active_after_action": false,
+      "settle_ms": 3.908,
+      "elapsed_ms": 1040.201,
+      "occurrences": 4,
+      "slow": true
+    },
+    {
+      "iteration": 4,
+      "view": "week",
+      "start": "2028-10-17T00:00:00+00:00",
+      "canonical_writer_hold_ms": 1000.0,
+      "calendar": "cal-4",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.019,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.088,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.179,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.338,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.119,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.02,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.007,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.171,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.752,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.112,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.096,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.087,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.433,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.609,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.145,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 4.826,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.015,
+          "max_ms": 0.015,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.7,
+          "max_ms": 1.689,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.013,
+          "max_ms": 0.013,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.029,
+          "max_ms": 0.029,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 1.181,
+          "max_ms": 0.68,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 5.009,
+      "writer_active_after_action": false,
+      "settle_ms": 5.689,
+      "elapsed_ms": 10.7,
+      "occurrences": 4,
+      "slow": false
+    },
+    {
+      "iteration": 5,
+      "view": "month",
+      "start": "2026-10-12T00:00:00+00:00",
+      "operation": "jump",
+      "stages": {
+        "synchronize_index": {
+          "ms": 0.106,
+          "calls": 2
+        },
+        "range_query": {
+          "ms": 0.635,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.136,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.025,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.01,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.188,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.779,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.123,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.102,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.509,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.709,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.159,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 7.17,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "SELECT": {
+          "ms": 4.955,
+          "max_ms": 2.486,
+          "calls": 24
+        },
+        "BEGIN": {
+          "ms": 0.006,
+          "max_ms": 0.003,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 2.131,
+          "max_ms": 1.553,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 7.182,
+      "writer_active_after_action": false,
+      "settle_ms": 7.789,
+      "elapsed_ms": 14.974,
+      "occurrences": 10,
+      "slow": false
+    },
+    {
+      "iteration": 5,
+      "view": "month",
+      "start": "2026-10-12T00:00:00+00:00",
+      "calendar": "cal-5",
+      "operation": "hide",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.023,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.098,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.257,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.551,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.11,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.023,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.038,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.197,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.741,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.118,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.093,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.454,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.641,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.145,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 5.184,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.027,
+          "max_ms": 0.027,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.764,
+          "max_ms": 1.673,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.016,
+          "max_ms": 0.016,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.032,
+          "max_ms": 0.032,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 1.521,
+          "max_ms": 0.991,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 5.446,
+      "writer_active_after_action": false,
+      "settle_ms": 4.828,
+      "elapsed_ms": 10.278,
+      "occurrences": 10,
+      "slow": false
+    },
+    {
+      "iteration": 5,
+      "view": "month",
+      "start": "2026-10-12T00:00:00+00:00",
+      "calendar": "cal-5",
+      "operation": "show",
+      "stages": {
+        "maintain_projection": {
+          "ms": 0.021,
+          "calls": 2
+        },
+        "synchronize_index": {
+          "ms": 0.101,
+          "calls": 3
+        },
+        "visibility_write": {
+          "ms": 0.212,
+          "calls": 1
+        },
+        "range_query": {
+          "ms": 0.485,
+          "calls": 1
+        },
+        "week_data": {
+          "ms": 0.099,
+          "calls": 1
+        },
+        "all_day_data": {
+          "ms": 0.019,
+          "calls": 1
+        },
+        "month_data": {
+          "ms": 0.025,
+          "calls": 1
+        },
+        "surface_data": {
+          "ms": 0.16,
+          "calls": 1
+        },
+        "calendar_rows": {
+          "ms": 1.598,
+          "calls": 1
+        },
+        "selection": {
+          "ms": 0.112,
+          "calls": 1
+        },
+        "fit_calendar": {
+          "ms": 0.002,
+          "calls": 1
+        },
+        "history_buttons": {
+          "ms": 0.102,
+          "calls": 1
+        },
+        "upcoming_query": {
+          "ms": 0.519,
+          "calls": 1
+        },
+        "sidebar": {
+          "ms": 0.733,
+          "calls": 1
+        },
+        "status": {
+          "ms": 0.158,
+          "calls": 1
+        },
+        "refresh": {
+          "ms": 5.031,
+          "calls": 1
+        }
+      },
+      "sql_intervals": {
+        "BEGIN IMMEDIATE": {
+          "ms": 0.02,
+          "max_ms": 0.02,
+          "calls": 1
+        },
+        "SELECT": {
+          "ms": 3.643,
+          "max_ms": 1.536,
+          "calls": 30
+        },
+        "INSERT": {
+          "ms": 0.015,
+          "max_ms": 0.015,
+          "calls": 1
+        },
+        "COMMIT": {
+          "ms": 0.029,
+          "max_ms": 0.029,
+          "calls": 1
+        },
+        "BEGIN": {
+          "ms": 0.005,
+          "max_ms": 0.002,
+          "calls": 2
+        },
+        "ROLLBACK": {
+          "ms": 1.459,
+          "max_ms": 0.851,
+          "calls": 2
+        }
+      },
+      "gc": [],
+      "action_ms": 5.247,
+      "writer_active_after_action": false,
+      "settle_ms": 5.584,
+      "elapsed_ms": 10.84,
+      "occurrences": 10,
+      "slow": false
+    }
+  ],
+  "stage_timings": "inclusive; SQL intervals include Python gaps",
+  "summary": {
+    "jump": {
+      "max_ms": 17.182,
+      "slow_count": 0
+    },
+    "hide": {
+      "max_ms": 1044.69,
+      "slow_count": 3
+    },
+    "show": {
+      "max_ms": 13.777,
+      "slow_count": 0
+    }
+  },
+  "fixture": {
+    "ordinary": 60,
+    "series": 20,
+    "finite": 3,
+    "calendars": 6,
+    "payload_bytes": 2048,
+    "irrelevant": 0
+  }
+}
