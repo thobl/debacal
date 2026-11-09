@@ -50,6 +50,12 @@ handler, optionally run `xdg-mime default debacal.desktop text/calendar`.
 Arch packages install the launcher automatically and retain your existing
 default calendar application.
 
+A source-only launch such as `uv run debacal --test` may print a Qt portal
+warning that app info for `debacal` was not found. The app still runs; the
+desktop portal cannot identify it until the launcher above is installed and
+its `debacal` command is available to the desktop session. This warning is
+separate from Python exceptions or calendar synchronization errors.
+
 ## From source
 
 ```sh

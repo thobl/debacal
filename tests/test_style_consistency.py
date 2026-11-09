@@ -1,6 +1,7 @@
 """Shared section styling and keyboard-only focus cues on native buttons."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
@@ -96,6 +97,53 @@ def test_main_buttons_and_shared_groups_omit_click_focus_frames(desktop, style):
             assert mouse != surface.grab().toImage()
         window.close()
         window.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize('view', ['day', 'week', 'month', 'year'])
+def test_clicking_workspace_header_keeps_native_window_lookup_and_does_not_raise(desktop, view):
+    app, widgets = desktop
+    with Store(':memory:') as store:
+        window = MainWindow(store, enable_sync=False)
+        widgets.append(window)
+        try:
+            window.resize(1400, 900)
+            window.show()
+            window.set_view(view)
+            settle(app)
+            errors = []
+            with patch('sys.excepthook', side_effect=lambda _type, error, _tb: errors.append(error)):
+                window.setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, True)
+                QTest.mouseClick(window.workspace_header, Qt.MouseButton.LeftButton,
+                                 pos=window.workspace_header.rect().bottomRight() - QPoint(4, 4))
+                settle(app)
+            assert not errors
+            assert window.workspace_header.window() is window
+            assert not window.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange)
+        finally:
+            window.close()
+            window.executor.shutdown(wait=True)
+
+
+def test_application_focus_filter_handles_widgets_with_a_shadowed_native_window_attribute(desktop):
+    app, widgets = desktop
+    window = QWidget()
+    widgets.append(window)
+    layout = QHBoxLayout(window)
+    for widget in (QWidget(), QPushButton('Action')):
+        # Model a custom widget supplied to the application-wide event filter;
+        # its owner attribute must not break the native top-level lookup.
+        widget.window = window
+        layout.addWidget(widget)
+    window.show()
+    settle(app)
+    errors = []
+    with patch('sys.excepthook', side_effect=lambda _type, error, _tb: errors.append(error)):
+        for index in range(layout.count()):
+            window.setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, True)
+            QTest.mouseClick(layout.itemAt(index).widget(), Qt.MouseButton.LeftButton)
+            settle(app)
+            assert not window.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange)
+    assert not errors
 
 
 @pytest.mark.parametrize('scale', [80, 100, 140])

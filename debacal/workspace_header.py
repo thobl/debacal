@@ -106,7 +106,7 @@ class WorkspaceHeader(QWidget):
 
     def __init__(self, window, title, controls):
         super().__init__()
-        self.window = window
+        self.workspace = window
         self.title, self.controls = title, controls
         self.inline = None
         self._signature = None
@@ -137,7 +137,7 @@ class WorkspaceHeader(QWidget):
         return QSize(0, self.layout().minimumSize().height())
 
     def update_preferences(self):
-        window, preferences = self.window, self.window.preferences
+        window, preferences = self.workspace, self.workspace.preferences
         window.heading.ensurePolished()
         window.range_label.ensurePolished()
         signature = (preferences, window.view, window.anchor.year,
@@ -208,11 +208,11 @@ class WorkspaceHeader(QWidget):
         self.update_preferences()
         # Tooltips update native button sizes first; reapply shared row sizes
         # even when the preference/layout metrics have not changed.
-        preferences = self.window.preferences
+        preferences = self.workspace.preferences
         scale = preferences.font_scale / 100
-        for button in (self.window.previous_button, self.window.today_button, self.window.next_button):
+        for button in (self.workspace.previous_button, self.workspace.today_button, self.workspace.next_button):
             button.setFixedSize(round(28 * scale), round(28 * scale))
-        for section in self.window.toolbar_sections:
+        for section in self.workspace.toolbar_sections:
             for button in section.findChildren(QPushButton):
                 compact = bool(button.property('compactIcon'))
                 button.setFixedSize(round(20 * scale) if compact else round(32 * scale),

@@ -20,7 +20,9 @@ class _ButtonFocus(QObject):
             self._mouse_active = True
             self._release.stop()
             if isinstance(button, QWidget):
-                button.window().setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, False)
+                # Application-wide filtering also sees custom widgets whose
+                # Python attributes can hide native QWidget methods.
+                QWidget.window(button).setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, False)
         elif kind == QEvent.Type.MouseButtonRelease:
             # A click can disable its own button and move focus during the
             # release handler. That automatic move remains a mouse action.
@@ -38,7 +40,7 @@ class _ButtonFocus(QObject):
             if kind == QEvent.Type.MouseButtonPress:
                 # Qt's native style also uses this window flag after keyboard
                 # navigation; clear it when switching back to a mouse click.
-                button.window().setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, False)
+                QWidget.window(button).setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, False)
                 button.update()
         elif kind == QEvent.Type.KeyPress and event.key() not in (
                 Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
