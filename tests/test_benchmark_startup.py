@@ -1,5 +1,11 @@
 """Startup scores include first queries and separate diagnostic overhead."""
 import json
+from pathlib import Path
+
+import pytest
+
+if not (Path(__file__).resolve().parents[1] / 'scripts/benchmark_startup.py').is_file():
+    pytest.skip('Maintainer tooling is not included in the source archive', allow_module_level=True)
 
 from scripts.benchmark_ranges import Fixture, build_database, expected_rows, generated_events, requests
 from scripts.benchmark_startup import ROOT, function_group, main, open_store, worker

@@ -1,5 +1,11 @@
 """The performance workload must check first requests and complete answers."""
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+if not (Path(__file__).resolve().parents[1] / 'scripts/benchmark_ranges.py').is_file():
+    pytest.skip('Maintainer tooling is not included in the source archive', allow_module_level=True)
 
 from debacal.models import Event
 from scripts.benchmark_ranges import (

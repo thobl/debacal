@@ -4,6 +4,11 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
+if not (Path(__file__).resolve().parents[1] / 'scripts/benchmark_toggle_latency.py').is_file():
+    pytest.skip('Maintainer tooling is not included in the source archive', allow_module_level=True)
+
 from scripts.benchmark_toggle_latency import make_workload
 
 
@@ -36,3 +41,17 @@ def test_cli_records_visibility_write_query_layout_and_collection_stages(tmp_pat
     for name in ('jump', 'hide', 'show'):
         assert result['summary'][name]['max_ms'] == max(
             row['elapsed_ms'] for row in result['records'] if row['operation'] == name)
+
+
+def test_source_archives_skip_benchmarks_without_maintainer_scripts(tmp_path):
+    """The release includes tests, but deliberately omits the scripts tree."""
+    tests = tmp_path / 'tests'
+    tests.mkdir()
+    source = Path(__file__).resolve().parent
+    for name in ('test_benchmark_ranges.py', 'test_benchmark_startup.py', 'test_benchmark_toggle_latency.py'):
+        (tests / name).write_bytes((source / name).read_bytes())
+    (tests / 'test_smoke.py').write_text('def test_source_collection():\n    pass\n')
+    child = subprocess.run([sys.executable, '-m', 'pytest', '-q', str(tests)],
+                           cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert '1 passed, 3 skipped' in child.stdout
