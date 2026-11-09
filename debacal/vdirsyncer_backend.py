@@ -49,6 +49,13 @@ def semantic(event: Event | None) -> str:
         values['start'], values['end'] = endpoint(item.start), endpoint(item.end)
         from .ics_resources import _timezone_signature
         from .ics_fallback import unfolded
+        if item.timezone_id and item.timezone_id not in item.timezone_definitions:
+            # A retained producer alias can become an ordinary IANA name when
+            # fixed detached ranges export as UTC and no longer need another
+            # resource's conflicting unprefixed definition. Compare its actual
+            # scheduling rules rather than that harmless spelling change.
+            from .timezones import resolve_timezone, timezone_identifier
+            values['timezone_id'] = timezone_identifier(resolve_timezone(item.timezone_id))
         # Only this item's scheduling zone can affect its future generated
         # occurrences. Context used solely by fixed detached ranges can be
         # normalized to UTC by other clients without changing the schedule.

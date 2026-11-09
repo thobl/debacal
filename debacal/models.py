@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-from .timezones import event_timezone, resolve_timezone, validate_definitions
+from .timezones import event_timezone, resolve_timezone, timezone_identifier, validate_definitions
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,11 +124,21 @@ class Event:
         definitions = validate_definitions(self.timezone_definitions)
         object.__setattr__(self, 'timezone_definitions', definitions)
         zone = '' if self.floating_time else self.timezone_id or getattr(self.start.tzinfo, "key", "")
+        resolved = resolve_timezone(zone, definitions) if zone else None
+        if resolved is not None and zone not in definitions:
+            # Known producer prefixes are database aliases. Store the actual
+            # database key so recurrence, editing and VTIMEZONE generation all
+            # use the same identity. Explicit resource definitions keep theirs.
+            database_id = timezone_identifier(resolved)
+            if database_id not in definitions:
+                zone = database_id
+            # Another instance in this UID may use the database-shaped name
+            # for different explicit rules. Preserve the alias in that case
+            # so its database rules cannot acquire that other definition.
         # UTC needs no named-zone definition. Both ICS parsers must retain the
         # same semantics even when one returns ZoneInfo('UTC') and one UTC.
         object.__setattr__(self, "timezone_id", "" if zone in {"UTC", "Etc/UTC"} and zone not in definitions else zone)
         if self.timezone_id:
-            resolved = resolve_timezone(self.timezone_id, definitions)
             if self.timezone_id in definitions:
                 if self.all_day:
                     object.__setattr__(self, 'start', self.start.replace(tzinfo=resolved))

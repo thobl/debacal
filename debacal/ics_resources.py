@@ -11,12 +11,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 import hashlib
 from uuid import NAMESPACE_URL, uuid5
-from zoneinfo import ZoneInfo
 import re
 
 from .models import Event
 from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
-from .timezones import TimezoneError, event_timezone
+from .timezones import TimezoneError, event_timezone, resolve_timezone
 from . import ics_fallback as fallback
 from . import ics_range_policy as range_codec
 
@@ -848,7 +847,7 @@ def _timezone_definition(timezone_id, first_date, last_date):
     except ImportError:
         raise ValueError("Exporting a named-timezone recurrence needs the 'icalendar' dependency to generate VTIMEZONE. "
                          "Install the project dependencies, or retain an imported timezone definition.") from None
-    return fallback.unfolded(Timezone.from_tzinfo(ZoneInfo(timezone_id), tzid=timezone_id,
+    return fallback.unfolded(Timezone.from_tzinfo(resolve_timezone(timezone_id), tzid=timezone_id,
                                                  first_date=first_date, last_date=last_date).to_ical())
 
 

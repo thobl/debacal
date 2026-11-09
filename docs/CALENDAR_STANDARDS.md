@@ -17,6 +17,13 @@ This documents tested behavior, rather than claiming complete RFC compliance.
 - Custom definitions accompany edits, copied/split series and synchronized
   resources. Unknown names without usable definitions produce an issue instead
   of silently guessing an offset or alias.
+- Without an embedded definition, documented libical, Citadel and Mozilla
+  namespace prefixes resolve to their IANA database location. For example,
+  `/freeassociation.sourceforge.net/Europe/Berlin` uses `Europe/Berlin`, as does
+  the older `/freeassociation.sourceforge.net/Tzfile/Europe/Berlin` form.
+  Matching embedded definitions still take priority; arbitrary vendor prefixes
+  are not guessed. Database aliases are normalized consistently through storage,
+  edits and export without rebinding unrelated resource-local definitions.
 - Floating times retain their wall clocks when the viewing system's zone changes.
   All-day events retain calendar dates, including across daylight-saving changes.
   Floating durations use wall-clock arithmetic, independent of the viewing zone.

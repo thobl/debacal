@@ -1,8 +1,9 @@
-"""Resolve event-scoped iCalendar timezone rules without guessing aliases.
+"""Resolve scoped iCalendar rules and documented timezone database aliases.
 
 VTIMEZONE names are identifiers, not necessarily IANA database keys. Definitions
 travel with their resource and override database rules when present. Two
 resources can use the same TZID for different rules, so caches include the text.
+Without an explicit definition, known producer namespaces can name IANA zones.
 """
 from __future__ import annotations
 
@@ -25,6 +26,14 @@ MAX_CACHED_DEFINITION_BYTES = 64 * 1024
 MAX_TRANSITION_PERIODS = 20_000
 MAX_IDENTIFIER_LENGTH = 1024
 
+# Libical's builtin/compatibility namespaces and Mozilla's former date-stamped
+# namespace. These identify database locations, not arbitrary global TZIDs.
+# https://github.com/libical/libical/blob/master/src/libical/icaltimezone.c
+# https://searchfox.org/comm-central/source/calendar/base/src/CalTimezoneService.sys.mjs
+_DATABASE_PREFIXES = ('/freeassociation.sourceforge.net/Tzfile/',
+                      '/freeassociation.sourceforge.net/')
+_VERSIONED_DATABASE_PREFIXES = ('/citadel.org/', '/mozilla.org/')
+
 
 class TimezoneError(ValueError):
     """A timezone cannot be interpreted safely; retain its original resource."""
@@ -35,6 +44,25 @@ def _validate_identifier(identifier):
             or any(character in identifier for character in '\r\n\x00')):
         raise TimezoneError('A timezone identifier must be nonempty text of at most 1,024 characters '
                             'without line breaks or NUL characters.')
+
+
+def _database_alias(identifier):
+    """Read documented namespace layouts without guessing arbitrary suffixes."""
+    candidate = None
+    for prefix in _DATABASE_PREFIXES:
+        if identifier.startswith(prefix):
+            candidate = identifier[len(prefix):]
+            break
+    if candidate is None:
+        for prefix in _VERSIONED_DATABASE_PREFIXES:
+            if identifier.startswith(prefix):
+                revision, separator, candidate = identifier[len(prefix):].partition('/')
+                if not separator or not revision or revision in {'.', '..'}:
+                    return None
+                break
+    if not candidate or any(part in {'', '.', '..'} for part in candidate.split('/')):
+        return None
+    return candidate
 
 
 class _TransitionIndex:
@@ -234,6 +262,14 @@ def _cached_explicit_timezone(identifier: str, definition: str) -> tzinfo:
     return _explicit_timezone(identifier, definition)
 
 
+@lru_cache(maxsize=64)
+def _scoped_database_alias(identifier: str, database_id: str) -> tzinfo:
+    # Preserve the alias's identity through authoring when another component
+    # uses the unprefixed name for different explicit rules. This wrapper still
+    # uses only the database rules, independently of that other definition.
+    return _ResourceTimezone(identifier, ZoneInfo(database_id))
+
+
 def resolve_timezone(identifier: str, definitions: Mapping[str, str] | None = None) -> tzinfo:
     """Resolve a name within its resource's explicit timezone context first."""
     _validate_identifier(identifier)
@@ -247,6 +283,15 @@ def resolve_timezone(identifier: str, definitions: Mapping[str, str] | None = No
     try:
         return ZoneInfo(identifier)
     except (ValueError, TypeError, OSError, ZoneInfoNotFoundError):
+        alias = _database_alias(identifier)
+        if alias is not None:
+            try:
+                zone = ZoneInfo(alias)
+                if definitions and alias in definitions:
+                    return _scoped_database_alias(identifier, alias)
+                return zone
+            except (ValueError, OSError, ZoneInfoNotFoundError):
+                pass
         raise TimezoneError(f'Timezone {identifier!r} is not available in the timezone database '
                              'and has no VTIMEZONE definition in this resource.') from None
 
