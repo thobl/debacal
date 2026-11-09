@@ -20,6 +20,11 @@ dependencies are installed using pacman; the build itself uses system Python
 packages. See [the recipe's documentation](../packaging/arch/README.md) for
 offline builds and test options.
 
+For a private repository, first download `debacal-0.1.0.tar.gz` from the release
+page while signed in and place it beside `PKGBUILD`. Makepkg cannot use your
+browser login or SSH authentication to fetch that HTTPS asset. An authenticated
+GitHub CLI download is another option; see the recipe documentation above.
+
 ## Other Linux distributions
 
 Install pipx using your distribution's package manager, then:
