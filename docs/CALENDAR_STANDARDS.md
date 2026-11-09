@@ -19,16 +19,22 @@ This documents tested behavior, rather than claiming complete RFC compliance.
   of silently guessing an offset or alias.
 - Floating times retain their wall clocks when the viewing system's zone changes.
   All-day events retain calendar dates, including across daylight-saving changes.
+  Floating durations use wall-clock arithmetic, independent of the viewing zone.
 - Explicit ambiguous clocks use the first occurrence; nonexistent clocks use
   the pre-transition offset, as specified by RFC 5545. Export uses UTC where
   necessary to distinguish an explicitly selected second repeated-hour endpoint.
 - DURATION preserves the difference between nominal days (`P1D`) and elapsed
   hours (`PT24H`) across daylight-saving transitions. DTEND remains exclusive.
+- Leap-second values use second 59 as recommended for implementations without
+  leap-second clocks. Invalid DATE/DATE-TIME endpoint combinations are reported
+  instead of being silently reinterpreted.
 
 ## Recurrence and retained data
 
-RRULE, RDATE date/date-time values, EXDATE, cancelled occurrences and detached
-RECURRENCE-ID edits are preserved. Floating rules retain floating UNTIL values;
+RRULE, RDATE date/date-time and PERIOD values, EXDATE, cancelled occurrences and
+detached RECURRENCE-ID edits are preserved. PERIOD values retain each occurrence's
+individual end or duration; export represents them with standard RDATE starts
+and detached event ranges. Floating rules retain floating UNTIL values;
 zoned rules use UTC UNTIL values. The editor's custom sequence metadata augments
 the standard recurrence rather than replacing it for other clients.
 
@@ -43,7 +49,8 @@ These cases currently require review instead of being silently approximated:
 
 - Detached-only UID resources without a master; multiple RRULE properties;
   legacy EXRULE; RECURRENCE-ID with RANGE=THISANDFUTURE.
-- RDATE `VALUE=PERIOD`, whose occurrences can have individual durations.
+- RDATE periods mixing floating and fixed time modes within the same UID.
+  Fixed periods may use a different timezone from the master.
 - Sub-minute recurrence frequencies and rules exceeding the bounded expansion
   budget. Dense or oversized timezone definitions also have computation/size
   limits; ordinary historic yearly transition rules are supported.
@@ -53,7 +60,9 @@ These cases currently require review instead of being silently approximated:
 
 A bad UID does not block healthy neighbors. The source is retained privately,
 with event-level diagnostics and inspection/export/retry actions under **Issues**
-in the sidebar. A successful later sync clears its retained issue. VTODO and
+in the sidebar and **Review issues** in the import dialog. Retained local-file
+failures can be retried through the reviewed import dialog. A successful later
+sync or corrected import of the same UID clears its retained issue. VTODO and
 other non-event resources remain in the sync mirror without appearing as events.
 
 Tests use synthetic calendars for timezone transitions, historic rules, scoped

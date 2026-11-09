@@ -119,7 +119,7 @@ def resource_when(diagnostics, preferences):
     return caption
 
 
-def resource_details(item, calendar_name, preferences):
+def resource_details(item, calendar_name, preferences, *, retained=True):
     metadata = item.get('diagnostics', {})
     lines = [calendar_name]
     if when := resource_when(metadata, preferences):
@@ -127,7 +127,8 @@ def resource_details(item, calendar_name, preferences):
     if zones := metadata.get('timezones'):
         lines.append('Timezone: ' + ', '.join(zones))
     lines.extend(['', item['reason'], '',
-                  'The original calendar resource is retained. Other events can continue syncing.'])
+                  'The original calendar resource is retained. Other events can continue syncing.' if retained else
+                  'This resource has not been imported. You can inspect or save its original calendar data.'])
     if metadata.get('truncated'):
         lines.append('Only the beginning was inspected for this description. Save the original to inspect the complete resource.')
     if 'timezone' in item['reason'].lower():

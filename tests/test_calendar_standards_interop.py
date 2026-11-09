@@ -362,19 +362,13 @@ def test_unavailable_timezone_diagnostic_names_the_identifier_and_keeps_healthy_
 
 
 @pytest.mark.parametrize("use_full", [False, True], ids=["lexical", "icalendar"])
-def test_unsupported_period_dates_are_isolated_instead_of_aborting_healthy_resources(use_full):
-    # PERIOD is legal RDATE syntax. Even if a supported subset cannot yet
-    # represent its per-occurrence duration, quarantine must contain that UID.
+def test_period_dates_preserve_their_range_alongside_healthy_resources(use_full):
     raw = document(vevent("period", "20261110T110000Z", "20261110T120000Z", extra=[
         "RDATE;VALUE=PERIOD:20261111T110000Z/20261111T130000Z"]),
         vevent("healthy-peer", "20261112T110000Z", "20261112T120000Z"))
     report = parse_report(raw, "synthetic", use_full=use_full)
+    assert len(report.events) == 2 and not report.rejected and not report.issues
     assert any(event.ical_uid == "healthy-peer@example.invalid" for event in report.events)
-    assert len(report.events) + len(report.rejected) == 2
-    assert all(resource.uid == "period@example.invalid" for resource in report.rejected)
-    if report.rejected:
-        assert len(report.issues) == 1
-    else:
-        start, end = datetime(2026, 11, 11, tzinfo=UTC), datetime(2026, 11, 12, tzinfo=UTC)
-        occurrence, = expand_events(report.events, start, end)
-        assert occurrence.end == datetime(2026, 11, 11, 13, tzinfo=UTC)
+    start, end = datetime(2026, 11, 11, tzinfo=UTC), datetime(2026, 11, 12, tzinfo=UTC)
+    occurrence, = expand_events(report.events, start, end)
+    assert occurrence.end == datetime(2026, 11, 11, 13, tzinfo=UTC)

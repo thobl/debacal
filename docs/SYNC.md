@@ -121,8 +121,10 @@ in private quarantine. Click the warning/sync indicator in the sidebar to open
 timezone, reason and identifiers, including after restarting the app.
 **View original** opens a read-only source viewer; **Save original…** exports
 the retained ICS; **Copy details** copies diagnostics. **Retry synchronization**
-fetches the resource again. Writable local calendars also offer
-**Import corrected file…**. These actions do not silently rewrite or delete
+fetches the resource again. Writable local calendars also offer **Retry import…**
+to review the retained source with the current parser, and **Import corrected file…**.
+The import preview's **Review issues** lists each rejected event separately with
+the same source inspection, export and diagnostic actions. These actions do not silently rewrite or delete
 server resources. Healthy siblings can still be imported, viewed and synchronized.
 The bridge leaves skipped server files intact and excludes their UIDs from
 deletion inference; an unidentifiable bad resource conservatively protects cached

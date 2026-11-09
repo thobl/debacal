@@ -12,6 +12,10 @@ import re
 from .models import Event
 
 
+class CalendarValueError(ValueError):
+    """A calendar value error whose controlled message can be shown to users."""
+
+
 def unfolded(data):
     if isinstance(data, bytes):
         data = data.decode("utf-8-sig")
@@ -123,12 +127,16 @@ def dt(value, params, tz, definitions=None):
             from .timezones import resolve_timezone
             zone = resolve_timezone(params["TZID"], definitions)
         fmt = "%Y%m%dT%H%M%S" if len(clock.rstrip("Z")) == 15 else "%Y%m%dT%H%M"
+        # RFC 5545 section 3.3.5 permits second 60. Implementations without
+        # leap-second support are instructed to interpret it as second 59.
+        if re.fullmatch(r'\d{8}T\d{4}60Z?', clock):
+            clock = clock[:13] + '59' + ('Z' if clock.endswith('Z') else '')
         return datetime.strptime(clock.rstrip("Z"), fmt).replace(tzinfo=zone), False
     except ValueError as exc:
         from .timezones import TimezoneError
         if isinstance(exc, TimezoneError):
             raise
-        raise ValueError(f"Invalid iCalendar date/time {value!r}: {exc}") from exc
+        raise CalendarValueError('Invalid iCalendar date or time value. View the original resource to inspect its date/time properties.') from exc
 
 
 def duration(value):

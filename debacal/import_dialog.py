@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from html import escape
 from threading import Lock
 
@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QVBoxLayout, QSizePolicy,
-    QAbstractItemView, QDialog, QTextEdit, QWidget, QFrame, QScrollArea,
+    QAbstractItemView, QWidget, QFrame, QScrollArea,
 )
 
 from .appearance import stylesheet, widget_palette
@@ -29,7 +29,19 @@ from .models import Event
 from .preferences import Preferences
 from .preview_navigation import PreviewNavigation
 from .recurrence import key_datetime
+from .resource_diagnostics import resource_details, resource_diagnostics, resource_when
+from .status_dialog import IssueAction, ResourceSourceDialog, StatusDialog, StatusIssue
 from .timeutil import local_zone
+
+
+@dataclass(frozen=True, slots=True)
+class _ImportIssue:
+    key: str
+    source: str
+    reason: str
+    resource_id: str = ''
+    raw_ics: str | bytes | None = None
+    uid: str = ''
 
 
 def _prepare_preview(sources, preferences):
@@ -498,8 +510,9 @@ class ImportDialog(FormDialog):
         self.preview_ready = self._selection_future is None
         self._update_summary()
         self._warnings = tuple(dict.fromkeys((*self.prepared_import.warnings, *page.warnings)))
-        self.issues_button.setText(f'Review issues ({len(self._warnings)})')
-        self.issues_button.setVisible(bool(self._warnings))
+        issue_specs = self._issue_specs()
+        self.issues_button.setText(f'Review issues ({len(issue_specs)})')
+        self.issues_button.setVisible(bool(issue_specs))
         self.issues_button.setToolTip('<qt>' + '<br>'.join(escape(value) for value in self._warnings) + '</qt>')
         self._update_import_button()
 
@@ -513,19 +526,83 @@ class ImportDialog(FormDialog):
         self._update_import_button()
 
     def _show_issues(self):
-        dialog = QDialog(self)
+        issues = self._import_issues()
+        def action_error(message):
+            issues.append(StatusIssue(f'action:{len(issues)}', 'Action failed', message))
+            dialog.refresh()
+            dialog.list.setCurrentRow(len(issues) - 1)
+        dialog = StatusDialog(lambda: issues, parent=self, show_issues=True, action_error=action_error)
         dialog.setWindowTitle('Import issues')
-        dialog.resize(650, 360)
-        layout = QVBoxLayout(dialog)
-        details = QTextEdit()
-        details.setReadOnly(True)
-        details.setPlainText('\n\n'.join(self._warnings))
-        layout.addWidget(details)
-        buttons = dialog_buttons(close=True)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        dialog.exec()
-        dialog.deleteLater()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def _issue_specs(self):
+        """Count individual resources without reparsing their retained source."""
+        specs, represented = [], set()
+        if self.prepared_import is not None:
+            for source in self.prepared_import.items:
+                if source.error:
+                    specs.append(_ImportIssue(f'file:{source.index}', source.label, source.error))
+                    represented.add(source.label + ': ' + source.error)
+                if source.report is None:
+                    continue
+                rejected_ids = {resource.resource_id for resource in source.report.rejected}
+                for index, resource in enumerate(source.report.rejected):
+                    specs.append(_ImportIssue(f'resource:{source.index}:{index}:{resource.resource_id}',
+                                              source.label, resource.reason, resource.resource_id,
+                                              resource.raw_ics, resource.uid))
+                    represented.add(source.label + ': ' + resource.reason)
+                for index, issue in enumerate(source.report.issues):
+                    represented.add(source.label + ': ' + issue.reason)
+                    if issue.resource_id not in rejected_ids:
+                        specs.append(_ImportIssue(f'warning:{source.index}:{index}', source.label,
+                                                  issue.reason, issue.resource_id))
+        for index, warning in enumerate(self._warnings):
+            if warning not in represented:
+                specs.append(_ImportIssue(f'preview:{index}', 'Import warning', warning))
+        return specs
+
+    def _import_issues(self):
+        issues = []
+        calendar = self.calendars.get(self.calendar.currentData())
+        for spec in self._issue_specs():
+            if spec.raw_ics is None:
+                details = spec.reason + ('\n\nResource ID: ' + spec.resource_id if spec.resource_id else '')
+                issues.append(StatusIssue(spec.key, spec.source, details))
+                continue
+            metadata = resource_diagnostics(spec.raw_ics)
+            if not metadata.get('uid') and spec.uid:
+                metadata['uid'] = spec.uid
+            title = metadata.get('title') or 'Untitled event'
+            subtitle = spec.source
+            if when := resource_when(metadata, self.preferences):
+                subtitle += ' · ' + when
+            details = resource_details({'diagnostics': metadata, 'resource_id': spec.resource_id,
+                                        'reason': spec.reason}, spec.source, self.preferences, retained=False)
+            if calendar is not None:
+                details += '\n\nImport destination: ' + calendar.name
+            actions = (IssueAction('Save original…', lambda raw=spec.raw_ics: self._save_issue_source(raw)),
+                       IssueAction('Copy details', lambda value=title + '\n\n' + details:
+                                   QApplication.clipboard().setText(value)))
+            issues.append(StatusIssue(spec.key, title, details, 'View original…',
+                                      lambda raw=spec.raw_ics: self._show_issue_source(raw),
+                                      close_on_action=False, subtitle=subtitle, extra_actions=actions))
+        return issues
+
+    def _show_issue_source(self, raw):
+        dialog = ResourceSourceDialog(raw, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def _save_issue_source(self, raw):
+        path, _ = QFileDialog.getSaveFileName(self, 'Save original calendar resource',
+                                             'calendar-resource.ics', 'Calendar files (*.ics)')
+        if path:
+            Path(path).write_bytes(raw if isinstance(raw, bytes) else raw.encode('utf-8'))
 
     def _finish_preview(self, *_):
         self._active = False

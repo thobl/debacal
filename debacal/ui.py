@@ -1653,8 +1653,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                    self.export_quarantined_resource(cid, rid))]
             if calendar is not None and (calendar.read_only or calendar.kind == 'ics'):
                 details += '\n\nThis calendar is read-only. Any source corrections must be made by its provider or owner.'
-            if calendar is not None and calendar.kind == 'local' and not calendar.read_only:
+            if calendar is not None and calendar.kind == 'local' and calendar.enabled and not calendar.read_only:
                 details += '\n\nFor a file import, save the original, correct it in its source application, and import the corrected file with the same UID when available.'
+                actions.append(IssueAction('Retry import…', lambda cid=calendar_id, rid=resource_id:
+                                           self.retry_quarantined_import(cid, rid), close_on_action=True))
                 actions.append(IssueAction('Import corrected file…', lambda cid=calendar_id: self.import_ics(cid),
                                            close_on_action=True))
             actions.insert(1, IssueAction('Copy details', lambda value=title + '\n\n' + details:
@@ -1712,6 +1714,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             dialog.exec()
         finally:
             dialog.deleteLater()
+
+    def retry_quarantined_import(self, calendar_id, resource_id):
+        calendar = self.store.get_calendar(calendar_id)
+        if calendar is None or calendar.kind != 'local' or not calendar.enabled or calendar.read_only:
+            raise ValueError('Choose a writable local calendar to retry this import.')
+        raw = self._retained_resource(calendar_id, resource_id)
+        data = raw if isinstance(raw, bytes) else raw.encode('utf-8')
+        return self.import_data(data, label='Retained calendar resource', calendar_id=calendar_id)
 
     def export_quarantined_resource(self, calendar_id, resource_id):
         path, _ = QFileDialog.getSaveFileName(self, 'Save original calendar resource',

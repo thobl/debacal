@@ -42,6 +42,19 @@ class ParseReport:
     rejected: tuple[RejectedResource, ...] = ()
 
 
+class PeriodError(fallback.CalendarValueError):
+    """A safe, property-specific explanation for a malformed RDATE period."""
+
+
+@dataclass(frozen=True)
+class _RecurrencePeriod:
+    start: datetime
+    end: datetime
+    duration_spec: str
+    floating_time: bool
+    timezone_id: str
+
+
 def reject_duplicate_identities(report: ParseReport, *, existing_events=()) -> ParseReport:
     """Quarantine resources claiming one local ID instead of overwriting a peer.
 
@@ -77,8 +90,8 @@ def _safe_reason(exc):
     message = str(exc).lower()
     if isinstance(exc, TimezoneError):
         return str(exc)
-    if "period" in message:
-        return "RDATE periods with individual durations are not supported yet. The original event has been retained."
+    if isinstance(exc, fallback.CalendarValueError):
+        return str(exc)
     if "schedule syntax version" in message:
         return "Unsupported custom schedule version."
     if "until" in message:
@@ -86,7 +99,7 @@ def _safe_reason(exc):
     if isinstance(exc, RecurrenceError) or "recurrence" in message or "rrule" in message:
         return "Unsupported or invalid recurrence rule."
     if "timezone" in message:
-        return "Unsupported timezone definition."
+        return "Event time values have missing or invalid timezone information."
     if "end" in message and "before" in message:
         return "Event ends before its start."
     if "uid is missing" in message:
@@ -183,6 +196,13 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
 _DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID'}
 
 
+def _references_timezone(parameters, raw):
+    # A PERIOD can finish with a UTC endpoint or duration while its start
+    # still depends on this resource's explicit timezone definition.
+    return bool(parameters.get('TZID') and parameters.get('VALUE') != 'DATE'
+                and any(not piece.split('/', 1)[0].upper().endswith('Z') for piece in raw.split(',')))
+
+
 def _timezone_definitions(blocks, referenced=None):
     definitions = {}
     for block in blocks:
@@ -206,7 +226,7 @@ def _read(data, use_full=True):
     lexical = fallback.components(data)
     referenced = {params['TZID'] for component in lexical for key in _DATE_PROPERTIES
                   for params, value in component.get(key, [])
-                  if params.get('TZID') and params.get('VALUE') != 'DATE' and not value.upper().endswith('Z')}
+                  if _references_timezone(params, value)}
     definitions = _timezone_definitions(blocks, referenced)
     for component in lexical:
         component['_timezone_definitions'] = definitions
@@ -224,6 +244,10 @@ def _read(data, use_full=True):
             if not line:
                 continue
             key, params, value = fallback.content_line(line)
+            if key == 'RDATE' and (params.get('VALUE') == 'PERIOD' or '/' in value):
+                # Periods are decoded from their lexical form below. Letting
+                # the library discard an invalid value would hide the issue.
+                continue
             if key in _DATE_PROPERTIES:
                 params.pop('TZID', None)
                 line = key + ''.join(';' + name + '=' + fallback.parameter(item) for name, item in params.items()) + ':' + value
@@ -250,6 +274,9 @@ def _read(data, use_full=True):
                     component["_decoded"].setdefault(key, []).extend(v.dt for v in value.dts)
                 elif hasattr(value, "dt"):
                     component["_decoded"].setdefault(key, []).append(value.dt)
+        for key in _DATE_PROPERTIES | {'DURATION'}:
+            if key in lexical[index]:
+                component[key] = lexical[index][key]
         result.append(component)
     return result
 
@@ -268,9 +295,74 @@ def _decoded(component, key, tz):
     for parameters, raw in component.get(key, []):
         for piece in raw.split(","):
             if parameters.get('VALUE') == 'PERIOD' or '/' in piece:
-                raise ValueError('RDATE PERIOD values with individual durations are unsupported.')
+                if key != 'RDATE':
+                    raise PeriodError('Only RDATE can contain recurrence periods.')
+                result.append(_decode_period(piece, parameters, tz, component.get('_timezone_definitions')).start)
+                continue
             decoded, all_day = fallback.dt(piece, parameters, tz, component.get('_timezone_definitions'))
             result.append(decoded.date() if all_day else decoded)
+    return result
+
+
+def _decode_period(raw, parameters, tz, definitions):
+    """Decode RFC 5545 PERIOD without replacing its occurrence-specific range."""
+    start_text, separator, endpoint = raw.partition('/')
+    if not separator or not start_text or not endpoint or '/' in endpoint:
+        raise PeriodError('An RDATE period needs a start date-time and an end date-time or positive duration.')
+    parameters = dict(parameters) | {'VALUE': 'DATE-TIME'}
+    try:
+        start, start_date = fallback.dt(start_text, parameters, tz, definitions)
+        if start_date:
+            raise PeriodError('RDATE periods use date-times, not all-day DATE values.')
+        floating = not parameters.get('TZID') and not start_text.upper().endswith('Z')
+        spec = ''
+        if endpoint.upper().startswith(('P', '+P', '-P')):
+            days, seconds = parse_duration_spec(endpoint.upper())
+            if days == seconds == 0:
+                raise PeriodError('An RDATE period duration must be positive.')
+            end = (start + timedelta(days=days, seconds=seconds) if floating
+                   else add_duration(start, endpoint.upper()))
+            spec = normalized_spec(endpoint.upper())
+        else:
+            end, end_date = fallback.dt(endpoint, parameters, tz, definitions)
+            if end_date:
+                raise PeriodError('RDATE periods use date-times, not all-day DATE values.')
+            end_floating = not parameters.get('TZID') and not endpoint.upper().endswith('Z')
+            if floating != end_floating:
+                raise PeriodError('An RDATE period must use compatible start and end timezone forms.')
+        valid = end.replace(tzinfo=None) > start.replace(tzinfo=None) if floating else end.timestamp() > start.timestamp()
+        if not valid:
+            raise PeriodError('The end of an RDATE period must follow its start.')
+    except (TimezoneError, PeriodError):
+        raise
+    except (ValueError, TypeError, OverflowError):
+        raise PeriodError('An RDATE period contains an invalid date-time or duration.') from None
+    identifier = '' if floating or start_text.upper().endswith('Z') else str(parameters.get('TZID', ''))
+    return _RecurrencePeriod(start, end, spec, floating, identifier)
+
+
+def _period_overrides(component, master, tz):
+    from .recurrence import occurrence_id
+    result = {}
+    for parameters, raw in component.get('RDATE', []):
+        if parameters.get('VALUE') != 'PERIOD' and '/' not in raw:
+            continue
+        if master.all_day:
+            raise PeriodError('RDATE periods require a timed DTSTART.')
+        for value in raw.split(','):
+            period = _decode_period(value, parameters, tz, component.get('_timezone_definitions'))
+            if period.floating_time != master.floating_time:
+                raise PeriodError('An RDATE period must use the same floating or fixed time mode as DTSTART.')
+            key = _key(period.start, tz, master.floating_time)
+            override = replace(master, id=occurrence_id(master.id, key), start=period.start, end=period.end,
+                               all_day=False, timezone_id=period.timezone_id, floating_time=period.floating_time,
+                               duration_spec=period.duration_spec,
+                               recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
+                               raw_ics='', series_id=master.id, recurrence_id=key,
+                               schedule_expression='', expression_anchor='', schedule_syntax=1, range_policy='')
+            if key in result and Event.from_dict(result[key]).end.timestamp() != override.end.timestamp():
+                raise PeriodError('Conflicting RDATE periods assign different ranges to the same occurrence.')
+            result.setdefault(key, override.to_dict())
     return result
 
 
@@ -284,6 +376,11 @@ def _floating(component, key='DTSTART'):
     return params.get('VALUE') != 'DATE' and len(value) != 8 and not params.get('TZID') and not value.upper().endswith('Z')
 
 
+def _event_title(component, default='Untitled event'):
+    value = fallback.prop(component, 'SUMMARY', default)
+    return value if value.strip() else 'Untitled event'
+
+
 def _used_definitions(components):
     result, inspected = {}, set()
     for component in components:
@@ -291,8 +388,7 @@ def _used_definitions(components):
         for key in _DATE_PROPERTIES:
             for params, value in component.get(key, []):
                 identifier = params.get('TZID')
-                if (identifier in inspected or identifier not in definitions
-                        or value.upper().endswith('Z') or params.get('VALUE') == 'DATE'):
+                if identifier in inspected or identifier not in definitions or not _references_timezone(params, value):
                     continue
                 # Every component in this UID shares one resource context.
                 # Detached instances can reference it thousands of times.
@@ -312,7 +408,10 @@ def _component_end(component, start, all_day, tz, *, inherited=None, duration_zo
     if 'DTEND' in component:
         if len(component['DTEND']) != 1:
             raise ValueError('An event must have only one DTEND.')
-        return _datetime(_decoded(component, 'DTEND', tz)[0], tz), ''
+        endpoint = _decoded(component, 'DTEND', tz)[0]
+        if (not isinstance(endpoint, datetime)) != all_day:
+            raise fallback.CalendarValueError('DTEND must use the same DATE or DATE-TIME value type as DTSTART.')
+        return _datetime(endpoint, tz), ''
     if 'DURATION' in component:
         if len(component['DURATION']) != 1:
             raise ValueError('An event must have only one DURATION.')
@@ -320,6 +419,9 @@ def _component_end(component, start, all_day, tz, *, inherited=None, duration_zo
         days, seconds = parse_duration_spec(value)
         if all_day and (seconds or not days):
             raise ValueError('An all-day event duration must use positive whole days or weeks.')
+        floating = _floating(component) if 'DTSTART' in component else bool(inherited and inherited.floating_time)
+        if not all_day and floating:
+            return start + timedelta(days=days, seconds=seconds), normalized_spec(value)
         cursor = start if all_day or duration_zone is None else start.astimezone(duration_zone)
         return add_duration(cursor, value), '' if all_day else normalized_spec(value)
     if inherited is not None:
@@ -496,6 +598,8 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             continue
         if "DTSTART" not in master_component:
             raise ValueError("An event is missing DTSTART.")
+        if len(master_component['DTSTART']) != 1:
+            raise fallback.CalendarValueError('An event must have exactly one DTSTART.')
         raw_start = _decoded(master_component, "DTSTART", tz)[0]
         all_day = not isinstance(raw_start, datetime)
         event_start = _datetime(raw_start, tz)
@@ -511,7 +615,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         definitions = _used_definitions(components)
         master = Event(
             id=event_id, calendar_id=calendar_id,
-            title=fallback.prop(master_component, "SUMMARY") or "Untitled event", start=event_start, end=event_end,
+            title=_event_title(master_component), start=event_start, end=event_end,
             description=fallback.prop(master_component, "DESCRIPTION"), location=fallback.prop(master_component, "LOCATION"),
             group_id=fallback.prop(master_component, "X-DEBACAL-GROUP") or None,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
@@ -548,7 +652,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         if not verified_policy:
             master = replace(master, range_policy='')
         discarded = set()
-        overrides, exclusions = {}, set(master.excluded_dates)
+        overrides, exclusions = _period_overrides(master_component, master, tz), set(master.excluded_dates)
         for component in components:
             if "RECURRENCE-ID" not in component:
                 continue
@@ -561,6 +665,9 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             if fallback.prop(component, "STATUS").upper() == "CANCELLED":
                 exclusions.add(key)
                 continue
+            if 'DTSTART' in component and len(component['DTSTART']) != 1:
+                raise fallback.CalendarValueError('An event must have exactly one DTSTART.')
+            inherited = Event.from_dict(overrides[key]) if key in overrides else master
             raw_override_start = _decoded(component, 'DTSTART' if 'DTSTART' in component else 'RECURRENCE-ID', tz)[0]
             override_all_day = not isinstance(raw_override_start, datetime)
             override_floating = not override_all_day and (_floating(component) if 'DTSTART' in component else floating)
@@ -570,12 +677,14 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                                     str(component.get('DTSTART', [({}, '')])[0][0].get('TZID', '')) or master.timezone_id)
             if 'DTSTART' not in component:
                 from .recurrence import event_zone
-                override_zone, override_timezone_id = event_zone(master), master.timezone_id
+                override_start = inherited.start if key in overrides else override_start
+                override_zone, override_timezone_id = event_zone(inherited), inherited.timezone_id
+                override_floating = inherited.floating_time
             override_end, override_spec = _component_end(component, override_start, override_all_day, tz,
-                inherited=master if 'DTSTART' not in component else None, duration_zone=override_zone)
+                inherited=inherited if 'DTSTART' not in component else None, duration_zone=override_zone)
             override = replace(
                 master, id=occurrence_id(master.id, key), start=override_start, end=override_end,
-                title=fallback.prop(component, "SUMMARY", master.title),
+                title=_event_title(component, master.title),
                 description=fallback.prop(component, "DESCRIPTION", master.description),
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,

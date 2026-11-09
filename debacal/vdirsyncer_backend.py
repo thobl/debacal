@@ -49,8 +49,12 @@ def semantic(event: Event | None) -> str:
         values['start'], values['end'] = endpoint(item.start), endpoint(item.end)
         from .ics_resources import _timezone_signature
         from .ics_fallback import unfolded
+        # Only this item's scheduling zone can affect its future generated
+        # occurrences. Context used solely by fixed detached ranges can be
+        # normalized to UTC by other clients without changing the schedule.
         values['timezone_definitions'] = {identifier: _timezone_signature(unfolded(definition))
-                                           for identifier, definition in sorted(item.timezone_definitions.items())}
+                                           for identifier, definition in sorted(item.timezone_definitions.items())
+                                           if identifier == item.timezone_id}
         nominal = bool(item.duration_spec and not item.series_id)
         if nominal and not item.recurring and not item.floating_time:
             from .recurrence import event_zone

@@ -77,6 +77,10 @@ Excluding dates from a series retains its standard rule with EXDATE; explicitly
 choosing a few occurrences imports only those dates, as a finite RDATE series
 or an individual event. The preview does not edit the source calendar.
 Unreadable files and unsupported entries are listed under **Review issues**.
+Each rejected event is listed separately with its title, date, timezone, reason
+and UID. You can inspect or save its original source and copy its diagnostics.
+Retained local import failures also offer **Retry import…** from the sidebar's
+issues dialog; this opens a new review before applying anything.
 Imports can repair events lacking UID identifiers by assigning stable IDs;
 this is reported as an informational warning. Remote sync retains strict UID
 validation, and importing the same file again uses the same generated IDs.
@@ -605,7 +609,7 @@ Slot confirmation acts on release without waiting for the double-click interval.
 
 * Additional provider integration and OAuth.
 * Broader recurrence and timezone interoperability, including advanced custom rules.
-  Detached-only imports without a master, RDATE periods, EXRULE,
+  Detached-only imports without a master, EXRULE,
   RANGE=THISANDFUTURE and sub-minute rules currently fail explicitly; see the
   [support notes](CALENDAR_STANDARDS.md).
 * Progressive handling of exceptionally large import/edit batches on the UI thread.

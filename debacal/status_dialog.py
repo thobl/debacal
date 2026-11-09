@@ -56,7 +56,7 @@ class ResourceSourceDialog(QDialog):
 
 
 class StatusDialog(QDialog):
-    def __init__(self, issue_supplier, sync_supplier, parent=None, *, show_issues=False,
+    def __init__(self, issue_supplier, sync_supplier=None, parent=None, *, show_issues=False,
                  retry_sync=None, preferences=None, action_error=None):
         super().__init__(parent)
         self.setWindowTitle('Calendar status and issues')
@@ -97,15 +97,19 @@ class StatusDialog(QDialog):
         actions.addStretch()
         page.addLayout(actions)
         self.tabs.addTab(issues_page, 'Issues')
-        self.sync_details = QTextEdit()
-        self.sync_details.setReadOnly(True)
-        self.sync_details.setAccessibleName('Synchronization details')
-        self.tabs.addTab(self.sync_details, 'Synchronization')
+        self.sync_details = None
+        if sync_supplier is not None:
+            self.sync_details = QTextEdit()
+            self.sync_details.setReadOnly(True)
+            self.sync_details.setAccessibleName('Synchronization details')
+            self.tabs.addTab(self.sync_details, 'Synchronization')
+        else:
+            self.tabs.tabBar().hide()
         footer = QHBoxLayout()
-        if retry_sync is not None:
+        if sync_supplier is not None and retry_sync is not None:
             button = action_button('Retry synchronization', retry_sync)
             footer.addWidget(button)
-        if preferences is not None:
+        if sync_supplier is not None and preferences is not None:
             button = action_button('Preferences…', lambda: self._open_preferences(preferences))
             footer.addWidget(button)
         footer.addStretch()
@@ -115,7 +119,7 @@ class StatusDialog(QDialog):
         outer.addLayout(footer)
         self.list.currentItemChanged.connect(self._select)
         self.refresh()
-        self.tabs.setCurrentIndex(0 if show_issues else 1)
+        self.tabs.setCurrentIndex(0 if show_issues or sync_supplier is None else 1)
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh)
@@ -145,8 +149,8 @@ class StatusDialog(QDialog):
             self.list.setVisible(bool(values))
             self.details.setVisible(bool(values))
             self._select(self.list.currentItem())
-        text = self._sync_supplier()
-        if self.sync_details.toPlainText() != text:
+        text = self._sync_supplier() if self._sync_supplier is not None else None
+        if self.sync_details is not None and self.sync_details.toPlainText() != text:
             scrollbar = self.sync_details.verticalScrollBar()
             position = scrollbar.value()
             self.sync_details.setPlainText(text)
