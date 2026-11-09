@@ -5,11 +5,10 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from threading import Event as ThreadEvent, Thread, get_ident
-from time import monotonic
+from time import monotonic, sleep
 
 import pytest
 from PySide6.QtCore import QTimer
-from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from debacal.models import Calendar, Event
@@ -27,7 +26,10 @@ def wait_until(app, condition, timeout=10):
     deadline = monotonic() + timeout
     while not condition() and monotonic() < deadline:
         app.processEvents()
-        QTest.qWait(2)
+        # Qt's native qWait can retain the GIL, starving the Python database
+        # worker while this test pumps events. A real thread wait models the
+        # application's event loop without depending on incidental scheduling.
+        sleep(.002)
     assert condition()
 
 
