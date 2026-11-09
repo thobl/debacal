@@ -506,7 +506,9 @@ separate when imported. Exports leave the source events and clipboard unchanged.
 Imports preserve recurring masters and exceptions; occurrences are
 expanded only for the displayed date range. An import is undoable and does not
 truncate an infinite series to a fixed window. The offline codec supports ordinary
-VEVENTs and named IANA zones; unsupported custom timezone definitions fail clearly.
+VEVENTs, named IANA zones, embedded VTIMEZONE rules (including Windows names),
+and floating local date-times. Embedded rules travel with the event through
+edits and export. See [calendar format support](CALENDAR_STANDARDS.md).
 
 **Add calendar** supports local calendars, read-only ICS URLs, and CalDAV accounts.
 Enter a server/account URL (including a Nextcloud base URL), username and app
@@ -530,7 +532,11 @@ every five minutes while the app is open. Preferences can pause it or change the
 interval; pausing also suppresses the startup attempt. **Sync** / `Ctrl+R` still
 works manually. Offline changes
 stay in a transactional outbox. Calendar toggles use only local data. Individual
-unsupported resources are retained in quarantine and listed in Sync status;
+unsupported resources are retained in quarantine and listed individually under
+**Issues**, opened from the sidebar warning/sync indicator. Each entry includes
+the event, calendar, date/time, timezone and reason. You can inspect or save its
+original ICS, copy diagnostics, and retry synchronization. Writable local sources
+also allow importing a corrected file. These actions preserve the server original;
 healthy events and uploads continue. A skipped resource is never treated as a
 server deletion. Repairing it on the server or updating the parser retries it
 on the next sync. Floating UNTIL values are interpreted in DTSTART’s timezone
@@ -599,8 +605,9 @@ Slot confirmation acts on release without waiting for the double-click interval.
 
 * Additional provider integration and OAuth.
 * Broader recurrence and timezone interoperability, including advanced custom rules.
-  Custom non-IANA timezone definitions, detached-only imports without a master,
-  EXRULE, RANGE=THISANDFUTURE and sub-minute rules currently fail explicitly.
+  Detached-only imports without a master, RDATE periods, EXRULE,
+  RANGE=THISANDFUTURE and sub-minute rules currently fail explicitly; see the
+  [support notes](CALENDAR_STANDARDS.md).
 * Progressive handling of exceptionally large import/edit batches on the UI thread.
 * Linux distribution integration, accessibility/screen-reader validation,
   and broader desktop/window-manager coverage. Wheel build/install and isolated

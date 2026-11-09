@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 
 from .models import Event
+from .timezones import timezone_identifier
 from .coincident_occurrences import apply_occurrence_counts, multiplicities
 from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
                        expression_for_regular, reconstruct_sequence, sequence_tail)
@@ -32,16 +33,16 @@ class SequenceAuthoring:
 
 def authoring_anchor(event, authoring_zone=None):
     zone = authoring_zone or event_zone(event)
-    return (datetime.combine(event.start.date(), time.min, zone) if event.all_day
-            else event.start.astimezone(zone))
+    return (datetime.combine(event.start.date(), time.min, zone) if event.all_day else
+            event.start.replace(tzinfo=zone) if event.floating_time else event.start.astimezone(zone))
 
 
 def authoring_event(event, authoring_zone=None):
     """Rezone the complete prototype, preserving floating all-day dates."""
     anchor = authoring_anchor(event, authoring_zone)
-    end = (datetime.combine(event.end.date(), time.min, anchor.tzinfo) if event.all_day
-           else event.end.astimezone(anchor.tzinfo))
-    return replace(event, start=anchor, end=end, timezone_id=getattr(anchor.tzinfo, 'key', ''))
+    end = (datetime.combine(event.end.date(), time.min, anchor.tzinfo) if event.all_day else
+           event.end.replace(tzinfo=anchor.tzinfo) if event.floating_time else event.end.astimezone(anchor.tzinfo))
+    return replace(event, start=anchor, end=end, timezone_id=timezone_identifier(anchor.tzinfo))
 
 
 def simplified_rule(event):
@@ -91,6 +92,9 @@ def _valid_wall(value):
 def _same_zone(first, second):
     if first == second:
         return True
+    if getattr(first, 'identifier', '') or getattr(second, 'identifier', ''):
+        # A resource is allowed to redefine even a familiar name such as UTC.
+        return False
     # Qt/ICS can spell fixed UTC using either ZoneInfo or datetime.timezone.
     utc_names = {'UTC', 'Etc/UTC', 'Etc/GMT', 'GMT', 'UTC+00:00'}
     return str(first) in utc_names and str(second) in utc_names
@@ -102,7 +106,19 @@ def expression_event(event, expression, *, authoring_zone=None):
         return document_event(event, expression)
     prototype = authoring_event(event, authoring_zone)
     anchor = prototype.start
-    compiled = compile_sequence(expression, anchor, all_day=event.all_day)
+    compiled = compile_sequence(expression, anchor.replace(tzinfo=timezone.utc) if event.floating_time else anchor,
+                                all_day=event.all_day)
+    if event.floating_time:
+        from .recurrence import canonical_rule
+        def floating_key(key):
+            return datetime.fromisoformat(key).replace(tzinfo=None).isoformat()
+        compiled = replace(compiled, recurrence_rule=canonical_rule(compiled.recurrence_rule, prototype),
+            recurrence_dates=tuple(map(floating_key, compiled.recurrence_dates)),
+            excluded_dates=tuple(map(floating_key, compiled.excluded_dates)),
+            prefix_starts=tuple(value.replace(tzinfo=anchor.tzinfo) for value in compiled.prefix_starts),
+            tail_start=compiled.tail_start.replace(tzinfo=anchor.tzinfo),
+            tail_prelude=tuple(value.replace(tzinfo=anchor.tzinfo) for value in compiled.tail_prelude),
+            duplicate_starts=tuple(value.replace(tzinfo=anchor.tzinfo) for value in compiled.duplicate_starts))
     tail = sequence_tail(expression)
     if tail is not None and tail.overflow in ('skip', 'shift') and tail.range_span > 1:
         from .event_duration import end_for
@@ -123,7 +139,7 @@ def expression_event(event, expression, *, authoring_zone=None):
                                   'Use a calendar-day duration such as 2d, choose Cut, or use an earlier end date.')
     candidate = replace(prototype, recurrence_rule=compiled.recurrence_rule,
                         recurrence_dates=compiled.recurrence_dates, excluded_dates=compiled.excluded_dates,
-                        recurrence_overrides={}, timezone_id=getattr(anchor.tzinfo, 'key', ''),
+                        recurrence_overrides={}, timezone_id=timezone_identifier(anchor.tzinfo),
                         range_policy=compiled.range_policy)
     return (apply_occurrence_counts(candidate, event, compiled.duplicate_starts)
             if compiled.duplicate_starts or event.recurrence_overrides else candidate)
@@ -147,26 +163,26 @@ def _document_unbounded(event):
 def _finite_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
     anchor = authoring_anchor(event, authoring_zone)
     values = []
-    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day):
+    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day or event.floating_time):
         value = (datetime.combine(value.date(), time.min, anchor.tzinfo) if event.all_day
                  else value.astimezone(anchor.tzinfo))
         values.append(value)
         if len(values) > limit:
             raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences. Its standard recurrence is preserved.')
-    values = sorted({recurrence_key(value, event.all_day): value for value in values}.values(),
+    values = sorted({recurrence_key(value, event.all_day, floating_time=event.floating_time): value for value in values}.values(),
                     key=lambda value: value.timestamp())
-    primary = recurrence_key(anchor, event.all_day)
+    primary = recurrence_key(anchor, event.all_day, floating_time=event.floating_time)
     # The reference controls interpretation, but need not itself be an event.
     # Keep it first when present; excluded/moved references need no invented
     # occurrence merely to make the editor's date field meaningful.
-    return tuple([value for value in values if recurrence_key(value, event.all_day) == primary]
-                 + [value for value in values if recurrence_key(value, event.all_day) != primary])
+    return tuple([value for value in values if recurrence_key(value, event.all_day, floating_time=event.floating_time) == primary]
+                 + [value for value in values if recurrence_key(value, event.all_day, floating_time=event.floating_time) != primary])
 
 
 def _contains(event, key, rules=None):
     value = key_datetime(key, event)
     previous = (rules if rules is not None else recurrence_set(event)).before(value, inc=True)
-    return previous is not None and recurrence_key(previous, event.all_day) == recurrence_key(value, event.all_day)
+    return previous is not None and recurrence_key(previous, event.all_day, floating_time=event.floating_time) == recurrence_key(value, event.all_day, floating_time=event.floating_time)
 
 
 def displayed_schedule(event):
@@ -190,10 +206,10 @@ def displayed_schedule(event):
             raise RecurrenceError('Occurrences with different all-day settings keep their standard exceptions; a single sequence cannot describe them.')
         if item.all_day and (item.start.time() != time.min or item.end.time() != time.min):
             raise RecurrenceError('All-day exceptions with explicit clocks retain their complete scheduling document.')
-        if not item.all_day and not _valid_wall(item.start):
+        if not item.all_day and not item.floating_time and not _valid_wall(item.start):
             raise RecurrenceError('An occurrence uses a nonexistent local time. Its standard exception is preserved.')
         nominal.add(key)
-        actual.append(recurrence_key(item.start, event.all_day))
+        actual.append(recurrence_key(item.start, event.all_day, floating_time=event.floating_time))
     if not actual:
         return replace(event, recurrence_overrides={})
     base = replace(event, excluded_dates=tuple(excluded | nominal), recurrence_overrides={})
@@ -230,8 +246,8 @@ def canonical_starts(event, *, authoring_zone=None, limit=DEFAULT_LIMIT):
                           else item.start.astimezone(zone))
             if len(values) > limit:
                 raise RecurrenceError(f'This schedule exceeds {limit:,} authoring occurrences.')
-    anchor_key = recurrence_key(authoring_anchor(event, authoring_zone), event.all_day)
-    return tuple(sorted(values, key=lambda value: (recurrence_key(value, event.all_day) != anchor_key,
+    anchor_key = recurrence_key(authoring_anchor(event, authoring_zone), event.all_day, floating_time=event.floating_time)
+    return tuple(sorted(values, key=lambda value: (recurrence_key(value, event.all_day, floating_time=event.floating_time) != anchor_key,
                                                  value.timestamp())))
 
 
@@ -253,14 +269,14 @@ def recurrence_matches(first, second):
     Finite rules are compared in full within the authoring budget. No finite
     sample is used as proof that two different infinite rules are equivalent.
     """
-    if first.all_day != second.all_day:
+    if first.all_day != second.all_day or first.floating_time != second.floating_time:
         return False
-    if recurrence_key(first.start, first.all_day) != recurrence_key(second.start, second.all_day):
+    if recurrence_key(first.start, first.all_day, floating_time=first.floating_time) != recurrence_key(second.start, second.all_day, floating_time=second.floating_time):
         return False
     first_unbounded, second_unbounded = _unbounded(first), _unbounded(second)
     if first_unbounded != second_unbounded:
         return False
-    same_zone = first.all_day or _same_zone(event_zone(first), event_zone(second))
+    same_zone = first.all_day or first.floating_time or _same_zone(event_zone(first), event_zone(second))
     if first_unbounded and not same_zone:
         return False
     same_rule = same_zone and simplified_rule(first) == simplified_rule(second)
@@ -279,10 +295,10 @@ def recurrence_matches(first, second):
     if not same_rule:
         if first_unbounded:
             return False
-        return ({recurrence_key(value, first.all_day) for value in _finite_starts(first)} ==
-                {recurrence_key(value, second.all_day) for value in _finite_starts(second)})
+        return ({recurrence_key(value, first.all_day, floating_time=first.floating_time) for value in _finite_starts(first)} ==
+                {recurrence_key(value, second.all_day, floating_time=second.floating_time) for value in _finite_starts(second)})
     def normalized_keys(event, name):
-        return {recurrence_key(key_datetime(key, event), event.all_day) for key in getattr(event, name)}
+        return {recurrence_key(key_datetime(key, event), event.all_day, floating_time=event.floating_time) for key in getattr(event, name)}
     keys = ((normalized_keys(first, 'recurrence_dates') ^ normalized_keys(second, 'recurrence_dates'))
             | (normalized_keys(first, 'excluded_dates') ^ normalized_keys(second, 'excluded_dates')))
     if not keys:
@@ -395,7 +411,7 @@ def _tail_expression(event, *, authoring_zone=None):
         raise RecurrenceError(str(error)) from error
     if expression_matches(event, tail, authoring_zone=anchor.tzinfo):
         return tail
-    primary = recurrence_key(anchor, event.all_day)
+    primary = recurrence_key(anchor, event.all_day, floating_time=event.floating_time)
     bare = replace(event, recurrence_dates=(), excluded_dates=(), recurrence_overrides={})
     base_rules, actual_rules = recurrence_set(bare), recurrence_set(event)
     meaningful_keys = {key for key in (*event.recurrence_dates, *event.excluded_dates)
@@ -405,7 +421,7 @@ def _tail_expression(event, *, authoring_zone=None):
     cursor = None
     # Only visit the finite prefix up to the last exception and one untouched
     # tail member. This never attempts to enumerate an ongoing recurrence.
-    for index, value in enumerate(normalize_recurrence_stream(recurrence_set(bare), all_day=event.all_day)):
+    for index, value in enumerate(normalize_recurrence_stream(recurrence_set(bare), all_day=event.all_day or event.floating_time)):
         if index > DEFAULT_LIMIT:
             raise RecurrenceError(f'The edited prefix exceeds {DEFAULT_LIMIT:,} authoring occurrences. Its standard recurrence is preserved.')
         # With no exceptions, DTSTART can already be the tail cursor.
@@ -434,15 +450,15 @@ def _tail_expression(event, *, authoring_zone=None):
     if cursor is None:
         raise RecurrenceError('This ongoing recurrence cannot retain its phase in a custom sequence. Its rule is preserved.')
     values = []
-    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day):
+    for value in normalize_recurrence_stream(recurrence_set(event), all_day=event.all_day or event.floating_time):
         local = datetime.combine(value.date(), time.min, anchor.tzinfo) if event.all_day else value.astimezone(anchor.tzinfo)
         if local.timestamp() > cursor.timestamp():
             break
         values.append(local)
         if len(values) > DEFAULT_LIMIT:
             raise RecurrenceError(f'The edited prefix exceeds {DEFAULT_LIMIT:,} authoring occurrences. Its standard recurrence is preserved.')
-    ordered = ([value for value in values if recurrence_key(value, event.all_day) == primary]
-               + [value for value in values if recurrence_key(value, event.all_day) != primary])
+    ordered = ([value for value in values if recurrence_key(value, event.all_day, floating_time=event.floating_time) == primary]
+               + [value for value in values if recurrence_key(value, event.all_day, floating_time=event.floating_time) != primary])
     # A prefix may name dates before the prototype. The last instruction must
     # still put the cursor at the first unaffected tail member.
     # A jump into an ongoing regular tail describes that tail's phase, rather
@@ -483,7 +499,7 @@ def _compact_authoring(event, *, authoring_zone=None, prefer_literal=True):
             # The tail shares one final cursor. Move that emission to the end
             # while explicit extra copies remain independent occurrences.
             cursor_index = next((index for index in range(len(prefix) - 1, -1, -1)
-                                 if recurrence_key(prefix[index], event.all_day) == recurrence_key(cursor, event.all_day)), None)
+                                 if recurrence_key(prefix[index], event.all_day, floating_time=event.floating_time) == recurrence_key(cursor, event.all_day, floating_time=event.floating_time)), None)
             if cursor_index is not None:
                 prefix.pop(cursor_index)
             for key, count in sorted(extras.items()):

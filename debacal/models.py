@@ -1,17 +1,18 @@
 """Small, UI-independent calendar values.
 
-Dates are timezone-aware. JSON keeps the original UTC offset; SQLite uses UTC
-timestamps for ordering so events from different timezones compare correctly.
+Internal datetimes are timezone-aware. JSON retains scoped timezone definitions
+and offsets for fixed instants, or plain wall clocks for floating timed events.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from .timezones import event_timezone, resolve_timezone, validate_definitions
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,8 @@ class Event:
     excluded_dates: tuple[str, ...] = ()
     recurrence_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     timezone_id: str = ""
+    timezone_definitions: dict[str, str] = field(default_factory=dict)
+    floating_time: bool = False
     raw_ics: str = ""
     # These identify a displayed occurrence. Stored series masters leave them
     # empty; edits are embedded in the master so a series is one sync resource.
@@ -96,6 +99,8 @@ class Event:
             raise ValueError("An event needs an ID and a calendar.")
         if not self.title.strip():
             raise ValueError("An event needs a title.")
+        if type(self.floating_time) is not bool or self.floating_time and self.all_day:
+            raise ValueError('Only timed events can use floating wall-clock times.')
         if not isinstance(self.schedule_expression, str) or not isinstance(self.expression_anchor, str):
             raise ValueError("Custom schedule text and its anchor must be strings.")
         if type(self.schedule_syntax) is not int or self.schedule_syntax not in {1, 2}:
@@ -109,30 +114,39 @@ class Event:
                 raise ValueError("A custom schedule anchor must be a valid ISO date.") from exc
         if any(value.tzinfo is None or value.utcoffset() is None for value in (self.start, self.end)):
             raise ValueError("Event start and end must include a timezone.")
-        if not self.all_day and self.end.timestamp() < self.start.timestamp():
+        if not self.all_day and (self.end.replace(tzinfo=None) < self.start.replace(tzinfo=None)
+                                if self.floating_time else self.end.timestamp() < self.start.timestamp()):
             raise ValueError("The end must not be before the start.")
         if self.all_day and self.end.replace(tzinfo=None) <= self.start.replace(tzinfo=None):
             raise ValueError("All-day events must end after the start date.")
         if not self.ical_uid:
             object.__setattr__(self, "ical_uid", self.id)
-        zone = self.timezone_id or getattr(self.start.tzinfo, "key", "")
+        definitions = validate_definitions(self.timezone_definitions)
+        object.__setattr__(self, 'timezone_definitions', definitions)
+        zone = '' if self.floating_time else self.timezone_id or getattr(self.start.tzinfo, "key", "")
         # UTC needs no named-zone definition. Both ICS parsers must retain the
         # same semantics even when one returns ZoneInfo('UTC') and one UTC.
-        object.__setattr__(self, "timezone_id", "" if zone in {"UTC", "Etc/UTC"} else zone)
+        object.__setattr__(self, "timezone_id", "" if zone in {"UTC", "Etc/UTC"} and zone not in definitions else zone)
         if self.timezone_id:
-            try:
-                ZoneInfo(self.timezone_id)
-            except (ValueError, ZoneInfoNotFoundError) as exc:
-                raise ValueError(f"Unknown event timezone: {self.timezone_id}") from exc
+            resolved = resolve_timezone(self.timezone_id, definitions)
+            if self.timezone_id in definitions:
+                if self.all_day:
+                    object.__setattr__(self, 'start', self.start.replace(tzinfo=resolved))
+                    object.__setattr__(self, 'end', self.end.replace(tzinfo=resolved))
+                else:
+                    object.__setattr__(self, 'start', self.start.astimezone(resolved))
+                    object.__setattr__(self, 'end', self.end.astimezone(resolved))
         def canonical_date(value):
             if len(value) == 10:
                 return datetime.fromisoformat(value).date().isoformat()
             parsed = datetime.fromisoformat(value)
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=ZoneInfo(self.timezone_id) if self.timezone_id else self.start.tzinfo)
+                parsed = parsed.replace(tzinfo=event_timezone(self))
             if self.all_day:
-                zone = ZoneInfo(self.timezone_id) if self.timezone_id else self.start.tzinfo
+                zone = event_timezone(self)
                 return parsed.astimezone(zone).date().isoformat()
+            if self.floating_time:
+                return parsed.astimezone(event_timezone(self)).replace(tzinfo=None).isoformat()
             return parsed.astimezone(timezone.utc).isoformat()
 
         object.__setattr__(self, "recurrence_dates", tuple(sorted({canonical_date(value) for value in self.recurrence_dates})))
@@ -141,12 +155,17 @@ class Event:
         if not isinstance(self.duration_spec, str):
             raise ValueError('An event duration specification must be text.')
         if self.duration_spec:
-            from .event_duration import add_duration, normalized_spec
+            from .event_duration import add_duration, normalized_spec, parse_duration_spec
             spec = normalized_spec(self.duration_spec)
             if spec and not self.all_day:
-                zone = ZoneInfo(self.timezone_id) if self.timezone_id else self.start.tzinfo
+                zone = event_timezone(self)
                 try:
-                    matches = add_duration(self.start.astimezone(zone), spec).timestamp() == self.end.timestamp()
+                    if self.floating_time:
+                        days, seconds = parse_duration_spec(spec)
+                        matches = (self.start.replace(tzinfo=None) + timedelta(days=days, seconds=seconds)
+                                   == self.end.replace(tzinfo=None))
+                    else:
+                        matches = add_duration(self.start.astimezone(zone), spec).timestamp() == self.end.timestamp()
                 except (OverflowError, ValueError) as exc:
                     raise ValueError('The nominal duration exceeds the supported calendar range.') from exc
                 if not matches:
@@ -165,9 +184,12 @@ class Event:
                                           or self.schedule_expression not in ('', '+0d'))
 
     def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        value["start"] = self.start.isoformat()
-        value["end"] = self.end.isoformat()
+        # Custom dateutil tzinfo values hold locks and cannot be deep-copied.
+        # Datetimes become strings anyway; copy only the remaining JSON data.
+        value = {item.name: deepcopy(getattr(self, item.name)) for item in fields(self)
+                 if item.name not in {'start', 'end'}}
+        value["start"] = (self.start.replace(tzinfo=None) if self.floating_time else self.start).isoformat()
+        value["end"] = (self.end.replace(tzinfo=None) if self.floating_time else self.end).isoformat()
         value["recurrence_dates"] = list(self.recurrence_dates)
         value["excluded_dates"] = list(self.excluded_dates)
         return value
@@ -181,11 +203,13 @@ class Event:
         for field in ("start", "end"):
             if isinstance(value[field], str):
                 value[field] = datetime.fromisoformat(value[field])
-        if value.get("timezone_id"):
-            try:
-                zone = ZoneInfo(value["timezone_id"])
-            except (ValueError, ZoneInfoNotFoundError) as exc:
-                raise ValueError(f"Unknown event timezone: {value['timezone_id']}") from exc
+        if value.get('floating_time'):
+            from .timeutil import local_zone
+            zone = local_zone()
+            value['start'] = value['start'].replace(tzinfo=zone)
+            value['end'] = value['end'].replace(tzinfo=zone)
+        elif value.get("timezone_id"):
+            zone = resolve_timezone(value['timezone_id'], value.get('timezone_definitions', {}))
             if value.get('all_day'):
                 # DATE values float. A midnight clock gap must not turn its
                 # retained date into 01:00 (or a different civil date).

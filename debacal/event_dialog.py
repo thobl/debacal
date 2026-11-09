@@ -27,6 +27,7 @@ from .dialog_base import FormDialog, dialog_buttons
 from .event_schedule import ScheduleDraft, count_to_until, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 from .models import Event
+from .timezones import timezone_identifier
 from .preferences import Preferences
 from .patterns import PatternError, compile_sequence, relative_sequence_steps, sequence_tail
 from .range_policies import occupied_span, range_policy_options, shift_range_fits, static_range_policy_fits
@@ -554,7 +555,8 @@ class EventDialog(FormDialog):
 
     def sequence_zone(self):
         source = self.schedule_source()
-        return event_zone(source) if source and source.schedule_expression and source.schedule_syntax == 2 else local_zone()
+        return (event_zone(source) if source and (source.timezone_definitions or
+                source.schedule_expression and source.schedule_syntax == 2) else local_zone())
 
     def _load_scope(self, scope, start=None, end=None):
         self._schedule_error = None
@@ -567,8 +569,12 @@ class EventDialog(FormDialog):
         if reference is None and end is None:
             end = add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes))
         all_day = bool(reference and reference.all_day)
+        self._floating_time = bool(reference and reference.floating_time)
         if not all_day:
-            start, end = start.astimezone(local_zone()), end.astimezone(local_zone())
+            if self._floating_time:
+                start, end = start.replace(tzinfo=local_zone()), end.replace(tzinfo=local_zone())
+            else:
+                start, end = start.astimezone(local_zone()), end.astimezone(local_zone())
         self.all_day.setChecked(all_day)
         self.duration_spec = reference.duration_spec if reference and not all_day else ''
         self.duration_zone = event_zone(reference) if reference else local_zone()
@@ -597,7 +603,11 @@ class EventDialog(FormDialog):
         if self._range_needs_repair:
             return format_duration(self._duration, elapsed=True)
         return format_event_duration(self._last_start, self._last_end,
-                                     all_day=self.all_day.isChecked(), duration_spec=self.duration_spec)
+                                     all_day=self.all_day.isChecked(), duration_spec=self.duration_spec,
+                                     floating_time=self.is_floating_time())
+
+    def is_floating_time(self):
+        return bool(getattr(self, '_floating_time', False) and not self.all_day.isChecked())
 
     def _relocate_range(self, target, *, endpoint='start'):
         if self._range_needs_repair:
@@ -605,21 +615,21 @@ class EventDialog(FormDialog):
                     if endpoint == 'start' else (add_elapsed(target, -self._duration), target))
         return relocate_range(self._last_start, self._last_end, target, endpoint=endpoint,
                               all_day=self.all_day.isChecked(), duration_spec=self.duration_spec,
-                              duration_zone=self.duration_zone)
+                              duration_zone=self.duration_zone, floating_time=self.is_floating_time())
 
     def _duration_end(self, start, duration, spec):
-        if self.all_day.isChecked():
+        if self.all_day.isChecked() or self.is_floating_time():
             return start + duration
         return (add_duration(start.astimezone(self.duration_zone), spec).astimezone(start.tzinfo)
                 if spec else add_elapsed(start, duration))
 
     def _set_range(self, start, end, *, duration_spec=None):
-        duration = range_duration(start, end, all_day=self.all_day.isChecked())
+        duration = range_duration(start, end, all_day=self.all_day.isChecked(), floating_time=self.is_floating_time())
         needs_repair = False
         if self._loading and not self.all_day.isChecked():
             try:
-                validate_datetime(start)
-                validate_datetime(end)
+                validate_datetime(start, floating_time=self.is_floating_time())
+                validate_datetime(end, floating_time=self.is_floating_time())
             except ValueError:
                 # A caller can supply a nonexistent local clock. Keep those
                 # fields editable and let Save identify the clock error. The
@@ -632,7 +642,8 @@ class EventDialog(FormDialog):
                 pass  # Reading the fields reports unsupported UTC boundaries.
         if duration < timedelta(0) or (not duration and not (
                 self.original and not self.all_day.isChecked()
-                and self.original.start.timestamp() == self.original.end.timestamp())):
+                and range_duration(self.original.start, self.original.end,
+                                   floating_time=self.original.floating_time) == timedelta(0))):
             raise ValueError('The end must be after the start.')
         was_loading = self._loading
         self._loading = True
@@ -642,6 +653,8 @@ class EventDialog(FormDialog):
                 self.duration_spec if duration_spec is None else duration_spec)
             self.start.setAllDay(all_day)
             self.end.setAllDay(all_day)
+            self.start.setFloatingTime(self.is_floating_time())
+            self.end.setFloatingTime(self.is_floating_time())
             self.start.set_value(start)
             self.end.set_value(end - timedelta(days=1) if all_day else end)
             self._last_start, self._last_end, self._duration = start, end, duration
@@ -665,7 +678,7 @@ class EventDialog(FormDialog):
         value = field.value()
         if self.all_day.isChecked() and field is self.end:
             value += timedelta(days=1)
-        return validate_datetime(value, all_day=self.all_day.isChecked())
+        return validate_datetime(value, all_day=self.all_day.isChecked(), floating_time=self.is_floating_time())
 
     validate_time = staticmethod(validate_datetime)
 
@@ -696,9 +709,9 @@ class EventDialog(FormDialog):
         def change():
             end = self.value(self.end)
             start = self.value(self.start)
-            changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if self.all_day.isChecked()
+            changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if self.all_day.isChecked() or self.is_floating_time()
                        else end.timestamp() != self._last_end.timestamp())
-            if range_duration(start, end, all_day=self.all_day.isChecked()) <= timedelta(0):
+            if range_duration(start, end, all_day=self.all_day.isChecked(), floating_time=self.is_floating_time()) <= timedelta(0):
                 start = self._relocate_range(end, endpoint='end')[0]
             self._set_range(start, end, duration_spec='' if changed else self.duration_spec)
             self._sync_ending()
@@ -735,7 +748,7 @@ class EventDialog(FormDialog):
                 clock = previous[0].timetz() if previous else time(9, tzinfo=local_zone())
                 start = datetime.combine(self._last_start.date(), clock)
                 end = (relocate_range(*previous, start, duration_spec=self.duration_spec,
-                                      duration_zone=self.duration_zone)[1] if previous else
+                                      duration_zone=self.duration_zone, floating_time=self.is_floating_time())[1] if previous else
                        add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes)))
             self._set_range(start, end)
             self._sync_ending()
@@ -832,9 +845,7 @@ class EventDialog(FormDialog):
         end = self._relocate_range(start)[1]
         if not self.all_day.isChecked():
             start, end = start.astimezone(self.duration_zone), end.astimezone(self.duration_zone)
-        prototype = Event('range-choice', 'range-choice', 'Range choice', start, end,
-            all_day=self.all_day.isChecked(), duration_spec=self.duration_spec,
-            timezone_id=getattr(self.duration_zone, 'key', '') if not self.all_day.isChecked() else '')
+        prototype = self._prototype(start, end)
         return {policy: static_range_policy_fits(prototype, kind, interval, policy=policy, span=span,
             preferred_day=preferred_day, count=count, until=until) for policy in ('skip', 'shift')}
 
@@ -1142,12 +1153,15 @@ class EventDialog(FormDialog):
         """One range/content projection for text validation and event creation."""
         spec = self.duration_spec if duration_spec is None else duration_spec
         zone = duration_zone or self.duration_zone
+        source = self.schedule_source()
+        floating = bool(source and source.floating_time and not self.all_day.isChecked())
         return Event(self.original.id if self.original else self._new_id,
             self.calendar.currentData() or 'local', self.title.text().strip() or 'Untitled event',
             start.astimezone(zone) if spec else start, end.astimezone(zone) if spec else end,
             location=self.location.text(), description=self.description.toPlainText(),
             all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives',
-            duration_spec=spec, timezone_id=getattr(zone, 'key', '') if spec else '')
+            duration_spec=spec, timezone_id=timezone_identifier(zone) if spec or source and source.timezone_definitions else '',
+            timezone_definitions=source.timezone_definitions if source else {}, floating_time=floating)
 
     def _read_expression(self, draft, *, detect=True):
         start, end = self.value(self.start), self.value(self.end)
@@ -1180,10 +1194,12 @@ class EventDialog(FormDialog):
     def build_events(self):
         start, end = self.value(self.start), self.value(self.end)
         duration_spec, duration_zone = self.duration_spec, self.duration_zone
-        point = (self.original and self.original.start.timestamp() == self.original.end.timestamp()
+        point = (self.original and range_duration(self.original.start, self.original.end,
+                                                 floating_time=self.original.floating_time) == timedelta(0)
                  and not self.all_day.isChecked())
         try:
-            validate_range_order(start, end, all_day=self.all_day.isChecked(), allow_point=bool(point))
+            validate_range_order(start, end, all_day=self.all_day.isChecked(), allow_point=bool(point),
+                                 floating_time=self.is_floating_time())
         except ValueError:
             self._validation_field = self.end
             raise
@@ -1223,8 +1239,13 @@ class EventDialog(FormDialog):
                       start=stored_start, end=stored_end, location=self.location.text(), description=self.description.toPlainText(),
                       all_day=self.all_day.isChecked(), candidate=self.schedule_mode.currentData() == 'alternatives', **fields)
         values['duration_spec'] = duration_spec
+        values['floating_time'] = bool(source and source.floating_time and not self.all_day.isChecked())
+        if source:
+            values['timezone_definitions'] = source.timezone_definitions
+            if single or source.timezone_definitions:
+                values['timezone_id'] = source.timezone_id
         if duration_spec:
-            values['timezone_id'] = getattr(duration_zone, 'key', '')
+            values['timezone_id'] = timezone_identifier(duration_zone)
         event = replace(self.original, **values) if self.original else Event(**values)
         if self.original is None and self.series is None and event.recurrence_overrides:
             # A new draft has shared content controls and individual ranges.
@@ -1244,8 +1265,8 @@ class EventDialog(FormDialog):
             recurrence_set(event)
             if not single and (draft.kind == 'custom' or draft.expression):
                 for value in draft.validation_starts(start, all_day=self.all_day.isChecked()):
-                    validate_datetime(value, all_day=event.all_day)
-                    validate_datetime(end_for(event, value), all_day=event.all_day)
+                    validate_datetime(value, all_day=event.all_day, floating_time=event.floating_time)
+                    validate_datetime(end_for(event, value), all_day=event.all_day, floating_time=event.floating_time)
         return [event]
 
     def _project_preview(self, event):
@@ -1298,9 +1319,9 @@ class EventDialog(FormDialog):
                 return value.replace(tzinfo=None) if projected.all_day else value.astimezone(zone).replace(tzinfo=None)
             shift = wall(projected.start) - wall(source.start)
             nominal = (wall(key_datetime(self.original.recurrence_id, source)) + shift).replace(tzinfo=zone)
-            primary = replace(primary, recurrence_id=recurrence_key(nominal, projected.all_day))
+            primary = replace(primary, recurrence_id=recurrence_key(nominal, projected.all_day, floating_time=projected.floating_time))
         elif projected and self.series and self.scope.currentData() == 'group':
-            primary = replace(primary, recurrence_id=recurrence_key(projected.start, projected.all_day))
+            primary = replace(primary, recurrence_id=recurrence_key(projected.start, projected.all_day, floating_time=projected.floating_time))
         self.preview.set_primary(primary)
         self.preview.enable_date_editing(self._can_edit_schedule() and not self.preview.error)
         self.error.setText(self.preview.error)
@@ -1350,7 +1371,7 @@ class EventDialog(FormDialog):
             picker = DateTimeRangePicker(start, end, endpoint=endpoint, preferences=self.preferences,
                 calendar_color=self._calendar_color(), parent=self, all_day=self.all_day.isChecked(),
                 full_day_shortcut=self.scope_bindings.get('full_day', 'F'),
-                duration_spec=self.duration_spec, duration_zone=self.duration_zone)
+                duration_spec=self.duration_spec, duration_zone=self.duration_zone, floating_time=self.is_floating_time())
             picker.accepted.connect(lambda: self._accept_primary_range(
                 picker.result_start, picker.result_end, picker.result_duration_spec))
             self.range_picker = picker
@@ -1389,7 +1410,7 @@ class EventDialog(FormDialog):
             picker = DateTimeRangePicker(start, self._relocate_range(start)[1], preferences=self.preferences,
                 calendar_color=self._calendar_color(), parent=self, all_day=self.all_day.isChecked(),
                 full_day_shortcut=self.scope_bindings.get('full_day', 'F'),
-                duration_spec=self.duration_spec, duration_zone=self.duration_zone)
+                duration_spec=self.duration_spec, duration_zone=self.duration_zone, floating_time=self.is_floating_time())
             picker.setWindowTitle('Add occurrence')
             picker.accepted.connect(lambda: self._add_range(
                 picker.result_start, picker.result_end, duration_spec=picker.result_duration_spec))
@@ -1413,11 +1434,14 @@ class EventDialog(FormDialog):
             return
         start, end = occurrence.start, occurrence.end
         if not occurrence.all_day:
-            start, end = start.astimezone(local_zone()), end.astimezone(local_zone())
+            if occurrence.floating_time:
+                start, end = start.replace(tzinfo=local_zone()), end.replace(tzinfo=local_zone())
+            else:
+                start, end = start.astimezone(local_zone()), end.astimezone(local_zone())
         picker = DateTimeRangePicker(start, end, preferences=self.preferences,
             calendar_color=self._calendar_color(), parent=self, all_day=self.all_day.isChecked(),
             full_day_shortcut=self.scope_bindings.get('full_day', 'F'),
-            duration_spec=occurrence.duration_spec, duration_zone=event_zone(occurrence))
+            duration_spec=occurrence.duration_spec, duration_zone=event_zone(occurrence), floating_time=occurrence.floating_time)
         picker.setWindowTitle('Edit occurrence')
         def apply():
             master = self._project_preview(self.build_events()[0])
@@ -1510,14 +1534,14 @@ class EventDialog(FormDialog):
         """Reconcile typed values even when Return saves before focus changes."""
         start, end = self.value(self.start), self.value(self.end)
         all_day = self.all_day.isChecked()
-        start_changed = ((start.replace(tzinfo=None) != self._last_start.replace(tzinfo=None)) if all_day else
+        start_changed = ((start.replace(tzinfo=None) != self._last_start.replace(tzinfo=None)) if all_day or self.is_floating_time() else
                          start.timestamp() != self._last_start.timestamp() or
                          self._range_needs_repair and start.replace(tzinfo=None) != self._last_start.replace(tzinfo=None))
-        end_changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if all_day else
+        end_changed = (end.replace(tzinfo=None) != self._last_end.replace(tzinfo=None) if all_day or self.is_floating_time() else
                        end.timestamp() != self._last_end.timestamp())
         if start_changed and not end_changed:
             end = self._relocate_range(start)[1]
-        elif end_changed and range_duration(start, end, all_day=all_day) <= timedelta(0):
+        elif end_changed and range_duration(start, end, all_day=all_day, floating_time=self.is_floating_time()) <= timedelta(0):
             start = self._relocate_range(end, endpoint='end')[0]
         spec = '' if end_changed else self.duration_spec
         previous_duration = self._duration_caption()

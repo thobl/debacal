@@ -15,16 +15,16 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, time
 import json
-from zoneinfo import ZoneInfo
 
 from .models import Event
 from .event_duration import normalized_spec
 from .recurrence import RecurrenceError, event_zone, key_datetime, occurrence, recurrence_key
+from .timezones import resolve_timezone
 
 
 PREFIX = 'schedule'
 _FIELDS = {'rule', 'add', 'omit', 'move', 'range_policy', 'duration_spec'}
-_RANGE_FIELDS = {'start', 'end', 'all_day', 'zone', 'duration_spec'}
+_RANGE_FIELDS = {'start', 'end', 'all_day', 'zone', 'floating_time', 'duration_spec'}
 
 
 def is_sequence_document(text: str) -> bool:
@@ -76,6 +76,10 @@ def parse_document(text: str) -> dict:
             raise RecurrenceError('Moved occurrence start and end values must be dates or datetimes.')
         if 'all_day' in item and type(item['all_day']) is not bool:
             raise RecurrenceError('A moved occurrence all_day value must be true or false.')
+        if 'floating_time' in item and type(item['floating_time']) is not bool:
+            raise RecurrenceError('A moved occurrence floating_time value must be true or false.')
+        if item.get('floating_time') and (item.get('all_day') or item.get('zone')):
+            raise RecurrenceError('A floating occurrence cannot also be all-day or have a named timezone.')
         if 'zone' in item and not isinstance(item['zone'], str):
             raise RecurrenceError('A moved occurrence zone must be a timezone name.')
         if not isinstance(item.get('duration_spec', ''), str):
@@ -90,11 +94,13 @@ def _range_document(item: Event) -> dict:
         # together with non-midnight clocks. Keep every accepted range exactly;
         # the ordinary DATE-only case remains pleasant to read and edit.
         return (value.date().isoformat() if item.all_day and value.time() == time.min and value.fold == 0
-                else value.isoformat())
+                else (value.replace(tzinfo=None) if item.floating_time else value).isoformat())
     value = {'start': value_at(item.start), 'end': value_at(item.end),
              'all_day': item.all_day}
     if item.timezone_id:
         value['zone'] = item.timezone_id
+    if item.floating_time:
+        value['floating_time'] = True
     if item.duration_spec:
         value['duration_spec'] = item.duration_spec
     return value
@@ -154,30 +160,36 @@ def document_event(source: Event, text: str) -> Event:
     moves = {}
     for raw_key, values in document.get('move', {}).items():
         canonical = (datetime.fromisoformat(raw_key).date().isoformat() if len(raw_key) == 10
-                     else recurrence_key(key_datetime(raw_key, bare), bare.all_day))
+                     else recurrence_key(key_datetime(raw_key, bare), bare.all_day,
+                                         floating_time=bare.floating_time))
         if canonical in moves:
             raise RecurrenceError('Two moved occurrence keys name the same nominal date.')
         original = source.recurrence_overrides.get(canonical)
         item = (Event.from_dict(original) if original is not None
                 else occurrence(bare, key_datetime(canonical, bare), canonical))
         try:
-            zone = ZoneInfo(values['zone']) if values.get('zone') else event_zone(item)
+            zone = resolve_timezone(values['zone'], item.timezone_definitions) if values.get('zone') else event_zone(item)
         except (ValueError, KeyError) as error:
             raise RecurrenceError(f'Invalid occurrence timezone: {values.get("zone")!r}.') from error
         all_day = values.get('all_day', item.all_day)
+        floating_time = values.get('floating_time', item.floating_time and not all_day and not values.get('zone'))
         start, end = (_datetime(values[name], zone=zone) for name in ('start', 'end'))
         changed = replace(item, start=start, end=end, all_day=all_day,
                           timezone_id=values.get('zone', item.timezone_id),
+                          floating_time=floating_time,
                           duration_spec=values.get('duration_spec', ''))
         if changed.duration_spec != normalized_spec(values.get('duration_spec', '')):
             raise RecurrenceError('The moved duration does not match its start/end range.')
         payload = deepcopy(original) if original is not None else item.to_dict()
         # Preserve all content and identity exactly when reading the unchanged
-        # document. Range edits deliberately update only these four fields.
-        if (changed.start.isoformat(), changed.end.isoformat(), changed.all_day, changed.timezone_id, changed.duration_spec) != (
-                item.start.isoformat(), item.end.isoformat(), item.all_day, item.timezone_id, item.duration_spec):
-            payload.update(start=changed.start.isoformat(), end=changed.end.isoformat(),
-                           all_day=changed.all_day, timezone_id=changed.timezone_id, duration_spec=changed.duration_spec)
+        # document. Range edits deliberately update only scheduling fields.
+        if (changed.start.isoformat(), changed.end.isoformat(), changed.all_day, changed.timezone_id,
+                changed.floating_time, changed.duration_spec) != (
+                item.start.isoformat(), item.end.isoformat(), item.all_day, item.timezone_id,
+                item.floating_time, item.duration_spec):
+            encoded = changed.to_dict()
+            payload.update((field, encoded[field]) for field in
+                           ('start', 'end', 'all_day', 'timezone_id', 'floating_time', 'duration_spec'))
         moves[canonical] = payload
     return replace(bare, recurrence_overrides=moves)
 

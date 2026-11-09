@@ -48,6 +48,38 @@ def test_bulk_decodes_shared_timezones_once_and_matches_isolated_resources(use_f
 
 
 @pytest.mark.parametrize('use_full', [False, True])
+def test_bulk_resource_templates_reuse_the_already_split_calendar_structure(use_full):
+    start = datetime(2026, 10, 24, 9, tzinfo=ZoneInfo('Europe/Berlin'))
+    events = [Event(f'bulk-{index}', 'local', 'Synthetic bulk event', start + timedelta(days=index),
+                    start + timedelta(days=index, hours=1), recurrence_rule='FREQ=WEEKLY;COUNT=3')
+              for index in range(120)]
+    payload = export_ics(events)
+    with patch.object(codec, '_blocks', wraps=codec._blocks) as split:
+        report = codec.parse_report(payload, 'local', use_full=use_full)
+    assert len(report.events) == len(events) and not report.issues
+    # One report split and one shared decoder split, independent of UID count.
+    # Each resource used to repeat this structural work over the shared zones.
+    assert split.call_count <= 2
+
+
+@pytest.mark.parametrize('use_full', [False, True])
+def test_detached_instances_inspect_each_shared_timezone_definition_once(use_full):
+    from dataclasses import replace
+    start = datetime(2026, 10, 24, 9, tzinfo=ZoneInfo('Europe/Berlin'))
+    series = Event('detached', 'local', 'Synthetic detached series', start, start + timedelta(hours=1),
+                   recurrence_rule='FREQ=DAILY;COUNT=121')
+    exceptions = [replace(occurrence(series, start + timedelta(days=index)), title='Synthetic exception')
+                  for index in range(1, 121)]
+    series = replace(series, recurrence_overrides={item.recurrence_id: item.to_dict() for item in exceptions})
+    payload = export_ics([series])
+    with patch.object(codec, '_generated_timezone_coverage', wraps=codec._generated_timezone_coverage) as inspect:
+        report = codec.parse_report(payload, 'local', use_full=use_full)
+    event, = report.events
+    assert not report.issues and len(event.recurrence_overrides) == len(exceptions)
+    assert inspect.call_count == 1
+
+
+@pytest.mark.parametrize('use_full', [False, True])
 def test_missing_uid_repair_uses_isolated_decoding_without_redecoding_healthy_peers(use_full):
     payload = mixed_calendar().replace(b'UID:utc\r\n', b'')
     with patch.object(codec, '_read', wraps=codec._read) as decode:

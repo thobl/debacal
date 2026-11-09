@@ -71,7 +71,7 @@ Use **+** beside Calendars to connect an account. Select a calendar's name to cr
 
 Only one window opens per profile. Use `--test` for separate persistent test data, or `--profile NAME` for another profile. Passwords can be saved in your system keyring. See the [user guide](docs/USER_GUIDE.md) for data locations, backups, advanced sequences, and troubleshooting.
 
-This is an early release. Please report problems through [GitHub Issues](https://github.com/thobl/debacal/issues). Known limits and test results are recorded in the [release review](docs/RELEASE_REVIEW.md).
+This is an early release. Please report problems through [GitHub Issues](https://github.com/thobl/debacal/issues). See [calendar format support](docs/CALENDAR_STANDARDS.md) for interoperability limits and the [release review](docs/RELEASE_REVIEW.md) for release validation.
 
 ## License
 

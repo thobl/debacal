@@ -23,7 +23,7 @@ def _key(event: Event) -> tuple[str, str, str]:
 
 
 def display_date(event: Event) -> date:
-    return event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
+    return event.start.date() if event.all_day or event.floating_time else event.start.astimezone(local_zone()).date()
 
 
 def _without_authoring(event: Event) -> Event:

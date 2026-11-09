@@ -20,11 +20,11 @@ from .timeutil import local_zone, now
 
 
 def _start(event):
-    return event.start if event.all_day else event.start.astimezone(local_zone())
+    return event.start if event.all_day or event.floating_time else event.start.astimezone(local_zone())
 
 
 def _end(event):
-    return event.end if event.all_day else event.end.astimezone(local_zone())
+    return event.end if event.all_day or event.floating_time else event.end.astimezone(local_zone())
 
 
 class SeriesPreview(QWidget):
@@ -181,7 +181,7 @@ class SeriesPreview(QWidget):
 
     def _primary_key(self, master):
         """Resolve the prototype identity even when a rule starts after its RDATE."""
-        first = recurrence_key(master.start, master.all_day)
+        first = recurrence_key(master.start, master.all_day, floating_time=master.floating_time)
         if self._primary is None:
             return first
         actual = self._primary.start.timestamp()
@@ -294,10 +294,10 @@ class SeriesPreview(QWidget):
             for master in self.masters:
                 for key in master.recurrence_dates:
                     value = key_datetime(key, master)
-                    self.added_dates.add(value.date() if master.all_day else value.astimezone(local_zone()).date())
+                    self.added_dates.add(value.date() if master.all_day or master.floating_time else value.astimezone(local_zone()).date())
                 for key in master.excluded_dates:
                     value = key_datetime(key, master)
-                    self.excluded_dates.add(value.date() if master.all_day else value.astimezone(local_zone()).date())
+                    self.excluded_dates.add(value.date() if master.all_day or master.floating_time else value.astimezone(local_zone()).date())
             last = date.fromordinal(min(date.max.toordinal(), self.grid_start.toordinal() + 42))
             begin = datetime.combine(self.grid_start, time.min, local_zone())
             end = datetime.combine(last, time.max if last == date.max else time.min, local_zone())

@@ -32,7 +32,9 @@ def signature(event):
     """Hash normalized scheduling and shared-content fields, never local IDs."""
     from .recurrence import canonical_rule, normalized_rule
     def stamp(value):
-        return value.date().isoformat() if event.all_day else value.astimezone(timezone.utc).isoformat()
+        return (value.date().isoformat() if event.all_day else
+                value.replace(tzinfo=None).isoformat() if event.floating_time else
+                value.astimezone(timezone.utc).isoformat())
     value = {
         'version': 1, 'policy': 'cut', 'uid': event.ical_uid,
         'start': stamp(event.start), 'end': stamp(event.end), 'all_day': event.all_day,
@@ -44,6 +46,12 @@ def signature(event):
     }
     if event.duration_spec:
         value['duration_spec'] = event.duration_spec
+    if event.floating_time:
+        value['floating_time'] = True
+    if not event.all_day and event.timezone_id in event.timezone_definitions:
+        # Equal current offsets do not imply equal future transitions. Include
+        # resource rules so the range cache cannot leak across reused TZIDs.
+        value['timezone_definition'] = fallback.unfolded(event.timezone_definitions[event.timezone_id])
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -111,9 +119,20 @@ def matches_generated(component, event, key, expected, *, decode, tz, fingerprin
     else:
         if not isinstance(actual_start, datetime) or not isinstance(actual_end, datetime):
             return False
-        def instant(value):
-            return (value if value.tzinfo else value.replace(tzinfo=tz)).timestamp()
-        same_range = (instant(actual_start), instant(actual_end)) == (start.timestamp(), end.timestamp())
+        if event.floating_time:
+            def floating_property(name):
+                parameters, raw = component.get(name, [({}, '')])[0]
+                return bool(raw and not parameters.get('TZID') and parameters.get('VALUE') != 'DATE'
+                            and not raw.upper().endswith('Z'))
+            # Decoders attach the current viewer zone for display. Verify the
+            # authored value type, then compare clocks without that attachment.
+            same_range = (floating_property('DTSTART') and floating_property('DTEND')
+                          and (actual_start.replace(tzinfo=None), actual_end.replace(tzinfo=None))
+                              == (start.replace(tzinfo=None), end.replace(tzinfo=None)))
+        else:
+            def instant(value):
+                return (value if value.tzinfo else value.replace(tzinfo=tz)).timestamp()
+            same_range = (instant(actual_start), instant(actual_end)) == (start.timestamp(), end.timestamp())
     return (same_range and fallback.prop(component, 'STATUS').upper() != 'CANCELLED'
             and all(fallback.prop(component, name, value) == value for name, value in (
                 ('SUMMARY', event.title), ('DESCRIPTION', event.description), ('LOCATION', event.location)))

@@ -31,6 +31,12 @@ def static_range_policy_fits(prototype: Event, kind: str, interval: int = 1, *,
     if policy not in ('skip', 'shift') or span <= 1:
         return True
     from .recurrence import event_zone
+    if prototype.floating_time:
+        # A floating clock has a neutral wall-time duration, so display-zone
+        # daylight changes must not alter the month-boundary preflight.
+        return _static_range_policy_fits(prototype.start.replace(tzinfo=timezone.utc).isoformat(),
+            prototype.end.replace(tzinfo=timezone.utc).isoformat(), timezone.utc, prototype.all_day,
+            prototype.duration_spec, str(kind).upper(), interval, policy, span, preferred_day, count, until)
     return _static_range_policy_fits(prototype.start.isoformat(), prototype.end.isoformat(),
         event_zone(prototype), prototype.all_day, prototype.duration_spec, str(kind).upper(), interval,
         policy, span, preferred_day, count, until)
@@ -54,7 +60,8 @@ def _static_range_policy_fits(start_text, end_text, zone, all_day, duration_spec
     # Finite bounds near year 9999 still inspect their terminal endpoint.
     bounds_safe = (count is None and until is None or until is not None and until.year < 9999
                    or count is not None and (initial + months * cycle * max(0, count - 1)) // 12 < 9999)
-    if bounds_safe and (all_day or isinstance(zone, timezone) or str(zone) in {'UTC', 'Etc/UTC', 'Etc/GMT', 'GMT'}):
+    if bounds_safe and (all_day or isinstance(zone, timezone) or
+                        not getattr(zone, 'identifier', '') and str(zone) in {'UTC', 'Etc/UTC', 'Etc/GMT', 'GMT'}):
         return True
     nominal_days = nominal_seconds = 0
     if duration_spec:
@@ -243,28 +250,28 @@ def occurrence_end(master: Event, start: datetime) -> datetime:
         boundary = datetime(local_start.year + 1, 1, 1, tzinfo=zone)
     else:
         boundary = datetime(local_start.year, local_start.month + 1, 1, tzinfo=zone)
-    if not master.all_day:
+    if not master.all_day and not master.floating_time:
         boundary = normalize_recurrence_time(boundary)
     return boundary if end.timestamp() > boundary.timestamp() else end
 
 
 def cut_range_for_key(master: Event, key: str) -> tuple[datetime, datetime] | None:
     """A verified changed native range, excluding explicit additions/overrides."""
-    from .recurrence import (_recurrence_set, key_datetime, normalize_recurrence_time,
+    from .recurrence import (recurrence_set, key_datetime, normalize_recurrence_time,
                              recurrence_key)
     if (not cut_policy_active(master) or key in master.excluded_dates
             or key in master.recurrence_dates or key in master.recurrence_overrides):
         return None
     start = key_datetime(key, master)
-    if not master.all_day:
+    if not master.all_day and not master.floating_time:
         start = normalize_recurrence_time(start)
     try:
         end = occurrence_end(master, start)
         if end.timestamp() == uncut_occurrence_end(master, start).timestamp():
             return None
-        rules = _recurrence_set(master, include_dates=False)
+        rules = recurrence_set(master, include_dates=False)
         previous = rules.before(start, inc=True)
-        if previous is None or recurrence_key(previous, master.all_day) != recurrence_key(start, master.all_day):
+        if previous is None or recurrence_key(previous, master.all_day, floating_time=master.floating_time) != recurrence_key(start, master.all_day, floating_time=master.floating_time):
             return None
     except (ValueError, OverflowError):
         return None
@@ -281,15 +288,15 @@ def iter_cut_ranges(master: Event) -> Iterator[tuple[str, datetime, datetime]]:
     """
     if not cut_policy_active(master):
         return
-    from .recurrence import (_recurrence_set, normalize_recurrence_stream,
+    from .recurrence import (recurrence_set, normalize_recurrence_stream,
                              recurrence_key)
     skip = set(master.excluded_dates) | set(master.recurrence_dates) | set(master.recurrence_overrides)
     # Export intentionally streams the complete four-digit calendar horizon.
     # At most 119,988 monthly periods exist; views retain the smaller default
     # budget, and the ICS range adapter separately caps exported exceptions.
-    rules = _recurrence_set(master, include_dates=False, work_limit=120000)
-    for start in normalize_recurrence_stream(rules, all_day=master.all_day):
-        key = recurrence_key(start, master.all_day)
+    rules = recurrence_set(master, include_dates=False, work_limit=120000)
+    for start in normalize_recurrence_stream(rules, all_day=master.all_day or master.floating_time):
+        key = recurrence_key(start, master.all_day, floating_time=master.floating_time)
         if key in skip:
             continue
         try:

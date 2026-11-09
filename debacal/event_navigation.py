@@ -5,7 +5,7 @@ from .recurrence import key_datetime, occurrence, recurrence_key, recurrence_set
 
 
 def event_day(event, zone):
-    return event.start.date() if event.all_day else event.start.astimezone(zone).date()
+    return event.start.date() if event.all_day or event.floating_time else event.start.astimezone(zone).date()
 
 
 def adjacent_event_day(resources, day, direction, zone, matches=lambda event, master: True):
@@ -49,7 +49,7 @@ def adjacent_event_day(resources, day, direction, zone, matches=lambda event, ma
             for index, value in enumerate(nominal):
                 if index >= 10000 + len(master.recurrence_overrides):
                     break
-                key = recurrence_key(value, master.all_day)
+                key = recurrence_key(value, master.all_day, floating_time=master.floating_time)
                 if key in master.recurrence_overrides:
                     continue
                 if consider(occurrence(master, value, key), master):

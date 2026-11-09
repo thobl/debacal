@@ -32,7 +32,8 @@ from .button_focus import install_button_focus
 from .selection import EventSelection, affected_visible, capture_selection, selection_roots
 from .placement import PastePlacement, initial_paste_target
 from .search_panel import event_matches_query
-from .status_dialog import StatusDialog, StatusIssue
+from .status_dialog import IssueAction, ResourceSourceDialog, StatusDialog, StatusIssue
+from .resource_diagnostics import resource_details, resource_when
 from .calendar_choice_dialog import CalendarChoiceDialog
 from .credentials import CredentialStore
 from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspace_bindings,
@@ -75,6 +76,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._sync_running = False
         self._sync_errors = {}
         self._sync_issues = {}
+        self._sync_issue_history = deque(maxlen=256)
         self._sync_messages = deque(maxlen=100)
         self._local_issues = OrderedDict()
         self._view_issues = ()
@@ -821,7 +823,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                  wall(target) - wall(reference.start))
         start = (wall(master.start) + shift).replace(tzinfo=zone, fold=master.start.fold)
         mapping = relative_reanchor_map(master, start)
-        key = reference.recurrence_id or recurrence_key(reference.start, reference.all_day)
+        key = reference.recurrence_id or recurrence_key(reference.start, reference.all_day,
+                                                       floating_time=reference.floating_time)
         return key_datetime(mapping[key], master) if mapping is not None and key in mapping else target
 
     def reanchored_selection_starts(self, refs, scope, reference, edited):
@@ -1609,8 +1612,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = 'Sync failed · open Sync status'
         elif self.engine and self.engine.conflicts:
             value = f'{len(self.engine.conflicts)} conflict(s) need review'
-        elif self._sync_issues:
-            value = 'Synced with resource issues · open Sync status'
+        elif self._sync_issues or any(issue.key.startswith('resource:') for issue in issues):
+            value = 'Calendar resources need review · open details'
         elif self._view_issues:
             value = f'{len(self._view_issues)} series unavailable in this view · open details'
         elif self.results.agenda_mode and self.results.agenda_issues:
@@ -1624,12 +1627,42 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if pending:
             value += f' · {pending} change(s) waiting'
         self.status.setText(value)
-        self.status.setToolTip(value + '\n' + ('\n'.join(issue.details for issue in issues)
-                                              or 'Click for synchronization details.'))
+        details = (f'{len(issues)} issue(s). Click to review affected events and recovery actions.'
+                   if issues else 'Click for synchronization details.')
+        if issues:
+            details += '\n' + '\n'.join(' '.join(issue.details.split())[:220] for issue in issues[:2])
+        self.status.setToolTip(value + '\n' + details)
 
     def status_issues(self):
         issues = list(self.local_issues)
-        calendars = {calendar.id: calendar for calendar in self.store.list_calendars()}
+        calendars = {calendar.id: calendar for calendar in self.store.list_calendars(include_disabled=True)}
+        resources = self.store.quarantined_resource_summaries()
+        resource_ids = {}
+        for item in resources:
+            calendar_id, resource_id = item['calendar_id'], item['resource_id']
+            resource_ids.setdefault(calendar_id, set()).add(resource_id)
+            calendar = calendars.get(calendar_id)
+            name = calendar.name if calendar is not None else 'Calendar'
+            metadata = item['diagnostics']
+            title = metadata.get('title') or ('Event ' + resource_id)
+            subtitle = name
+            if when := resource_when(metadata, self.preferences):
+                subtitle += ' · ' + when
+            details = resource_details(item, name, self.preferences)
+            actions = [IssueAction('Save original…', lambda cid=calendar_id, rid=resource_id:
+                                   self.export_quarantined_resource(cid, rid))]
+            if calendar is not None and (calendar.read_only or calendar.kind == 'ics'):
+                details += '\n\nThis calendar is read-only. Any source corrections must be made by its provider or owner.'
+            if calendar is not None and calendar.kind == 'local' and not calendar.read_only:
+                details += '\n\nFor a file import, save the original, correct it in its source application, and import the corrected file with the same UID when available.'
+                actions.append(IssueAction('Import corrected file…', lambda cid=calendar_id: self.import_ics(cid),
+                                           close_on_action=True))
+            actions.insert(1, IssueAction('Copy details', lambda value=title + '\n\n' + details:
+                                          QApplication.clipboard().setText(value)))
+            issues.append(StatusIssue('resource:' + calendar_id + ':' + resource_id, title, details,
+                                      'View original…', lambda cid=calendar_id, rid=resource_id:
+                                      self.show_quarantined_resource(cid, rid), close_on_action=False,
+                                      subtitle=subtitle, extra_actions=tuple(actions)))
         projections = {event.id: (event, error, ['the calendar']) for event, error in self._view_issues}
         if self.results.agenda_mode:
             for event, error in self.results.agenda_issues:
@@ -1647,8 +1680,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             else:
                 label, action = 'Edit event…', lambda identity=event.id: self.edit_event(identity)
             issues.append(StatusIssue('view:' + event.id, title, details, label, action))
-        for kind, values in (('error', self._sync_errors), ('issue', self._sync_issues)):
-            for calendar_id, message in values.items():
+        warning_values = list(dict.fromkeys((*self._sync_issue_history, *self._sync_issues.items())))
+        for kind, values in (('error', list(self._sync_errors.items())), ('issue', warning_values)):
+            for index, (calendar_id, message) in enumerate(values):
+                if kind == 'issue' and any('resource ' + resource_id + ':' in message
+                                           for resource_id in resource_ids.get(calendar_id, ())):
+                    continue
                 calendar = calendars.get(calendar_id)
                 title = (calendar.name + ' · ' if calendar else '') + ('Synchronization failed' if kind == 'error' else 'Calendar resources need review')
                 if calendar is not None:
@@ -1656,12 +1693,32 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     label = 'Edit calendar connection…'
                 else:
                     action, label = (self.sync_now, 'Retry synchronization') if self.engine else (None, '')
-                issues.append(StatusIssue('sync:' + kind + ':' + calendar_id, title, message, label, action))
+                issues.append(StatusIssue(f'sync:{kind}:{calendar_id}:{index}', title, message, label, action))
         if self.engine and self.engine.conflicts:
             issues.append(StatusIssue('conflicts', 'Calendar conflicts',
                                       '\n\n'.join(conflict.reason for conflict in self.engine.conflicts),
                                       'Review conflicts…', self.show_conflicts))
         return issues
+
+    def _retained_resource(self, calendar_id, resource_id):
+        item = self.store.get_quarantined_resource(calendar_id, resource_id)
+        if item is None:
+            raise ValueError('This resource has been repaired or is no longer retained. Refresh the issue list.')
+        return item['raw_ics']
+
+    def show_quarantined_resource(self, calendar_id, resource_id):
+        dialog = ResourceSourceDialog(self._retained_resource(calendar_id, resource_id), self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def export_quarantined_resource(self, calendar_id, resource_id):
+        path, _ = QFileDialog.getSaveFileName(self, 'Save original calendar resource',
+                                             'calendar-resource.ics', 'Calendar files (*.ics)')
+        if path:
+            raw = self._retained_resource(calendar_id, resource_id)
+            Path(path).write_bytes(raw if isinstance(raw, bytes) else raw.encode('utf-8'))
 
     def show_issues(self):
         self.show_sync_status(show_issues=True)
@@ -1690,11 +1747,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 lines.append(self._sync_errors[calendar.id])
             if calendar.id in self._sync_issues:
                 lines.append(self._sync_issues[calendar.id])
-        quarantined = self.store.list_quarantined_resources()
+        quarantined = self.store.quarantined_resource_summaries()
         if quarantined:
-            names = {calendar.id: calendar.name for calendar in self.store.list_calendars()}
+            names = {calendar.id: calendar.name for calendar in self.store.list_calendars(include_disabled=True)}
             lines += ['', 'Skipped resources retained for retry:']
-            lines.extend(f'{names.get(item["calendar_id"], "Calendar")} · {item["resource_id"]} · {item["reason"]}' for item in quarantined)
+            lines.extend(f'{names.get(item["calendar_id"], "Calendar")} · '
+                         f'{item["diagnostics"].get("title") or "Untitled event"} · '
+                         f'{item["resource_id"]} · {item["reason"]}' for item in quarantined)
         lines += ['', 'Recent synchronization activity:'] + list(self._sync_messages)
         return '\n'.join(lines)
 
@@ -1773,12 +1832,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._sync_errors[message.calendar_id or 'sync'] = message.message
             elif message.kind == 'issue':
                 self._sync_issues[message.calendar_id or 'sync'] = message.message
+                # Failed resources have their own persistent rows. Retain
+                # account/metadata warnings separately so a large rejected
+                # calendar cannot push them out of the bounded warning list.
+                if ': resource ' not in message.message:
+                    self._sync_issue_history.append((message.calendar_id or 'sync', message.message))
             elif message.kind == 'conflict':
                 self.notify_conflict(message)
             elif message.kind == 'started':
                 self._sync_running = True
                 self._sync_errors.clear()
                 self._sync_issues.clear()
+                self._sync_issue_history.clear()
             elif message.kind in ('updated', 'finished'):
                 updated = True
                 if message.kind == 'finished':

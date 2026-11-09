@@ -9,7 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import re
-from zoneinfo import ZoneInfo
+
+from .timezones import event_timezone
 
 
 _DURATION = re.compile(r'\+?P(?:(?P<weeks>\d+)W|(?:(?P<days>\d+)D)?'
@@ -93,8 +94,12 @@ def end_for(event, start: datetime) -> datetime:
     """Project an event's semantic duration at another starting instant/date."""
     if event.all_day:
         return start + timedelta(days=max(1, (event.end.date() - event.start.date()).days))
+    if event.floating_time:
+        # Floating endpoints describe wall clocks, independent of the viewer's
+        # UTC offset and DST transitions.
+        return start + (event.end.replace(tzinfo=None) - event.start.replace(tzinfo=None))
     if event.duration_spec:
-        zone = ZoneInfo(event.timezone_id) if event.timezone_id else event.start.tzinfo
+        zone = event_timezone(event)
         return add_duration(start.astimezone(zone), event.duration_spec).astimezone(start.tzinfo)
     return add_elapsed(start, elapsed_duration(event.start, event.end))
 
@@ -105,6 +110,9 @@ def same_duration(first, second) -> bool:
     if first.all_day:
         return (max(1, (first.end.date() - first.start.date()).days)
                 == max(1, (second.end.date() - second.start.date()).days))
+    if first.floating_time and second.floating_time:
+        return (first.end.replace(tzinfo=None) - first.start.replace(tzinfo=None)
+                == second.end.replace(tzinfo=None) - second.start.replace(tzinfo=None))
     if first.duration_spec or second.duration_spec:
         return first.duration_spec == second.duration_spec
     return elapsed_duration(first.start, first.end) == elapsed_duration(second.start, second.end)

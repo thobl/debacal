@@ -596,7 +596,7 @@ dev = [
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
     { name = "caldav", specifier = ">=2,<4" },
-    { name = "icalendar", specifier = ">=6,<8" },
+    { name = "icalendar", specifier = ">=6.3,<8" },
     { name = "keyring", specifier = ">=25,<26" },
     { name = "pyside6", marker = "python_full_version < '3.12'", specifier = ">=6.7,!=6.12.0,<7" },
     { name = "pyside6", marker = "python_full_version >= '3.12'", specifier = ">=6.7,<7" },

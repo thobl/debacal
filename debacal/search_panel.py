@@ -659,7 +659,7 @@ class SearchPanel(QTreeWidget):
         item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, '\n'.join(lines[1:]))
 
     def _when(self, event):
-        local = event.start if event.all_day else event.start.astimezone(local_zone())
+        local = event.start if event.all_day or event.floating_time else event.start.astimezone(local_zone())
         return self.preferences.format_date(local.date(), weekday=True) + (
             ' · all day' if event.all_day else ' · ' + self.preferences.format_time(local))
 
@@ -701,8 +701,8 @@ class SearchPanel(QTreeWidget):
         else:
             iterator = chain((found,), iterator)
         def normal():
-            for start in normalize_recurrence_stream(iterator, all_day=master.all_day):
-                key = recurrence_key(start, master.all_day)
+            for start in normalize_recurrence_stream(iterator, all_day=master.all_day or master.floating_time):
+                key = recurrence_key(start, master.all_day, floating_time=master.floating_time)
                 if key in master.recurrence_overrides:
                     continue
                 if floor is not None and start.timestamp() < floor.timestamp():
@@ -713,8 +713,7 @@ class SearchPanel(QTreeWidget):
             for key, payload in master.recurrence_overrides.items():
                 if key in master.excluded_dates:
                     continue
-                start = payload['start']
-                start = datetime.fromisoformat(start) if isinstance(start, str) else start
+                start = self._override_event(master, key, payload).start
                 records.append((start.astimezone(timezone.utc), key, payload))
             self._override_records[master.id] = sorted(records, key=lambda record: record[0])
         detached = (self._override_event(master, key, payload)

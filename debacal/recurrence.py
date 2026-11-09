@@ -12,7 +12,6 @@ from heapq import merge
 from math import gcd
 from typing import Iterable
 from urllib.parse import quote, unquote
-from zoneinfo import ZoneInfo
 import re
 
 from dateutil.rrule import rruleset, rrulestr
@@ -21,6 +20,7 @@ from .models import Event
 from .event_duration import add_elapsed, elapsed_duration, end_for, parse_duration_spec, same_duration
 from .schedule_replacement import ScheduleReplacement
 from .recurrence_budget import BoundedRule
+from .timezones import event_timezone
 
 
 MAX_MINUTELY_COUNT = 10000
@@ -36,7 +36,7 @@ class RecurrenceRangeError(RecurrenceError):
 
 
 def event_zone(event: Event):
-    return ZoneInfo(event.timezone_id) if event.timezone_id else event.start.tzinfo
+    return event_timezone(event)
 
 
 def normalize_recurrence_time(value: datetime) -> datetime:
@@ -115,10 +115,10 @@ def _exclusion_walls(value: datetime):
             continue
 
 
-def recurrence_key(value: datetime | date, all_day: bool = False) -> str:
+def recurrence_key(value: datetime | date, all_day: bool = False, *, floating_time: bool = False) -> str:
     if all_day or not isinstance(value, datetime):
         return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
-    return value.astimezone(timezone.utc).isoformat()
+    return value.replace(tzinfo=None).isoformat() if floating_time else value.astimezone(timezone.utc).isoformat()
 
 
 def key_datetime(key: str, master: Event) -> datetime:
@@ -130,7 +130,7 @@ def key_datetime(key: str, master: Event) -> datetime:
     return value.astimezone(event_zone(master))
 
 
-def schedule_fields(starts: Iterable[datetime], *, all_day: bool = False) -> dict:
+def schedule_fields(starts: Iterable[datetime], *, all_day: bool = False, floating_time: bool = False) -> dict:
     """Encode a finite timestamp sequence as a verified COUNT rule or RDATEs.
 
     The first instruction's timestamp remains DTSTART, including when explicit
@@ -142,17 +142,19 @@ def schedule_fields(starts: Iterable[datetime], *, all_day: bool = False) -> dic
         raise RecurrenceError("A schedule needs its initial event.")
     if any(value.tzinfo is None or value.utcoffset() is None for value in values):
         raise RecurrenceError("Schedule timestamps must include a timezone.")
+    if floating_time:
+        values = [value.replace(tzinfo=timezone.utc, fold=0) for value in values]
     zone = values[0].tzinfo
     if all_day:
         values = [datetime.combine(value.astimezone(zone).date(), time.min, zone) for value in values]
     ordered = []
     seen = set()
     for value in values:
-        key = recurrence_key(value, all_day)
+        key = recurrence_key(value, all_day, floating_time=floating_time)
         if key not in seen:
             seen.add(key)
             ordered.append(value.astimezone(zone))
-    fallback = {"recurrence_rule": "", "recurrence_dates": tuple(recurrence_key(value, all_day) for value in ordered[1:])}
+    fallback = {"recurrence_rule": "", "recurrence_dates": tuple(recurrence_key(value, all_day, floating_time=floating_time) for value in ordered[1:])}
     if len(ordered) < 2 or any(later.timestamp() <= earlier.timestamp() for earlier, later in zip(ordered, ordered[1:])):
         return fallback
     wall = [value.replace(tzinfo=None) for value in ordered]
@@ -204,9 +206,9 @@ def base_schedule_starts(master: Event, *, limit: int = 10000) -> list[datetime]
             raise RecurrenceError("An unbounded repeating rule cannot retain a finite custom sequence. Choose a regular rule or a finite custom sequence.")
     bare = replace(master, excluded_dates=(), recurrence_overrides={})
     result = [master.start.astimezone(event_zone(master))]
-    initial = recurrence_key(master.start, master.all_day)
+    initial = recurrence_key(master.start, master.all_day, floating_time=master.floating_time)
     for value in recurrence_set(bare):
-        if recurrence_key(value, master.all_day) == initial:
+        if recurrence_key(value, master.all_day, floating_time=master.floating_time) == initial:
             continue
         result.append(value.astimezone(event_zone(master)))
         if len(result) > limit:
@@ -245,12 +247,20 @@ def canonical_rule(rule: str, master: Event) -> str:
                     last_day = datetime.strptime(value, "%Y%m%d").date()
                     if master.all_day:
                         value = last_day.strftime("%Y%m%d")
+                    elif master.floating_time:
+                        value = datetime.combine(last_day, time.max).strftime('%Y%m%dT%H%M%S')
                     else:
                         boundary = datetime.combine(last_day, time.max, zone)
                         value = boundary.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 else:
                     utc = value.endswith("Z")
                     boundary = datetime.strptime(value.rstrip("Z"), "%Y%m%dT%H%M%S")
+                    if master.floating_time:
+                        # RFC floating DTSTART requires floating UNTIL. Retain
+                        # its wall fields even when repairing a vendor's Z.
+                        value = boundary.strftime('%Y%m%dT%H%M%S')
+                        parts.append(name + '=' + value)
+                        continue
                     boundary = boundary.replace(tzinfo=timezone.utc if utc else zone, fold=1)
                     if not utc and not _valid_wall_time(boundary):
                         raise ValueError("Nonexistent local boundary")
@@ -345,12 +355,17 @@ def _seek_rule(rule: str, start: datetime, after: datetime | None) -> tuple[str,
 
 
 class _FloatingDateSet:
-    """Dateutil operations on floating dates, independent of local UTC offsets."""
-    def __init__(self, rules, zone):
-        self.rules, self.zone = rules, zone
+    """Dateutil operations on floating wall clocks, independent of UTC offsets."""
+    def __init__(self, rules, zone, *, timed=False):
+        self.rules, self.zone, self.timed = rules, zone, timed
 
     def _restore(self, value):
         return value.replace(tzinfo=self.zone) if value is not None else None
+
+    def _boundary(self, value):
+        # The wrapper is also used for DATE rules. Their callers intentionally
+        # supply civil-date boundaries, rather than converting date-only keys.
+        return (value.astimezone(self.zone) if self.timed else value).replace(tzinfo=timezone.utc, fold=0)
 
     def __iter__(self):
         return (self._restore(value) for value in self.rules)
@@ -360,42 +375,52 @@ class _FloatingDateSet:
         return [self._restore(item) for item in value] if isinstance(value, list) else self._restore(value)
 
     def before(self, value, inc=False):
-        return self._restore(self.rules.before(value.replace(tzinfo=timezone.utc, fold=0), inc=inc))
+        return self._restore(self.rules.before(self._boundary(value), inc=inc))
 
     def after(self, value, inc=False):
-        return self._restore(self.rules.after(value.replace(tzinfo=timezone.utc, fold=0), inc=inc))
+        return self._restore(self.rules.after(self._boundary(value), inc=inc))
 
     def between(self, after, before, inc=False, count=1):
         return [self._restore(value) for value in self.rules.between(
-            after.replace(tzinfo=timezone.utc, fold=0), before.replace(tzinfo=timezone.utc, fold=0),
+            self._boundary(after), self._boundary(before),
             inc=inc, count=count)]
 
     def xafter(self, value, count=None, inc=False):
         return (self._restore(item) for item in self.rules.xafter(
-            value.replace(tzinfo=timezone.utc, fold=0), count=count, inc=inc))
+            self._boundary(value), count=count, inc=inc))
 
     def count(self):
         return self.rules.count()
 
 
 def _floating_master(master):
-    return replace(master, start=datetime.combine(master.start.date(), time.min, timezone.utc),
-                   end=datetime.combine(master.end.date(), time.min, timezone.utc), timezone_id='UTC')
+    start = (datetime.combine(master.start.date(), time.min, timezone.utc) if master.all_day
+             else master.start.replace(tzinfo=timezone.utc, fold=0))
+    end = (datetime.combine(master.end.date(), time.min, timezone.utc) if master.all_day
+           else master.end.replace(tzinfo=timezone.utc, fold=0))
+    rule = canonical_rule(master.recurrence_rule, master)
+    if master.floating_time:
+        rule = re.sub(r'UNTIL=(\d{8}T\d{6})(?=;|$)', r'UNTIL=\1Z', rule)
+    return replace(master, start=start, end=end, timezone_id='UTC',
+                   timezone_definitions={}, floating_time=False, recurrence_rule=rule)
 
 
-def recurrence_set(master: Event, *, after: datetime | None = None):
+def recurrence_set(master: Event, *, after: datetime | None = None, include_dates: bool = True, work_limit=None):
     """Return standard recurrence dates, optionally seeking a requested suffix.
 
     With ``after`` only values at/after that boundary are guaranteed complete;
     callers inspecting recurrence history should omit it. RDATE and EXDATE
     remain unchanged, including explicitly added dates before DTSTART.
     """
-    if master.all_day:
+    if master.all_day or master.floating_time:
         if after is not None and (after.tzinfo is None or after.utcoffset() is None):
             raise ValueError('The recurrence boundary must include a timezone.')
-        boundary = after.replace(tzinfo=timezone.utc, fold=0) if after is not None else None
-        return _FloatingDateSet(_recurrence_set(_floating_master(master), after=boundary), event_zone(master))
-    return _recurrence_set(master, after=after)
+        boundary = ((after.astimezone(event_zone(master)) if master.floating_time else after)
+                    .replace(tzinfo=timezone.utc, fold=0)) if after is not None else None
+        return _FloatingDateSet(_recurrence_set(_floating_master(master), after=boundary,
+                                               include_dates=include_dates, work_limit=work_limit), event_zone(master),
+                                timed=master.floating_time)
+    return _recurrence_set(master, after=after, include_dates=include_dates, work_limit=work_limit)
 
 
 def _recurrence_set(master: Event, *, after: datetime | None = None, include_dates: bool = True,
@@ -512,9 +537,13 @@ def shift_rule(rule: str, shift: timedelta, master: Event) -> str:
             parts["UNTIL"] = value.strftime("%Y%m%d")
         else:
             try:
-                value = datetime.strptime(bound, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-                moved = value.astimezone(event_zone(master)) + shift
-                parts["UNTIL"] = moved.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                if master.floating_time:
+                    value = datetime.strptime(bound.rstrip('Z'), '%Y%m%dT%H%M%S') + shift
+                    parts['UNTIL'] = value.strftime('%Y%m%dT%H%M%S')
+                else:
+                    value = datetime.strptime(bound, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+                    moved = value.astimezone(event_zone(master)) + shift
+                    parts["UNTIL"] = moved.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             except ValueError as exc:
                 raise RecurrenceError("Could not move this recurrence's UNTIL boundary. Edit its rule explicitly.") from exc
     return ";".join(f"{name}={value}" for name, value in parts.items())
@@ -584,8 +613,8 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
             new = expand_sequence(text, current, all_day=master.all_day)
     except PatternError as error:
         raise RecurrenceError(str(error)) from error
-    old_keys = [recurrence_key(value, master.all_day) for value in old]
-    new_keys = [recurrence_key(value, master.all_day) for value in new]
+    old_keys = [recurrence_key(value, master.all_day, floating_time=master.floating_time) for value in old]
+    new_keys = [recurrence_key(value, master.all_day, floating_time=master.floating_time) for value in new]
     if (len(old_keys) != len(new_keys) or (not allow_duplicates and
             (len(set(old_keys)) != len(old_keys) or len(set(new_keys)) != len(new_keys)))):
         # A set program whose coincident instructions change multiplicity has
@@ -599,7 +628,7 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
                 return None
             repeated[old_key] = new_key
     actual_mapping = dict(zip(old_keys, new_keys))
-    overrides = {key: recurrence_key(Event.from_dict(payload).start, master.all_day)
+    overrides = {key: recurrence_key(Event.from_dict(payload).start, master.all_day, floating_time=master.floating_time)
                  for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates}
     if tail:
         new_tail = sequence_tail(shifted)
@@ -616,15 +645,15 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
                 nominal = old_compiled.tail_start + timedelta(days=index * days)
                 if tail.until is not None and nominal.date() > tail.until:
                     continue
-                actual = nominal if master.all_day else normalize_recurrence_time(nominal)
-                if recurrence_key(actual, master.all_day) != recurrence_key(target, master.all_day):
+                actual = nominal if master.all_day or master.floating_time else normalize_recurrence_time(nominal)
+                if recurrence_key(actual, master.all_day, floating_time=master.floating_time) != recurrence_key(target, master.all_day, floating_time=master.floating_time):
                     continue
                 moved = new_compiled.tail_start + timedelta(days=index * days)
                 if new_tail.until is not None and moved.date() > new_tail.until:
                     return None
-                if not master.all_day:
+                if not master.all_day and not master.floating_time:
                     moved = normalize_recurrence_time(moved)
-                return recurrence_key(moved, master.all_day)
+                return recurrence_key(moved, master.all_day, floating_time=master.floating_time)
             return None
 
         def weekly_selector_identity(target):
@@ -658,17 +687,17 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
                 if tail.until is not None and nominal_day > tail.until:
                     continue
                 nominal = datetime.combine(nominal_day, old_compiled.tail_start.timetz())
-                actual = nominal if master.all_day else normalize_recurrence_time(nominal)
-                if recurrence_key(actual, master.all_day) != recurrence_key(target, master.all_day):
+                actual = nominal if master.all_day or master.floating_time else normalize_recurrence_time(nominal)
+                if recurrence_key(actual, master.all_day, floating_time=master.floating_time) != recurrence_key(target, master.all_day, floating_time=master.floating_time):
                     continue
                 new_week, new_position = divmod(index + new_omitted, len(new_offsets))
                 moved_day = new_first + timedelta(days=new_week * new_tail.interval * 7 + new_offsets[new_position])
                 if new_tail.until is not None and moved_day > new_tail.until:
                     return None
                 moved = datetime.combine(moved_day, new_compiled.tail_start.timetz())
-                if not master.all_day:
+                if not master.all_day and not master.floating_time:
                     moved = normalize_recurrence_time(moved)
-                return recurrence_key(moved, master.all_day)
+                return recurrence_key(moved, master.all_day, floating_time=master.floating_time)
             return None
 
         def tail_stream(compiled, anchor):
@@ -701,8 +730,8 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
                 scanned += 1
                 if scanned > MAX_REANCHOR_IDENTITIES:
                     raise RecurrenceRangeError('This relative move needs more than 10,000 recurrence identities. Choose a nearer occurrence.')
-                before_key = recurrence_key(before, master.all_day)
-                actual_mapping[before_key] = recurrence_key(after, master.all_day)
+                before_key = recurrence_key(before, master.all_day, floating_time=master.floating_time)
+                actual_mapping[before_key] = recurrence_key(after, master.all_day, floating_time=master.floating_time)
                 if before.timestamp() >= target.timestamp():
                     return actual_mapping.get(actual)
             return None
@@ -714,7 +743,7 @@ def relative_reanchor_map(master: Event, start: datetime, *, allow_duplicates=Fa
     for key, payload in master.recurrence_overrides.items():
         if key in master.excluded_dates:
             continue
-        actual = recurrence_key(Event.from_dict(payload).start, master.all_day)
+        actual = recurrence_key(Event.from_dict(payload).start, master.all_day, floating_time=master.floating_time)
         mapped = resolve(key)
         if mapped is not None:
             mapping[key] = mapped
@@ -749,7 +778,7 @@ def canonicalize_authored_primary(event: Event, *, primary_range=None) -> Event:
     detached range. Imported rules keep their existing interpretation unless
     an authoring operation explicitly calls this conversion.
     """
-    if event.all_day or not event.recurring:
+    if event.all_day or event.floating_time or not event.recurring:
         return event
     zone = event_zone(event)
     actual = event.start.astimezone(zone)
@@ -805,7 +834,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
     Both previews and persisted edits use this same rule/exception projection.
     """
     def checked_wall(value):
-        if not edited.all_day and not _valid_wall_time(value):
+        if not edited.all_day and not edited.floating_time and not _valid_wall_time(value):
             raise RecurrenceError(
                 "This move would use a local time that does not exist because of a daylight-saving transition. "
                 "Choose another time."
@@ -842,7 +871,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                     continue
                 when = key_datetime(key, updated)
                 previous = rules.before(when, inc=True)
-                if previous is None or recurrence_key(previous, updated.all_day) != key:
+                if previous is None or recurrence_key(previous, updated.all_day, floating_time=updated.floating_time) != key:
                     continue
                 value = Event.from_dict(payload)
                 override_start = value.start.astimezone(zone)
@@ -853,7 +882,9 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                                          start=override_start, end=override_end,
                                          duration_spec=duration_source.duration_spec,
-                                         timezone_id=updated.timezone_id, **shared_changes,
+                                         timezone_id=updated.timezone_id, timezone_definitions=updated.timezone_definitions,
+                                         floating_time=updated.floating_time,
+                                         **shared_changes,
                                          all_day=updated.all_day, candidate=updated.candidate,
                                          schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
             # New or changed detached ranges are authoritative. Retain their
@@ -864,7 +895,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                     continue
                 when = key_datetime(key, updated)
                 previous = rules.before(when, inc=True)
-                if previous is None or recurrence_key(previous, updated.all_day) != key:
+                if previous is None or recurrence_key(previous, updated.all_day, floating_time=updated.floating_time) != key:
                     continue
                 value = Event.from_dict(payload)
                 checked_wall(value.start)
@@ -872,6 +903,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                     calendar_id=master.calendar_id, ical_uid=master.ical_uid,
                     series_id=master.id, recurrence_id=key, timezone_id=updated.timezone_id,
+                    timezone_definitions=updated.timezone_definitions,
+                    floating_time=updated.floating_time,
                     read_only=master.read_only, group_id=master.group_id,
                     **shared_changes,
                     candidate=updated.candidate,
@@ -947,7 +980,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
         if relative_keys is not None and key in relative_keys:
             return relative_keys[key]
         value = checked_wall((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone))
-        return recurrence_key(value, edited.all_day)
+        return recurrence_key(value, edited.all_day, floating_time=edited.floating_time)
 
     dates = tuple(shift_key(key) for key in master.recurrence_dates) if edited.recurrence_dates == master.recurrence_dates else edited.recurrence_dates
     exclusions = tuple(shift_key(key) for key in master.excluded_dates) if edited.excluded_dates == master.excluded_dates else edited.excluded_dates
@@ -1023,6 +1056,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
                                        start=override_start, end=override_end,
                                        duration_spec=override_source.duration_spec,
                                        recurrence_id=moved_key, timezone_id=master.timezone_id,
+                                       timezone_definitions=master.timezone_definitions,
+                                       floating_time=master.floating_time,
                                        **shared_changes, all_day=edited.all_day,
                                        candidate=edited.candidate,
                                        schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
@@ -1053,8 +1088,8 @@ def _valid_wall_time(value: datetime) -> bool:
 
 
 def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
-    key = key or recurrence_key(start, master.all_day)
-    if not master.all_day:
+    key = key or recurrence_key(start, master.all_day, floating_time=master.floating_time)
+    if not master.all_day and not master.floating_time:
         start = normalize_recurrence_time(start)
     values = dict(
         id=occurrence_id(master.id, key), start=start,
@@ -1098,9 +1133,12 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         return []
     if not master.recurring:
         return [master] if overlaps(master, start, end) else []
-    generation_master = _floating_master(master) if master.all_day else master
+    floating = master.all_day or master.floating_time
+    generation_master = _floating_master(master) if floating else master
     zone = event_zone(generation_master)
-    view_end = end.replace(tzinfo=timezone.utc, fold=0) if master.all_day else end
+    wall_boundary = lambda value: (value.astimezone(event_zone(master)).replace(tzinfo=timezone.utc, fold=0)
+                                   if master.floating_time else value.replace(tzinfo=timezone.utc, fold=0))
+    view_end = wall_boundary(end) if floating else end
 
     def order_value(item, endpoint='start'):
         value = getattr(item, endpoint)
@@ -1111,8 +1149,8 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         return value.timestamp()
 
     try:
-        if master.all_day:
-            lower = start.replace(tzinfo=timezone.utc, fold=0) - (generation_master.end - generation_master.start)
+        if floating:
+            lower = wall_boundary(start) - (generation_master.end - generation_master.start)
         elif master.duration_spec:
             days, seconds = parse_duration_spec(master.duration_spec)
             # Nominal day ends can normalize forward through a clock gap.
@@ -1154,20 +1192,23 @@ def expand_series(master: Event, start: datetime, end: datetime, *, limit: int =
         # than nominal wall clocks around a skipped hour. Normalized rule
         # values then merge with finite dates in the same chronological order.
         generated = rules if lower is None else rules.xafter(lower.astimezone(timezone.utc), inc=True)
-        regular = normalize_recurrence_stream(generated, all_day=master.all_day)
+        regular = normalize_recurrence_stream(generated, all_day=floating)
         for generated in merge(finite, regular, key=lambda value: value.timestamp()):
             if generated.timestamp() >= view_end.timestamp():
                 break
             if truncate and len(result) >= limit:
                 earliest = sorted(result.values(), key=lambda item: (order_value(item), order_value(item, 'end'), item.id))[:limit]
                 result = {item.id: item for item in earliest}
-                cursor_order = (generated.date().toordinal(), 0) if master.all_day else generated.timestamp()
+                cursor_order = ((generated.date().toordinal(), 0) if master.all_day else
+                                generated.replace(tzinfo=event_zone(master)).timestamp() if master.floating_time
+                                else generated.timestamp())
                 if cursor_order > order_value(earliest[-1]):
                     break
-            key = recurrence_key(generated, master.all_day)
+            key = recurrence_key(generated, master.all_day, floating_time=master.floating_time)
             if key in master.recurrence_overrides or key in excluded:
                 continue
-            actual = datetime.combine(generated.date(), time.min, event_zone(master)) if master.all_day else generated
+            actual = (datetime.combine(generated.date(), time.min, event_zone(master)) if master.all_day else
+                      generated.replace(tzinfo=event_zone(master)) if master.floating_time else generated)
             item = occurrence(master, actual, key)
             if overlaps(item, start, end):
                 result[item.id] = item

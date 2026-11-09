@@ -22,6 +22,9 @@ from .schedule_replacement import ScheduleReplacement
 _EVENT_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.ical_uid'),''),id) ELSE id END"
 _SYNC_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.base_payload.event.ical_uid'),''),json_extract(data,'$.base_payload.event.id')) END"
 _EVENT_ALL_DAY_SQL = "CASE WHEN json_valid(data) THEN COALESCE(json_extract(data,'$.all_day'),0) ELSE 0 END"
+_EVENT_FLOATING_SQL = "CASE WHEN json_valid(data) THEN COALESCE(json_extract(data,'$.floating_time'),0) ELSE 0 END"
+_EVENT_START_WALL_SQL = "CASE WHEN json_valid(data) THEN json_extract(data,'$.start') END"
+_EVENT_END_WALL_SQL = "CASE WHEN json_valid(data) THEN json_extract(data,'$.end') END"
 _EVENT_START_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.start'),1,10) END"
 _EVENT_END_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.end'),1,10) END"
 
@@ -84,10 +87,24 @@ class Store:
                 calendar_id TEXT NOT NULL REFERENCES calendars(id),
                 resource_id TEXT NOT NULL, raw_ics BLOB NOT NULL,
                 reason TEXT NOT NULL, updated_at TEXT NOT NULL,
+                diagnostics TEXT NOT NULL DEFAULT '{}',
                 PRIMARY KEY(calendar_id, resource_id)
             );
         """)
         with self._transaction():
+            quarantine_columns = {row['name'] for row in self.connection.execute('PRAGMA table_info(quarantined_resources)')}
+            if 'diagnostics' not in quarantine_columns:
+                self.connection.execute("ALTER TABLE quarantined_resources ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}'")
+            # Old retained resources get a small lexical projection once. Never
+            # transfer full ICS blobs to the status dialog's refresh timer.
+            from .resource_diagnostics import DIAGNOSTIC_PREFIX_LIMIT, resource_diagnostics
+            for row in self.connection.execute(
+                    "SELECT calendar_id,resource_id,substr(raw_ics,1,?) AS prefix,length(raw_ics) AS raw_size FROM quarantined_resources WHERE diagnostics='{}'",
+                    (DIAGNOSTIC_PREFIX_LIMIT,)):
+                diagnostics = resource_diagnostics(row['prefix'])
+                diagnostics['truncated'] = row['raw_size'] > DIAGNOSTIC_PREFIX_LIMIT
+                self.connection.execute('UPDATE quarantined_resources SET diagnostics=? WHERE calendar_id=? AND resource_id=?',
+                                        (self._json(diagnostics), row['calendar_id'], row['resource_id']))
             columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(events)")}
             if "recurring" not in columns:
                 self.connection.execute("ALTER TABLE events ADD COLUMN recurring INTEGER NOT NULL DEFAULT 0")
@@ -129,6 +146,7 @@ class Store:
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_calendar_uid ON events(calendar_id,({_EVENT_UID_SQL}))")
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_all_day_dates ON events(({_EVENT_END_DATE_SQL}),({_EVENT_START_DATE_SQL})) WHERE ({_EVENT_ALL_DAY_SQL})=1")
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_all_day_recurring_dates ON events(recurring,({_EVENT_END_DATE_SQL}),({_EVENT_START_DATE_SQL})) WHERE ({_EVENT_ALL_DAY_SQL})=1")
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_floating_recurring_times ON events(recurring,({_EVENT_END_WALL_SQL}),({_EVENT_START_WALL_SQL})) WHERE ({_EVENT_FLOATING_SQL})=1")
             self.connection.execute("CREATE INDEX IF NOT EXISTS sync_metadata_event ON sync_metadata(event_id)")
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS sync_metadata_calendar_uid ON sync_metadata(calendar_id,({_SYNC_UID_SQL}))")
             self.connection.execute("CREATE INDEX IF NOT EXISTS events_groups ON events(calendar_id,group_id,start,end,id) WHERE group_id IS NOT NULL")
@@ -343,14 +361,16 @@ class Store:
             raise ValueError('A quarantined resource needs an identifier.')
         if not isinstance(raw_ics, (str, bytes)):
             raise ValueError('A quarantined resource must contain calendar text or bytes.')
+        from .resource_diagnostics import resource_diagnostics
+        diagnostics = self._json(resource_diagnostics(raw_ics))
         with self._transaction():
             if self.get_calendar(calendar_id) is None:
                 raise ValueError('Calendar not found.')
             self.connection.execute(
-                """INSERT INTO quarantined_resources(calendar_id,resource_id,raw_ics,reason,updated_at)
-                   VALUES (?,?,?,?,?) ON CONFLICT(calendar_id,resource_id) DO UPDATE SET
-                   raw_ics=excluded.raw_ics,reason=excluded.reason,updated_at=excluded.updated_at""",
-                (calendar_id, resource_id, raw_ics, reason, datetime.now(timezone.utc).isoformat()),
+                """INSERT INTO quarantined_resources(calendar_id,resource_id,raw_ics,reason,updated_at,diagnostics)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(calendar_id,resource_id) DO UPDATE SET
+                   raw_ics=excluded.raw_ics,reason=excluded.reason,updated_at=excluded.updated_at,diagnostics=excluded.diagnostics""",
+                (calendar_id, resource_id, raw_ics, reason, datetime.now(timezone.utc).isoformat(), diagnostics),
             )
 
     def list_quarantined_resources(self, calendar_id: str | None = None) -> list[dict[str, Any]]:
@@ -359,6 +379,29 @@ class Store:
             if calendar_id is not None:
                 query, params = query + ' WHERE calendar_id=?', (calendar_id,)
             return [dict(row) for row in self.connection.execute(query + ' ORDER BY calendar_id,resource_id', params)]
+
+    def quarantined_resource_summaries(self) -> list[dict[str, Any]]:
+        """Small persisted metadata for UI lists; never fetch raw calendar blobs."""
+        with self._lock:
+            result = []
+            for row in self.connection.execute(
+                    'SELECT calendar_id,resource_id,reason,updated_at,diagnostics FROM quarantined_resources ORDER BY calendar_id,resource_id'):
+                item = dict(row)
+                try:
+                    item['diagnostics'] = json.loads(item['diagnostics'])
+                except (ValueError, TypeError):
+                    item['diagnostics'] = {}
+                if not isinstance(item['diagnostics'], dict):
+                    item['diagnostics'] = {}
+                result.append(item)
+            return result
+
+    def get_quarantined_resource(self, calendar_id: str, resource_id: str) -> dict[str, Any] | None:
+        """Read one original resource after an explicit view/export action."""
+        with self._lock:
+            row = self.connection.execute('SELECT * FROM quarantined_resources WHERE calendar_id=? AND resource_id=?',
+                                          (calendar_id, resource_id)).fetchone()
+            return dict(row) if row is not None else None
 
     def delete_quarantined_resource(self, calendar_id: str, resource_id: str) -> None:
         with self._transaction():
@@ -451,6 +494,17 @@ class Store:
             for resource in accepted.rejected:
                 self.set_quarantined_resource(calendar_id, resource.resource_id, resource.raw_ics, resource.reason)
             self.apply(f'Import {len(accepted.events)} event(s)', accepted.events)
+            # A reviewed reimport can repair one previously rejected UID without
+            # claiming that every other retained resource has been corrected.
+            rejected_keys = {resource.resource_id for resource in accepted.rejected}
+            retained_keys = {row[0] for row in self.connection.execute(
+                'SELECT resource_id FROM quarantined_resources WHERE calendar_id=?', (calendar_id,))} if accepted.events else set()
+            repairable_keys = retained_keys - rejected_keys
+            if repairable_keys:
+                for event in accepted.events:
+                    resource_id = hashlib.sha256(event.ical_uid.encode()).hexdigest()[:12]
+                    if resource_id in repairable_keys:
+                        self.delete_quarantined_resource(event.calendar_id, resource_id)
         return accepted
 
     def refresh_subscription(self, report, calendar_id: str):
@@ -587,11 +641,23 @@ class Store:
             date_params.append(end.date().isoformat())
         if start is not None and end is not None and end.timestamp() <= start.timestamp():
             timed.append('0')
-        timed_clause = f'(({_EVENT_ALL_DAY_SQL})=0 AND {" AND ".join(timed)})'
+        wall, wall_params = [], []
+        from .timeutil import local_zone
+        if start is not None:
+            wall_start = start.astimezone(local_zone()).replace(tzinfo=None).isoformat()
+            wall.append(f'({_EVENT_END_WALL_SQL})>=? AND (({_EVENT_END_WALL_SQL})>? OR ({_EVENT_END_WALL_SQL})=({_EVENT_START_WALL_SQL}))')
+            wall_params.extend((wall_start, wall_start))
+        if end is not None:
+            wall.append(f'({_EVENT_START_WALL_SQL})<?')
+            wall_params.append(end.astimezone(local_zone()).replace(tzinfo=None).isoformat())
+        timed_clause = f'(({_EVENT_ALL_DAY_SQL})=0 AND ({_EVENT_FLOATING_SQL})=0 AND {" AND ".join(timed)})'
         date_clause = f'(({_EVENT_ALL_DAY_SQL})=1 AND {" AND ".join(floating)})'
+        wall_clause = f'(({_EVENT_FLOATING_SQL})=1 AND {" AND ".join(wall)})'
+        if all_day == 'floating':
+            return wall_clause, wall_params
         if all_day is not None:
             return (date_clause, date_params) if all_day else (timed_clause, timed_params)
-        return f'({timed_clause} OR {date_clause})', timed_params + date_params
+        return f'({timed_clause} OR {date_clause} OR {wall_clause})', timed_params + date_params + wall_params
 
     @staticmethod
     def _floating_timestamp(value: str, zone) -> float:
@@ -652,12 +718,15 @@ class Store:
                 # Separate indexed searches keep the timed range selective;
                 # combining date and epoch conditions with OR scans every
                 # ordinary event when SQLite chooses its recurring index.
-                for all_day in (False, True):
+                for all_day in (False, True, 'floating'):
                     overlap, candidate_params = self._range_clause(start, end, all_day=all_day)
                     projection = 'data'
                     if ordinary_limit is not None:
                         projection += ',start,end,id'
-                        if all_day:
+                        if all_day == 'floating':
+                            projection += (f',({_EVENT_START_WALL_SQL}) AS wall_start,'
+                                           f'({_EVENT_END_WALL_SQL}) AS wall_end')
+                        elif all_day:
                             projection += (f',({_EVENT_START_DATE_SQL}) AS date_start,'
                                            f'({_EVENT_END_DATE_SQL}) AS date_end')
                     candidate_query = f'SELECT {projection} FROM events WHERE recurring=0 AND {overlap}{condition}'
@@ -666,12 +735,17 @@ class Store:
                         ordinary.extend(Event.from_dict(json.loads(row['data'])) for row
                                         in self.connection.execute(candidate_query, candidate_params))
                     else:
-                        order = 'date_start,date_end,id' if all_day else 'start,end,id'
+                        order = ('wall_start,wall_end,id' if all_day == 'floating' else
+                                 'date_start,date_end,id' if all_day else 'start,end,id')
                         rows.extend((all_day, row) for row in self.connection.execute(
                             candidate_query + f' ORDER BY {order} LIMIT ?', [*candidate_params, ordinary_limit]))
                 if ordinary_limit is not None:
                     def order(value):
                         all_day, row = value
+                        if all_day == 'floating':
+                            from .timeutil import local_zone
+                            return (datetime.fromisoformat(row['wall_start']).replace(tzinfo=local_zone()).timestamp(),
+                                    datetime.fromisoformat(row['wall_end']).replace(tzinfo=local_zone()).timestamp(), row['id'])
                         return ((self._floating_timestamp(row['date_start'], start.tzinfo),
                                  self._floating_timestamp(row['date_end'], start.tzinfo), row['id']) if all_day
                                 else (row['start'], row['end'], row['id']))
@@ -739,7 +813,7 @@ class Store:
                 if key in master.recurrence_overrides:
                     return occurrence(master, start, key)
                 previous = recurrence_set(master, after=start).before(start, inc=True)
-                if previous is None or recurrence_key(previous, master.all_day) != key:
+                if previous is None or recurrence_key(previous, master.all_day, floating_time=master.floating_time) != key:
                     return None
                 return occurrence(master, start, key)
             except ValueError:
@@ -852,7 +926,8 @@ class Store:
         overrides = dict(projected.recurrence_overrides)
         for key, payload in master.recurrence_overrides.items():
             moved_key = (key_map[key] if key_map is not None and key in key_map else
-                         recurrence_key((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone), projected.all_day))
+                         recurrence_key((wall(key_datetime(key, master)) + shift).replace(tzinfo=zone), projected.all_day,
+                                        floating_time=projected.floating_time))
             if moved_key not in overrides:
                 continue  # A following edit leaves the earlier exceptions alone.
             original = Event.from_dict(payload)
@@ -1358,10 +1433,11 @@ class Store:
         def schedule(value):
             if value is None:
                 return None
-            fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "recurrence_rule",
+            fields = tuple(value.get(name) for name in ("start", "all_day", "timezone_id", "timezone_definitions", "floating_time", "recurrence_rule",
                                                         "recurrence_dates", "excluded_dates", "range_policy", "duration_spec"))
             overrides = {key: (payload.get("start"), payload.get("end"),
-                               payload.get("all_day", False), payload.get("timezone_id", ""), payload.get('duration_spec', ''))
+                               payload.get("all_day", False), payload.get("timezone_id", ""),
+                               payload.get('timezone_definitions', {}), payload.get('floating_time', False), payload.get('duration_spec', ''))
                          for key, payload in value.get("recurrence_overrides", {}).items()}
             return fields, overrides
 

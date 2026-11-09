@@ -42,16 +42,24 @@ def semantic(event: Event | None) -> str:
         values = item.to_dict()
         for key in ("raw_ics", "id", "calendar_id", "series_id", "recurrence_id", "read_only"):
             values.pop(key, None)
-        values["start"] = item.start.date().isoformat() if item.all_day else item.start.astimezone(timezone.utc).isoformat()
-        values["end"] = item.end.date().isoformat() if item.all_day else item.end.astimezone(timezone.utc).isoformat()
+        def endpoint(value):
+            if item.all_day:
+                return value.date().isoformat()
+            return (value.replace(tzinfo=None) if item.floating_time else value.astimezone(timezone.utc)).isoformat()
+        values['start'], values['end'] = endpoint(item.start), endpoint(item.end)
+        from .ics_resources import _timezone_signature
+        from .ics_fallback import unfolded
+        values['timezone_definitions'] = {identifier: _timezone_signature(unfolded(definition))
+                                           for identifier, definition in sorted(item.timezone_definitions.items())}
         nominal = bool(item.duration_spec and not item.series_id)
-        if nominal and not item.recurring:
+        if nominal and not item.recurring and not item.floating_time:
             from .recurrence import event_zone
             start = item.start.astimezone(event_zone(item))
             nominal = not (start.fold and start.replace(fold=0).timestamp() != start.timestamp())
         if item.all_day or (not nominal and (not item.recurring or
                 not item.recurrence_rule and not (item.schedule_expression and item.schedule_syntax == 2))):
             values.pop("timezone_id", None)
+            values.pop('timezone_definitions', None)
         if not item.schedule_expression:
             values.pop("schedule_syntax", None)
         if not nominal:

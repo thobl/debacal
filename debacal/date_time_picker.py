@@ -25,20 +25,22 @@ from .theme import corner_radius, scheme_for
 from .shortcuts import shortcut_keys, shortcut_label, shortcut_sequences
 
 
-def range_duration(start, end, *, all_day=False):
-    return end.replace(tzinfo=None) - start.replace(tzinfo=None) if all_day else elapsed_duration(start, end)
+def range_duration(start, end, *, all_day=False, floating_time=False):
+    return (end.replace(tzinfo=None) - start.replace(tzinfo=None) if all_day or floating_time
+            else elapsed_duration(start, end))
 
 
-def validate_range_order(start, end, *, all_day=False, allow_point=False):
+def validate_range_order(start, end, *, all_day=False, allow_point=False, floating_time=False):
     """Check floating range order separately from timed instant order."""
-    duration = range_duration(start, end, all_day=all_day)
+    duration = range_duration(start, end, all_day=all_day, floating_time=floating_time)
     if duration < timedelta(0) or (duration == timedelta(0) and not allow_point):
         raise ValueError('The end must be after the start.')
 
 
-def relocate_range(start, end, target, *, endpoint='start', all_day=False, duration_spec='', duration_zone=None):
+def relocate_range(start, end, target, *, endpoint='start', all_day=False, duration_spec='', duration_zone=None,
+                    floating_time=False):
     """Retain floating days, explicit nominal days, or exact elapsed time."""
-    if all_day:
+    if all_day or floating_time:
         duration = range_duration(start, end, all_day=True)
         return (target, target + duration) if endpoint == 'start' else (target - duration, target)
     if duration_spec:
@@ -63,26 +65,27 @@ class DateTimeRangePicker(QDialog):
     """
     def __init__(self, start, end, *, endpoint='start', preferences=None,
                  calendar_color='#587c67', parent=None, all_day=False, full_day_shortcut='F',
-                 duration_spec='', duration_zone=None):
+                 duration_spec='', duration_zone=None, floating_time=False):
         super().__init__(parent, Qt.WindowType.Dialog)
         # Establish the final transient-dialog modality before its first map.
         self.setWindowModality(Qt.WindowModality.WindowModal)
         if endpoint not in ('start', 'end'):
             raise ValueError('Choose the start or end picker.')
-        validate_datetime(start, all_day=all_day)
-        validate_datetime(end, all_day=all_day)
+        validate_datetime(start, all_day=all_day, floating_time=floating_time)
+        validate_datetime(end, all_day=all_day, floating_time=floating_time)
         # Imported timed events may intentionally have no duration. Keep them
         # editable without inventing an end, while ordinary range drafts still
         # require a positive duration.
-        self._allow_point = not all_day and end.timestamp() == start.timestamp()
-        validate_range_order(start, end, all_day=all_day, allow_point=self._allow_point)
+        self._allow_point = not all_day and range_duration(start, end, floating_time=floating_time) == timedelta(0)
+        validate_range_order(start, end, all_day=all_day, allow_point=self._allow_point, floating_time=floating_time)
         self.preferences = preferences or Preferences()
         self.endpoint, self.all_day = endpoint, bool(all_day)
+        self.floating_time = bool(floating_time and not all_day)
         self.duration_spec = normalized_spec(duration_spec) if not all_day else ''
         self.duration_zone = duration_zone or start.tzinfo
         self.zone, self.calendar_color = start.tzinfo, calendar_color
         self.draft_start = start
-        self.draft_end = end.replace(tzinfo=self.zone) if all_day else end.astimezone(self.zone)
+        self.draft_end = end.replace(tzinfo=self.zone) if all_day or self.floating_time else end.astimezone(self.zone)
         self.result_start, self.result_end = start, end
         self.result_duration_spec = self.duration_spec
         self._updating = False
@@ -170,11 +173,12 @@ class DateTimeRangePicker(QDialog):
 
     @property
     def duration(self):
-        return range_duration(self.draft_start, self.draft_end, all_day=self.all_day)
+        return range_duration(self.draft_start, self.draft_end, all_day=self.all_day, floating_time=self.floating_time)
 
     def relocate(self, start, end, value, *, endpoint='start'):
         return relocate_range(start, end, value, endpoint=endpoint, all_day=self.all_day,
-                              duration_spec=self.duration_spec, duration_zone=self.duration_zone)
+                              duration_spec=self.duration_spec, duration_zone=self.duration_zone,
+                              floating_time=self.floating_time)
 
     @property
     def same_day(self):
@@ -217,25 +221,25 @@ class DateTimeRangePicker(QDialog):
     def set_range(self, start, end, *, duration_spec=''):
         try:
             spec = normalized_spec(duration_spec) if not self.all_day else ''
-            validate_datetime(start, all_day=self.all_day)
-            validate_datetime(end, all_day=self.all_day)
-            validate_range_order(start, end, all_day=self.all_day, allow_point=self._allow_point)
+            validate_datetime(start, all_day=self.all_day, floating_time=self.floating_time)
+            validate_datetime(end, all_day=self.all_day, floating_time=self.floating_time)
+            validate_range_order(start, end, all_day=self.all_day, allow_point=self._allow_point, floating_time=self.floating_time)
             if self.all_day and (start.time() != time.min or end.time() != time.min):
                 raise ValueError('All-day events use whole calendar dates.')
         except (ValueError, OverflowError) as exc:
             self.error.setText(str(exc))
             self.error.show()
             return False
-        self.draft_start = start.replace(tzinfo=self.zone) if self.all_day else start.astimezone(self.zone)
-        self.draft_end = end.replace(tzinfo=self.zone) if self.all_day else end.astimezone(self.zone)
+        self.draft_start = start.replace(tzinfo=self.zone) if self.all_day or self.floating_time else start.astimezone(self.zone)
+        self.draft_end = end.replace(tzinfo=self.zone) if self.all_day or self.floating_time else end.astimezone(self.zone)
         self.duration_spec = spec
         self.refresh()
         return True
 
     def set_start(self, value, *, preserve_duration=True):
         try:
-            validate_datetime(value, all_day=self.all_day)
-            value = value.replace(tzinfo=self.zone) if self.all_day else value.astimezone(self.zone)
+            validate_datetime(value, all_day=self.all_day, floating_time=self.floating_time)
+            value = value.replace(tzinfo=self.zone) if self.all_day or self.floating_time else value.astimezone(self.zone)
             end = self.relocate(self.draft_start, self.draft_end, value)[1] if preserve_duration else self.draft_end
             return self.set_range(value, end, duration_spec=self.duration_spec if preserve_duration else '')
         except (ValueError, OverflowError) as exc:
@@ -247,14 +251,14 @@ class DateTimeRangePicker(QDialog):
         """Keep the duration and move Start when an earlier End is selected."""
         start = self.draft_start if start is None else start
         end = self.draft_end if end is None else end
-        if range_duration(start, value, all_day=self.all_day) <= timedelta(0):
+        if range_duration(start, value, all_day=self.all_day, floating_time=self.floating_time) <= timedelta(0):
             return self.relocate(start, end, value, endpoint='end')
         return start, value
 
     def set_end(self, value):
         try:
-            validate_datetime(value, all_day=self.all_day)
-            value = value.replace(tzinfo=self.zone) if self.all_day else value.astimezone(self.zone)
+            validate_datetime(value, all_day=self.all_day, floating_time=self.floating_time)
+            value = value.replace(tzinfo=self.zone) if self.all_day or self.floating_time else value.astimezone(self.zone)
             return self.set_range(*self.end_pair(value))
         except (ValueError, OverflowError) as exc:
             self.error.setText(str(exc))
@@ -422,7 +426,7 @@ class TimeRangeStrip(QWidget):
     def hover_hint(self, value):
         start, end = self.proposed_range(value)
         spec = self.picker.duration_spec if self.picker.endpoint == 'start' else ''
-        return self.preferences.format_time(value), format_event_duration(start, end, duration_spec=spec)
+        return self.preferences.format_time(value), format_event_duration(start, end, duration_spec=spec, floating_time=self.picker.floating_time)
 
     def _band_for(self, start, end):
         top, bottom = sorted((self.y_for(start), self.y_for(end)))
@@ -529,7 +533,7 @@ class TimeRangeStrip(QWidget):
         for y in (band.top(), band.bottom()):
             painter.drawLine(QPointF(bracket_x - 2 * scale, y), QPointF(bracket_x + 2 * scale, y))
         info_x = bracket_x + 6 * scale
-        duration = format_event_duration(start, end, duration_spec=self.active_duration_spec)
+        duration = format_event_duration(start, end, duration_spec=self.active_duration_spec, floating_time=self.picker.floating_time)
         # Long duration captions can wrap instead of reserving an empty column.
         info = QRectF(info_x, max(0, min(self.height() - 36 * scale, band.center().y() - 18 * scale)),
                       self.width() - info_x, 36 * scale)
@@ -545,9 +549,9 @@ class TimeRangeStrip(QWidget):
         painter.end()
 
     def _valid_preview(self, draft):
-        validate_datetime(draft[0], all_day=self.picker.all_day)
-        validate_datetime(draft[1], all_day=self.picker.all_day)
-        validate_range_order(*draft, all_day=self.picker.all_day, allow_point=self.picker._allow_point)
+        validate_datetime(draft[0], all_day=self.picker.all_day, floating_time=self.picker.floating_time)
+        validate_datetime(draft[1], all_day=self.picker.all_day, floating_time=self.picker.floating_time)
+        validate_range_order(*draft, all_day=self.picker.all_day, allow_point=self.picker._allow_point, floating_time=self.picker.floating_time)
         return draft
 
     def _set_preview(self, calculate):

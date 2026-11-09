@@ -16,6 +16,7 @@ import re
 
 from .models import Event
 from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
+from .timezones import TimezoneError, event_timezone
 from . import ics_fallback as fallback
 from . import ics_range_policy as range_codec
 
@@ -74,6 +75,10 @@ def reject_duplicate_identities(report: ParseReport, *, existing_events=()) -> P
 def _safe_reason(exc):
     from .recurrence import RecurrenceError
     message = str(exc).lower()
+    if isinstance(exc, TimezoneError):
+        return str(exc)
+    if "period" in message:
+        return "RDATE periods with individual durations are not supported yet. The original event has been retained."
     if "schedule syntax version" in message:
         return "Unsupported custom schedule version."
     if "until" in message:
@@ -92,7 +97,7 @@ def _safe_reason(exc):
 def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missing_uids=False):
     """Split UID resources before decoding so one bad event cannot abort peers."""
     lines = fallback.unfolded(data)
-    if not lines or "BEGIN:VCALENDAR" not in lines or "END:VCALENDAR" not in lines:
+    if not lines or "BEGIN:VCALENDAR" not in {line.upper() for line in lines} or "END:VCALENDAR" not in {line.upper() for line in lines}:
         raise ValueError("Expected a complete VCALENDAR document.")
     try:
         header, blocks = _blocks(data)
@@ -154,15 +159,16 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
             decoded_groups = {}
     events, issues, rejected = [], [], []
     for key, group in grouped.items():
+        resource_blocks = timezones + group
         raw = fallback.folded(["BEGIN:VCALENDAR", *header,
-                               *(line for block in timezones + group for line in block), "END:VCALENDAR"]).decode()
+                               *(line for block in resource_blocks for line in block), "END:VCALENDAR"]).decode()
         uid = _uid_of(group[0])
         resource_id = hashlib.sha256((uid or raw).encode()).hexdigest()[:12]
         try:
             if not uid:
                 raise ValueError("Event UID is missing.")
             parsed = parse(raw, calendar_id, limit=limit, use_full=use_full,
-                           _source=decoded_groups.get(uid))
+                           _source=decoded_groups.get(uid), _resource_context=(header, resource_blocks))
             events.extend(parsed)
             if uid in generated_uids and parsed:
                 issues.append(ResourceIssue(resource_id, "Missing event UID; generated a stable identifier for import."))
@@ -174,27 +180,66 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
         tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
 
 
+_DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID'}
+
+
+def _timezone_definitions(blocks, referenced=None):
+    definitions = {}
+    for block in blocks:
+        if block[0] != 'BEGIN:VTIMEZONE':
+            continue
+        identifier = fallback.text(_property_of(block, 'TZID') or '')
+        if not identifier:
+            continue  # An unused invalid definition must not reject healthy events.
+        if referenced is not None and identifier not in referenced:
+            continue
+        definition = fallback.folded(block).decode()
+        if identifier in definitions and definitions[identifier] != definition:
+            raise TimezoneError(f'Timezone {identifier!r} has conflicting definitions in one calendar resource.')
+        definitions[identifier] = definition
+    return definitions
+
+
 def _read(data, use_full=True):
     from .ics import ICalendar
+    header, blocks = _blocks(data)
+    lexical = fallback.components(data)
+    referenced = {params['TZID'] for component in lexical for key in _DATE_PROPERTIES
+                  for params, value in component.get(key, [])
+                  if params.get('TZID') and params.get('VALUE') != 'DATE' and not value.upper().endswith('Z')}
+    definitions = _timezone_definitions(blocks, referenced)
+    for component in lexical:
+        component['_timezone_definitions'] = definitions
     if not use_full or ICalendar is None:
-        return fallback.components(data)
-    calendar = ICalendar.from_ical(data)
+        return lexical
+    # The library's global TZID cache can substitute another resource's rules.
+    # Parse ordinary properties with the library, but decode time properties
+    # ourselves from the original lexical values and this resource's context.
+    # Unused malformed VTIMEZONEs must not poison unrelated event components.
+    neutral = ['BEGIN:VCALENDAR', *header]
+    for block in blocks:
+        if block[0] != 'BEGIN:VEVENT':
+            continue
+        for line in block:
+            if not line:
+                continue
+            key, params, value = fallback.content_line(line)
+            if key in _DATE_PROPERTIES:
+                params.pop('TZID', None)
+                line = key + ''.join(';' + name + '=' + fallback.parameter(item) for name, item in params.items()) + ':' + value
+            neutral.append(line)
+    neutral.append('END:VCALENDAR')
+    calendar = ICalendar.from_ical(fallback.folded(neutral))
     if calendar.name != "VCALENDAR":
         raise ValueError("Expected a VCALENDAR document.")
     originals = calendar.walk('VEVENT')
-    lexical = None
-    if any('DURATION' in component for component in originals):
-        # vDuration normalizes PT24H to P1D. That changes elapsed hours into
-        # nominal calendar days, so retain this property's original grammar.
-        lexical = [fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
-                   for block in _blocks(data)[1] if block[0] == 'BEGIN:VEVENT']
-        if len(lexical) != len(originals):
-            raise ValueError('Could not match event duration properties to their source components.')
+    if len(lexical) != len(originals):
+        raise ValueError('Could not match events to their original components.')
     result = []
     for index, original in enumerate(originals):
-        component = {"_decoded": {}}
+        component = {"_decoded": {}, '_timezone_definitions': definitions}
         for key, values in original.items():
-            if key == 'DURATION' and lexical is not None:
+            if key in _DATE_PROPERTIES or key == 'DURATION':
                 component[key] = lexical[index].get(key, [])
                 continue
             values = values if isinstance(values, list) else [values]
@@ -222,14 +267,43 @@ def _decoded(component, key, tz):
     result = []
     for parameters, raw in component.get(key, []):
         for piece in raw.split(","):
-            result.append(fallback.dt(piece, parameters, tz)[0] if parameters.get("VALUE") != "DATE" and len(piece) != 8
-                          else fallback.dt(piece, parameters, tz)[0].date())
+            if parameters.get('VALUE') == 'PERIOD' or '/' in piece:
+                raise ValueError('RDATE PERIOD values with individual durations are unsupported.')
+            decoded, all_day = fallback.dt(piece, parameters, tz, component.get('_timezone_definitions'))
+            result.append(decoded.date() if all_day else decoded)
     return result
 
 
-def _key(value, tz):
-    from .ics import occurrence_key
-    return occurrence_key(_datetime(value, tz) if isinstance(value, datetime) else value, tz=tz)
+def _key(value, tz, floating=False):
+    from .recurrence import recurrence_key
+    return recurrence_key(value, not isinstance(value, datetime), floating_time=floating)
+
+
+def _floating(component, key='DTSTART'):
+    params, value = component[key][0]
+    return params.get('VALUE') != 'DATE' and len(value) != 8 and not params.get('TZID') and not value.upper().endswith('Z')
+
+
+def _used_definitions(components):
+    result, inspected = {}, set()
+    for component in components:
+        definitions = component.get('_timezone_definitions', {})
+        for key in _DATE_PROPERTIES:
+            for params, value in component.get(key, []):
+                identifier = params.get('TZID')
+                if (identifier in inspected or identifier not in definitions
+                        or value.upper().endswith('Z') or params.get('VALUE') == 'DATE'):
+                    continue
+                # Every component in this UID shares one resource context.
+                # Detached instances can reference it thousands of times.
+                inspected.add(identifier)
+                definition = definitions[identifier]
+                block = tuple(fallback.unfolded(definition))
+                # Native zones generated by this codec remain native model
+                # zones; preserving their raw blocks still makes exports portable.
+                if _generated_timezone_coverage(block) is None:
+                    result[identifier] = definition
+    return result
 
 
 def _component_end(component, start, all_day, tz, *, inherited=None, duration_zone=None):
@@ -307,15 +381,17 @@ def _blocks(data):
 def _property_of(block, name):
     depth = 0
     for line in block:
-        left, _, value = line.partition(":")
-        marker = left.upper()
+        try:
+            marker, _, value = fallback.content_line(line)
+        except ValueError:
+            continue  # Decode failures belong to the containing UID's report.
         if marker == "BEGIN":
             depth += 1
             continue
         if marker == "END":
             depth -= 1
             continue
-        if depth == 1 and left.split(";")[0].upper() == name:
+        if depth == 1 and marker == name:
             return value
     return None
 
@@ -340,10 +416,18 @@ def _with_uid(block, uid):
     return result
 
 
-def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=()):
-    header, blocks = _blocks(data)
-    selected = [b for b in blocks if b[0] == "BEGIN:VTIMEZONE" or
-                (b[0] == "BEGIN:VEVENT" and (_uid_of(b) == uid or (synthetic and not _uid_of(b))))]
+def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), definitions=None, floating=False, context=None):
+    # Bulk imports already split the source into complete resource blocks.
+    # Reusing that structure avoids reparsing every UID document and its
+    # shared timezone definitions a second time.
+    header, blocks = _blocks(data) if context is None else context
+    selected_events = [b for b in blocks if b[0] == 'BEGIN:VEVENT'
+                       and (_uid_of(b) == uid or (synthetic and not _uid_of(b)))]
+    selected_ids = {id(block) for block in selected_events}
+    referenced = {params['TZID'] for block in selected_events for line in block if line
+                  for _, params, _ in [fallback.content_line(line)] if params.get('TZID')}
+    selected = [b for b in blocks if (b[0] == 'BEGIN:VTIMEZONE'
+                and fallback.text(_property_of(b, 'TZID') or '') in referenced) or id(b) in selected_ids]
     if discard_generated:
         from .ics import local_timezone
         tz, omitted = local_timezone(), set(discard_generated)
@@ -351,7 +435,8 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=()):
         for block in selected:
             if block[0] == 'BEGIN:VEVENT' and _property_of(block, range_codec.GENERATED) is not None:
                 component = fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
-                if 'RECURRENCE-ID' in component and _key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz) in omitted:
+                component['_timezone_definitions'] = definitions or {}
+                if 'RECURRENCE-ID' in component and _key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz, floating) in omitted:
                     continue
             retained.append(block)
         selected = retained
@@ -359,7 +444,7 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=()):
 
 
 def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
-          read_only_recurring=False, use_full=True, _source=None):
+          read_only_recurring=False, use_full=True, _source=None, _resource_context=None):
     """Import series without materializing any recurrence occurrences.
 
     Window parameters remain accepted for API compatibility, but do not truncate
@@ -375,12 +460,18 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
     generated_safety = {}
     if generated_count:
         _, raw_blocks = _blocks(data)
+        definitions = {identifier: definition for component in source
+                       for identifier, definition in component.get('_timezone_definitions', {}).items()}
+        floating_uids = {fallback.prop(component, 'UID'): _floating(component)
+                         for component in source if 'RECURRENCE-ID' not in component and 'DTSTART' in component}
         for block in raw_blocks:
             if block[0] != 'BEGIN:VEVENT' or _property_of(block, range_codec.GENERATED) is None:
                 continue
             raw_component = fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
+            raw_component['_timezone_definitions'] = definitions
             if 'RECURRENCE-ID' in raw_component:
-                key = _key(_decoded(raw_component, 'RECURRENCE-ID', tz)[0], tz)
+                key = _key(_decoded(raw_component, 'RECURRENCE-ID', tz)[0], tz,
+                           floating_uids.get(_uid_of(block), False))
                 slot = (_uid_of(block), key)
                 generated_safety[slot] = (range_codec.safe_generated_block(block)
                                           and slot not in generated_safety)
@@ -414,23 +505,22 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         if fallback.prop(master_component, "X-DEBACAL-CALENDAR") == calendar_id:
             event_id = fallback.prop(master_component, "X-DEBACAL-ID", event_id)
         params = master_component["DTSTART"][0][0]
-        timezone_id = str(params.get("TZID", "")) or getattr(event_start.tzinfo, "key", "")
-        if timezone_id:
-            try:
-                ZoneInfo(timezone_id)
-            except (KeyError, ValueError):
-                raise ValueError(f"Custom timezone {timezone_id!r} cannot be edited safely yet. Use an IANA timezone.") from None
+        floating = not all_day and _floating(master_component)
+        timezone_id = ('' if all_day or floating else
+                       'UTC' if master_component['DTSTART'][0][1].upper().endswith('Z') else str(params.get('TZID', '')))
+        definitions = _used_definitions(components)
         master = Event(
             id=event_id, calendar_id=calendar_id,
-            title=fallback.prop(master_component, "SUMMARY", "Untitled event"), start=event_start, end=event_end,
+            title=fallback.prop(master_component, "SUMMARY") or "Untitled event", start=event_start, end=event_end,
             description=fallback.prop(master_component, "DESCRIPTION"), location=fallback.prop(master_component, "LOCATION"),
             group_id=fallback.prop(master_component, "X-DEBACAL-GROUP") or None,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
+            timezone_definitions=definitions, floating_time=floating,
             duration_spec=duration_spec,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
-            recurrence_dates=tuple(_key(value, tz) for value in _decoded(master_component, "RDATE", tz)),
-            excluded_dates=tuple(_key(value, tz) for value in _decoded(master_component, "EXDATE", tz)),
+            recurrence_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "RDATE", tz)),
+            excluded_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "EXDATE", tz)),
             raw_ics='',
             schedule_expression=fallback.prop(master_component, "X-DEBACAL-PATTERN"),
             expression_anchor=fallback.prop(master_component, "X-DEBACAL-PATTERN-ANCHOR"),
@@ -441,7 +531,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         # A foreign cancellation changes the canonical base just like EXDATE.
         # Include it before checking the signature, rather than regenerating a
         # range that another client intentionally removed.
-        cancelled = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz)
+        cancelled = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz, floating)
                      for component in components if 'RECURRENCE-ID' in component
                      and fallback.prop(component, 'STATUS').upper() == 'CANCELLED'}
         if cancelled:
@@ -452,7 +542,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                            and fallback.prop(master_component, range_codec.SIGNATURE) == policy_fingerprint)
         if verified_policy:
             expected = range_codec.expected_ranges(master)
-            present = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz)
+            present = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz, floating)
                        for component in components if 'RECURRENCE-ID' in component}
             verified_policy = expected.keys() <= present
         if not verified_policy:
@@ -462,7 +552,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         for component in components:
             if "RECURRENCE-ID" not in component:
                 continue
-            key = _key(_decoded(component, "RECURRENCE-ID", tz)[0], tz)
+            key = _key(_decoded(component, "RECURRENCE-ID", tz)[0], tz, floating)
             if (verified_policy and generated_safety.get((uid, key), False)
                     and range_codec.matches_generated(component, master, key, expected, decode=_decoded, tz=tz,
                                                        fingerprint=policy_fingerprint)):
@@ -473,10 +563,11 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 continue
             raw_override_start = _decoded(component, 'DTSTART' if 'DTSTART' in component else 'RECURRENCE-ID', tz)[0]
             override_all_day = not isinstance(raw_override_start, datetime)
+            override_floating = not override_all_day and (_floating(component) if 'DTSTART' in component else floating)
             override_start = _datetime(raw_override_start, tz)
             override_zone = override_start.tzinfo
-            override_timezone_id = (str(component.get('DTSTART', [({}, '')])[0][0].get('TZID', ''))
-                                    or master.timezone_id)
+            override_timezone_id = ('' if override_all_day or override_floating else
+                                    str(component.get('DTSTART', [({}, '')])[0][0].get('TZID', '')) or master.timezone_id)
             if 'DTSTART' not in component:
                 from .recurrence import event_zone
                 override_zone, override_timezone_id = event_zone(master), master.timezone_id
@@ -488,6 +579,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 description=fallback.prop(component, "DESCRIPTION", master.description),
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,
+                floating_time=override_floating,
                 duration_spec=override_spec, timezone_id=override_timezone_id,
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
@@ -498,17 +590,21 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             overrides[key] = override.to_dict()
         master = replace(master, recurrence_overrides=overrides, excluded_dates=tuple(sorted(exclusions)))
         master = replace(master, raw_ics=_resource_for_uid(data, uid, synthetic='UID' not in master_component,
-                                                          discard_generated=discarded))
+                                                          discard_generated=discarded,
+                                                          definitions=master.timezone_definitions, floating=master.floating_time,
+                                                          context=_resource_context))
         master = replace(master, recurrence_rule=canonical_rule(master.recurrence_rule, master))
         recurrence_set(master)  # Validate before an import reaches the SQLite transaction.
         result.append(master)
     return sorted(result, key=lambda event: (event.start.timestamp(), event.id))
 
 
-def _date_property(key, value):
+def _date_property(key, value, *, floating=False):
     if len(value) == 10:
         return f"{key};VALUE=DATE:{date.fromisoformat(value):%Y%m%d}"
     parsed = datetime.fromisoformat(value)
+    if floating:
+        return f"{key}:{parsed:%Y%m%dT%H%M%S}"
     if parsed.tzinfo is None:
         raise ValueError("Recurrence dates must include a timezone.")
     return f"{key}:{parsed.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
@@ -533,15 +629,16 @@ def rekey_recurrence_templates(event, transform):
             projected.append(block)
             continue
         component = fallback.components(fallback.folded(["BEGIN:VCALENDAR", *block, "END:VCALENDAR"]))[0]
+        component['_timezone_definitions'] = event.timezone_definitions
         if "RECURRENCE-ID" not in component:
             projected.append(block)
             continue
-        key = _key(_decoded(component, "RECURRENCE-ID", zone)[0], zone)
+        key = _key(_decoded(component, "RECURRENCE-ID", zone)[0], zone, event.floating_time)
         moved_key = transform(key)
         if moved_key == key:
             projected.append(block)
             continue
-        replacement = _date_property("RECURRENCE-ID", moved_key)
+        replacement = _date_property("RECURRENCE-ID", moved_key, floating=event.floating_time)
         moved, depth = [], 0
         for line in block:
             left, _, value = line.partition(":")
@@ -566,25 +663,31 @@ def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
     authored_v2 = bool(event.schedule_expression and event.schedule_syntax == 2)
-    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec) and not event.all_day
-                and event.timezone_id not in {"", "UTC", "Etc/UTC"})
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions) and not event.all_day and not event.floating_time
+                and event.timezone_id and (event.timezone_id not in {'UTC', 'Etc/UTC'}
+                                          or event.timezone_id in event.timezone_definitions))
 
 
-def _known_lines(event, uid, recurrence_id=""):
+def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
     nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id)
+    if event.floating_time:
+        lines = [line for line in lines if not line.startswith(('DTSTART:', 'DTEND:'))]
+        lines.append(f'DTSTART:{event.start:%Y%m%dT%H%M%S}')
+        if event.end.replace(tzinfo=None) > event.start.replace(tzinfo=None):
+            lines.append(f'DTEND:{event.end:%Y%m%dT%H%M%S}')
     fixed_late_start = False
-    if nominal_duration and not event.recurring:
+    if (nominal_duration or _named_start(event)) and not event.recurring and not event.floating_time:
         from .recurrence import event_zone
         local_start = event.start.astimezone(event_zone(event))
         fixed_late_start = bool(local_start.fold and local_start.replace(fold=0).timestamp() != local_start.timestamp())
         if fixed_late_start:
             nominal_duration = False  # One fixed range can use exact UTC endpoints.
     if not recurrence_id and not fixed_late_start and _named_start(event):
-        zone = ZoneInfo(event.timezone_id)
+        zone = event_timezone(event)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
-        lines.append(f"DTSTART;TZID={event.timezone_id}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
+        lines.append(f"DTSTART;TZID={fallback.parameter(event.timezone_id)}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
         if event.end.timestamp() > event.start.timestamp():
             local_end = event.end.astimezone(zone)
             if local_end.fold and local_end.replace(fold=0).timestamp() != local_end.timestamp():
@@ -593,7 +696,7 @@ def _known_lines(event, uid, recurrence_id=""):
                 # whose written end clock precedes their written start clock.
                 lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
             else:
-                lines.append(f"DTEND;TZID={event.timezone_id}:{local_end:%Y%m%dT%H%M%S}")
+                lines.append(f"DTEND;TZID={fallback.parameter(event.timezone_id)}:{local_end:%Y%m%dT%H%M%S}")
     if nominal_duration:
         lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
         lines.append('DURATION:' + event.duration_spec)
@@ -607,14 +710,14 @@ def _known_lines(event, uid, recurrence_id=""):
         lines.extend((range_codec.POLICY + ':' + event.range_policy,
                       range_codec.SIGNATURE + ':' + range_codec.signature(event)))
     if recurrence_id:
-        lines.append(_date_property("RECURRENCE-ID", recurrence_id))
+        lines.append(_date_property("RECURRENCE-ID", recurrence_id, floating=recurrence_floating))
     elif event.recurrence_rule:
         from .recurrence import canonical_rule
         rule = canonical_rule(event.recurrence_rule, event)
         if any(char in rule for char in "\r\n"):
             raise ValueError("A recurrence rule must be a single line.")
         if event.all_day:
-            zone = ZoneInfo(event.timezone_id) if event.timezone_id else event.start.tzinfo
+            zone = event_timezone(event)
             def date_until(match):
                 value = match[1]
                 if "T" not in value:
@@ -624,8 +727,8 @@ def _known_lines(event, uid, recurrence_id=""):
             rule = re.sub(r"UNTIL=([^;]+)", date_until, rule)
         lines.append("RRULE:" + rule)
     if not recurrence_id:
-        lines.extend(_date_property("RDATE", value) for value in event.recurrence_dates)
-        lines.extend(_date_property("EXDATE", value) for value in event.excluded_dates)
+        lines.extend(_date_property("RDATE", value, floating=event.floating_time) for value in event.recurrence_dates)
+        lines.extend(_date_property("EXDATE", value, floating=event.floating_time) for value in event.excluded_dates)
     return lines
 
 
@@ -640,7 +743,7 @@ def _timezone_definition(timezone_id, first_date, last_date):
                                                  first_date=first_date, last_date=last_date).to_ical())
 
 
-def _patch_block(block, event, uid, recurrence_id=""):
+def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=False):
     known = {"UID", "SUMMARY", "DTSTART", "DTEND", "DURATION", "DTSTAMP", "DESCRIPTION", "LOCATION",
              "X-DEBACAL-ID", "X-DEBACAL-CALENDAR", "X-DEBACAL-GROUP", "X-DEBACAL-CANDIDATE",
              "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"}
@@ -655,7 +758,7 @@ def _patch_block(block, event, uid, recurrence_id=""):
             result.append(line)
         if line.startswith("END:"):
             nested -= 1
-    return [*result, *_known_lines(event, uid, recurrence_id), "END:VEVENT"]
+    return [*result, *_known_lines(event, uid, recurrence_id, recurrence_floating=recurrence_floating), "END:VEVENT"]
 
 
 def _timezone_span(event):
@@ -671,8 +774,7 @@ def _timezone_signature(block):
     """
     stack = []
     for line in block:
-        left, _, value = line.partition(':')
-        key = left.split(';', 1)[0].upper()
+        key, parameters, value = fallback.content_line(line)
         if key == 'BEGIN':
             stack.append([value.upper(), [], []])
         elif key == 'END':
@@ -689,8 +791,10 @@ def _timezone_signature(block):
                 value = ','.join(sorted(value.split(',')))
             # Parameter values can be case-sensitive even though property
             # names are not. Be conservative for unrecognized extensions.
-            _, separator, parameters = left.partition(';')
-            stack[-1][1].append((key + separator + parameters, value))
+            if key == 'TZID' and parameters.get('VALUE', '').upper() == 'TEXT':
+                parameters.pop('VALUE')
+            encoded = ''.join(';' + name + '=' + fallback.parameter(item) for name, item in sorted(parameters.items()))
+            stack[-1][1].append((key + encoded, fallback.text(value) if key == 'TZID' else value))
     raise ValueError('Incomplete timezone definition.')
 
 
@@ -735,7 +839,7 @@ def _unique_timezones(blocks):
                     # Never guess which imported offset rules should win.
                     # Separate resources remain valid sync/export units.
                     raise ValueError(f'Incompatible timezone definitions for {identifier!r}. '
-                                     'Export the affected calendars separately.')
+                                     'Export the affected events separately.')
                 continue
             known[identifier] = signature
         result.append(block)
@@ -743,7 +847,6 @@ def _unique_timezones(blocks):
 
 
 def serialize_resource(event, *, timezone_spans=None):
-    from .ics import local_timezone
     raw = event.raw_ics
     header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
     uid = event.ical_uid or event.id
@@ -751,14 +854,22 @@ def serialize_resource(event, *, timezone_spans=None):
     masters, detached = [], {}
     for block in event_blocks:
         c = fallback.components(fallback.folded(["BEGIN:VCALENDAR", *block, "END:VCALENDAR"]))[0]
+        c['_timezone_definitions'] = event.timezone_definitions
         if "RECURRENCE-ID" in c:
-            key = _key(_decoded(c, "RECURRENCE-ID", local_timezone())[0], local_timezone())
+            key = _key(_decoded(c, "RECURRENCE-ID", event_timezone(event))[0], event_timezone(event), event.floating_time)
             detached[key] = block
         else:
             masters.append(block)
     if len(masters) > 1:
         raise ValueError("An event resource contains more than one master.")
     result = [b for b in blocks if b[0] != "BEGIN:VEVENT"]
+    # Copies and splits may have no raw template. Their scoped definitions are
+    # part of the event model, so they remain independently exportable.
+    existing_ids = {fallback.text(_property_of(block, 'TZID') or '') for block in result if block[0] == 'BEGIN:VTIMEZONE'}
+    for identifier, definition in event.timezone_definitions.items():
+        if identifier not in existing_ids:
+            result.append(fallback.unfolded(definition))
+            existing_ids.add(identifier)
     if timezone_spans:
         for index, block in enumerate(result):
             if block[0] == 'BEGIN:VTIMEZONE' and _generated_timezone_coverage(tuple(block)) is not None:
@@ -776,7 +887,8 @@ def serialize_resource(event, *, timezone_spans=None):
     result.append(_patch_block(masters[0] if masters else ["BEGIN:VEVENT", "END:VEVENT"], event, uid))
     for key, payload in sorted(event.recurrence_overrides.items()):
         override = Event.from_dict(payload)
-        result.append(_patch_block(detached.get(key, ["BEGIN:VEVENT", "END:VEVENT"]), override, uid, key))
+        result.append(_patch_block(detached.get(key, ["BEGIN:VEVENT", "END:VEVENT"]), override, uid, key,
+                                   recurrence_floating=event.floating_time))
     if event.range_policy == 'cut':
         from .recurrence import occurrence_id
         fingerprint = range_codec.signature(event)
@@ -786,7 +898,8 @@ def serialize_resource(event, *, timezone_spans=None):
                                recurrence_overrides={}, series_id=event.id, recurrence_id=key,
                                range_policy='', schedule_expression='', expression_anchor='',
                                schedule_syntax=1, raw_ics='')
-            block = _patch_block(detached.get(key, ['BEGIN:VEVENT', 'END:VEVENT']), override, uid, key)
+            block = _patch_block(detached.get(key, ['BEGIN:VEVENT', 'END:VEVENT']), override, uid, key,
+                                 recurrence_floating=event.floating_time)
             block.insert(-1, range_codec.GENERATED + ':' + fingerprint)
             result.append(block)
     # Keep imported cancellation metadata while it remains excluded. Removing
@@ -808,7 +921,7 @@ def export(events):
     # equality alone cannot consolidate the same zone generated for two eras.
     spans = {}
     for event in events:
-        if _named_start(event):
+        if _named_start(event) and event.timezone_id not in event.timezone_definitions:
             first, last = _timezone_span(event)
             previous = spans.get(event.timezone_id, (first, last))
             spans[event.timezone_id] = min(first, previous[0]), max(last, previous[1])

@@ -28,7 +28,7 @@ MAX_IMPORT_EVENTS = 50_000
 
 def _display_date(event: Event, value: datetime | None = None) -> date:
     value = event.start if value is None else value
-    return value.date() if event.all_day else value.astimezone(local_zone()).date()
+    return value.date() if event.all_day or event.floating_time else value.astimezone(local_zone()).date()
 
 
 def remap_calendar(report: ParseReport, calendar_id: str) -> ParseReport:
@@ -182,14 +182,14 @@ class PreparedImport:
                     if key not in master.excluded_dates:
                         consider(Event.from_dict(payload))
                 for value in (master.start, *(key_datetime(key, master) for key in master.recurrence_dates)):
-                    key = recurrence_key(value, master.all_day)
+                    key = recurrence_key(value, master.all_day, floating_time=master.floating_time)
                     if key not in master.excluded_dates and key not in master.recurrence_overrides:
                         consider(occurrence(master, value, key))
                 nominal_boundary = (datetime.combine(today, time.min, event_zone(master))
                                     if master.all_day else boundary)
                 rule = recurrence_set(master, after=nominal_boundary)
                 for index, value in enumerate(rule.xafter(nominal_boundary, inc=True)):
-                    key = recurrence_key(value, master.all_day)
+                    key = recurrence_key(value, master.all_day, floating_time=master.floating_time)
                     if key not in master.recurrence_overrides:
                         consider(occurrence(master, value, key))
                         break

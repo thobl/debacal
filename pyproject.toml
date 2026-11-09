@@ -21,7 +21,7 @@ dependencies = [
     # PYSIDE-3474/3486: 6.12.0 over-releases None/True on Python <= 3.11.
     "PySide6>=6.7,<7,!=6.12.0; python_version < '3.12'",
     "PySide6>=6.7,<7; python_version >= '3.12'",
-    "icalendar>=6,<8",
+    "icalendar>=6.3,<8",
     "caldav>=2,<4",
     "vdirsyncer>=0.21,<0.22",
     "python-dateutil>=2.9,<3",

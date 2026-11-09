@@ -7,12 +7,9 @@ an unbounded rule. Storage assigns a new identity to the tail when needed.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from itertools import islice
-import re
 from uuid import uuid4
-
-from dateutil.rrule import rrulestr
 
 from .models import Event
 from .event_duration import end_for
@@ -40,14 +37,10 @@ def _rule_text(parts):
 
 
 def _rule_iterator(master):
-    text = canonical_rule(master.recurrence_rule, master)
-    if master.all_day:
-        def until(match):
-            last = datetime.strptime(match[1], '%Y%m%d').date()
-            boundary = datetime.combine(last, time.max, event_zone(master))
-            return 'UNTIL=' + boundary.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-        text = re.sub(r'UNTIL=(\d{8})(?=;|$)', until, text)
-    return iter(rrulestr(text, dtstart=master.start.astimezone(event_zone(master))))
+    # Use the shared guarded evaluator, including floating UNTIL semantics;
+    # rule-owned identities deliberately ignore the resource's EXDATE/RDATEs.
+    bare = replace(master, excluded_dates=(), recurrence_overrides={})
+    return iter(recurrence_set(bare, include_dates=False))
 
 
 def _end_at(master, start):
@@ -61,7 +54,7 @@ def _has_visible_occurrence(master):
     for index, start in enumerate(recurrence_set(master)):
         if index >= MAX_SPLIT_SCAN:
             raise RecurrenceError('Too many excluded dates to split safely. Edit the whole series or choose a nearer occurrence.')
-        if recurrence_key(start, master.all_day) not in excluded:
+        if recurrence_key(start, master.all_day, floating_time=master.floating_time) not in excluded:
             return True
     return False
 
@@ -98,10 +91,10 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         raise RecurrenceError('This occurrence belongs to another series.')
     if reference.recurrence_id:
         pivot = key_datetime(reference.recurrence_id, master)
-        pivot_key = recurrence_key(pivot, master.all_day)
+        pivot_key = recurrence_key(pivot, master.all_day, floating_time=master.floating_time)
     elif reference.id == master.id:
         pivot = master.start.astimezone(event_zone(master))
-        pivot_key = recurrence_key(pivot, master.all_day)
+        pivot_key = recurrence_key(pivot, master.all_day, floating_time=master.floating_time)
     else:
         raise RecurrenceError('Choose an occurrence from this series.')
     if not master.recurring:
@@ -140,10 +133,10 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
             consumed += 1
             if consumed >= MAX_SPLIT_SCAN:
                 raise RecurrenceError('This split is more than 10,000 rule occurrences from the beginning. Edit the whole series or split it nearer the start.')
-    base = {recurrence_key(master.start, master.all_day): master.start.astimezone(event_zone(master))}
+    base = {recurrence_key(master.start, master.all_day, floating_time=master.floating_time): master.start.astimezone(event_zone(master))}
     base.update((key, key_datetime(key, master)) for key in master.recurrence_dates)
     if (pivot_key not in base and pivot_key not in master.recurrence_overrides
-            and (first_future is None or recurrence_key(first_future, master.all_day) != pivot_key)):
+            and (first_future is None or recurrence_key(first_future, master.all_day, floating_time=master.floating_time) != pivot_key)):
         raise RecurrenceError('The selected date is no longer in this series. Refresh before editing it.')
 
     before_parts, after_parts = dict(parts), dict(parts)
@@ -153,6 +146,11 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
         else:
             if master.all_day:
                 bound = (pivot.astimezone(event_zone(master)).date() - timedelta(days=1)).strftime('%Y%m%d')
+            elif master.floating_time:
+                before_wall = pivot.replace(tzinfo=None)
+                before_wall = (before_wall.replace(microsecond=0) if before_wall.microsecond
+                               else before_wall - timedelta(seconds=1))
+                bound = before_wall.strftime('%Y%m%dT%H%M%S')
             else:
                 before_instant = _instant(pivot)
                 before_instant = (before_instant.replace(microsecond=0) if before_instant.microsecond
@@ -182,18 +180,18 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
             options = list(local_base.values()) + [key_datetime(key, master) for key in overrides]
             if not options:
                 return None
-            initial = recurrence_key(master.start, master.all_day)
+            initial = recurrence_key(master.start, master.all_day, floating_time=master.floating_time)
             start = (master.start.astimezone(event_zone(master)) if not after and initial in local_base
                      else min(options, key=_instant))
         end = _end_at(master, start)
-        if after and not master.all_day and not all(_valid_wall_time(value) for value in (start, end)):
+        if after and not master.all_day and not master.floating_time and not all(_valid_wall_time(value) for value in (start, end)):
             raise RecurrenceError(
                 'This occurrence crosses a daylight-saving clock gap. '
                 'Split at another occurrence to preserve the series time and duration.'
             )
         # DTSTART itself belongs to the set even when it did not match RRULE.
         # Keep that original anchor as RDATE if the rule's tail starts elsewhere.
-        rdates = tuple(key for key in local_base if key != recurrence_key(start, master.all_day))
+        rdates = tuple(key for key in local_base if key != recurrence_key(start, master.all_day, floating_time=master.floating_time))
         part = replace(master, start=start, end=end, recurrence_rule=_rule_text(rule_parts),
                        recurrence_dates=rdates, excluded_dates=exclusions, recurrence_overrides=overrides,
                        series_id='', recurrence_id='')

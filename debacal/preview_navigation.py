@@ -11,6 +11,15 @@ NAVIGATION_LIMIT = 10000
 POSITION_LIMIT = 2000
 
 
+def _until_datetime(master, boundary, *, end_of_day=False):
+    zone = event_zone(master)
+    if len(boundary) == 8:
+        return datetime.combine(datetime.strptime(boundary, '%Y%m%d').date(),
+                                time.max if end_of_day else time.min, zone)
+    value = datetime.strptime(boundary.rstrip('Z'), '%Y%m%dT%H%M%S')
+    return value.replace(tzinfo=timezone.utc).astimezone(zone) if boundary.endswith('Z') else value.replace(tzinfo=zone)
+
+
 class PreviewNavigation:
     def __init__(self, masters):
         self.masters = []
@@ -30,7 +39,8 @@ class PreviewNavigation:
     def rebind(self, masters):
         """Retain cheap position data across title and duration changes."""
         masters = list(masters)
-        signature = tuple((item.id, item.start.isoformat(), item.all_day, item.timezone_id,
+        signature = tuple((item.id, item.start.isoformat(), item.all_day, item.floating_time, item.timezone_id,
+                           tuple(sorted(item.timezone_definitions.items())),
                            item.recurrence_rule, item.recurrence_dates, item.excluded_dates,
                            tuple(sorted((key, value.get('start')) for key, value in item.recurrence_overrides.items())))
                           for item in masters)
@@ -57,8 +67,7 @@ class PreviewNavigation:
             return False
         canonical = dict(part.split('=', 1) for part in canonical_rule(master.recurrence_rule, master).split(';'))
         boundary = canonical['UNTIL']
-        until = (datetime.strptime(boundary, '%Y%m%d').replace(tzinfo=event_zone(master)) if len(boundary) == 8 else
-                 datetime.strptime(boundary, '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc).astimezone(event_zone(master)))
+        until = _until_datetime(master, boundary)
         first = master.start.astimezone(event_zone(master))
         seconds = max(0, (until.replace(tzinfo=None) - first.replace(tzinfo=None)).total_seconds())
         units = {'SECONDLY': 1, 'MINUTELY': 60, 'HOURLY': 3600, 'DAILY': 86400,
@@ -78,7 +87,7 @@ class PreviewNavigation:
         generated = 0
         for master in self._recurring:
             if not master.recurrence_rule:
-                keys = {recurrence_key(master.start, master.all_day), *master.recurrence_dates,
+                keys = {recurrence_key(master.start, master.all_day, floating_time=master.floating_time), *master.recurrence_dates,
                         *master.recurrence_overrides} - set(master.excluded_dates)
             else:
                 keys = set()
@@ -86,14 +95,14 @@ class PreviewNavigation:
                     generated += 1
                     if generated > POSITION_LIMIT:
                         return None
-                    keys.add(recurrence_key(value, master.all_day))
+                    keys.add(recurrence_key(value, master.all_day, floating_time=master.floating_time))
                 keys.update(set(master.recurrence_overrides) - set(master.excluded_dates))
             for key in keys:
                 nominal = key_datetime(key, master)
-                if (not master.all_day and
+                if (not master.all_day and not master.floating_time and
                         nominal.astimezone(timezone.utc).astimezone(nominal.tzinfo).replace(tzinfo=None) != nominal.replace(tzinfo=None)):
                     continue
-                actual = (datetime.fromisoformat(master.recurrence_overrides[key]['start'])
+                actual = (occurrence(master, nominal, key).start
                           if key in master.recurrence_overrides else nominal)
                 positions[occurrence_id(master.id, key)] = actual.timestamp()
         self._positions = sorted((timestamp, key) for key, timestamp in positions.items())
@@ -140,11 +149,11 @@ class PreviewNavigation:
             if not master.recurring:
                 identifiers.add(master.id)
                 continue
-            keys = {recurrence_key(master.start, master.all_day), *master.recurrence_dates,
+            keys = {recurrence_key(master.start, master.all_day, floating_time=master.floating_time), *master.recurrence_dates,
                     *master.recurrence_overrides} - set(master.excluded_dates)
             for key in keys:
                 value = key_datetime(key, master)
-                if (master.all_day or
+                if (master.all_day or master.floating_time or
                         value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) == value.replace(tzinfo=None)):
                     identifiers.add((master.id, key))
         return len(identifiers)
@@ -165,7 +174,7 @@ class PreviewNavigation:
                               for key in master.recurrence_overrides if key not in excluded)
             nominal = replace(master, recurrence_overrides={},
                               excluded_dates=tuple(excluded | set(master.recurrence_overrides)))
-            values = normalize_recurrence_stream(recurrence_set(nominal), all_day=master.all_day)
+            values = normalize_recurrence_stream(recurrence_set(nominal), all_day=master.all_day or master.floating_time)
             first = next(values, None)
             if first is not None:
                 candidates.append(occurrence(master, first))
@@ -202,12 +211,12 @@ class PreviewNavigation:
         if not master.recurrence_rule:
             if not master.recurring:
                 return master
-            keys = {recurrence_key(master.start, master.all_day), *master.recurrence_dates,
+            keys = {recurrence_key(master.start, master.all_day, floating_time=master.floating_time), *master.recurrence_dates,
                     *master.recurrence_overrides} - set(master.excluded_dates)
             latest = None
             for key in keys:
                 value = key_datetime(key, master)
-                if (not master.all_day and
+                if (not master.all_day and not master.floating_time and
                         value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None)):
                     continue
                 if key in master.recurrence_overrides:
@@ -234,10 +243,7 @@ class PreviewNavigation:
         if 'UNTIL' in fields:
             normalized = dict(part.split('=', 1) for part in canonical_rule(master.recurrence_rule, master).split(';'))
             boundary = normalized['UNTIL']
-            if len(boundary) == 8:
-                until = datetime.combine(datetime.strptime(boundary, '%Y%m%d').date(), time.max, event_zone(master))
-            else:
-                until = datetime.strptime(boundary, '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc).astimezone(event_zone(master))
+            until = _until_datetime(master, boundary, end_of_day=True)
             until_count = (until.replace(tzinfo=None) - first.replace(tzinfo=None)) // (unit * interval) + 1
             count = min(count, until_count) if count is not None else until_count
         # DTSTART remains a set member even when UNTIL precedes it.

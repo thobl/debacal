@@ -1,14 +1,13 @@
 """Offline iCalendar subset used when optional calendar packages are unavailable.
 
 It preserves ordinary VEVENT masters and detached recurrence exceptions. The
-icalendar package handles richer input syntax when installed. Custom timezone
-definitions that cannot map to an IANA zone fail explicitly.
+icalendar package handles richer input syntax when installed. Date values use
+resource-scoped VTIMEZONE definitions or the IANA timezone database.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 import re
-from zoneinfo import ZoneInfo
 
 from .models import Event
 
@@ -25,36 +24,78 @@ def unfolded(data):
     return lines
 
 
+def _unquoted_parts(value, delimiter):
+    parts, start, quoted, escaped_quote = [], 0, False, False
+    for index, character in enumerate(value):
+        if character == '"' and not escaped_quote:
+            quoted = not quoted
+        if character == delimiter and not quoted:
+            parts.append(value[start:index])
+            start = index + 1
+        escaped_quote = character == '\\' and not escaped_quote
+    parts.append(value[start:])
+    return parts
+
+
+def content_line(line):
+    """Read a content line without splitting quoted parameter delimiters."""
+    if '"' not in line:
+        name, separator, value = line.partition(':')
+        if not separator:
+            raise ValueError('Malformed iCalendar property.')
+        key, *parameters = name.split(';')
+    else:
+        parts = _unquoted_parts(line, ':')
+        if len(parts) < 2:
+            raise ValueError('Malformed iCalendar property.')
+        name, value = parts[0], ':'.join(parts[1:])
+        key, *parameters = _unquoted_parts(name, ';')
+    params = {}
+    for item in parameters:
+        pkey, separator, pvalue = item.partition('=')
+        if not separator:
+            raise ValueError('Malformed iCalendar parameter.')
+        if pvalue.startswith('"') and pvalue.endswith('"'):
+            pvalue = pvalue[1:-1]
+        pvalue = re.sub(r"\^(\^|[nN]|')", lambda match:
+                        '^' if match[1] == '^' else '"' if match[1] == "'" else '\n', pvalue)
+        params[pkey.upper()] = pvalue.upper() if pkey.upper() == 'VALUE' else pvalue
+    return key.upper(), params, value
+
+
+def parameter(value):
+    """Encode a parameter value, including RFC 6868 quotes/newlines."""
+    value = str(value).replace('^', '^^').replace('\r\n', '\n').replace('\r', '\n')
+    value = value.replace('\n', '^n').replace('"', "^'")
+    return '"' + value + '"' if any(character in value for character in ':;,') else value
+
+
 def components(data):
     lines = unfolded(data)
-    if "BEGIN:VCALENDAR" not in lines or "END:VCALENDAR" not in lines:
+    markers = {line.upper() for line in lines}
+    if "BEGIN:VCALENDAR" not in markers or "END:VCALENDAR" not in markers:
         raise ValueError("Expected a complete VCALENDAR document.")
     result, current, nested = [], None, 0
     for line in lines:
-        if line == "BEGIN:VEVENT":
+        if not line:
+            continue
+        key, parameters, value = content_line(line)
+        if key == 'BEGIN' and value.upper() == 'VEVENT':
             if current is not None:
                 raise ValueError("Unexpected nested VEVENT.")
             current, nested = {}, 0
-        elif line == "END:VEVENT":
+        elif key == 'END' and value.upper() == 'VEVENT':
             if current is None:
                 raise ValueError("Unexpected END:VEVENT.")
             result.append(current)
             current = None
         elif current is not None:
-            if line.startswith("BEGIN:"):
+            if key == 'BEGIN':
                 nested += 1
-            elif line.startswith("END:"):
+            elif key == 'END':
                 nested -= 1
             elif not nested and line:
-                name, sep, value = line.partition(":")
-                if not sep:
-                    raise ValueError("Malformed iCalendar property.")
-                key, *params = name.split(";")
-                parameters = {}
-                for item in params:
-                    pkey, _, pvalue = item.partition("=")
-                    parameters[pkey.upper()] = pvalue.strip('"')
-                current.setdefault(key.upper(), []).append((parameters, value))
+                current.setdefault(key, []).append((parameters, value))
     if current is not None:
         raise ValueError("Unterminated VEVENT.")
     return result
@@ -72,19 +113,21 @@ def prop(component, key, default=""):
     return text(component[key][0][1]) if key in component else default
 
 
-def dt(value, params, tz):
+def dt(value, params, tz, definitions=None):
     try:
         if params.get("VALUE") == "DATE" or re.fullmatch(r"\d{8}", value):
             return datetime.combine(datetime.strptime(value, "%Y%m%d").date(), time.min, tzinfo=tz), True
-        zone = timezone.utc if value.endswith("Z") else tz
-        if "TZID" in params:
-            try:
-                zone = ZoneInfo(params["TZID"])
-            except (KeyError, ValueError) as exc:
-                raise ValueError(f"Timezone {params['TZID']} requires the full icalendar backend.") from exc
-        fmt = "%Y%m%dT%H%M%S" if len(value.rstrip("Z")) == 15 else "%Y%m%dT%H%M"
-        return datetime.strptime(value.rstrip("Z"), fmt).replace(tzinfo=zone), False
+        clock = value.upper()
+        zone = timezone.utc if clock.endswith("Z") else tz
+        if "TZID" in params and not clock.endswith("Z"):
+            from .timezones import resolve_timezone
+            zone = resolve_timezone(params["TZID"], definitions)
+        fmt = "%Y%m%dT%H%M%S" if len(clock.rstrip("Z")) == 15 else "%Y%m%dT%H%M"
+        return datetime.strptime(clock.rstrip("Z"), fmt).replace(tzinfo=zone), False
     except ValueError as exc:
+        from .timezones import TimezoneError
+        if isinstance(exc, TimezoneError):
+            raise
         raise ValueError(f"Invalid iCalendar date/time {value!r}: {exc}") from exc
 
 

@@ -33,13 +33,13 @@ def _semantic(event: Event) -> dict:
 
 def calendar_day_delta(reference: Event, target: datetime) -> int:
     """Date movement in the target's display zone; all-day dates float."""
-    previous = (reference.start.date() if reference.all_day else
+    previous = (reference.start.date() if reference.all_day or reference.floating_time else
                 reference.start.astimezone(target.tzinfo).date())
     return (target.date() - previous).days
 
 
 def _moved_times(event: Event, shift: timedelta, zone, *, target: datetime | None = None) -> tuple[datetime, datetime]:
-    original_start = event.start.astimezone(zone)
+    original_start = event.start.replace(tzinfo=zone) if event.floating_time else event.start.astimezone(zone)
     # datetime arithmetic resets fold to zero, even for a zero-day duplicate.
     # Preserve the start's repeated-hour choice while moving its wall date.
     start = (original_start.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=original_start.fold)
@@ -47,7 +47,7 @@ def _moved_times(event: Event, shift: timedelta, zone, *, target: datetime | Non
         start = target.astimezone(zone)
     end = end_for(event, start)
     for value in (start, end):
-        if not _valid_wall_time(value):
+        if not event.floating_time and not _valid_wall_time(value):
             raise ValueError(f'The local time {value:%d.%m.%Y %H:%M} falls in a daylight-saving clock change. Choose another time.')
     return start, end
 
@@ -67,11 +67,11 @@ def _resolve(masters: tuple[Event, ...], reference: Event) -> Event:
     if reference.id != occurrence_id(master.id, key) or key in master.excluded_dates:
         raise ValueError("The clipboard occurrence does not belong to its captured schedule.")
     when = key_datetime(key, master)
-    if recurrence_key(when, master.all_day) != key:
+    if recurrence_key(when, master.all_day, floating_time=master.floating_time) != key:
         raise ValueError("The clipboard occurrence has an invalid recurrence identifier.")
     if key not in master.recurrence_overrides:
         previous = recurrence_set(master).before(when, inc=True)
-        if previous is None or recurrence_key(previous, master.all_day) != key:
+        if previous is None or recurrence_key(previous, master.all_day, floating_time=master.floating_time) != key:
             raise ValueError("The clipboard occurrence does not belong to its captured schedule.")
     return occurrence(master, when, key)
 
@@ -185,13 +185,13 @@ class EventClipboard:
         for event in selected:
             destination = event.calendar_id if preserve_calendars else calendar_id
             zone = event_zone(event)
-            wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
+            wall = lambda value, floating=False: value.replace(tzinfo=None) if floating else value.astimezone(zone).replace(tzinfo=None)
             shift = (timedelta(days=calendar_day_delta(self.reference, target))
-                     if event.all_day or self.reference.all_day else wall(target) - wall(self.reference.start))
+                     if event.all_day or self.reference.all_day else wall(target) - wall(self.reference.start, self.reference.floating_time))
             primary_reference = (event.id == self.reference.id or
                 self.reference.series_id == event.id
-                and self.reference.recurrence_id == recurrence_key(event.start, event.all_day)
-                and wall(self.reference.start) == wall(event.start))
+                and self.reference.recurrence_id == recurrence_key(event.start, event.all_day, floating_time=event.floating_time)
+                and wall(self.reference.start, self.reference.floating_time) == wall(event.start, event.floating_time))
             exact_target = target if primary_reference and not event.all_day else None
             start, end = _moved_times(event, shift, zone, target=exact_target)
             moved = replace(event, start=start, end=end)

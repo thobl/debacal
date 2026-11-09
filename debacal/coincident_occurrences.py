@@ -21,14 +21,14 @@ from .recurrence import (RecurrenceError, event_zone, key_datetime, occurrence,
 def _contains(event, key, rules=None):
     when = key_datetime(key, event)
     value = (rules if rules is not None else recurrence_set(event)).before(when, inc=True)
-    return value is not None and recurrence_key(value, event.all_day) == recurrence_key(when, event.all_day)
+    return value is not None and recurrence_key(value, event.all_day, floating_time=event.floating_time) == recurrence_key(when, event.all_day, floating_time=event.floating_time)
 
 
 def multiplicities(event):
     """Finite multiplicities beyond the ordinary one-event recurrence set."""
     active = {key: Event.from_dict(payload) for key, payload in event.recurrence_overrides.items()
               if key not in event.excluded_dates}
-    counts = Counter(recurrence_key(item.start, event.all_day) for item in active.values())
+    counts = Counter(recurrence_key(item.start, event.all_day, floating_time=event.floating_time) for item in active.values())
     if not counts:
         return Counter()
     base = replace(event, recurrence_overrides={}, excluded_dates=tuple(set(event.excluded_dates) | set(active)))
@@ -57,15 +57,17 @@ def logical_occurrence_start(master, key):
             return nominal
     item = Event.from_dict(master.recurrence_overrides[key])
     return (datetime.combine(item.start.date(), time.min, event_zone(master)) if master.all_day
+            else item.start.replace(tzinfo=event_zone(master)) if master.floating_time
             else item.start.astimezone(event_zone(master)))
 
 
 def _shifted(value, source, candidate, shift):
     zone = event_zone(candidate)
     local = (datetime.combine(value.date(), time.min, zone) if candidate.all_day
+             else value.replace(tzinfo=zone) if candidate.floating_time
              else value.astimezone(zone))
     result = (local.replace(tzinfo=None) + shift).replace(tzinfo=zone, fold=local.fold)
-    if not candidate.all_day and result.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != result.replace(tzinfo=None):
+    if not candidate.all_day and not candidate.floating_time and result.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != result.replace(tzinfo=None):
         raise RecurrenceError('Moving this occurrence would use a nonexistent local time. Choose another time.')
     return result
 
@@ -88,7 +90,7 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
     source_base = replace(source, recurrence_overrides={},
                           excluded_dates=tuple(set(source.excluded_dates) | set(source.recurrence_overrides)))
     source_rules = recurrence_set(source_base)
-    extras = Counter(recurrence_key(value, candidate.all_day) for value in extra_starts)
+    extras = Counter(recurrence_key(value, candidate.all_day, floating_time=candidate.floating_time) for value in extra_starts)
     membership, source_membership = {}, {}
     def contains(key):
         if key not in membership:
@@ -102,7 +104,7 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
         return source_membership[key]
 
     overrides, retained = {}, Counter()
-    reference = recurrence_key(source.start, source.all_day)
+    reference = recurrence_key(source.start, source.all_day, floating_time=source.floating_time)
     for key, payload in sorted(source.recurrence_overrides.items(), key=lambda pair: (pair[0] != reference, pair[0])):
         if key in source.excluded_dates:
             continue
@@ -111,12 +113,12 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
             raise RecurrenceError('A compact sequence cannot mix timed and all-day occurrences.')
         start = _shifted(item.start, source, candidate, shift)
         end = _end_at(item, start)
-        actual = recurrence_key(start, candidate.all_day)
-        original_actual = recurrence_key(item.start, source.all_day)
+        actual = recurrence_key(start, candidate.all_day, floating_time=candidate.floating_time)
+        original_actual = recurrence_key(item.start, source.all_day, floating_time=source.floating_time)
         ordinary_priority = int(ordinary_first and original_ordinary(original_actual))
         if retained[actual] >= max(0, wanted(actual) - ordinary_priority):
             continue
-        nominal = recurrence_key(_shifted(key_datetime(key, source), source, candidate, shift), candidate.all_day)
+        nominal = recurrence_key(_shifted(key_datetime(key, source), source, candidate, shift), candidate.all_day, floating_time=candidate.floating_time)
         if nominal in overrides:
             raise RecurrenceError('Two retained occurrences have the same nominal identity.')
         if (nominal == key and start.isoformat() == item.start.isoformat()
@@ -144,7 +146,7 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
             exclusions.add(actual)
             counts[actual] -= 1
 
-    used = reserved | set(candidate.recurrence_dates) | set(candidate.excluded_dates) | {recurrence_key(candidate.start, candidate.all_day)}
+    used = reserved | set(candidate.recurrence_dates) | set(candidate.excluded_dates) | {recurrence_key(candidate.start, candidate.all_day, floating_time=candidate.floating_time)}
     step = timedelta(days=1) if candidate.all_day else timedelta(seconds=1)
     seed = (datetime.combine(candidate.start.date(), time.min, event_zone(candidate)) if candidate.all_day
             else candidate.start.astimezone(event_zone(candidate)).replace(microsecond=0))
@@ -161,7 +163,7 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
                     direction, nominal_cursor = 1, seed
                     continue
                 break
-            key = recurrence_key(nominal_cursor, candidate.all_day)
+            key = recurrence_key(nominal_cursor, candidate.all_day, floating_time=candidate.floating_time)
             if key not in used and not contains(key):
                 used.add(key)
                 return key
@@ -186,7 +188,8 @@ def reanchor_compiled_multiset(source, old_compiled, new_compiled, start, end, k
     if len(old_starts) != len(new_starts):
         raise RecurrenceError('The moved definition changes its number of prefix occurrences.')
     zone = event_zone(source)
-    start, end = start.astimezone(zone), end.astimezone(zone)
+    start, end = ((start.replace(tzinfo=zone), end.replace(tzinfo=zone)) if source.floating_time
+                  else (start.astimezone(zone), end.astimezone(zone)))
     shift = start.replace(tzinfo=None) - source.start.astimezone(zone).replace(tzinfo=None)
     candidate = replace(source, start=start, end=end, recurrence_rule=new_compiled.recurrence_rule,
                         recurrence_dates=new_compiled.recurrence_dates, excluded_dates=new_compiled.excluded_dates,
@@ -195,25 +198,25 @@ def reanchor_compiled_multiset(source, old_compiled, new_compiled, start, end, k
     for key, payload in source.recurrence_overrides.items():
         if key not in source.excluded_dates:
             item = Event.from_dict(payload)
-            queues[recurrence_key(item.start, source.all_day)].append((key, item, payload))
+            queues[recurrence_key(item.start, source.all_day, floating_time=source.floating_time)].append((key, item, payload))
     rules = recurrence_set(source)
-    for actual in set(recurrence_key(value, source.all_day) for value in old_starts):
+    for actual in set(recurrence_key(value, source.all_day, floating_time=source.floating_time) for value in old_starts):
         if actual not in source.recurrence_overrides and _contains(source, actual, rules):
             queues[actual].append((actual, occurrence(source, key_datetime(actual, source), actual), None))
     for queue in queues.values():
-        queue.sort(key=lambda value: (value[0] != recurrence_key(source.start, source.all_day), value[0]))
+        queue.sort(key=lambda value: (value[0] != recurrence_key(source.start, source.all_day, floating_time=source.floating_time), value[0]))
     overrides, assigned = {}, set()
     def retain(key, item, actual, payload):
-        nominal = recurrence_key(_shifted(key_datetime(key, source), source, candidate, shift), source.all_day)
+        nominal = recurrence_key(_shifted(key_datetime(key, source), source, candidate, shift), source.all_day, floating_time=source.floating_time)
         if nominal in overrides:
             raise RecurrenceError('Moving this series would merge two nominal identities.')
-        actual = actual.astimezone(zone)
-        if payload is not None or recurrence_key(actual, source.all_day) != nominal:
+        actual = actual.replace(tzinfo=zone) if source.floating_time else actual.astimezone(zone)
+        if payload is not None or recurrence_key(actual, source.all_day, floating_time=source.floating_time) != nominal:
             overrides[nominal] = replace(item, start=actual, end=_end_at(item, actual),
                                           recurrence_id=nominal).to_dict()
         assigned.add(key)
     for old, new in zip(old_starts, new_starts):
-        queue = queues[recurrence_key(old, source.all_day)]
+        queue = queues[recurrence_key(old, source.all_day, floating_time=source.floating_time)]
         if not queue:
             raise RecurrenceError('A moved prefix occurrence has no corresponding calendar identity.')
         key, item, payload = queue.pop(0)

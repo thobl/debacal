@@ -116,16 +116,23 @@ a failed run is not replaced by a generic success message during view refresh.
 ## Individual resource failures
 
 Parsing and validation operate per UID. Invalid resources are retained verbatim
-in private quarantine and reported using a short resource identifier and a
-sanitized reason. Healthy siblings can still be imported, viewed and synchronized.
+in private quarantine. Click the warning/sync indicator in the sidebar to open
+**Issues**: each retained resource shows its event title, calendar, date/time,
+timezone, reason and identifiers, including after restarting the app.
+**View original** opens a read-only source viewer; **Save original…** exports
+the retained ICS; **Copy details** copies diagnostics. **Retry synchronization**
+fetches the resource again. Writable local calendars also offer
+**Import corrected file…**. These actions do not silently rewrite or delete
+server resources. Healthy siblings can still be imported, viewed and synchronized.
 The bridge leaves skipped server files intact and excludes their UIDs from
 deletion inference; an unidentifiable bad resource conservatively protects cached
 events from deletion. A bad queued local resource remains in the outbox while
 other healthy writes continue. Unrelated unresolved conflicts also do not block
 healthy uploads.
 
-Naive UNTIL boundaries from exporters are interpreted in the DTSTART timezone
-and converted to the standard UTC representation. Other unsupported rules fail
+Naive UNTIL boundaries for zoned events are interpreted in the DTSTART timezone
+and converted to UTC; floating events retain floating UNTIL values.
+Other unsupported rules fail
 at that UID rather than aborting the calendar. Structural corruption is reported
 rather than being mistaken for an empty calendar. A fixed resource is retried on
 the next sync and removed from quarantine when it becomes valid.
@@ -167,6 +174,13 @@ standard recurrence, including when a definition compiles to a regular RRULE.
 New named-zone RRULE exports generate VTIMEZONE through the declared `icalendar`
 dependency. Definitions cover 1970–2100 by default and extend to master dates;
 imported definitions and unknown event metadata are retained.
+
+Embedded VTIMEZONE rules are authoritative for their resource, including Windows
+identifiers such as `W. Europe Standard Time`. They persist through storage,
+edits, copies and synchronization. Debacal does not guess an IANA alias when an
+explicit definition is supplied. Floating date-times retain their local clocks
+without being permanently bound to the importing machine's zone. See
+[calendar format support and limits](CALENDAR_STANDARDS.md).
 
 ## Custom series metadata between Debacal instances
 

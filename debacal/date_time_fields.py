@@ -16,12 +16,12 @@ from .preferences import Preferences
 from .timeutil import now
 
 
-def validate_datetime(value, *, all_day=False):
+def validate_datetime(value, *, all_day=False, floating_time=False):
     """Reject impossible local clocks without normalizing an event silently."""
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError('Choose a date and time with a timezone.')
-    if all_day:
-        return value  # Floating dates do not require a real local midnight.
+    if all_day or floating_time:
+        return value  # Floating DATE/wall clocks do not require a local instant.
     returned = value.astimezone(timezone.utc).astimezone(value.tzinfo)
     if returned.replace(tzinfo=None) != value.replace(tzinfo=None):
         raise ValueError('This local time does not exist because the clocks change. Choose another time.')
@@ -50,7 +50,7 @@ def _translated_months(text, preferences):
     return text
 
 
-def parse_datetime(text, preferences=None, reference=None, *, all_day=False):
+def parse_datetime(text, preferences=None, reference=None, *, all_day=False, floating_time=False):
     """Accept padded/unpadded numeric dates, ISO and localized month names.
 
     Ambiguous slash dates follow the chosen regional format. A dot is always
@@ -81,11 +81,11 @@ def parse_datetime(text, preferences=None, reference=None, *, all_day=False):
         raise ValueError('Use a date' + ('' if all_day else ' and time') + ' such as ' + example + '.') from exc
     if all_day:
         return validate_datetime(datetime.combine(parsed.date(), time.min, reference.tzinfo), all_day=True)
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None or floating_time:
         parsed = parsed.replace(tzinfo=reference.tzinfo, fold=reference.fold)
     else:
         parsed = parsed.astimezone(reference.tzinfo)
-    return validate_datetime(parsed)
+    return validate_datetime(parsed, floating_time=floating_time)
 
 
 def parse_duration(text, *, all_day=False):
@@ -164,13 +164,14 @@ def format_duration(value, *, all_day=False, elapsed=False):
                                        f'{minutes}min' if minutes else '', f'{seconds}s' if rest else '') if part)
 
 
-def format_event_duration(start, end, *, all_day=False, duration_spec=''):
+def format_event_duration(start, end, *, all_day=False, duration_spec='', floating_time=False):
     if all_day:
         return format_duration(end.replace(tzinfo=None) - start.replace(tzinfo=None), all_day=True)
     if duration_spec:
         days, seconds = parse_duration_spec(duration_spec)
         return f'{days}d' + (' ' + format_duration(timedelta(seconds=seconds), elapsed=True) if seconds else '')
-    duration = elapsed_duration(start, end)
+    duration = (end.replace(tzinfo=None) - start.replace(tzinfo=None) if floating_time
+                else elapsed_duration(start, end))
     return format_duration(duration, elapsed=True) if duration else '0min'
 
 
@@ -181,11 +182,12 @@ class DateTimeField(QWidget):
     editingFinished = Signal()
     picker_requested = Signal()
 
-    def __init__(self, preferences=None, parent=None):
+    def __init__(self, preferences=None, parent=None, *, floating_time=False):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self._value = now()
         self._all_day = False
+        self._floating_time = bool(floating_time)
         self._display_format = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -250,8 +252,9 @@ class DateTimeField(QWidget):
                 formatted += ' ' + self.preferences.format_time(self._value)
         if previous.strip() == formatted:
             value = self._value.replace(hour=0, minute=0, second=0, microsecond=0) if self._all_day else self._value
-            return validate_datetime(value, all_day=self._all_day)
-        return parse_datetime(previous, self.preferences, self._value, all_day=self._all_day)
+            return validate_datetime(value, all_day=self._all_day, floating_time=self._floating_time)
+        return parse_datetime(previous, self.preferences, self._value, all_day=self._all_day,
+                              floating_time=self._floating_time)
 
     def commit(self):
         self.set_value(self.value())
@@ -297,6 +300,10 @@ class DateTimeField(QWidget):
 
     def isAllDay(self):
         return self._all_day
+
+    def setFloatingTime(self, enabled):
+        """Treat typed clocks as wall times, independently of local DST gaps."""
+        self._floating_time = bool(enabled)
 
     def text(self):
         return self.edit.text()
