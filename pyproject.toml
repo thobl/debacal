@@ -34,10 +34,13 @@ Issues = "https://github.com/thobl/debacal/issues"
 Releases = "https://github.com/thobl/debacal/releases"
 
 [project.optional-dependencies]
-dev = ["pytest>=9", "build>=1.2,<2"]
+dev = ["pytest>=9", "build>=1.2,<2", "setuptools>=77"]
 
 [project.scripts]
 debacal = "debacal.__main__:main"
+
+[tool.setuptools.package-dir]
+"" = "."
 
 [tool.setuptools.packages.find]
 include = ["debacal*"]

@@ -98,6 +98,16 @@ For development, install `-e '.[dev]'` instead. Run tests with
 `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest`. Local-socket tests need
 an environment that permits local IPC; no personal calendar account is needed.
 
+With uv, use `uv sync --extra dev`, then `uv run debacal --test` to run the
+checkout with a separate testing profile. The editable package layout keeps
+the checkout ahead of a system-installed Debacal even in environments created
+with `--system-site-packages`. To refresh an older editable installation, run
+`uv sync --extra dev --reinstall-package debacal`.
+
+Fully quit an existing Debacal window before testing updated code. Launching
+the same profile again activates its running instance, which retains the code
+loaded when it started.
+
 ## Verify and remove
 
 Download `SHA256SUMS` alongside the release files and run `sha256sum --check
