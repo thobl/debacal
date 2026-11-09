@@ -268,3 +268,27 @@ dependencies. The repaired Arch package built and passed its normal checks.
 The full suite passed **3,284 tests and 169 subtests** with the installed Python,
 using offscreen Fusion and disabling desktop theme/shortcut overrides for the
 test baseline. The system CalDAV dependency remained missing throughout.
+
+### Release 0.1.3 — 9 November 2026
+
+This release includes every change since 0.1.2: producer-prefixed timezone
+support, maintained range indexes, compact persistent preparations and bulk
+startup construction, and UI database contention fixes. The current
+[performance report](PERFORMANCE.md) supersedes the earlier cached-query
+measurements above and includes held-writer checks.
+
+The workspace suite passed **3,885 tests and 169 subtests** before packaging.
+The extracted release passed **3,841 tests and 169 subtests**, with 34
+maintainer-only checks skipped. Local-socket tests ran outside the restricted
+sandbox. Benchmark tests now skip cleanly when their maintainer scripts are
+absent from a source archive; a separate regression protects that collection path.
+
+The Arch release recipe built `0.1.3-1` and passed its normal offline checks
+without installing it. The wheel installed into a temporary environment,
+resolved to its installed package outside the checkout, and passed CLI and
+offscreen demo/screenshot checks. Source, wheel and Arch recipe assets reproduced
+byte-for-byte in independent staging trees; package checksums match the recipe.
+UI choices now use a separate `.ui.sqlite3` sidecar, documented in profile backup
+instructions. New tracked files were checked for private paths, server/account
+identifiers and accidental calendar/database inclusion; commit identities remain
+the public GitHub no-reply identity.
