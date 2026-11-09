@@ -269,7 +269,7 @@ The full suite passed **3,284 tests and 169 subtests** with the installed Python
 using offscreen Fusion and disabling desktop theme/shortcut overrides for the
 test baseline. The system CalDAV dependency remained missing throughout.
 
-### Release 0.1.3 — 9 November 2026
+### Release candidate 0.1.3 — 9 November 2026
 
 This release includes every change since 0.1.2: producer-prefixed timezone
 support, maintained range indexes, compact persistent preparations and bulk
@@ -292,3 +292,17 @@ UI choices now use a separate `.ui.sqlite3` sidecar, documented in profile backu
 instructions. New tracked files were checked for private paths, server/account
 identifiers and accidental calendar/database inclusion; commit identities remain
 the public GitHub no-reply identity.
+
+GitHub's UTC checks subsequently blocked publication: prepared floating-date
+queries used inconsistent timezone defaults, and simultaneous first opens could
+race while creating the UI-state tables. No 0.1.3 release assets were published.
+Version 0.1.4 addresses these cases with explicit viewer-zone query parameters,
+bounded startup-only initialization handling, and cross-zone/concurrency tests.
+Runtime UI settings retain their zero busy timeout.
+
+The completed 0.1.4 assets passed 217 targeted tests from their extracted source
+and 196 recurrence/persistence checks in each of UTC and Berlin. The final Arch
+recipe built `0.1.4-1` with its normal checks, and a fresh wheel installation
+passed CLI and isolated demo/screenshot checks. All three assets reproduced
+byte-for-byte again, with regenerated recipe checksums. The release workflow
+requires the complete Python 3.11/3.14 matrix before publication.
