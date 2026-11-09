@@ -454,8 +454,15 @@ def test_import_preview_deselection_keeps_standard_series_with_one_excluded_date
         wait_for(app, lambda: dialog.preview_ready)
         occurrences = sorted(dialog._page.events, key=lambda event: event.start)
         excluded.append(occurrences[1].start)
+        # Data readiness can precede the queued layout after the initial
+        # loading message disappears. Compare completed layouts on both sides
+        # of the click so initial loading is not mistaken for a selection jump.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        app.processEvents()
         geometry = dialog.preview.canvas.geometry()
         click_import_event(app, dialog, occurrences[1])
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        app.processEvents()
         assert not dialog.selection.is_selected(occurrences[1])
         assert dialog.preview.canvas.geometry() == geometry
         assert not hasattr(dialog.preview, 'details') and not store.list_events()
