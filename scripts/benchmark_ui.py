@@ -1,135 +1,134 @@
-"""Reproducible offscreen interaction benchmark using disposable calendar data.
+"""Measure first visits to unrelated desktop date ranges, reporting maxima.
 
-Run with .venv/bin/python scripts/benchmark_ui.py --events 10000 --series 200.
-Use --source-root to compare a different checkout with the same workload.
+Use benchmark_ranges.py to isolate retrieval from Qt layout/painting. This
+companion runs one fresh process against the same generated, file-backed data,
+visits unique non-monotonic intervals and times real calendar visibility writes.
+It does not measure a repeated warm month/week loop.
 """
+from __future__ import annotations
+
 import argparse
-from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from time import perf_counter
-from zoneinfo import ZoneInfo
+from unittest.mock import patch
+
+from benchmark_ranges import Fixture, ROOT, build_database, requests
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--events', type=int, default=10000)
-    parser.add_argument('--series', type=int, default=200)
-    parser.add_argument('--iterations', type=int, default=3)
-    parser.add_argument('--source-root', type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--output', type=Path)
-    parser.add_argument('--profile', type=Path)
-    args = parser.parse_args()
-    if args.events < 0 or args.series < 0 or args.iterations < 1:
-        parser.error('Event counts must be nonnegative and iterations must be positive.')
-    sys.path.insert(0, str(args.source_root))
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtTest import QTest
+def worker(source, database, workload):
+    sys.path.insert(0, str(source))
     from PySide6.QtWidgets import QApplication
-    from debacal.models import Event, Calendar
     from debacal.store import Store
     from debacal.ui import MainWindow
-
-    start = datetime(2026, 11, 4, 9, tzinfo=ZoneInfo('Europe/Berlin'))
     app = QApplication([])
     app.setStyle('Fusion')
-    store = Store(':memory:')
-    for index in range(3):
-        store.save_calendar(Calendar(f'cal-{index}', f'Synthetic {index}', '#587c67', kind='caldav',
-                                     url=f'https://benchmark.invalid/calendar-{index}/'))
-    events = []
-    for index in range(args.events):
-        when = start + timedelta(days=index % 365 - 180, minutes=(index % 10) * 40)
-        events.append(Event(f'ordinary-{index}', f'cal-{index % 3}', f'Meeting {index}',
-                            when, when + timedelta(minutes=30)))
-    for index in range(args.series):
-        when = start.replace(year=2018) + timedelta(minutes=index % 12 * 30)
-        events.append(Event(f'repeating-{index}', f'cal-{index % 3}', f'Weekly meeting {index}',
-                            when, when + timedelta(minutes=45), recurrence_rule='FREQ=WEEKLY'))
-    candidate_start = start.replace(hour=20)
-    candidate = Event('choices', 'cal-0', 'Choose a slot', candidate_start, candidate_start + timedelta(hours=1),
-                       recurrence_dates=tuple((candidate_start + timedelta(weeks=offset)).isoformat() for offset in range(1, 500)),
-                       candidate=True)
-    events.append(candidate)
-    store.apply_remote(events)
-    # Include pending edits, without making the entire import an unsynced outbox.
-    store.apply('Synthetic pending edits', [replace(event, description='Pending local edit')
-                                            for event in events[:min(200, len(events))]])
+    begin = perf_counter()
+    store = Store(database)
+    preparation = (perf_counter() - begin) * 1000
+    window = None
+    records, errors = [], []
 
     def settle():
         for _ in range(3):
             app.processEvents()
+        if errors:
+            raise RuntimeError('Unhandled Qt callback error: ' + str(errors[0])) from errors[0]
 
-    timings = {}
-    def measure(name, action):
+    def measure(operation, action, request=None):
         begin = perf_counter()
         action()
         settle()
-        timings.setdefault(name, []).append(round((perf_counter() - begin) * 1000, 3))
+        records.append({'operation': operation, 'elapsed_ms': round((perf_counter() - begin) * 1000, 3),
+                        **(request or {})})
+        if window is not None and window.local_issues:
+            raise RuntimeError('Navigation produced app issues: ' + repr(window.local_issues))
 
-    def finish_search():
-        begin = perf_counter()
-        while window.search_timer.isActive():
-            settle()
-            QTest.qWait(1)
-            if perf_counter() - begin > 10:
-                raise RuntimeError('Search did not finish within 10 seconds.')
+    try:
+        with patch('sys.excepthook', side_effect=lambda _kind, error, _trace: errors.append(error)):
+            def open_window():
+                nonlocal window
+                window = MainWindow(store, enable_sync=False)
+                window.resize(1400, 900)
+                window.show()
+            measure('open_workspace', open_window)
+            for index, request in enumerate(workload):
+                def show_range():
+                    # Equivalent state update to view/date navigation, with one
+                    # refresh rather than an intermediate query for another date.
+                    window.view = request['kind']
+                    window.anchor = datetime.fromisoformat(request['start']).date()
+                    window.selected_day = window.anchor
+                    window.refresh()
+                metadata = {key: value for key, value in request.items() if key != 'calendars'}
+                metadata['visible_calendars'] = [calendar.id for calendar in store.list_calendars() if calendar.visible]
+                measure('show_' + request['kind'], show_range, metadata)
+                fixture_calendars = [calendar for calendar in store.list_calendars() if calendar.id.startswith('cal-')]
+                calendar = fixture_calendars[index % len(fixture_calendars)]
+                measure('hide_calendar' if calendar.visible else 'show_calendar',
+                        lambda: window.toggle_calendar(calendar.id, not calendar.visible),
+                        {'calendar': calendar.id, 'start': request['start'], 'view': request['kind']})
+    finally:
+        if window is not None:
+            window.close()
+            window.executor.shutdown(wait=True, cancel_futures=True)
+        app.processEvents()
+        store.close()
+    names = sorted({record['operation'] for record in records})
+    return {'storage': 'file-backed SQLite', 'fresh_process': True, 'warmup_queries': 0,
+            'preparation_ms': round(preparation, 3), 'records': records,
+            'summary': {name: {'max_ms': max(record['elapsed_ms'] for record in records if record['operation'] == name),
+                               'samples': sum(record['operation'] == name for record in records)} for name in names}}
 
-    profile = None
-    if args.profile:
-        import cProfile
-        profile = cProfile.Profile()
-        profile.enable()
-    begin = perf_counter()
-    window = MainWindow(store, enable_sync=False)
-    window.go_date(start.date())
-    window.show()
-    settle()
-    timings['open_workspace'] = [round((perf_counter() - begin) * 1000, 3)]
-    for _ in range(args.iterations):
-        measure('month_view', lambda: window.set_view('month'))
-        measure('week_view', lambda: window.set_view('week'))
-        measure('hide_calendar', lambda: window.toggle_calendar('cal-1', False))
-        measure('show_calendar', lambda: window.toggle_calendar('cal-1', True))
-        window.focus_search()
-        measure('type_search', lambda: QTest.keyClicks(window.search, 'meeting 123'))
-        # A debounced search still has to finish its work, not merely defer it.
-        if hasattr(window, 'flush_search'):
-            measure('finish_search', finish_search)
-        measure('clear_search', window.exit_search)
 
-    chosen = next(event for event in window.visible_events if event.candidate)
-    window.select_event(chosen.id)
-    settle()
-    hit = next(rect for rect, event_id in window.canvas.confirm_hits if event_id == chosen.id)
-    begin = perf_counter()
-    QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, pos=hit.center().toPoint())
-    while store.get_event('choices').candidate:
-        settle()
-        QTest.qWait(1)
-        if perf_counter() - begin > 30:
-            raise RuntimeError('Slot confirmation did not finish within 30 seconds.')
-    settle()
-    timings['confirm_slot'] = [round((perf_counter() - begin) * 1000, 3)]
-    if profile:
-        profile.disable()
-        profile.dump_stats(str(args.profile))
-    report = {'ordinary_events': args.events, 'weekly_series': args.series,
-              'candidate_dates': 500, 'milliseconds': timings}
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--events', type=int, default=6000)
+    parser.add_argument('--series', type=int, default=1200)
+    parser.add_argument('--finite', type=int, default=120)
+    parser.add_argument('--queries', type=int, default=24)
+    parser.add_argument('--source-root', type=Path, default=ROOT)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--max-ms', type=float, help='Fail if any measured desktop operation exceeds this latency.')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--database', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--requests', type=Path, help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if args.worker:
+        print(json.dumps(worker(args.source_root.resolve(), args.database, json.loads(args.requests.read_text()))))
+        return 0
+    if min(args.events, args.series, args.finite) < 0 or not 1 <= args.queries <= 2191:
+        parser.error('Event counts must be nonnegative and queries must be between 1 and 2191.')
+    if args.max_ms is not None and args.max_ms <= 0:
+        parser.error('--max-ms must be positive.')
+    sys.path.insert(0, str(args.source_root.resolve()))
+    config = Fixture(args.events, args.series, args.finite)
+    with TemporaryDirectory(prefix='debacal-ui-benchmark-') as directory:
+        database, request_file = Path(directory) / 'calendar.sqlite3', Path(directory) / 'requests.json'
+        build_database(database, config)
+        request_file.write_text(json.dumps(requests(args.queries, config.calendars)))
+        command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--source-root', str(args.source_root.resolve()),
+                   '--database', str(database), '--requests', str(request_file)]
+        child = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        if child.returncode:
+            raise RuntimeError('Desktop benchmark worker failed: ' + child.stderr.strip())
+        report = json.loads(child.stdout)
+    report['fixture'] = config.__dict__
     rendered = json.dumps(report, indent=2)
-    print(rendered)
     if args.output:
         args.output.write_text(rendered + '\n')
-    window.close()
-    app.processEvents()
-    store.close()
+        print(json.dumps({'output': str(args.output), 'summary': report['summary']}, indent=2))
+    else:
+        print(rendered)
+    return int(args.max_ms is not None and any(record['elapsed_ms'] > args.max_ms for record in report['records']))
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

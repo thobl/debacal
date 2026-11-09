@@ -1,0 +1,639 @@
+{
+  "environment": {
+    "python": "3.14.9",
+    "qt": "6.12.0",
+    "backend": "offscreen",
+    "profiled": false,
+    "initial_window_size": [
+      1400,
+      900
+    ],
+    "fresh_process_per_sample": true,
+    "storage": "file-backed SQLite",
+    "warmup_queries": 0
+  },
+  "ordinary_events": 10000,
+  "recurring_series": 200,
+  "finite_series": 120,
+  "candidate_dates": 500,
+  "iterations": 3,
+  "import_resources": 4201,
+  "preparation_ms": [
+    616.285,
+    593.419,
+    592.972
+  ],
+  "fixture_write_ms": [
+    1666.085,
+    1665.934,
+    1671.014
+  ],
+  "fixture_generation_ms": [
+    180.915,
+    175.832,
+    176.345
+  ],
+  "milliseconds": {
+    "open_workspace": [
+      114.277,
+      115.471,
+      116.434
+    ],
+    "day_view": [
+      14.612,
+      12.794,
+      12.864
+    ],
+    "month_view": [
+      22.975,
+      23.865,
+      26.0
+    ],
+    "week_view": [
+      16.148,
+      16.531,
+      16.368
+    ],
+    "year_view": [
+      147.396,
+      137.839,
+      136.657
+    ],
+    "year_next": [
+      55.452,
+      53.813,
+      53.897
+    ],
+    "year_previous": [
+      58.606,
+      54.475,
+      52.003
+    ],
+    "year_style_tints": [
+      57.857,
+      56.986,
+      54.437
+    ],
+    "year_style_tracks": [
+      49.914,
+      47.232,
+      48.155
+    ],
+    "year_hide_calendar": [
+      44.754,
+      42.014,
+      41.923
+    ],
+    "year_show_calendar": [
+      60.523,
+      55.475,
+      51.521
+    ],
+    "month_next": [
+      24.063,
+      22.917,
+      21.555
+    ],
+    "month_previous": [
+      21.87,
+      22.584,
+      20.391
+    ],
+    "hide_calendar": [
+      14.446,
+      14.622,
+      13.976
+    ],
+    "show_calendar": [
+      17.422,
+      17.325,
+      20.522
+    ],
+    "type_search": [
+      13.871,
+      12.092,
+      12.438
+    ],
+    "finish_search": [
+      107.143,
+      107.64,
+      107.319
+    ],
+    "search_follow": [
+      16.547,
+      16.973,
+      14.933
+    ],
+    "search_filter": [
+      3.001,
+      3.075,
+      3.68
+    ],
+    "clear_search": [
+      8.715,
+      8.401,
+      7.939
+    ],
+    "selection_all": [
+      4.579,
+      4.646,
+      4.507
+    ],
+    "selection_single": [
+      4.158,
+      4.379,
+      3.966
+    ],
+    "copy": [
+      6.929,
+      6.671,
+      6.38
+    ],
+    "paste_preview": [
+      7.074,
+      7.479,
+      9.63
+    ],
+    "paste_move_preview": [
+      4.433,
+      4.605,
+      4.882
+    ],
+    "paste_confirm": [
+      29.048,
+      29.668,
+      29.556
+    ],
+    "undo": [
+      18.096,
+      18.416,
+      17.801
+    ],
+    "redo": [
+      18.368,
+      19.09,
+      16.631
+    ],
+    "move_event": [
+      26.076,
+      26.676,
+      32.257
+    ],
+    "delete_event": [
+      17.469,
+      18.713,
+      16.807
+    ],
+    "edit_and_save": [
+      69.049,
+      69.221,
+      69.07
+    ],
+    "new_event_dialog": [
+      60.349,
+      64.141,
+      63.148
+    ],
+    "editor_regular_series": [
+      16.802,
+      15.662,
+      15.988
+    ],
+    "editor_custom_series": [
+      4.997,
+      4.715,
+      4.709
+    ],
+    "editor_preview_next": [
+      2.747,
+      2.759,
+      2.716
+    ],
+    "editor_preview_last": [
+      2.596,
+      2.578,
+      2.552
+    ],
+    "editor_build_events": [
+      0.392,
+      0.392,
+      0.381
+    ],
+    "date_time_picker": [
+      33.018,
+      34.986,
+      33.486
+    ],
+    "picker_change_start": [
+      0.641,
+      0.68,
+      0.964
+    ],
+    "picker_change_end": [
+      0.608,
+      0.63,
+      0.872
+    ],
+    "preferences_dialog": [
+      194.961,
+      194.421,
+      196.697
+    ],
+    "preferences_appearance": [
+      14.523,
+      14.225,
+      16.31
+    ],
+    "preferences_apply_unchanged": [
+      7.869,
+      8.02,
+      8.069
+    ],
+    "preferences_theme_warm": [
+      76.267,
+      75.289,
+      77.897
+    ],
+    "preferences_theme_neutral": [
+      61.424,
+      61.186,
+      60.816
+    ],
+    "preferences_font_120": [
+      82.548,
+      78.828,
+      79.23
+    ],
+    "preferences_font_100": [
+      74.613,
+      76.029,
+      76.044
+    ],
+    "export_ics": [
+      399.6,
+      405.788,
+      404.878
+    ],
+    "import_dialog": [
+      1654.149,
+      1689.466,
+      1695.012
+    ],
+    "import_ready": [
+      0.012,
+      0.012,
+      0.012
+    ],
+    "import_next_occurrence": [
+      14.48,
+      104.583,
+      101.764,
+      133.645,
+      136.254,
+      134.071,
+      11.884,
+      133.838,
+      101.885
+    ],
+    "import_next_month": [
+      79.224,
+      76.731,
+      75.784
+    ],
+    "import_toggle_date": [
+      17.354,
+      17.813,
+      18.563
+    ],
+    "import_selection_ready": [
+      16.979,
+      18.276,
+      16.321
+    ],
+    "import_accept": [
+      3.01,
+      2.656,
+      3.33
+    ],
+    "import_remap": [
+      112.846,
+      112.461,
+      113.554
+    ],
+    "import_apply": [
+      1045.112,
+      1035.023,
+      1042.57
+    ],
+    "conflict_dialog": [
+      33.578,
+      34.075,
+      33.677
+    ],
+    "conflict_next_month": [
+      3.166,
+      3.28,
+      3.19
+    ],
+    "confirm_slot": [
+      27.74,
+      29.682,
+      28.053
+    ]
+  },
+  "summary": {
+    "open_workspace": {
+      "max_ms": 116.434,
+      "samples": 3
+    },
+    "day_view": {
+      "max_ms": 14.612,
+      "samples": 3
+    },
+    "month_view": {
+      "max_ms": 26.0,
+      "samples": 3
+    },
+    "week_view": {
+      "max_ms": 16.531,
+      "samples": 3
+    },
+    "year_view": {
+      "max_ms": 147.396,
+      "samples": 3
+    },
+    "year_next": {
+      "max_ms": 55.452,
+      "samples": 3
+    },
+    "year_previous": {
+      "max_ms": 58.606,
+      "samples": 3
+    },
+    "year_style_tints": {
+      "max_ms": 57.857,
+      "samples": 3
+    },
+    "year_style_tracks": {
+      "max_ms": 49.914,
+      "samples": 3
+    },
+    "year_hide_calendar": {
+      "max_ms": 44.754,
+      "samples": 3
+    },
+    "year_show_calendar": {
+      "max_ms": 60.523,
+      "samples": 3
+    },
+    "month_next": {
+      "max_ms": 24.063,
+      "samples": 3
+    },
+    "month_previous": {
+      "max_ms": 22.584,
+      "samples": 3
+    },
+    "hide_calendar": {
+      "max_ms": 14.622,
+      "samples": 3
+    },
+    "show_calendar": {
+      "max_ms": 20.522,
+      "samples": 3
+    },
+    "type_search": {
+      "max_ms": 13.871,
+      "samples": 3
+    },
+    "finish_search": {
+      "max_ms": 107.64,
+      "samples": 3
+    },
+    "search_follow": {
+      "max_ms": 16.973,
+      "samples": 3
+    },
+    "search_filter": {
+      "max_ms": 3.68,
+      "samples": 3
+    },
+    "clear_search": {
+      "max_ms": 8.715,
+      "samples": 3
+    },
+    "selection_all": {
+      "max_ms": 4.646,
+      "samples": 3
+    },
+    "selection_single": {
+      "max_ms": 4.379,
+      "samples": 3
+    },
+    "copy": {
+      "max_ms": 6.929,
+      "samples": 3
+    },
+    "paste_preview": {
+      "max_ms": 9.63,
+      "samples": 3
+    },
+    "paste_move_preview": {
+      "max_ms": 4.882,
+      "samples": 3
+    },
+    "paste_confirm": {
+      "max_ms": 29.668,
+      "samples": 3
+    },
+    "undo": {
+      "max_ms": 18.416,
+      "samples": 3
+    },
+    "redo": {
+      "max_ms": 19.09,
+      "samples": 3
+    },
+    "move_event": {
+      "max_ms": 32.257,
+      "samples": 3
+    },
+    "delete_event": {
+      "max_ms": 18.713,
+      "samples": 3
+    },
+    "edit_and_save": {
+      "max_ms": 69.221,
+      "samples": 3
+    },
+    "new_event_dialog": {
+      "max_ms": 64.141,
+      "samples": 3
+    },
+    "editor_regular_series": {
+      "max_ms": 16.802,
+      "samples": 3
+    },
+    "editor_custom_series": {
+      "max_ms": 4.997,
+      "samples": 3
+    },
+    "editor_preview_next": {
+      "max_ms": 2.759,
+      "samples": 3
+    },
+    "editor_preview_last": {
+      "max_ms": 2.596,
+      "samples": 3
+    },
+    "editor_build_events": {
+      "max_ms": 0.392,
+      "samples": 3
+    },
+    "date_time_picker": {
+      "max_ms": 34.986,
+      "samples": 3
+    },
+    "picker_change_start": {
+      "max_ms": 0.964,
+      "samples": 3
+    },
+    "picker_change_end": {
+      "max_ms": 0.872,
+      "samples": 3
+    },
+    "preferences_dialog": {
+      "max_ms": 196.697,
+      "samples": 3
+    },
+    "preferences_appearance": {
+      "max_ms": 16.31,
+      "samples": 3
+    },
+    "preferences_apply_unchanged": {
+      "max_ms": 8.069,
+      "samples": 3
+    },
+    "preferences_theme_warm": {
+      "max_ms": 77.897,
+      "samples": 3
+    },
+    "preferences_theme_neutral": {
+      "max_ms": 61.424,
+      "samples": 3
+    },
+    "preferences_font_120": {
+      "max_ms": 82.548,
+      "samples": 3
+    },
+    "preferences_font_100": {
+      "max_ms": 76.044,
+      "samples": 3
+    },
+    "export_ics": {
+      "max_ms": 405.788,
+      "samples": 3
+    },
+    "import_dialog": {
+      "max_ms": 1695.012,
+      "samples": 3
+    },
+    "import_ready": {
+      "max_ms": 0.012,
+      "samples": 3
+    },
+    "import_next_occurrence": {
+      "max_ms": 136.254,
+      "samples": 9
+    },
+    "import_next_month": {
+      "max_ms": 79.224,
+      "samples": 3
+    },
+    "import_toggle_date": {
+      "max_ms": 18.563,
+      "samples": 3
+    },
+    "import_selection_ready": {
+      "max_ms": 18.276,
+      "samples": 3
+    },
+    "import_accept": {
+      "max_ms": 3.33,
+      "samples": 3
+    },
+    "import_remap": {
+      "max_ms": 113.554,
+      "samples": 3
+    },
+    "import_apply": {
+      "max_ms": 1045.112,
+      "samples": 3
+    },
+    "conflict_dialog": {
+      "max_ms": 34.075,
+      "samples": 3
+    },
+    "conflict_next_month": {
+      "max_ms": 3.28,
+      "samples": 3
+    },
+    "confirm_slot": {
+      "max_ms": 29.682,
+      "samples": 3
+    }
+  },
+  "max_event_loop_gap_ms": {
+    "open_workspace": 98.8,
+    "day_view": 13.575,
+    "month_view": 25.787,
+    "week_view": 16.364,
+    "year_view": 146.917,
+    "year_next": 55.16,
+    "year_previous": 58.447,
+    "year_style_tints": 57.652,
+    "year_style_tracks": 49.735,
+    "year_hide_calendar": 44.557,
+    "year_show_calendar": 60.369,
+    "month_next": 23.802,
+    "month_previous": 22.422,
+    "hide_calendar": 14.433,
+    "show_calendar": 20.366,
+    "type_search": 13.445,
+    "finish_search": 42.321,
+    "search_follow": 16.371,
+    "search_filter": 3.676,
+    "clear_search": 8.607,
+    "copy": 6.921,
+    "paste_preview": 9.624,
+    "paste_confirm": 29.303,
+    "undo": 18.088,
+    "redo": 18.588,
+    "move_event": 31.938,
+    "delete_event": 18.495,
+    "edit_and_save": 68.995,
+    "new_event_dialog": 43.209,
+    "editor_regular_series": 14.472,
+    "editor_preview_last": 2.549,
+    "date_time_picker": 26.882,
+    "preferences_dialog": 176.815,
+    "preferences_appearance": 15.642,
+    "preferences_theme_warm": 76.858,
+    "preferences_theme_neutral": 60.694,
+    "preferences_font_120": 75.841,
+    "preferences_font_100": 69.432,
+    "export_ics": 405.751,
+    "import_dialog": 1003.838,
+    "import_next_occurrence": 61.758,
+    "import_next_month": 68.685,
+    "import_toggle_date": 18.497,
+    "import_selection_ready": 10.23,
+    "import_remap": 113.545,
+    "import_apply": 1042.826,
+    "conflict_dialog": 24.339,
+    "conflict_next_month": 3.136,
+    "confirm_slot": 29.456,
+    "editor_custom_series": 4.667
+  },
+  "peak_rss_mib": 301.01
+}

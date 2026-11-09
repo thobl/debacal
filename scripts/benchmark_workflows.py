@@ -1,9 +1,11 @@
-"""Measure complete desktop workflows against disposable synthetic calendars.
+"""Measure complete desktop workflows in fresh processes, using disposable data.
 
 Run with .venv/bin/python scripts/benchmark_workflows.py --output /tmp/ui.json.
 Use the same script with --source-root OTHER_CHECKOUT for a fair comparison.
 The default offscreen backend needs no display, account or persistent profile.
 Set QT_QPA_PLATFORM=xcb explicitly to measure actual desktop painting instead.
+Each sample uses its own file-backed workspace and process. Maximum latency and
+all individual samples are reported; repeated warm visits are not a score.
 """
 from __future__ import annotations
 
@@ -16,8 +18,9 @@ import os
 from pathlib import Path
 import platform
 import resource
-import statistics
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from time import perf_counter
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -35,11 +38,53 @@ def main():
     parser.add_argument('--source-root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--output', type=Path)
     parser.add_argument('--profile', type=Path)
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--sample-index', type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument('--max-ms', type=float, help='Fail if any measured workflow exceeds this latency.')
     args = parser.parse_args()
     if args.events < 1 or args.series < 1 or args.iterations < 1:
         parser.error('Event counts and iterations must be positive.')
     if args.width < 1 or args.height < 1:
         parser.error('Window dimensions must be positive.')
+    if args.max_ms is not None and args.max_ms <= 0:
+        parser.error('--max-ms must be positive.')
+    if not args.worker:
+        reports = []
+        for sample in range(args.iterations):
+            command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--iterations', '1',
+                       '--sample-index', str(sample), '--events', str(args.events), '--series', str(args.series),
+                       '--width', str(args.width), '--height', str(args.height),
+                       '--source-root', str(args.source_root.resolve())]
+            if args.profile:
+                command.extend(['--profile', str(args.profile.with_name(args.profile.name + f'.{sample}'))])
+            child = subprocess.run(command, capture_output=True, text=True, timeout=600)
+            if child.returncode:
+                raise RuntimeError('Workflow worker failed: ' + child.stderr.strip())
+            reports.append(json.loads(child.stdout))
+        report = reports[0]
+        timings = {}
+        for child_report in reports:
+            for name, values in child_report['milliseconds'].items():
+                timings.setdefault(name, []).extend(values)
+        report.update(iterations=args.iterations, milliseconds=timings,
+                      summary={name: {'max_ms': max(values), 'samples': len(values)}
+                               for name, values in timings.items()},
+                      max_event_loop_gap_ms={name: max(child['max_event_loop_gap_ms'].get(name, 0)
+                                                       for child in reports)
+                                             for child in reports for name in child['max_event_loop_gap_ms']},
+                      peak_rss_mib=max(child['peak_rss_mib'] for child in reports),
+                      preparation_ms=[child['preparation_ms'] for child in reports],
+                      fixture_write_ms=[child['fixture_write_ms'] for child in reports],
+                      fixture_generation_ms=[child['fixture_generation_ms'] for child in reports])
+        report['environment'].update(fresh_process_per_sample=True, storage='file-backed SQLite', warmup_queries=0)
+        rendered = json.dumps(report, indent=2)
+        if args.output:
+            args.output.write_text(rendered + '\n')
+            print(json.dumps({'output': str(args.output), 'workflows': len(report['summary']),
+                              'slowest_workflow_ms': max(item['max_ms'] for item in report['summary'].values())}, indent=2))
+        else:
+            print(rendered)
+        return int(args.max_ms is not None and any(item['max_ms'] > args.max_ms for item in report['summary'].values()))
     sys.path.insert(0, str(args.source_root.resolve()))
 
     from PySide6 import __version__ as qt_version
@@ -60,31 +105,29 @@ def main():
 
     app = QApplication([])
     app.setStyle('Fusion')
-    start = datetime(2026, 11, 4, 9, tzinfo=ZoneInfo('Europe/Berlin'))
-    store = Store(':memory:')
+    start = datetime(2026, 11, 4, 9, tzinfo=ZoneInfo('Europe/Berlin')) + timedelta(days=args.sample_index * 61)
+    workspace = TemporaryDirectory(prefix='debacal-workflow-benchmark-')
+    store = Store(Path(workspace.name) / 'calendar.sqlite3')
     for index, color in enumerate(('#587c67', '#d5ad32', '#697ab1')):
         store.save_calendar(Calendar(f'cal-{index}', f'Synthetic {index + 1}', color))
     store.set_default_calendar('cal-0')
-    events = []
-    for index in range(args.events):
-        when = start + timedelta(days=index % 365 - 180, minutes=(index % 10) * 40)
-        all_day = index % 13 == 0
-        if all_day:
-            when = when.replace(hour=0, minute=0)
-        duration = timedelta(days=2) if all_day else timedelta(minutes=30)
-        events.append(Event(f'ordinary-{index}', f'cal-{index % 3}', f'Meeting {index}',
-                            when, when + duration, all_day=all_day))
-    for index in range(args.series):
-        when = start.replace(year=2018) + timedelta(minutes=index % 12 * 30)
-        events.append(Event(f'repeating-{index}', f'cal-{index % 3}', f'Weekly meeting {index}',
-                            when, when + timedelta(minutes=45), recurrence_rule='FREQ=WEEKLY'))
+    from benchmark_ranges import Fixture, generated_events
+    generation_started = perf_counter()
+    events = list(generated_events(Fixture(args.events, args.series, finite=120, calendars=3)))
+    fixture_generation_ms = round((perf_counter() - generation_started) * 1000, 3)
     # Always exercise individual editing, even with a minimal smoke dataset.
     ordinary = Event('editable', 'cal-0', 'Editable meeting', start, start + timedelta(hours=1))
     candidate_start = start.replace(hour=20)
     candidate = Event('choices', 'cal-0', 'Choose a slot', candidate_start,
         candidate_start + timedelta(hours=1), candidate=True,
         recurrence_dates=tuple((candidate_start + timedelta(weeks=n)).isoformat() for n in range(1, 500)))
+    write_started = perf_counter()
     store.apply_remote([*events, ordinary, candidate])
+    fixture_write_ms = round((perf_counter() - write_started) * 1000, 3)
+    store.close()
+    preparation_started = perf_counter()
+    store = Store(Path(workspace.name) / 'calendar.sqlite3')
+    preparation_ms = round((perf_counter() - preparation_started) * 1000, 3)
     timings, loop_gaps, errors = {}, {}, []
     active = None
     last_tick = perf_counter()
@@ -181,7 +224,7 @@ def main():
                 measure('hide_calendar', lambda: window.toggle_calendar('cal-1', False))
                 measure('show_calendar', lambda: window.toggle_calendar('cal-1', True))
                 window.focus_search()
-                measure('type_search', lambda: QTest.keyClicks(window.search, 'meeting 123'))
+                measure('type_search', lambda: QTest.keyClicks(window.search, 'synthetic ordinary-123'))
                 measure('finish_search', lambda: wait_for(lambda: not window.search_timer.isActive()))
                 if window.results.count():
                     measure('search_follow', lambda: window.cycle_search_result(1))
@@ -325,19 +368,21 @@ def main():
             app.clipboard().clear()
             app.processEvents()
             store.close()
+            workspace.cleanup()
             if profile:
                 profile.disable()
                 profile.dump_stats(str(args.profile))
     if errors:
         raise RuntimeError('Unhandled Qt callback error during cleanup: ' + str(errors[0])) from errors[0]
 
-    summary = {name: {'median_ms': round(statistics.median(samples), 3),
-                      'max_ms': max(samples), 'samples': len(samples)} for name, samples in timings.items()}
+    summary = {name: {'max_ms': max(samples), 'samples': len(samples)} for name, samples in timings.items()}
     report = {'environment': {'python': platform.python_version(), 'qt': qt_version,
                              'backend': app.platformName(), 'profiled': bool(profile),
                              'initial_window_size': initial_window_size},
-              'ordinary_events': args.events, 'weekly_series': args.series, 'candidate_dates': 500,
+              'ordinary_events': args.events, 'recurring_series': args.series, 'finite_series': 120, 'candidate_dates': 500,
               'iterations': args.iterations, 'import_resources': len(import_events),
+              'preparation_ms': preparation_ms, 'fixture_write_ms': fixture_write_ms,
+              'fixture_generation_ms': fixture_generation_ms,
               'milliseconds': timings, 'summary': summary,
               'max_event_loop_gap_ms': {name: round(max(values), 3) for name, values in loop_gaps.items()},
               'peak_rss_mib': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)}
@@ -351,4 +396,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

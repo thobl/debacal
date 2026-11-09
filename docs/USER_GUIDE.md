@@ -573,18 +573,21 @@ Tests cover year rollover and bounded pattern parsing, overlapping intervals,
 timezones, atomic history and selective undo, durable outbox races, ICS recurrence
 exceptions, sync conflict handling, and Qt editing/rendering/drag workflows.
 
-For a disposable large-calendar interaction benchmark:
+For isolated range-query latency against generated, file-backed calendars:
 
 ```sh
-.venv/bin/python scripts/benchmark_ui.py --events 10000 --series 200 --iterations 3
+.venv/bin/python scripts/benchmark_ranges.py --events 6000 --series 1200 --queries 24 --output /tmp/ranges.json
+.venv/bin/python scripts/benchmark_ui.py --events 6000 --series 1200 --queries 24 --output /tmp/navigation.json
 ```
 
-This creates synthetic data in memory with synchronization disabled, then measures
-view switches, calendar visibility, typing/search completion, and slot confirmation,
-including paints. `--output /tmp/timings.json` saves the results; `--source-root`
-compares another checkout with the same workload, and `--profile` saves cProfile data.
-Timing depends on the machine and Qt backend. Tests separately check bounded reads,
-layout reuse, and correct invalidation after edits, undo, and remote writes.
+The first command separates source selection from complete occurrence queries,
+checks answers against an independent reference, and records decoding/expansion
+work. The second includes Qt layout, painting and calendar visibility writes.
+Both visit distinct, non-monotonic date windows with no warm-up and report the
+maximum and every individual sample. The data includes retained ICS text,
+timezone definitions, ended/future rules, finite custom sets and exceptions.
+`--source-root OTHER_CHECKOUT` compares the same workload against another checkout.
+`--max-ms LIMIT` fails if any measured operation exceeds the chosen limit.
 
 The broader workflow benchmark also measures year view, copy/paste, moving and
 editing, undo/redo, dialogs, preferences, import previews, and conflict comparison:
@@ -593,15 +596,13 @@ editing, undo/redo, dialogs, preferences, import previews, and conflict comparis
 .venv/bin/python scripts/benchmark_workflows.py --events 10000 --series 200 --iterations 3 --output /tmp/workflows.json
 ```
 
-It uses only synthetic in-memory data with network sync disabled. The JSON includes
-each sample, median/worst timings, event-loop gaps, and peak process memory.
-Use the same script with `--source-root OTHER_CHECKOUT` for comparisons.
+Each iteration uses a fresh process and a separate file-backed synthetic workspace,
+with network sync disabled. The JSON includes each sample, maximum timings,
+event-loop gaps, and peak process memory. No median is used as a passing metric.
+See [the benchmark methodology](PERFORMANCE.md) for interpretation and limitations.
 
-Calendar pages and paint geometry are reused when their inputs stay unchanged.
-An event-only SQLite revision invalidates those caches across sync connections;
-visibility changes do not rebuild the event search index. Search uses a lightweight
+Paint geometry is reused while its inputs stay unchanged. Search uses a lightweight
 case-folded projection and loads complete events only for matching candidates.
-Existing databases build that projection once on upgrade without changing events.
 Typing is coalesced over 80 ms; arrows and Enter finish any pending search immediately.
 Slot confirmation acts on release without waiting for the double-click interval.
 
