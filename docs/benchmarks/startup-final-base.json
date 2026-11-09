@@ -1,0 +1,994 @@
+{
+  "environment": {
+    "python": "3.14.9",
+    "platform": "Linux",
+    "storage": "file-backed SQLite",
+    "fresh_process_per_sample": true,
+    "fresh_database_copy_per_sample": true,
+    "profile_and_memory_separate": true,
+    "physical_disk_cache_flushed": false
+  },
+  "fixture": {
+    "ordinary": 3000,
+    "series": 1200,
+    "finite": 120,
+    "calendars": 6,
+    "payload_bytes": 2048,
+    "irrelevant": 0,
+    "ancient_timezone": false
+  },
+  "one_time_upgrade": false,
+  "template_database_bytes": 21213184,
+  "fixture_write_ms": 1518.214,
+  "latency_samples": [
+    {
+      "mode": "latency",
+      "module_import_ms": 38.78,
+      "database_bytes_before": 21213184,
+      "open_ms": 222.98,
+      "open_cpu_ms": 220.216,
+      "writer_role_supported": true,
+      "resident_before_bytes": 34811904,
+      "resident_store_bytes": 62136320,
+      "queries": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 3.05,
+          "occurrences": 12
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.468,
+          "occurrences": 56
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.861,
+          "occurrences": 340
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.757,
+          "occurrences": 19
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.943,
+          "occurrences": 69
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.673,
+          "occurrences": 307
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.643,
+          "occurrences": 11
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.235,
+          "occurrences": 62
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.572,
+          "occurrences": 413
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.372,
+          "occurrences": 14
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.759,
+          "occurrences": 61
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.795,
+          "occurrences": 387
+        }
+      ],
+      "peak_resident_bytes": 83574784,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    },
+    {
+      "mode": "latency",
+      "module_import_ms": 40.294,
+      "database_bytes_before": 21213184,
+      "open_ms": 217.878,
+      "open_cpu_ms": 216.875,
+      "writer_role_supported": true,
+      "resident_before_bytes": 34906112,
+      "resident_store_bytes": 62214144,
+      "queries": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.837,
+          "occurrences": 12
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.646,
+          "occurrences": 56
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.576,
+          "occurrences": 340
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.391,
+          "occurrences": 19
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.372,
+          "occurrences": 69
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.977,
+          "occurrences": 307
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.21,
+          "occurrences": 11
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.318,
+          "occurrences": 62
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.967,
+          "occurrences": 413
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.254,
+          "occurrences": 14
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.116,
+          "occurrences": 61
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.5,
+          "occurrences": 387
+        }
+      ],
+      "peak_resident_bytes": 83574784,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    },
+    {
+      "mode": "latency",
+      "module_import_ms": 36.566,
+      "database_bytes_before": 21213184,
+      "open_ms": 228.561,
+      "open_cpu_ms": 227.489,
+      "writer_role_supported": true,
+      "resident_before_bytes": 34775040,
+      "resident_store_bytes": 62103552,
+      "queries": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.624,
+          "occurrences": 12
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.662,
+          "occurrences": 56
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.506,
+          "occurrences": 340
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.115,
+          "occurrences": 19
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.884,
+          "occurrences": 69
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.516,
+          "occurrences": 307
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.366,
+          "occurrences": 11
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.436,
+          "occurrences": 62
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.437,
+          "occurrences": 413
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.242,
+          "occurrences": 14
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.331,
+          "occurrences": 61
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 8.921,
+          "occurrences": 387
+        }
+      ],
+      "peak_resident_bytes": 83574784,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    }
+  ],
+  "writer_sample": {
+    "mode": "writer",
+    "module_import_ms": 32.567,
+    "database_bytes_before": 21213184,
+    "open_ms": 6.689,
+    "open_cpu_ms": 6.659,
+    "writer_role_supported": true,
+    "resident_before_bytes": 34824192,
+    "resident_store_bytes": 37838848,
+    "peak_resident_bytes": 83574784,
+    "database_bytes_after": 21213184,
+    "database_growth_bytes": 0
+  },
+  "duplicate_sample": {
+    "mode": "duplicate",
+    "module_import_ms": 35.968,
+    "database_bytes_before": 21213184,
+    "open_ms": 214.682,
+    "open_cpu_ms": 212.889,
+    "writer_role_supported": true,
+    "resident_before_bytes": 34803712,
+    "resident_store_bytes": 62111744,
+    "second_store_ms": 1.439,
+    "resident_two_stores_bytes": 62226432,
+    "peak_resident_bytes": 83574784,
+    "database_bytes_after": 21213184,
+    "database_growth_bytes": 0
+  },
+  "profile": {
+    "mode": "profile",
+    "module_import_ms": 34.756,
+    "database_bytes_before": 21213184,
+    "instrumented_ms": 490.886,
+    "exclusive_groups": {
+      "other": {
+        "exclusive_ms": 118.693,
+        "calls": 792787
+      },
+      "json_decode": {
+        "exclusive_ms": 54.905,
+        "calls": 17294
+      },
+      "store_iteration_and_bookkeeping": {
+        "exclusive_ms": 15.203,
+        "calls": 4343
+      },
+      "timezone": {
+        "exclusive_ms": 0.163,
+        "calls": 49
+      },
+      "interval_tree": {
+        "exclusive_ms": 36.374,
+        "calls": 139384
+      },
+      "projection_storage": {
+        "exclusive_ms": 26.905,
+        "calls": 9014
+      },
+      "prepared_representation": {
+        "exclusive_ms": 159.7,
+        "calls": 218008
+      },
+      "index_orchestration": {
+        "exclusive_ms": 19.37,
+        "calls": 6
+      },
+      "recurrence_engine": {
+        "exclusive_ms": 0.086,
+        "calls": 27
+      },
+      "recurrence_preparation": {
+        "exclusive_ms": 0.351,
+        "calls": 250
+      },
+      "sqlite": {
+        "exclusive_ms": 1.061,
+        "calls": 67
+      },
+      "model_and_validation": {
+        "exclusive_ms": 58.075,
+        "calls": 12480
+      }
+    },
+    "named_stages_inclusive_not_additive": [
+      {
+        "function": "debacal/store.py:41:__init__",
+        "calls": 1,
+        "exclusive_ms": 0.142,
+        "inclusive_ms": 494.702
+      },
+      {
+        "function": "debacal/store.py:656:_synchronize_query_index",
+        "calls": 1,
+        "exclusive_ms": 14.5,
+        "inclusive_ms": 484.523
+      },
+      {
+        "function": "debacal/prepared_storage.py:361:event",
+        "calls": 16680,
+        "exclusive_ms": 97.05,
+        "inclusive_ms": 268.263
+      },
+      {
+        "function": "debacal/event_range_index.py:80:bulk_load",
+        "calls": 1,
+        "exclusive_ms": 19.338,
+        "inclusive_ms": 77.355
+      },
+      {
+        "function": "__init__.py:304:loads",
+        "calls": 4323,
+        "exclusive_ms": 4.117,
+        "inclusive_ms": 62.24
+      },
+      {
+        "function": "debacal/interval_index.py:120:from_sorted",
+        "calls": 15,
+        "exclusive_ms": 3.74,
+        "inclusive_ms": 38.549
+      },
+      {
+        "function": "debacal/prepared_storage.py:441:series",
+        "calls": 120,
+        "exclusive_ms": 2.644,
+        "inclusive_ms": 9.103
+      },
+      {
+        "function": "debacal/prepared_storage.py:295:zone",
+        "calls": 34080,
+        "exclusive_ms": 3.68,
+        "inclusive_ms": 5.609
+      },
+      {
+        "function": "debacal/prepared_storage.py:319:_scoped_timezone",
+        "calls": 1,
+        "exclusive_ms": 0.034,
+        "inclusive_ms": 1.828
+      },
+      {
+        "function": "debacal/interval_index.py:38:__post_init__",
+        "calls": 15480,
+        "exclusive_ms": 1.349,
+        "inclusive_ms": 1.349
+      },
+      {
+        "function": "debacal/prepared_storage.py:92:_unpack",
+        "calls": 361,
+        "exclusive_ms": 0.446,
+        "inclusive_ms": 1.092
+      },
+      {
+        "function": "debacal/query_projection.py:120:__init__",
+        "calls": 1,
+        "exclusive_ms": 0.004,
+        "inclusive_ms": 0.347
+      },
+      {
+        "function": "debacal/.venv/lib/python3.14/site-packages/six.py:146:__init__",
+        "calls": 86,
+        "exclusive_ms": 0.029,
+        "inclusive_ms": 0.034
+      },
+      {
+        "function": "debacal/.venv/lib/python3.14/site-packages/six.py:110:__init__",
+        "calls": 46,
+        "exclusive_ms": 0.013,
+        "inclusive_ms": 0.016
+      },
+      {
+        "function": "debacal/.venv/lib/python3.14/site-packages/six.py:131:__init__",
+        "calls": 6,
+        "exclusive_ms": 0.01,
+        "inclusive_ms": 0.01
+      },
+      {
+        "function": "debacal/.venv/lib/python3.14/site-packages/six.py:93:__init__",
+        "calls": 132,
+        "exclusive_ms": 0.008,
+        "inclusive_ms": 0.008
+      },
+      {
+        "function": "debacal/interval_index.py:117:__init__",
+        "calls": 15,
+        "exclusive_ms": 0.003,
+        "inclusive_ms": 0.003
+      },
+      {
+        "function": "debacal/event_range_index.py:76:__init__",
+        "calls": 2,
+        "exclusive_ms": 0.003,
+        "inclusive_ms": 0.003
+      },
+      {
+        "function": "debacal/prepared_storage.py:268:__init__",
+        "calls": 1,
+        "exclusive_ms": 0.002,
+        "inclusive_ms": 0.002
+      },
+      {
+        "function": "debacal/timezones.py:138:__init__",
+        "calls": 1,
+        "exclusive_ms": 0.001,
+        "inclusive_ms": 0.001
+      },
+      {
+        "function": "debacal/.venv/lib/python3.14/site-packages/six.py:178:__init__",
+        "calls": 1,
+        "exclusive_ms": 0.0,
+        "inclusive_ms": 0.0
+      }
+    ],
+    "top_functions": [
+      {
+        "function": "debacal/prepared_storage.py:361:event",
+        "calls": 16680,
+        "exclusive_ms": 97.05,
+        "inclusive_ms": 268.263
+      },
+      {
+        "function": "debacal/models.py:240:copy_event",
+        "calls": 12480,
+        "exclusive_ms": 58.075,
+        "inclusive_ms": 87.302
+      },
+      {
+        "function": "decoder.py:351:raw_decode",
+        "calls": 4323,
+        "exclusive_ms": 42.684,
+        "inclusive_ms": 42.684
+      },
+      {
+        "function": "~:0:<built-in method builtins.getattr>",
+        "calls": 349830,
+        "exclusive_ms": 26.196,
+        "inclusive_ms": 26.233
+      },
+      {
+        "function": "debacal/prepared_storage.py:74:_from_wall",
+        "calls": 33721,
+        "exclusive_ms": 23.22,
+        "inclusive_ms": 29.578
+      },
+      {
+        "function": "debacal/query_projection.py:92:load_record",
+        "calls": 4320,
+        "exclusive_ms": 23.177,
+        "inclusive_ms": 306.217
+      },
+      {
+        "function": "debacal/event_range_index.py:80:bulk_load",
+        "calls": 1,
+        "exclusive_ms": 19.338,
+        "inclusive_ms": 77.355
+      },
+      {
+        "function": "~:0:<built-in method zlib.decompress>",
+        "calls": 4321,
+        "exclusive_ms": 19.164,
+        "inclusive_ms": 19.164
+      },
+      {
+        "function": "debacal/prepared_storage.py:414:value",
+        "calls": 79519,
+        "exclusive_ms": 17.536,
+        "inclusive_ms": 19.673
+      },
+      {
+        "function": "debacal/store.py:656:_synchronize_query_index",
+        "calls": 1,
+        "exclusive_ms": 14.5,
+        "inclusive_ms": 484.523
+      },
+      {
+        "function": "debacal/interval_index.py:141:build",
+        "calls": 30975,
+        "exclusive_ms": 14.39,
+        "inclusive_ms": 32.809
+      },
+      {
+        "function": "debacal/prepared_storage.py:346:datetime",
+        "calls": 33720,
+        "exclusive_ms": 10.872,
+        "inclusive_ms": 46.013
+      },
+      {
+        "function": "debacal/interval_index.py:46:_refresh",
+        "calls": 15480,
+        "exclusive_ms": 10.403,
+        "inclusive_ms": 14.679
+      },
+      {
+        "function": "~:0:<built-in method builtins.isinstance>",
+        "calls": 111794,
+        "exclusive_ms": 9.323,
+        "inclusive_ms": 9.34
+      },
+      {
+        "function": "<string>:2:__init__",
+        "calls": 15480,
+        "exclusive_ms": 6.683,
+        "inclusive_ms": 6.683
+      },
+      {
+        "function": "~:0:<method 'replace' of 'datetime.datetime' objects>",
+        "calls": 33721,
+        "exclusive_ms": 6.358,
+        "inclusive_ms": 6.358
+      },
+      {
+        "function": "~:0:<method 'get' of 'dict' objects>",
+        "calls": 52712,
+        "exclusive_ms": 5.664,
+        "inclusive_ms": 5.664
+      },
+      {
+        "function": "decoder.py:340:decode",
+        "calls": 4323,
+        "exclusive_ms": 5.129,
+        "inclusive_ms": 51.315
+      },
+      {
+        "function": "~:0:<built-in method builtins.sorted>",
+        "calls": 15,
+        "exclusive_ms": 5.027,
+        "inclusive_ms": 8.844
+      },
+      {
+        "function": "~:0:<method 'append' of 'list' objects>",
+        "calls": 50991,
+        "exclusive_ms": 4.708,
+        "inclusive_ms": 4.708
+      },
+      {
+        "function": "__init__.py:304:loads",
+        "calls": 4323,
+        "exclusive_ms": 4.117,
+        "inclusive_ms": 62.24
+      },
+      {
+        "function": "~:0:<built-in method __new__ of type object at 0x7fc3e5195020>",
+        "calls": 17215,
+        "exclusive_ms": 4.107,
+        "inclusive_ms": 4.32
+      },
+      {
+        "function": "debacal/interval_index.py:120:from_sorted",
+        "calls": 15,
+        "exclusive_ms": 3.74,
+        "inclusive_ms": 38.549
+      },
+      {
+        "function": "debacal/prepared_storage.py:295:zone",
+        "calls": 34080,
+        "exclusive_ms": 3.68,
+        "inclusive_ms": 5.609
+      },
+      {
+        "function": "debacal/query_projection.py:59:unpack_state",
+        "calls": 4321,
+        "exclusive_ms": 3.596,
+        "inclusive_ms": 85.358
+      },
+      {
+        "function": "debacal/interval_index.py:25:key",
+        "calls": 30960,
+        "exclusive_ms": 3.157,
+        "inclusive_ms": 3.157
+      },
+      {
+        "function": "__init__.py:248:detect_encoding",
+        "calls": 4321,
+        "exclusive_ms": 2.947,
+        "inclusive_ms": 4.559
+      },
+      {
+        "function": "~:0:<built-in method marshal.loads>",
+        "calls": 19,
+        "exclusive_ms": 2.757,
+        "inclusive_ms": 2.757
+      },
+      {
+        "function": "debacal/prepared_storage.py:441:series",
+        "calls": 120,
+        "exclusive_ms": 2.644,
+        "inclusive_ms": 9.103
+      },
+      {
+        "function": "~:0:<built-in method builtins.max>",
+        "calls": 30998,
+        "exclusive_ms": 2.618,
+        "inclusive_ms": 2.638
+      }
+    ],
+    "database_bytes_after": 21213184,
+    "database_growth_bytes": 0
+  },
+  "memory": {
+    "mode": "memory",
+    "module_import_ms": 36.888,
+    "database_bytes_before": 21213184,
+    "retained_python_bytes": 22436715,
+    "peak_python_bytes": 22613466,
+    "resident_before_bytes": 34775040,
+    "resident_store_bytes": 93925376,
+    "peak_resident_bytes": 93786112,
+    "database_bytes_after": 21213184,
+    "database_growth_bytes": 0
+  },
+  "desktop_samples": [
+    {
+      "mode": "desktop",
+      "module_import_ms": 33.902,
+      "database_bytes_before": 21213184,
+      "qt_and_workspace_import_ms": 320.497,
+      "qt_application_ms": 1.692,
+      "store_open_ms": 222.31,
+      "workspace_first_paint_ms": 157.533,
+      "ready_ms": 735.934,
+      "resident_ready_bytes": 153731072,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    },
+    {
+      "mode": "desktop",
+      "module_import_ms": 33.513,
+      "database_bytes_before": 21213184,
+      "qt_and_workspace_import_ms": 158.036,
+      "qt_application_ms": 1.841,
+      "store_open_ms": 218.255,
+      "workspace_first_paint_ms": 150.667,
+      "ready_ms": 562.312,
+      "resident_ready_bytes": 152420352,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    },
+    {
+      "mode": "desktop",
+      "module_import_ms": 32.932,
+      "database_bytes_before": 21213184,
+      "qt_and_workspace_import_ms": 162.723,
+      "qt_application_ms": 2.4,
+      "store_open_ms": 224.16,
+      "workspace_first_paint_ms": 155.933,
+      "ready_ms": 578.148,
+      "resident_ready_bytes": 152616960,
+      "database_bytes_after": 21213184,
+      "database_growth_bytes": 0
+    }
+  ],
+  "max_reader_open_ms": 228.561,
+  "max_writer_open_ms": 6.689,
+  "max_open_ms": 228.561,
+  "latency_sample_max_open_ms": 228.561,
+  "max_query_ms": 9.576,
+  "max_database_growth_bytes": 0,
+  "max_ready_ms": 735.934
+}

@@ -1,0 +1,230 @@
+{
+  "environment": {
+    "python": "3.14.9",
+    "platform": "Linux",
+    "storage": "file-backed SQLite",
+    "fresh_process_per_sample": true,
+    "fresh_database_copy_per_sample": true,
+    "profile_and_memory_separate": true,
+    "physical_disk_cache_flushed": false
+  },
+  "fixture": {
+    "ordinary": 3000,
+    "series": 1200,
+    "finite": 120,
+    "calendars": 6,
+    "payload_bytes": 2048,
+    "irrelevant": 0,
+    "ancient_timezone": true
+  },
+  "one_time_upgrade": true,
+  "template_database_bytes": 18894848,
+  "fixture_write_ms": 1403.49,
+  "latency_samples": [
+    {
+      "mode": "latency",
+      "module_import_ms": 34.365,
+      "database_bytes_before": 18894848,
+      "open_ms": 2507.167,
+      "open_cpu_ms": 2493.829,
+      "writer_role_supported": true,
+      "resident_before_bytes": 34779136,
+      "resident_store_bytes": 68141056,
+      "queries": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 4.134,
+          "occurrences": 12
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 5.458,
+          "occurrences": 56
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.545,
+          "occurrences": 340
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.577,
+          "occurrences": 19
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.337,
+          "occurrences": 69
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.175,
+          "occurrences": 307
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.286,
+          "occurrences": 11
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.534,
+          "occurrences": 62
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.067,
+          "occurrences": 413
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5"
+          ],
+          "elapsed_ms": 2.363,
+          "occurrences": 14
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4"
+          ],
+          "elapsed_ms": 4.224,
+          "occurrences": 61
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5"
+          ],
+          "elapsed_ms": 9.161,
+          "occurrences": 387
+        }
+      ],
+      "peak_resident_bytes": 68141056,
+      "database_bytes_after": 21336064,
+      "database_growth_bytes": 2441216
+    }
+  ],
+  "writer_sample": {
+    "mode": "writer",
+    "module_import_ms": 37.348,
+    "database_bytes_before": 18894848,
+    "open_ms": 2302.823,
+    "open_cpu_ms": 2292.798,
+    "writer_role_supported": true,
+    "resident_before_bytes": 34836480,
+    "resident_store_bytes": 45953024,
+    "peak_resident_bytes": 52330496,
+    "database_bytes_after": 21331968,
+    "database_growth_bytes": 2437120
+  },
+  "duplicate_sample": {
+    "mode": "duplicate",
+    "module_import_ms": 42.455,
+    "database_bytes_before": 18894848,
+    "open_ms": 2578.267,
+    "open_cpu_ms": 2555.198,
+    "writer_role_supported": true,
+    "resident_before_bytes": 34844672,
+    "resident_store_bytes": 68169728,
+    "second_store_ms": 0.934,
+    "resident_two_stores_bytes": 68300800,
+    "peak_resident_bytes": 67690496,
+    "database_bytes_after": 21336064,
+    "database_growth_bytes": 2441216
+  },
+  "max_reader_open_ms": 2578.267,
+  "max_writer_open_ms": 2302.823,
+  "max_open_ms": 2578.267,
+  "latency_sample_max_open_ms": 2507.167,
+  "max_query_ms": 9.545,
+  "max_database_growth_bytes": 2441216
+}

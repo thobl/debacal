@@ -1,0 +1,526 @@
+{
+  "storage": "file-backed SQLite",
+  "fresh_process": true,
+  "warmup_queries": 0,
+  "preparation_ms": 228.696,
+  "records": [
+    {
+      "operation": "open_workspace",
+      "elapsed_ms": 155.344
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 34.932,
+      "kind": "day",
+      "start": "2024-05-17T00:00:00+00:00",
+      "end": "2024-05-18T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 29.81,
+      "calendar": "cal-0",
+      "start": "2024-05-17T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 37.031,
+      "kind": "week",
+      "start": "2024-06-22T00:00:00+00:00",
+      "end": "2024-06-29T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 33.18,
+      "calendar": "cal-1",
+      "start": "2024-06-22T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 41.733,
+      "kind": "month",
+      "start": "2028-11-29T00:00:00+00:00",
+      "end": "2029-01-10T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 39.266,
+      "calendar": "cal-2",
+      "start": "2028-11-29T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 30.804,
+      "kind": "day",
+      "start": "2026-04-20T00:00:00+00:00",
+      "end": "2026-04-21T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 18.291,
+      "calendar": "cal-3",
+      "start": "2026-04-20T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 22.758,
+      "kind": "week",
+      "start": "2027-07-16T00:00:00+00:00",
+      "end": "2027-07-23T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 19.608,
+      "calendar": "cal-4",
+      "start": "2027-07-16T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 29.474,
+      "kind": "month",
+      "start": "2025-02-27T00:00:00+00:00",
+      "end": "2025-04-10T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 12.244,
+      "calendar": "cal-5",
+      "start": "2025-02-27T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 11.13,
+      "kind": "day",
+      "start": "2024-05-18T00:00:00+00:00",
+      "end": "2024-05-19T00:00:00+00:00",
+      "visible_calendars": [
+        "local"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 11.94,
+      "calendar": "cal-0",
+      "start": "2024-05-18T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 11.717,
+      "kind": "week",
+      "start": "2028-10-17T00:00:00+00:00",
+      "end": "2028-10-24T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 22.074,
+      "calendar": "cal-1",
+      "start": "2028-10-17T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 30.647,
+      "kind": "month",
+      "start": "2026-10-12T00:00:00+00:00",
+      "end": "2026-11-23T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 28.596,
+      "calendar": "cal-2",
+      "start": "2026-10-12T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 20.331,
+      "kind": "day",
+      "start": "2026-08-31T00:00:00+00:00",
+      "end": "2026-09-01T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 25.358,
+      "calendar": "cal-3",
+      "start": "2026-08-31T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 31.571,
+      "kind": "week",
+      "start": "2027-06-13T00:00:00+00:00",
+      "end": "2027-06-20T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 30.505,
+      "calendar": "cal-4",
+      "start": "2027-06-13T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 42.107,
+      "kind": "month",
+      "start": "2027-02-24T00:00:00+00:00",
+      "end": "2027-04-07T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 51.147,
+      "calendar": "cal-5",
+      "start": "2027-02-24T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 32.015,
+      "kind": "day",
+      "start": "2028-12-22T00:00:00+00:00",
+      "end": "2028-12-23T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 30.39,
+      "calendar": "cal-0",
+      "start": "2028-12-22T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 36.298,
+      "kind": "week",
+      "start": "2029-05-10T00:00:00+00:00",
+      "end": "2029-05-17T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 29.908,
+      "calendar": "cal-1",
+      "start": "2029-05-10T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 40.083,
+      "kind": "month",
+      "start": "2027-03-01T00:00:00+00:00",
+      "end": "2027-04-12T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-2",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 36.369,
+      "calendar": "cal-2",
+      "start": "2027-03-01T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 24.885,
+      "kind": "day",
+      "start": "2029-06-16T00:00:00+00:00",
+      "end": "2029-06-17T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-3",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 17.654,
+      "calendar": "cal-3",
+      "start": "2029-06-16T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 22.04,
+      "kind": "week",
+      "start": "2024-09-20T00:00:00+00:00",
+      "end": "2024-09-27T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-4",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 19.989,
+      "calendar": "cal-4",
+      "start": "2024-09-20T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 28.346,
+      "kind": "month",
+      "start": "2026-05-13T00:00:00+00:00",
+      "end": "2026-06-24T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-5"
+      ]
+    },
+    {
+      "operation": "hide_calendar",
+      "elapsed_ms": 11.313,
+      "calendar": "cal-5",
+      "start": "2026-05-13T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 12.364,
+      "kind": "day",
+      "start": "2024-01-28T00:00:00+00:00",
+      "end": "2024-01-29T00:00:00+00:00",
+      "visible_calendars": [
+        "local"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 11.474,
+      "calendar": "cal-0",
+      "start": "2024-01-28T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 11.326,
+      "kind": "week",
+      "start": "2027-04-06T00:00:00+00:00",
+      "end": "2027-04-13T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 22.051,
+      "calendar": "cal-1",
+      "start": "2027-04-06T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 27.837,
+      "kind": "month",
+      "start": "2028-10-31T00:00:00+00:00",
+      "end": "2028-12-12T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 27.432,
+      "calendar": "cal-2",
+      "start": "2028-10-31T00:00:00+00:00",
+      "view": "month"
+    },
+    {
+      "operation": "show_day",
+      "elapsed_ms": 19.323,
+      "kind": "day",
+      "start": "2029-09-15T00:00:00+00:00",
+      "end": "2029-09-16T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 24.789,
+      "calendar": "cal-3",
+      "start": "2029-09-15T00:00:00+00:00",
+      "view": "day"
+    },
+    {
+      "operation": "show_week",
+      "elapsed_ms": 31.27,
+      "kind": "week",
+      "start": "2027-02-18T00:00:00+00:00",
+      "end": "2027-02-25T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 31.245,
+      "calendar": "cal-4",
+      "start": "2027-02-18T00:00:00+00:00",
+      "view": "week"
+    },
+    {
+      "operation": "show_month",
+      "elapsed_ms": 39.575,
+      "kind": "month",
+      "start": "2029-02-20T00:00:00+00:00",
+      "end": "2029-04-03T00:00:00+00:00",
+      "visible_calendars": [
+        "local",
+        "cal-0",
+        "cal-1",
+        "cal-2",
+        "cal-3",
+        "cal-4"
+      ]
+    },
+    {
+      "operation": "show_calendar",
+      "elapsed_ms": 46.595,
+      "calendar": "cal-5",
+      "start": "2029-02-20T00:00:00+00:00",
+      "view": "month"
+    }
+  ],
+  "summary": {
+    "hide_calendar": {
+      "max_ms": 39.266,
+      "samples": 12
+    },
+    "open_workspace": {
+      "max_ms": 155.344,
+      "samples": 1
+    },
+    "show_calendar": {
+      "max_ms": 51.147,
+      "samples": 12
+    },
+    "show_day": {
+      "max_ms": 34.932,
+      "samples": 8
+    },
+    "show_month": {
+      "max_ms": 42.107,
+      "samples": 8
+    },
+    "show_week": {
+      "max_ms": 37.031,
+      "samples": 8
+    }
+  },
+  "fixture": {
+    "ordinary": 3000,
+    "series": 1200,
+    "finite": 120,
+    "calendars": 6,
+    "payload_bytes": 2048,
+    "irrelevant": 0
+  }
+}

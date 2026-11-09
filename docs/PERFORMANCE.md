@@ -5,12 +5,26 @@ unrelated date. A fast median or repeated visit does not establish that target.
 
 ## Maintained representation
 
-SQLite remains the durable source of truth. When a Store opens, it decodes each
-resource once and builds an in-memory representation, before accepting date
-queries. Writes update that representation inside the transaction; undo, redo
-and imports follow the same path. A transactional, revision-indexed change table
-lets another connection update just the affected resources. Visibility changes
-do not rebuild event data.
+SQLite retains canonical calendar resources and a separate compact prepared
+representation. Imports and event changes validate and prepare the changed
+sources once, updating both representations in the same transaction. Undo and
+redo follow the same path. Normal startup loads the prepared values without
+parsing canonical event JSON, RRULE strings or timezone definitions. A format
+and native timezone-data fingerprint identifies upgrades requiring a rebuild;
+damaged derived rows can be repaired from their retained canonical resources.
+
+The search trees themselves are rebuilt on every launch. Sorted interval entries
+are assembled into balanced trees in linear time; sorting unordered inputs takes
+`O(N log N)`. Startup performs no repeated AVL insertions or rotations. A
+transactional change journal lets another connection update just the affected
+entries. The sync worker maintains the durable data without constructing a
+second in-memory view index. Visibility changes do not rebuild event data.
+
+Display values share descriptions, timezone definitions and other unchanged
+metadata. Original ICS transport text stays in the canonical records and is
+loaded when an edit, export or sync needs it. A private provenance flag makes
+edits of lightweight display values preserve that original transport metadata;
+the flag is excluded from history, export and synchronization payloads.
 
 Each calendar has AVL interval trees for fixed instants, civil dates and floating
 wall clocks. Subtrees store their latest endpoint, including whether that endpoint
@@ -114,10 +128,11 @@ Older reports in `docs/benchmarks` describe the previous warm/synthetic-in-memor
 methodology. They remain historical observations and are not evidence of the
 first-visit latency target.
 
-## First-window measurements
+## Range-index baseline before startup optimization
 
 The same twelve unrelated day/week/month requests ran against `8d8da99` and the
-maintained-index implementation, without other test loads. The base fixture has
+initial maintained-index implementation, before the startup work below and
+without other test loads. The base fixture has
 3,000 ordinary resources, 1,200 rule series and 120 finite irregular series,
 retaining approximately 2 KiB of synthetic ICS text per resource. Queries choose
 four of six calendars. All answers matched the independent reference.
@@ -165,3 +180,156 @@ Raw requests, maxima and work counters are retained in
 [before](benchmarks/ranges-before.json), [indexed](benchmarks/ranges-after.json),
 [scaled](benchmarks/ranges-scaled.json), [navigation](benchmarks/ui-after.json)
 and [complete workflows](benchmarks/workflows-after.json).
+
+## Startup stages and memory
+
+```sh
+.venv/bin/python scripts/benchmark_startup.py --samples 3 --output /tmp/startup.json
+.venv/bin/python scripts/benchmark_startup.py --samples 3 --irrelevant-series 10800 --output /tmp/startup-large.json
+.venv/bin/python scripts/benchmark_startup.py --samples 3 --ancient-timezone --output /tmp/startup-timezone.json
+```
+
+The startup runner uses the same disposable file-backed calendars and unrelated
+first-query windows as the range benchmark. It records every fresh-process Store
+opening and query, verifies complete answers against the independent reference,
+and checks `--max-startup-ms` and `--max-query-ms` against the slowest sample.
+Module import time and fixture creation are separate from opening the Store.
+It also measures a standalone sync/writer Store and the cost of opening one
+beside the application's reader Store. The baseline had no separate writer
+role, so its second Store necessarily prepared another complete view index.
+The startup maximum includes every uninstrumented Store opening, including the
+reader in that duplicate-role probe and optional desktop samples; diagnostics
+cannot hide a slower opening by placing it outside the main sample array.
+
+CPU profiling and allocation tracing run in separate fresh processes. Their
+overhead is absent from the latency score. The profile reports exclusive function
+time in non-overlapping groups, plus explicitly non-additive inclusive timings
+for named construction/loading stages. The `other` group includes standard
+library and built-in operations; time spent iterating SQLite rows can be charged
+to the Python caller rather than `sqlite3.execute`. A profiled millisecond must
+not be presented as an uninstrumented startup millisecond.
+
+The memory run reports retained and peak traced Python allocations. Normal
+latency runs independently record resident memory before and after loading, and
+before/after opening the writer. Tracemalloc's own bookkeeping increases RSS,
+so its resident totals are not compared with uninstrumented RSS. Physical disk
+caches are not flushed. The optional ancient-timezone fixture replaces the
+fixed embedded zone with two annual DST observances starting in 1601, exposing
+transition preparation that a fixed-offset fixture cannot measure.
+
+`--desktop` additionally measures Qt/workspace imports, QApplication creation,
+Store loading and the first offscreen workspace paint in fresh processes, with
+network sync disabled. These distinguish data preparation from the fixed Python
+and Qt costs of launching the complete application. `ready_ms` is the sum of
+those measured phases, not an external measurement from process creation.
+`--max-ready-ms` bounds the slowest such desktop startup when `--desktop` is used.
+
+`--fixture-source-root PATH_TO_OLD_CHECKOUT` builds the canonical fixture using
+that implementation, then opens it with `--source-root` to measure one-time
+upgrade preparation. Each worker receives a fresh copy of the original database;
+an earlier worker cannot migrate the next worker's input. Copies are outside
+timing. The report labels upgrade runs separately and records database size
+before/after closing, making persistent-index storage growth visible. Ordinary
+restart measurements use data already maintained by the new implementation.
+
+### Startup results and design choice
+
+The following maxima use synthetic data, three fresh reader samples and the
+additional uninstrumented writer/desktop probes. Base means 3,000 ordinary
+resources, 1,200 rule series and 120 irregular finite series. The larger case
+adds 10,800 irrelevant rules without changing any queried answer. Annual zone
+uses the base data with the ancient two-observance timezone.
+
+| Maximum Store opening | Full reconstruction | Bulk trees only | Persisted preparation + bulk trees |
+| --- | ---: | ---: | ---: |
+| Base | 799.632 ms | 635.718 ms | 228.561 ms |
+| Larger | 4,587.147 ms | 3,421.552 ms | 1,046.650 ms |
+| Annual zone | 2,278.918 ms | — | 227.301 ms |
+
+The base reconstruction maximum includes a 799.632 ms second full Store; the
+largest reader-only opening was 747.715 ms. The final standalone writer took at
+most 7.841 ms across these cases, and opening it beside the reader took about
+1 ms. It constructs no independent view index.
+
+Profiling guided the split. In the base profile, individual AVL insertion
+accounted for 418 ms of exclusive instrumented work; bulk construction reduced
+that to 36 ms. Actual startup improved less because recurrence preparation,
+model reconstruction and timezone calculations remained. One annual embedded
+timezone added roughly 1.5 seconds of uninstrumented startup work; its transition
+preparation accounted for 3.08 seconds inside a 5.37-second instrumented run.
+Persisting those prepared transitions removes that repeated iteration.
+
+After persistence, dataclass copy/pickle-state machinery was the largest
+avoidable reconstruction cost: base event restoration took 481 ms inclusive in
+the profile. A direct slot copy and numeric datetime restoration reduced that
+to 268 ms. These are nested profiler diagnostics, not additional wall times.
+
+The implementation therefore persists versioned preparation records, numeric
+interval entries and shared timezone data. It **rebuilds the actual balanced
+trees at each launch**: entries are sorted and nodes constructed in a bulk pass.
+It does not serialize Python AVL nodes or introduce a memory-mapped tree format.
+Measured bulk construction is small enough that the extra persistent-tree
+format and update complexity were not justified. Updates still maintain only
+changed sources and their interval entries.
+
+| Retained Python allocations (separate traced run) | Before | Final |
+| --- | ---: | ---: |
+| Base | 38.06 MiB | 21.40 MiB |
+| Larger | 151.48 MiB | 76.97 MiB |
+
+Normal-process RSS with both reader and sync-role Stores fell from 113.67 to
+59.34 MiB for the base data, and from 355.02 to 119.66 MiB for the larger data.
+These are Store benchmark processes, excluding a full Qt desktop. A separate
+close probe retained the closed Store object and collected unreachable cycles:
+traced Python allocations fell from 21.40 to 2.12 MiB. RSS under tracing remained
+high because tracing and allocator memory are separate from live application
+objects; it is not evidence that all those resident pages were returned to the
+operating system.
+
+### Upgrade cost and first-query guards
+
+Prepared records cost one initial migration for an existing canonical-only
+database. Each upgrade worker started from a fresh copy of the old database.
+The base upgrade used three reader samples; the larger and annual cases used
+one, with writer/duplicate-role probes recorded separately.
+
+| One-time upgrade | Maximum opening | Additional allocated database space |
+| --- | ---: | ---: |
+| Base | 988.939 ms | 2.21 MiB |
+| Larger | 4,605.674 ms | 8.54 MiB |
+| Annual zone | 2,578.267 ms | 2.33 MiB |
+
+The larger migration remains approximately as expensive as its old repeated
+startup, but subsequent openings use the maintained data. The base database
+grew from about 18.02 to 20.23 MiB; the larger database from 62.64 to 71.18 MiB.
+The same transaction maintains canonical changes and their prepared records.
+
+The startup runner's final maximum unique-window query times were 9.576 ms for
+base, 11.613 ms for larger and 11.544 ms for annual data, with complete answers
+verified independently. A separate range guard observed 13.025 ms, decoded no
+canonical models and expanded at most 80 relevant rules. The desktop navigation
+guard observed 34.932/37.031/42.107 ms for day/week/month, and 39.266/51.147 ms
+for hiding/showing a calendar. Preparation does not depend on visiting a date.
+
+Desktop phase sums, including support imports, Qt imports, QApplication, Store
+opening and first offscreen paint, reached 1,348.408 ms before and 735.934 ms
+after. Network sync was disabled. These totals include fixed Python/Qt costs
+and must not be confused with the 228.561 ms Store-opening result.
+
+Raw reports: [before base](benchmarks/startup-before-base.json),
+[before larger](benchmarks/startup-before-scaled.json),
+[before annual](benchmarks/startup-before-annual.json),
+[bulk base](benchmarks/startup-bulk-base.json),
+[bulk larger](benchmarks/startup-bulk-scaled.json),
+[initial persistence base](benchmarks/startup-persist-base.json),
+[initial persistence larger](benchmarks/startup-persist-scaled.json),
+[final base](benchmarks/startup-final-base.json),
+[final larger](benchmarks/startup-final-scaled.json),
+[final annual](benchmarks/startup-final-annual.json),
+[upgrade base](benchmarks/startup-upgrade-base.json),
+[upgrade larger](benchmarks/startup-upgrade-scaled.json),
+[upgrade annual](benchmarks/startup-upgrade-annual.json),
+[desktop before](benchmarks/startup-desktop-before.json),
+[range guard](benchmarks/startup-final-ranges.json),
+[navigation guard](benchmarks/startup-final-ui.json),
+[close-memory probe](benchmarks/startup-close-memory.json).

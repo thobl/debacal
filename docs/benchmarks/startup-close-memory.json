@@ -1,0 +1,23 @@
+{
+  "fixture": {
+    "ordinary": 3000,
+    "series": 1200,
+    "finite": 120,
+    "calendars": 6,
+    "payload_bytes": 2048,
+    "irrelevant": 0
+  },
+  "method": "Separate traced allocation probe; retain closed Store object, then collect unreachable cycles.",
+  "mode": "memory",
+  "module_import_ms": 37.333,
+  "database_bytes_before": 21213184,
+  "retained_python_bytes": 22435861,
+  "peak_python_bytes": 22612655,
+  "resident_before_bytes": 34934784,
+  "resident_store_bytes": 94003200,
+  "peak_resident_bytes": 93659136,
+  "retained_after_close_python_bytes": 2218199,
+  "resident_after_close_bytes": 90832896,
+  "database_bytes_after": 21213184,
+  "database_growth_bytes": 0
+}
