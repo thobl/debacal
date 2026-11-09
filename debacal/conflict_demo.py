@@ -48,13 +48,14 @@ class DemoConflictEngine:
         self._emit("finished", "Offline conflict demo: no server connection."
                    + (" A simulated change needs review." if self._conflicts else ""))
 
-    def resolve_conflict(self, conflict_id, choice, *, expected=None):
+    def resolve_conflict(self, conflict_id, choice, *, expected=None, store=None):
         if choice not in {"local", "remote"}:
             raise ValueError("Choose 'local' or 'remote'.")
         conflict = self._conflicts.get(conflict_id)
         if conflict is None:
             return
-        current = self.store.get_event(conflict.event_id)
+        writer = store if store is not None else self.store
+        current = writer.get_event(conflict.event_id)
         if (expected is not None and expected != conflict) or current != conflict.local:
             refreshed = replace(conflict, local=current,
                                 reason="The demo versions changed while their comparison was open. Review the current versions before choosing.")
@@ -62,8 +63,8 @@ class DemoConflictEngine:
             self._emit("conflict", refreshed.reason, refreshed)
             return
         if choice == "remote":
-            self.store.apply("Use simulated server version", [conflict.remote] if conflict.remote else [],
-                             [conflict.event_id] if conflict.remote is None else [])
+            writer.apply("Use simulated server version", [conflict.remote] if conflict.remote else [],
+                         [conflict.event_id] if conflict.remote is None else [])
         self._conflicts.pop(conflict_id)
         self._emit("updated", "Offline demo: kept the " + ("local" if choice == "local" else "simulated server") + " version.")
 

@@ -222,10 +222,9 @@ def test_legacy_index_backfill_happens_once(tmp_path):
             "recurring": 0, "group_id": "group", "candidate": 1,
         }
         assert store.connection.execute("SELECT recurring FROM events WHERE id='authored'").fetchone()[0] == 1
-    with patch("debacal.store.json.loads", wraps=json.loads) as decode:
-        with Store(path):
-            pass
-    assert decode.call_count == 4  # Two markers and one eager decode per source.
+    with patch.object(Event, 'from_dict', side_effect=AssertionError('Restart must not repeat source backfill')):
+        with Store(path) as reopened:
+            assert {row['id'] for row in reopened.connection.execute('SELECT id FROM events')} == {'choice', 'authored'}
 
 
 @pytest.mark.parametrize("rule", [

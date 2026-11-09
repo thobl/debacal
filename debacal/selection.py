@@ -187,7 +187,7 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
     refs = list(refs)
     if not refs:
         raise ValueError("Select an event before copying.")
-    with store._transaction():
+    with store.read_snapshot():
         for value in [*refs, *([reference] if reference is not None else [])]:
             store._reviewed_master(value)
         roots = selection_roots(store, refs, scope)

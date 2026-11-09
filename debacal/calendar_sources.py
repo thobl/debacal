@@ -71,6 +71,7 @@ class CalendarSourcesEditor(QWidget):
         self._future = None
         self._active = True
         self._loading = False
+        self._applying = False
         selected = store.get_default_calendar()
         self._selected = selected.id if selected else None
         self._selected_account = None
@@ -461,19 +462,61 @@ class CalendarSourcesEditor(QWidget):
                 self.alias.setFocus()
                 raise ValueError('Enter a calendar name.')
 
-    def apply(self):
+    def apply(self, *, on_success=None, on_error=None):
+        """Apply one captured source draft without waiting for the sync writer."""
+        if self._applying:
+            return False
         self.validate()
-        changed = self.store.apply_calendar_preferences(self._originals, self._drafts.values())
+        originals = dict(self._originals)
+        drafts = tuple(self._drafts.values())
+        passwords = tuple(self._passwords.items())
+        changed_sources = dict((calendar.id, calendar) for calendar in drafts) != originals
+        result = {}
+        def completed(value):
+            changed, calendars = value
+            self._applying = False
+            self.setEnabled(True)
+            changed = self._finish_apply(changed, calendars, passwords)
+            result['changed'] = changed
+            if on_success is not None:
+                on_success(changed)
+        if not changed_sources:
+            completed((False, tuple(self.store.list_calendars(include_disabled=True))))
+            return result['changed']
+        from .ui_database import submit_write
+        self._applying = True
+        self.setEnabled(False)
+        submitting = True
+        def failed(error):
+            self._applying = False
+            self.setEnabled(True)
+            if on_error is not None:
+                on_error(error)
+            elif submitting:
+                raise error
+            else:
+                self._set_message(str(error), error=True)
+        def save(writer):
+            changed = writer.apply_calendar_preferences(originals, drafts)
+            return changed, tuple(writer.list_calendars(include_disabled=True))
+        try:
+            submit_write(self, self.store, save, on_success=completed, on_error=failed)
+        finally:
+            submitting = False
+        return result.get('changed', False)
+
+    def _finish_apply(self, changed, calendars, passwords):
+        """Publish committed source/credential changes on the GUI thread."""
         by_account = {}
-        for calendar in self._drafts.values():
+        for calendar in calendars:
             if calendar.kind == 'caldav' and calendar.enabled:
                 by_account.setdefault(source_identity(calendar), calendar)
-        for account, password in self._passwords.items():
+        for account, password in passwords:
             if account in by_account and self._applied_passwords.get(account) != password:
                 self.credential_requested.emit(by_account[account].id, password[0], password[1])
                 self._applied_passwords[account] = password
                 changed = True
-        self._originals = {calendar.id: calendar for calendar in self.store.list_calendars(include_disabled=True)}
+        self._originals = {calendar.id: calendar for calendar in calendars}
         if self._drafts != self._originals:
             self._drafts = dict(self._originals)
             self._rebuild()

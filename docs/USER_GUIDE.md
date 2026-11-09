@@ -33,8 +33,13 @@ untouched. Choose **Open my calendars** to leave the demo, or launch without
 `--demo` to connect and synchronize a remote calendar. Normal mode
 starts with an empty Personal calendar and stores data under Qt's platform data
 directory, normally `~/.local/share/debacal/debacal/calendar.sqlite3` on Linux.
-Use `--database /path/to/calendar.sqlite3` to choose another location. Back up the
-database with the app closed (or use SQLite's backup API for a live database).
+Use `--database /path/to/calendar.sqlite3` to choose another location. Calendar
+data and history live in that file. Display preferences, shortcuts, calendar
+visibility and other UI choices live beside it in `calendar.sqlite3.ui.sqlite3`.
+This keeps those controls responsive while synchronization writes calendar data.
+Close the app before backing up, moving or resetting these files; include both
+to retain the complete profile. SQLite's backup API can copy each live database.
+Do not discard `-wal`/`-shm` companions while the app is running.
 
 Only one window normally runs for each profile/database. Calling `debacal`
 again brings its existing window forward. Use `--new-instance` to explicitly

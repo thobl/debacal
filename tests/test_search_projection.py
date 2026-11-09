@@ -140,7 +140,7 @@ def test_existing_database_backfill_is_persistent_without_changing_event_revisio
         assert index(reopened)[source.id][1] == "strasse  backfill place"
         assert reopened.events_revision() == revision
         assert reopened.get_event(source.id) == source
-    with patch("debacal.store.json.loads", wraps=json.loads) as decode:
-        with Store(path):
-            pass
-    assert decode.call_count == 3  # Migration markers and one eager source decode.
+    with patch.object(Event, 'from_dict', side_effect=AssertionError('Restart must not decode canonical events')):
+        with Store(path) as reopened:
+            assert index(reopened)[source.id][1] == "strasse  backfill place"
+            assert reopened.events_revision() == revision

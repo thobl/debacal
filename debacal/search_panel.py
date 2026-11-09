@@ -170,14 +170,18 @@ class SearchPanel(QTreeWidget):
     def update_context(self, calendars, preferences):
         """Update row presentation without discarding the searchable events."""
         calendars = tuple(calendars)
-        signature = (calendars, preferences)
+        # Visibility changes which dates the agenda requests, but it does not
+        # change a search row's color, source label or date/time formatting.
+        # Keep the current calendar objects without walking all expanded rows.
+        self._calendars = {calendar.id: calendar for calendar in calendars}
+        signature = (tuple(sorted((calendar.id, calendar.name, calendar.color)
+                                  for calendar in calendars)), preferences)
         if signature == self._context_signature:
             return False
         self._context_signature = signature
         self._presentation_revision += 1
         self.preferences = preferences
         self.setIndentation(round(15 * preferences.font_scale / 100))
-        self._calendars = {calendar.id: calendar for calendar in calendars}
         for item in self._all_rows():
             effective = item.data(EVENT_ROLE)
             source = self._masters.get(item.data(MASTER_ROLE)) if self.is_series_root(item) else effective

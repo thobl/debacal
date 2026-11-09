@@ -201,7 +201,7 @@ class Preferences:
 
     @classmethod
     def load(cls, store) -> Preferences:
-        with store._transaction():
+        with (store.ui_transaction() if hasattr(store, 'ui_transaction') else store._transaction()):
             values = store.get_setting(SETTINGS_KEY, {})
             if store.get_setting(WEEK_NUMBERS_DEFAULT_KEY, 0) != 1:
                 # Older versions saved the previous false default with every
@@ -214,7 +214,7 @@ class Preferences:
             return cls.from_dict(values)
 
     def save(self, store) -> None:
-        with store._transaction():
+        with (store.ui_transaction() if hasattr(store, 'ui_transaction') else store._transaction()):
             store.set_setting(SETTINGS_KEY, self.to_dict())
             store.set_setting(WEEK_NUMBERS_DEFAULT_KEY, 1)
 

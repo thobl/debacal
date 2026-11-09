@@ -25,6 +25,7 @@ from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
 from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
+from .conflict_demo import DemoConflictEngine
 from .event_scope import DEFAULT_MODE_BINDINGS
 from .workspace_chrome import WorkspaceChrome
 from .appearance import stylesheet, widget_palette
@@ -40,6 +41,7 @@ from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspa
                         normalize_bindings, shortcut_label, shortcut_matches, shortcut_sequences)
 from .event_navigation import adjacent_event_day, event_day
 from .event_duration import add_elapsed
+from .ui_database import DatabaseCommands
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': ['E', 'Return'], 'delete_event': 'Del',
@@ -68,6 +70,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_requests = deque()
         self._import_memory_bytes = 0
         self._import_dialog_active = False
+        self._import_jobs = set()
+        self._close_after_import = False
         self._import_timer = QTimer(self)
         self._import_timer.setSingleShot(True)
         self._import_timer.timeout.connect(self._process_import_request)
@@ -156,6 +160,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         for surface in (self.header, self.month, self.year):
             surface.week_requested.connect(self.open_week)
         self.install_mode_shortcuts()
+        self.database_commands = DatabaseCommands(self.store, self, on_change=self.refresh,
+                                                  on_error=self.report_error)
+        self.database_commands.pending_changed.connect(lambda _count: self.update_sync_status())
         self.refresh()
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
@@ -180,6 +187,37 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def active_canvas(self):
         return self.year if self.view == 'year' else self.month if self.view == 'month' else self.canvas
+
+    def _database_context(self):
+        """User context that a delayed save must never replace after navigation."""
+        calendars = self.store.list_calendars()
+        destination = self.store.get_default_calendar()
+        return (self.view, self.anchor, self.selected_day, self.selection.scope,
+                tuple(reference.id for reference in self.selection.refs),
+                self._search_selection_active, frozenset(self._search_row_ids), self.search.text(),
+                id(self.pending_paste) if self.pending_paste is not None else None,
+                self._drag_preview_request, tuple(calendar.id for calendar in calendars if calendar.visible),
+                destination.id if destination else None)
+
+    def write_database(self, operation, on_success=None, on_error=None, *, preserve_context=True):
+        """Persist a captured action without waiting for the sync writer on Qt."""
+        context = self._database_context()
+        def completed(result):
+            if self._closed:
+                return
+            if preserve_context and self._database_context() != context:
+                self.refresh()
+            elif on_success is None:
+                self.refresh()
+            else:
+                on_success(result)
+        def failed(error):
+            if not self._closed:
+                if on_error is not None:
+                    on_error(error)
+                else:
+                    self.report_error(str(error))
+        return self.database_commands.write(operation, on_success=completed, on_error=failed)
 
     def update_creation_target(self):
         calendar = self.store.get_default_calendar()
@@ -555,26 +593,24 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         try:
             dialog.all_day.setChecked(all_day)
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                if self.apply_events('Create ' + str(len(dialog.result_events)) + ' event(s)', dialog.result_events):
-                    for event in dialog.result_events:
+                events = tuple(dialog.result_events)
+                def created(_result):
+                    for event in events:
                         calendar = self.store.get_calendar(event.calendar_id)
                         if calendar and not calendar.visible:
                             self.store.set_calendar_visible(calendar.id, True)
                     self.refresh(calendars=True)
+                self.apply_events('Create ' + str(len(events)) + ' event(s)', events, on_success=created)
         finally:
             dialog.deleteLater()
 
     def create_all_day_event(self, start=None, end=None):
         self.create_event(start, end, all_day=True)
 
-    def apply_events(self, label, events=(), delete_ids=()):
-        try:
-            self.store.apply(label, upserts=events, delete_ids=delete_ids)
-            self.refresh()
-            return True
-        except ValueError as exc:
-            self.report_error(str(exc))
-            return False
+    def apply_events(self, label, events=(), delete_ids=(), *, on_success=None):
+        events, delete_ids = tuple(events), tuple(delete_ids)
+        return self.write_database(lambda writer: writer.apply(label, upserts=events, delete_ids=delete_ids),
+                                   on_success=on_success)
 
     def event_by_id(self, event_id):
         event = self.store.get_occurrence(event_id) if event_id else None
@@ -700,7 +736,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             # families to review those changes, without loading unrelated data.
             families = selection_roots(self.store, refs, 'group')
             expected = self.store.get_events(value.series_id or value.id for value in families)
-            previous_ids = self.store.event_ids()
             members = selection_roots(self.store, refs, scope)
             if any(not self.event_writable(member) for member in members):
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
@@ -728,15 +763,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             reference = dialog.edit_reference
             expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited)
                                if not dialog.schedule_replacement else {})
-            self.store.edit_selection(refs, scope, reference, edited,
-                                      replace_schedule=dialog.schedule_replacement,
-                                      calendar_id=(dialog.calendar.currentData()
-                                                   if getattr(dialog, 'calendar_change_requested', False) else None),
-                                      expected_masters=expected)
-            destination = self.store.get_calendar(edited.calendar_id)
-            if destination and not destination.visible and (edited.calendar_id != reference.calendar_id
-                                                            or getattr(dialog, 'calendar_change_requested', False)):
-                self.store.set_calendar_visible(destination.id, True)
+            replacement = dialog.schedule_replacement
+            calendar_changed = bool(getattr(dialog, 'calendar_change_requested', False))
+            calendar_id = dialog.calendar.currentData() if calendar_changed else None
+            refs, expected = tuple(refs), tuple(expected)
             zone = local_zone()
             edited_start = edited.start if edited.all_day else edited.start.astimezone(zone)
             reference_start = reference.start if reference.all_day else reference.start.astimezone(zone)
@@ -744,8 +774,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             shift = edited_start.replace(tzinfo=None) - reference_start.replace(tzinfo=None)
             target = (event_start.replace(tzinfo=None) + shift).replace(tzinfo=edited_start.tzinfo, fold=edited_start.fold)
             target = expected_starts.get(event.id, target)
-            self.reselect_after_operation(refs, target, previous_ids, shift,
-                                         expected_starts=expected_starts, all_day=edited.all_day)
+            def save(writer):
+                previous_ids = writer.event_ids()
+                writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
+                                      calendar_id=calendar_id, expected_masters=expected)
+                return previous_ids
+            def saved(previous_ids):
+                destination = self.store.get_calendar(edited.calendar_id)
+                if destination and not destination.visible and (edited.calendar_id != reference.calendar_id or calendar_changed):
+                    self.store.set_calendar_visible(destination.id, True)
+                self.reselect_after_operation(refs, target, previous_ids, shift,
+                                             expected_starts=expected_starts, all_day=edited.all_day)
+            self.write_database(save, on_success=saved)
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
         finally:
@@ -881,21 +921,28 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         event = reference or self.event_by_id(event_id)
         if event is None:
             return
-        refs = self.operation_references(event)
+        refs = tuple(self.operation_references(event))
         scope = scope or self.operation_scope()
-        previous_ids = self.store.event_ids()
         try:
             EventDialog.validate_time(start)
             EventDialog.validate_time(end)
             expected_starts = self.reanchored_selection_starts(refs, scope, event, replace(event, start=start, end=end))
-            result = self.store.move_selection(refs, scope, event, start, end, copy=copy)
             self.clear_drag_preview()
             if copy:
+                # Copy preparation is a read-only snapshot; persistence goes
+                # through the same command queue as a normal paste.
+                result = self.store.move_selection(refs, scope, event, start, end, copy=True)
                 self.persist_copies(result, expected_starts.get(event.id, start), 'Copy selected events', all_day=event.all_day)
             else:
                 shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
-                self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
-                                             expected_starts=expected_starts, all_day=event.all_day)
+                def move(writer):
+                    previous_ids = writer.event_ids()
+                    writer.move_selection(refs, scope, event, start, end)
+                    return previous_ids
+                def moved(previous_ids):
+                    self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
+                                                 expected_starts=expected_starts, all_day=event.all_day)
+                self.write_database(move, on_success=moved)
         except (ValueError, KeyError, OverflowError) as exc:
             self.clear_drag_preview()
             self.report_error(str(exc))
@@ -932,14 +979,16 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         scope = scope or (('group' if group else 'single') if group is not None else self.operation_scope())
         try:
             row = self.results.currentRow()
-            self.store.delete_selection(self.operation_references(event), scope)
-            self.selection.clear()
-            self._search_selection_active = False
-            self._search_row_ids.clear()
-            self.selected_id = None
-            self.refresh()
-            if self.search.text() and self.results.count():
-                self.results.setCurrentRow(min(max(row, 0), self.results.count() - 1))
+            refs = tuple(self.operation_references(event))
+            def deleted(_result):
+                self.selection.clear()
+                self._search_selection_active = False
+                self._search_row_ids.clear()
+                self.selected_id = None
+                self.refresh()
+                if self.search.text() and self.results.count():
+                    self.results.setCurrentRow(min(max(row, 0), self.results.count() - 1))
+            self.write_database(lambda writer: writer.delete_selection(refs, scope), on_success=deleted)
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
 
@@ -993,18 +1042,19 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return initial_paste_target(selection, self.dates()[0], self.selected_day)
 
     def persist_copies(self, events, target, label, *, all_day=None):
+        events = tuple(events)
         if not events:
             return
-        self.selection.clear()
-        self._search_selection_active = False
-        self._search_row_ids.clear()
-        self.selected_id = None
-        for calendar_id in {event.calendar_id for event in events}:
-            calendar = self.store.get_calendar(calendar_id)
-            if calendar and not calendar.visible:
-                self.store.set_calendar_visible(calendar_id, True)
-        if self.apply_events(label, events):
-            all_day = events[0].all_day if all_day is None else all_day
+        all_day = events[0].all_day if all_day is None else all_day
+        def copied(_result):
+            self.selection.clear()
+            self._search_selection_active = False
+            self._search_row_ids.clear()
+            self.selected_id = None
+            for calendar_id in {event.calendar_id for event in events}:
+                calendar = self.store.get_calendar(calendar_id)
+                if calendar and not calendar.visible:
+                    self.store.set_calendar_visible(calendar_id, True)
             self.anchor = self.selected_day = (target.date() if all_day else target.astimezone(local_zone()).date())
             self.refresh()
             ids = {event.id for event in events}
@@ -1021,6 +1071,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.selection.replace([value for value in by_resource.values() if value.id != selected.id] + [selected])
                 self.sync_selection()
                 self.ensure_event_visible(selected.id)
+        self.apply_events(label, events, on_success=copied)
 
     def paste_events(self, scope=None, target=None):
         try:
@@ -1114,14 +1165,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         event = self.event_by_id(event_id or self.selected_id or '')
         if not event or not event.candidate:
             return
-        try:
-            self.store.confirm_candidate(event)
+        def confirmed(_result):
             self.selection.clear()
             self.selected_id = event.series_id or event.id
             self.refresh()
             self.select_event(self.selected_id)
-        except ValueError as exc:
-            self.report_error(str(exc))
+        self.write_database(lambda writer: writer.confirm_candidate(event), on_success=confirmed)
 
     def event_menu(self, event_id, point):
         event = self.event_by_id(event_id)
@@ -1149,18 +1198,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             menu.deleteLater()
 
     def undo(self):
-        try:
-            self.store.undo()
-            self.refresh()
-        except ValueError as exc:
-            self.report_error(str(exc))
+        self.write_database(lambda writer: writer.undo())
 
     def redo(self):
-        try:
-            self.store.redo()
-            self.refresh()
-        except ValueError as exc:
-            self.report_error(str(exc))
+        self.write_database(lambda writer: writer.redo())
 
     def show_history(self):
         dialog = HistoryDialog(self.store, self.refresh, self)
@@ -1397,26 +1438,36 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             credentials=self.credentials)
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                password_set = False
-                credential_save = None
-                for calendar in dialog.result_calendars:
-                    # Discovery can be repeated without adding duplicate sources.
-                    existing = next((c for c in self.store.list_calendars(include_disabled=True) if c.kind == calendar.kind and c.url and c.url == calendar.url and c.username == calendar.username), None)
-                    if existing and existing.id != calendar.id:
-                        calendar = replace(calendar, id=existing.id, visible=existing.visible,
-                            enabled=True, name_alias=existing.name_alias,
-                            name=existing.name if existing.name_alias else calendar.name,
-                            use_server_color=existing.use_server_color, color=existing.color)
-                    self.store.save_calendar(calendar)
-                    if self.engine and dialog.password.text() and not password_set:
-                        credential_save = self.engine.set_password(calendar.id, dialog.password.text(), remember=dialog.remember_password.isChecked())
-                        password_set = True
-                self.refresh(calendars=True)
-                if dialog.result_calendar.kind != 'local':
-                    if credential_save is not None:
-                        engine = self.engine
-                        credential_save.add_done_callback(lambda _: engine.sync_now())
-                    self.sync_now()
+                calendars = tuple(dialog.result_calendars)
+                password = dialog.password.text()
+                remember = dialog.remember_password.isChecked()
+                remote = dialog.result_calendar.kind != 'local'
+                def save(writer):
+                    saved = []
+                    for calendar in calendars:
+                        # Discovery can finish while sync refreshes this account.
+                        existing = next((c for c in writer.list_calendars(include_disabled=True)
+                                         if c.kind == calendar.kind and c.url and c.url == calendar.url
+                                         and c.username == calendar.username), None)
+                        if existing and existing.id != calendar.id:
+                            calendar = replace(calendar, id=existing.id, visible=existing.visible,
+                                enabled=True, name_alias=existing.name_alias,
+                                name=existing.name if existing.name_alias else calendar.name,
+                                use_server_color=existing.use_server_color, color=existing.color)
+                        writer.save_calendar(calendar)
+                        saved.append(calendar)
+                    return tuple(saved)
+                def saved(calendars):
+                    credential_save = None
+                    if self.engine and password and calendars:
+                        credential_save = self.engine.set_password(calendars[0].id, password, remember=remember)
+                    self.refresh(calendars=True)
+                    if remote:
+                        if credential_save is not None:
+                            engine = self.engine
+                            credential_save.add_done_callback(lambda _: engine.sync_now())
+                        self.sync_now()
+                self.write_database(save, on_success=saved, preserve_context=False)
         except ValueError as exc:
             self.report_error(str(exc))
         finally:
@@ -1505,6 +1556,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         future.source_label = item.label
                         future.retry_source = source
                         future.import_memory_bytes = len(source.data) if source.data is not None else 0
+                        self._import_jobs.add(future)
                         future.add_done_callback(lambda result: self.tasks.put(('import', result)))
                         submitted_bytes += future.import_memory_bytes
         finally:
@@ -1568,7 +1620,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.warning_button.setVisible(bool(issues))
         self.warning_button.setToolTip(f'{len(issues)} issue(s) · click for details and recovery actions' if issues else 'No outstanding issues')
         self.warning_button.setAccessibleName(f'{len(issues)} calendar issue(s)' if issues else 'No calendar issues')
-        if self.demo_mode:
+        if getattr(self, 'database_commands', None) is not None and self.database_commands.pending:
+            value = 'Saving changes…'
+        elif self.demo_mode:
             value = 'Demo · offline · changes are temporary'
         elif self._sync_running:
             value = 'Syncing in background…'
@@ -1750,6 +1804,43 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.tray_icon.show()
             self.tray_icon.showMessage('Calendar conflict', message.message, QSystemTrayIcon.MessageIcon.Information)
 
+    def _finish_import_job(self, future):
+        self._import_jobs.discard(future)
+        self._import_memory_bytes = max(0, self._import_memory_bytes - getattr(future, 'import_memory_bytes', 0))
+        if self._close_after_import and not self._import_jobs:
+            QTimer.singleShot(0, self.close)
+
+    def _import_succeeded(self, report, future):
+        try:
+            self.refresh()
+            detail = f'Imported {len(report.events)} event resource(s).'
+            if report.issues:
+                detail += f' {len(report.issues)} import warning(s).'
+                if report.rejected:
+                    detail += f' {len(report.rejected)} unsupported event resource(s) were skipped.'
+                self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
+            self._sync_messages.append(detail)
+            if report.rejected:
+                self.report_error(detail + '\n\n' + '\n'.join(
+                    f'{issue.resource_id}: {issue.reason}' for issue in report.issues), title='Some events could not be imported',
+                    action_label='Review synchronization details…', action=self.show_sync_status)
+        finally:
+            self._finish_import_job(future)
+
+    def _import_failed(self, error, future):
+        self._close_after_import = False
+        try:
+            source = getattr(future, 'source_path', '')
+            label = getattr(future, 'source_label', Path(source).name if source else '')
+            detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(error)
+            self._sync_messages.append(detail)
+            retry_source = getattr(future, 'retry_source', None)
+            retry_path = retry_source.path if retry_source is not None else source or None
+            self.report_error(detail, title='Import failed', action_label='Retry file import…' if retry_path else '',
+                              action=(lambda path=retry_path: self.import_files((path,))) if retry_path else None)
+        finally:
+            self._finish_import_job(future)
+
     def poll(self):
         if self._closed:
             return
@@ -1766,33 +1857,17 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 except ValueError as exc:
                     self.report_error(str(exc), title='Account password could not be saved')
                 continue
-            detail = ''
             try:
-                report = self.store.import_report(future.result(), calendar_id=getattr(future, 'calendar_id', None))
-                events = report.events
-                self.refresh()
-                detail = f'Imported {len(events)} event resource(s).'
-                if report.issues:
-                    detail += f' {len(report.issues)} import warning(s).'
-                    if report.rejected:
-                        detail += f' {len(report.rejected)} unsupported event resource(s) were skipped.'
-                    self._sync_messages.extend(f'{issue.resource_id}: {issue.reason}' for issue in report.issues)
-                self._sync_messages.append(detail)
-                if report.rejected:
-                    self.report_error(detail + '\n\n' + '\n'.join(
-                        f'{issue.resource_id}: {issue.reason}' for issue in report.issues), title='Some events could not be imported',
-                        action_label='Review synchronization details…', action=self.show_sync_status)
+                prepared = future.result()
             except Exception as exc:
-                source = getattr(future, 'source_path', '')
-                label = getattr(future, 'source_label', Path(source).name if source else '')
-                detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(exc)
-                self._sync_messages.append(detail)
-                retry_source = getattr(future, 'retry_source', None)
-                retry_path = retry_source.path if retry_source is not None else source or None
-                self.report_error(detail, title='Import failed', action_label='Retry file import…' if retry_path else '',
-                                  action=(lambda path=retry_path: self.import_files((path,))) if retry_path else None)
-            finally:
-                self._import_memory_bytes = max(0, self._import_memory_bytes - getattr(future, 'import_memory_bytes', 0))
+                self._import_failed(exc, future)
+                continue
+            calendar_id = getattr(future, 'calendar_id', None)
+            self.write_database(
+                lambda writer, prepared=prepared, calendar_id=calendar_id: writer.import_report(prepared, calendar_id=calendar_id),
+                on_success=lambda report, future=future: self._import_succeeded(report, future),
+                on_error=lambda error, future=future: self._import_failed(error, future),
+                preserve_context=False)
         if not self.engine:
             return
         updated = False
@@ -1836,7 +1911,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         dialog = ConflictDialog(conflict, self.preferences, self)
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted and dialog.choice:
-                self.engine.resolve_conflict(conflict.id, dialog.choice, expected=conflict)
+                engine, choice = self.engine, dialog.choice
+                if isinstance(engine, DemoConflictEngine):
+                    self.write_database(lambda writer: engine.resolve_conflict(
+                        conflict.id, choice, expected=conflict, store=writer), preserve_context=False)
+                else:
+                    engine.resolve_conflict(conflict.id, choice, expected=conflict)
         finally:
             dialog.deleteLater()
 
@@ -2010,6 +2090,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return None
 
     def closeEvent(self, event):
+        if self._import_jobs:
+            self._close_after_import = True
+            event.ignore()
+            return
+        if hasattr(self, 'database_commands') and self.database_commands.request_close(self.close):
+            event.ignore()
+            return
         self._closed = True
         QApplication.instance().removeEventFilter(self)
         self.poll_timer.stop()
@@ -2025,5 +2112,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.engine.close()
         if self.tray_icon:
             self.tray_icon.hide()
+        self.database_commands.shutdown()
         self.executor.shutdown(wait=False, cancel_futures=True)
         event.accept()

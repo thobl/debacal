@@ -271,6 +271,7 @@ class HistoryDialog(QDialog):
         self.setWindowTitle('Operation history')
         self.resize(600, 430)
         self.store, self.changed = store, changed
+        self._writing = False
         outer = QVBoxLayout(self)
         outer.addWidget(hint('Undo any independent operation. Later changes to the same event must be undone first. History is saved across restarts.'))
         self.list = QListWidget()
@@ -300,17 +301,28 @@ class HistoryDialog(QDialog):
     def selection(self, *_):
         item = self.list.currentItem()
         op = item.data(Qt.ItemDataRole.UserRole) if item else {}
-        self.undo_btn.setEnabled(op.get('can_undo', False))
-        self.redo_btn.setEnabled(op.get('can_redo', False))
+        self.undo_btn.setEnabled(not self._writing and op.get('can_undo', False))
+        self.redo_btn.setEnabled(not self._writing and op.get('can_redo', False))
 
     def perform(self, redo):
         item = self.list.currentItem()
-        if not item:
+        if not item or self._writing:
             return
-        try:
-            op = item.data(Qt.ItemDataRole.UserRole)
-            (self.store.redo if redo else self.store.undo)(op['id'])
+        from .ui_database import submit_write
+        identity = item.data(Qt.ItemDataRole.UserRole)['id']
+        self._writing = True
+        self.selection()
+
+        def succeeded(_value):
+            self._writing = False
+            self.message.clear()
             self.changed()
             self.reload()
-        except ValueError as exc:
-            self.message.setText(str(exc))
+
+        def failed(error):
+            self._writing = False
+            self.message.setText(str(error))
+            self.selection()
+
+        submit_write(self, self.store, lambda writer: (writer.redo if redo else writer.undo)(identity),
+                     on_success=succeeded, on_error=failed)

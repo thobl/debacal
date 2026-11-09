@@ -147,7 +147,9 @@ def test_testing_profile_launch_delivers_files_with_isolated_storage(tmp_path, n
     assert workspace["credential_namespace"]
     assert workspace["enable_sync"] and not workspace["demo_mode"]
     assert result["imports"] == [[str(calendar)]]
-    assert list((tmp_path / "data").rglob("*.sqlite3")) == [database]
+    assert set((tmp_path / "data").rglob("*.sqlite3")) == {
+        database, database.with_name(database.name + '.ui.sqlite3'),
+    }
 
 
 def test_native_file_open_events_wait_for_the_workspace_and_are_not_replayed(tmp_path):

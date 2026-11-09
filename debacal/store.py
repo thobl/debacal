@@ -17,6 +17,7 @@ from uuid import uuid4
 from .models import Calendar, Event
 from .event_duration import add_duration, end_for, same_duration
 from .schedule_replacement import ScheduleReplacement
+from .ui_state import UiState, UI_SETTINGS
 
 
 _EVENT_UID_SQL = "CASE WHEN json_valid(data) THEN COALESCE(NULLIF(json_extract(data,'$.ical_uid'),''),id) ELSE id END"
@@ -40,6 +41,7 @@ class EventOwnershipConflict(ValueError):
 class Store:
     def __init__(self, path: str | Path, *, query_index: bool = True):
         self.path = str(path)
+        legacy_profile = self.path != ':memory:' and Path(self.path).is_file() and Path(self.path).stat().st_size > 0
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -49,6 +51,11 @@ class Store:
         self._projection_storage = None
         self._query_revision = -1
         self._query_transactions = []
+        self._ui_state = None
+        self._ui_access = False
+        self._maintenance_callback = None
+        from .database_priority import get_write_gate
+        self._write_gate = get_write_gate(self.path)
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys=ON")
@@ -96,6 +103,7 @@ class Store:
                 PRIMARY KEY(calendar_id, resource_id)
             );
         """)
+        self._ui_state = UiState(self.path)
         with self._transaction():
             quarantine_columns = {row['name'] for row in self.connection.execute('PRAGMA table_info(quarantined_resources)')}
             if 'diagnostics' not in quarantine_columns:
@@ -187,6 +195,7 @@ class Store:
                     )
             if not self.connection.execute("SELECT 1 FROM calendars LIMIT 1").fetchone():
                 self._write_calendar(Calendar("local", "Personal", "#4f7865"))
+        self._ui_state.import_legacy(self.connection, seed=legacy_profile)
         # Derived preparations are durable. Ordinary restarts read the compact
         # representation and bulk-build only the in-memory search trees.
         from .query_projection import ProjectionStorage
@@ -225,6 +234,8 @@ class Store:
             frame = {'revision': self._query_revision, 'before': {}}
             self._query_transactions.append(frame)
             try:
+                if not nested and not self._ui_access:
+                    self._write_gate.wait_background()
                 self.connection.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
                 yield
                 if nested:
@@ -261,9 +272,53 @@ class Store:
             resource = hashlib.sha256(identity.encode()).hexdigest()[:12]
             self.set_quarantined_resource(calendar, resource, raw, reason)
 
+    @contextmanager
+    def ui_transaction(self):
+        """Group local UI choices without acquiring the event writer lock."""
+        with self._lock:
+            with self._ui_state.transaction():
+                yield
+
+    @contextmanager
+    def read_snapshot(self):
+        """Read a consistent WAL snapshot without claiming the writer slot."""
+        with self._lock:
+            own = not self.connection.in_transaction
+            if own:
+                self.connection.execute('BEGIN')
+            try:
+                yield
+            finally:
+                if own:
+                    self.connection.rollback()
+
+    def configure_ui_access(self, maintenance_callback, mutation_callback=None):
+        """Make foreground reads fail-fast and delegate derived-data repairs.
+
+        Ordinary Store callers retain synchronous transaction semantics. The
+        application attaches this after startup and uses a separate command
+        writer for mutations; foreground queries never wait for that writer.
+        """
+        with self._lock:
+            self._maintenance_callback = maintenance_callback
+            self._ui_mutation_callback = mutation_callback
+            self._ui_access = True
+            self.connection.execute('PRAGMA busy_timeout=0')
+
+    def maintain_queries(self, identities=None):
+        """Run durable preparation/repair on a background command connection."""
+        with self._transaction():
+            self._maintain_query_projections(identities=identities)
+
     def close(self) -> None:
+        commands = getattr(self, '_standalone_ui_commands', None)
+        if commands is not None:
+            commands.shutdown()
+            self._standalone_ui_commands = None
         with self._lock:
             self.connection.close()
+            if self._ui_state is not None:
+                self._ui_state.close()
             self._query_index = None
             if self._projection_storage is not None:
                 self._projection_storage.reader = None
@@ -304,9 +359,12 @@ class Store:
             return ordered + [calendar for calendar in calendars if calendar.id in by_id]
 
     def _calendars_by_creation_order(self) -> list[Calendar]:
-        return [Calendar.from_dict(json.loads(row[0])) for row in self.connection.execute(
+        calendars = [Calendar.from_dict(json.loads(row[0])) for row in self.connection.execute(
             "SELECT data FROM calendars ORDER BY rowid"
         )]
+        overrides = self._ui_state.visibility_overrides() if self._ui_state is not None else {}
+        return [replace(calendar, visible=overrides[calendar.id]) if calendar.id in overrides
+                and calendar.visible != overrides[calendar.id] else calendar for calendar in calendars]
 
     def set_calendar_order(self, identifiers: Iterable[str]) -> None:
         """Save this profile's display order without touching calendar sources."""
@@ -315,7 +373,7 @@ class Store:
         requested = list(identifiers)
         if any(not isinstance(identity, str) for identity in requested) or len(set(requested)) != len(requested):
             raise ValueError('Calendar order must contain unique calendar IDs.')
-        with self._transaction():
+        with self.ui_transaction():
             calendars = self.list_calendars(include_disabled=True)
             available = {calendar.id for calendar in calendars}
             if any(identity not in available for identity in requested):
@@ -327,7 +385,11 @@ class Store:
     def get_calendar(self, calendar_id: str) -> Calendar | None:
         with self._lock:
             row = self.connection.execute("SELECT data FROM calendars WHERE id=?", (calendar_id,)).fetchone()
-            return Calendar.from_dict(json.loads(row[0])) if row else None
+            if row is None:
+                return None
+            calendar = Calendar.from_dict(json.loads(row[0]))
+            visible = self._ui_state.visibility(calendar_id) if self._ui_state is not None else None
+            return replace(calendar, visible=visible) if visible is not None and visible != calendar.visible else calendar
 
     def save_calendar(self, calendar: Calendar) -> None:
         with self._transaction():
@@ -340,11 +402,11 @@ class Store:
             self._write_calendar(calendar)
 
     def set_calendar_visible(self, calendar_id: str, visible: bool) -> None:
-        with self._transaction():
+        with self._lock:
             calendar = self.get_calendar(calendar_id)
             if calendar is None:
                 raise ValueError("Calendar not found.")
-            self._write_calendar(replace(calendar, visible=visible))
+            self._ui_state.set_visible(calendar_id, visible)
 
     def apply_calendar_preferences(self, originals: dict[str, Calendar], calendars: Iterable[Calendar]) -> bool:
         """Apply source drafts atomically, rebasing onto the latest sync metadata.
@@ -401,7 +463,7 @@ class Store:
             return configured or next((calendar for calendar in writable if calendar.kind == 'local'), None) or next(iter(writable), None)
 
     def set_default_calendar(self, calendar_id: str) -> None:
-        with self._transaction():
+        with self.ui_transaction():
             calendar = self.get_calendar(calendar_id)
             if calendar is None:
                 raise ValueError('Default calendar not found.')
@@ -660,7 +722,12 @@ class Store:
                 return
             from .query_projection import PreparedStateError, load_record, unpack_state
             storage = self._projection_storage
-            if self.connection.in_transaction:
+            if self._ui_access:
+                if storage.version() != self.events_revision():
+                    if self._maintenance_callback is not None:
+                        self._maintenance_callback(None)
+                    return
+            elif self.connection.in_transaction:
                 self._maintain_query_projections()
             elif storage.version() != self.events_revision():
                 # Also repair writes from an older app or a direct SQL client.
@@ -673,7 +740,7 @@ class Store:
             own_transaction = not self.connection.in_transaction
             if own_transaction:
                 self.connection.execute('BEGIN')
-            invalid, records = set(), []
+            invalid, records, removed = set(), [], []
             try:
                 revision = self.events_revision()
                 if revision == self._query_revision:
@@ -692,7 +759,10 @@ class Store:
                     remember(identity)
                     if row['data'] is None:
                         if not full:
-                            self._query_index.remove(identity)
+                            if self._ui_access:
+                                removed.append(identity)
+                            else:
+                                self._query_index.remove(identity)
                         continue
                     try:
                         record = load_record(unpack_state(row['data']), reader)
@@ -701,7 +771,7 @@ class Store:
                     except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
                         invalid.add(identity)
                         continue
-                    if full:
+                    if full or self._ui_access:
                         records.append(record)
                     else:
                         self._query_index.restore(identity, record)
@@ -712,6 +782,14 @@ class Store:
                         remember(identity)
                     index.bulk_load(records)
                     self._query_index = index
+                elif self._ui_access and not invalid:
+                    # Publish the complete delta only after it is validated.
+                    # A broken derived row must leave the previous snapshot
+                    # coherent while a background connection repairs it.
+                    for identity in removed:
+                        self._query_index.remove(identity)
+                    for record in records:
+                        self._query_index.restore(record.master.id, record)
                 if not invalid:
                     self._query_revision = revision
             except BaseException:
@@ -723,6 +801,10 @@ class Store:
                 if own_transaction:
                     self.connection.rollback()
             if invalid:
+                if self._ui_access:
+                    if self._maintenance_callback is not None:
+                        self._maintenance_callback(invalid)
+                    return
                 # A damaged derived row is rebuilt from its canonical source;
                 # data corruption cannot silently hide an event or poison all
                 # other calendars. This is unrelated to viewed date windows.
@@ -870,6 +952,25 @@ class Store:
             return ordinary, list(masters.values())
 
     def _quarantine_expansion_failures(self, failures) -> None:
+        if self._ui_access and failures:
+            callback = getattr(self, '_ui_mutation_callback', None)
+            if callback is not None:
+                captured = tuple((master, str(error)) for master, error in failures)
+                def record_failures(writer):
+                    changed = False
+                    for expected, message in captured:
+                        source = writer.get_event(expected.id)
+                        if source is None or writer._semantic_event(source.to_dict()) != writer._semantic_event(expected.to_dict()):
+                            continue
+                        resource_id = hashlib.sha256((source.ical_uid or source.id).encode()).hexdigest()[:12]
+                        previous = writer.get_quarantined_resource(source.calendar_id, resource_id)
+                        if previous is not None and previous['reason'] == message and previous['raw_ics'] == source.raw_ics:
+                            continue
+                        writer.set_quarantined_resource(source.calendar_id, resource_id, source.raw_ics or '', message)
+                        changed = True
+                    return changed
+                callback(record_failures, ('projection-errors', tuple((master.id, str(error)) for master, error in failures)))
+            return
         for master, error in failures:
             resource_id = hashlib.sha256((master.ical_uid or master.id).encode()).hexdigest()[:12]
             source = self.get_event(master.id) if master._query_projection else master
@@ -896,17 +997,23 @@ class Store:
         self._quarantine_expansion_failures(failures)
         return result
 
-    def get_occurrence(self, event_id: str) -> Event | None:
+    def get_occurrence(self, event_id: str, *, canonical: bool = False) -> Event | None:
+        """Resolve one identity, optionally reviewing its canonical source.
+
+        Presentation can retain an older coherent index while maintenance is
+        pending. Mutation guards must not mistake that snapshot for the latest
+        canonical event; their fallback prepares only the named resource.
+        """
         from .recurrence import split_occurrence_id
         parts = split_occurrence_id(event_id)
         if parts is None:
-            if not self._query_enabled:
+            if canonical or not self._query_enabled:
                 return self.get_event(event_id)
             values = self.query_source_events([event_id])
             return values[0] if values else None
         master_id, key = parts
         with self._lock:
-            if self._query_enabled:
+            if self._query_enabled and not canonical:
                 self._synchronize_query_index()
                 record = self._query_index.sources.get(master_id)
             else:
@@ -936,6 +1043,8 @@ class Store:
     def _reviewed_master(self, reference: Event) -> Event:
         master = self.get_event(reference.series_id or reference.id)
         current = self.get_occurrence(reference.id)
+        if self._ui_access and self._query_revision != self.events_revision():
+            current = self.get_occurrence(reference.id, canonical=True)
         def content(event):
             if reference.series_id:
                 # A sibling edit can refresh the master's derived authoring
@@ -1233,7 +1342,7 @@ class Store:
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
                        calendar_id=None, label="Move selected events", expected_masters=(), preserve_calendars=False):
         """Move one union atomically, or prepare fresh copies without writing."""
-        with self._transaction():
+        with (self.read_snapshot() if copy else self._transaction()):
             refs, roots = self._review_selection(refs, scope, reference, expected_masters)
             edited = replace(reference, start=start, end=end)
             if copy:
@@ -1321,7 +1430,7 @@ class Store:
         event ID and UID before storing it as another resource.
         """
         from .series_operations import partition_series
-        with self._transaction():
+        with self.read_snapshot():
             master = self._reviewed_future_master(reference, expected_master)
             _, tail = partition_series(master, reference)
             if tail is None:
@@ -1850,9 +1959,17 @@ class Store:
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         with self._lock:
+            if key in UI_SETTINGS and self._ui_state is not None:
+                present, value = self._ui_state.get(key)
+                if present:
+                    return value
             row = self.connection.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return json.loads(row[0]) if row else default
 
     def set_setting(self, key: str, value: Any) -> None:
+        if key in UI_SETTINGS and self._ui_state is not None:
+            with self._lock:
+                self._ui_state.set(key, value)
+            return
         with self._transaction():
             self.connection.execute("INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, self._json(value)))

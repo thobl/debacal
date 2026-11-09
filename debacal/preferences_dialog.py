@@ -36,6 +36,7 @@ class PreferencesDialog(QDialog):
         bounds = self.screen().availableGeometry()
         self.resize(min(1040, max(760, bounds.width() - 48)), min(820, max(540, bounds.height() - 48)))
         self.result_preferences = preferences
+        self._applying = False
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -396,7 +397,9 @@ class PreferencesDialog(QDialog):
         self.shortcut_editor.restore_defaults()
         self.error.clear()
 
-    def apply(self):
+    def apply(self, *, close_after=False):
+        if self._applying:
+            return False
         try:
             preferences = self.value()
         except ValueError as error:
@@ -435,15 +438,40 @@ class PreferencesDialog(QDialog):
             self.error.setText(str(error))
             self.error.show()
             return False
+        bindings = dict(bindings)
+        completed = False
+
+        def saved(_changed=False):
+            nonlocal completed
+            self._set_applying(False)
+            self._finish_apply(preferences, bindings)
+            completed = True
+            if close_after:
+                self.accept()
+
+        def failed(error):
+            self._set_applying(False)
+            self.set_category('sources')
+            self.error.setText(str(error))
+            self.error.show()
+
         if self.source_editor is not None:
+            self._set_applying(True)
             try:
-                self.source_editor.validate()
-                self.source_editor.apply()
+                self.source_editor.apply(on_success=saved, on_error=failed)
             except ValueError as error:
-                self.set_category('sources')
-                self.error.setText(str(error))
-                self.error.show()
-                return False
+                failed(error)
+        else:
+            saved()
+        return completed
+
+    def _set_applying(self, applying):
+        self._applying = applying
+        for control in (self.buttons, self.pages, self.categories, self.restore_button):
+            control.setEnabled(not applying)
+        self.save_button.setText('Saving…' if applying else 'Save')
+
+    def _finish_apply(self, preferences, bindings):
         self.result_preferences, self.result_bindings = preferences, bindings
         self.dialog_keyboard.refresh_tooltips()
         self.error.clear()
@@ -461,8 +489,20 @@ class PreferencesDialog(QDialog):
             self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
             if self.source_editor is not None:
                 self.source_editor.set_preferences(preferences)
-        return True
 
     def save(self):
-        if self.apply():
-            self.accept()
+        self.apply(close_after=True)
+
+    def accept(self):
+        if not self._applying:
+            super().accept()
+
+    def reject(self):
+        if not self._applying:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self._applying:
+            event.ignore()
+        else:
+            super().closeEvent(event)
