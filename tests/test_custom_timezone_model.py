@@ -237,7 +237,7 @@ def test_dense_ancient_transition_rule_has_a_computation_budget():
         datetime(2026, 1, 2, tzinfo=zone).utcoffset()
 
 
-def test_lazy_transition_index_supports_future_then_past_queries_through_supported_years():
+def test_prepared_transition_index_supports_future_then_past_queries_through_supported_years():
     zone = resolve_timezone(TZID, {TZID: WINDOWS})
     assert datetime(9999, 12, 31, 12, tzinfo=zone).utcoffset() == timedelta(hours=1)
     assert datetime(1995, 10, 1, 12, tzinfo=zone).utcoffset() == timedelta(hours=2)

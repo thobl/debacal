@@ -143,4 +143,4 @@ def test_existing_database_backfill_is_persistent_without_changing_event_revisio
     with patch("debacal.store.json.loads", wraps=json.loads) as decode:
         with Store(path):
             pass
-    assert decode.call_count == 2  # Migration markers only, no resource JSON.
+    assert decode.call_count == 3  # Migration markers and one eager source decode.

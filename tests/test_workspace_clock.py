@@ -147,7 +147,7 @@ def test_minute_timer_repaints_every_today_marker_at_midnight_without_navigating
     assert window._clock_day == current[0].date()
 
 
-def test_dense_series_keeps_healthy_events_visible_with_cached_actionable_range_warning(desktop):
+def test_dense_series_keeps_healthy_events_visible_with_actionable_range_warning(desktop):
     _, store, windows, _ = desktop
     calendar = Calendar('dense-source', 'Dense source', '#587c67')
     store.save_calendar(calendar)
@@ -168,13 +168,13 @@ def test_dense_series_keeps_healthy_events_visible_with_cached_actionable_range_
     assert 'Other events remain visible' in warning.details
     assert 'unavailable in this view' in window.status.text()
     assert not window.warning_button.isHidden()
-    # Calendar visibility reuses the same complete healthy page and its issues.
+    # Every visibility change queries the requested sources and current issues.
     with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as query:
         window.toggle_calendar(calendar.id, False)
         assert not window._view_issues and [event.id for event in window.range_events] == [healthy.id]
         window.toggle_calendar(calendar.id, True)
         assert len(window._view_issues) == 1
-        assert query.call_count == 0
+        assert query.call_count == 2
     warning.action()
     assert window.view == 'day' and not window._view_issues
     assert healthy.id in {event.id for event in window.range_events}
@@ -186,11 +186,10 @@ def test_dense_series_keeps_healthy_events_visible_with_cached_actionable_range_
     window.refresh()
     assert not window._view_issues
     assert len(window.range_events) == 3
-    assert all(not issues for issues in window._range_issue_cache.values())
     assert store.list_quarantined_resources() == []
 
 
-def test_agenda_budget_warning_reuses_cache_and_follows_agenda_visibility(desktop):
+def test_agenda_budget_warning_follows_fresh_queries_and_agenda_visibility(desktop):
     _, store, windows, _ = desktop
     source = Event('source', 'local', 'A repeating event', NOW, NOW + timedelta(hours=1),
                    recurrence_rule='FREQ=DAILY')
@@ -213,12 +212,12 @@ def test_agenda_budget_warning_reuses_cache_and_follows_agenda_visibility(deskto
         assert 'unavailable in upcoming events' in window.status.text()
         assert not window.warning_button.isHidden()
         window.refresh_agenda_clock(NOW)
-        assert query.call_count == 1
+        assert query.call_count == 2
         window.search.setText('healthy')
         assert not window.results.agenda_mode
         assert not any(issue.key.startswith('view:') for issue in window.status_issues())
         assert window.warning_button.isHidden()
         window.search.clear()
         assert window.results.agenda_mode and not window.warning_button.isHidden()
-        assert query.call_count == 1
+        assert query.call_count == 3
     assert store.list_quarantined_resources() == []

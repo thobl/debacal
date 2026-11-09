@@ -257,7 +257,7 @@ def test_matching_detached_override_is_grouped_under_its_master(workspace):
     assert 'Needle override' in parent.child(0).text()
 
 
-def test_query_cache_and_expanded_pages_survive_refresh(workspace):
+def test_search_index_and_expanded_pages_survive_refresh(workspace):
     _, store, panel = workspace
     store.apply('Create', [event(recurrence_rule='FREQ=DAILY;COUNT=250')])
     with patch.object(store, 'event_search_index', wraps=store.event_search_index) as reads:

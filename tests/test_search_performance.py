@@ -1,4 +1,4 @@
-"""Bounded search reads, stable rows and precise upcoming-cache behavior."""
+"""Bounded search reads, stable rows and fresh upcoming range queries."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -35,6 +35,7 @@ class ProjectionStore:
         self.version = 1
         self.index_reads = 0
         self.model_reads = []
+        self.source_reads = []
         self.upcoming_reads = []
 
     def events_revision(self):
@@ -54,6 +55,10 @@ class ProjectionStore:
     def get_events(self, identifiers):
         self.model_reads.append(tuple(identifiers))
         return [self.events[key] for key in reversed(identifiers) if key in self.events]
+
+    def query_source_events(self, identifiers):
+        self.source_reads.append(tuple(identifiers))
+        return [self.events[key] for key in identifiers if key in self.events]
 
     def list_events(self, *args, **kwargs):
         raise AssertionError('Search must not decode the complete event table.')
@@ -89,7 +94,7 @@ def large_events():
     return [event(index) for index in range(50_000)]
 
 
-def test_fifty_thousand_matches_fetch_one_bounded_batch_and_reuse_rows(panel_factory, large_events):
+def test_fifty_thousand_matches_use_bounded_source_batches_and_keep_rows_stable(panel_factory, large_events):
     store = ProjectionStore(large_events)
     panel = panel_factory(store)
     started = perf_counter()
@@ -103,12 +108,13 @@ def test_fifty_thousand_matches_fetch_one_bounded_batch_and_reuse_rows(panel_fac
         assert panel.selected_row_ids() == {large_events[0].id}
     assert perf_counter() - started < 2
     assert store.index_reads == 1
-    assert len(store.model_reads) == 1 and len(store.model_reads[0]) == 256
+    assert not store.model_reads
+    assert len(store.source_reads) == 6 and all(len(read) == 256 for read in store.source_reads)
     # The complete candidate index must survive the 200-row display cap.
     panel.populate('Project 49999')
     assert panel.event_id(panel.item(0)) == large_events[-1].id
     assert panel.topLevelItemCount() == 1
-    assert sum(map(len, store.model_reads)) == 257
+    assert len(store.source_reads[-1]) == 1
 
 
 def test_broad_projection_candidates_are_exactly_checked_beyond_first_batch(panel_factory):
@@ -134,7 +140,7 @@ def test_revision_changes_and_missing_candidate_models_are_safe(panel_factory):
     panel.populate('replacement')
     assert panel.event_id(panel.item(0)) == 'event-0'
     assert store.index_reads == 2
-    # A worker can delete an indexed row between projection and model reads.
+    # A worker can delete an indexed row between projection and source reads.
     store.events.clear()
     store.version += 1
     store.event_search_index = lambda: [('vanished', 'local', 'needle')]
@@ -157,7 +163,7 @@ def test_calendar_presentation_changes_keep_index_and_exact_selection(panel_fact
     assert panel.selected_row_ids() == {'event-0'} and store.index_reads == 1
 
 
-def test_old_daily_representatives_seek_once_then_reuse_across_typing(panel_factory):
+def test_unchanged_search_rows_keep_their_representatives_across_typing(panel_factory):
     old = datetime(1980, 1, 1, 9, tzinfo=timezone.utc)
     values = [event(index, start=old, end=old + timedelta(hours=1), recurrence_rule='FREQ=DAILY') for index in range(1000)]
     store = ProjectionStore(values)
@@ -219,7 +225,7 @@ def test_rebuild_restores_current_row_independently_of_explicit_selection(panel_
     assert panel.selected_row_ids() == {'event-1'}
 
 
-def test_upcoming_refills_after_short_events_expire_without_full_range_query(panel_factory):
+def test_every_upcoming_request_queries_exact_bounds_without_full_range_expansion(panel_factory):
     values = [event(index, start=START + timedelta(seconds=index), end=START + timedelta(seconds=index)) for index in range(80)]
     store = ProjectionStore(values)
     panel = panel_factory(store)
@@ -230,15 +236,16 @@ def test_upcoming_refills_after_short_events_expire_without_full_range_query(pan
     assert panel.item(0) is first and panel.currentItem() is first
     assert panel.populate_upcoming(START + timedelta(seconds=5)) == 10
     assert [panel.event_id(panel.item(i)) for i in range(10)] == [f'event-{i}' for i in range(5, 15)]
-    assert len(store.upcoming_reads) == 1
+    assert len(store.upcoming_reads) == 3
     panel.populate_upcoming(START + timedelta(seconds=15))
     assert [panel.event_id(panel.item(i)) for i in range(10)] == [f'event-{i}' for i in range(15, 25)]
-    assert len(store.upcoming_reads) == 2
-    assert all(read[-1] == 20 for read in store.upcoming_reads)
+    assert len(store.upcoming_reads) == 4
+    assert all(read[-1] == 10 for read in store.upcoming_reads)
+    assert store.upcoming_reads[-1][:2] == (START + timedelta(seconds=15), START + timedelta(days=30, seconds=15))
     assert store.index_reads == 0 and not store.model_reads
 
 
-def test_upcoming_cache_respects_exact_points_visibility_and_horizon(panel_factory):
+def test_upcoming_queries_respect_exact_points_visibility_and_horizon(panel_factory):
     values = [event(index, start=START + timedelta(minutes=index), end=START + timedelta(minutes=index)) for index in range(12)]
     horizon = event(99, start=START + timedelta(days=30, seconds=1), end=START + timedelta(days=30, seconds=1))
     store = ProjectionStore([*values, horizon])
@@ -250,14 +257,14 @@ def test_upcoming_cache_respects_exact_points_visibility_and_horizon(panel_facto
     assert panel.row_item('event-0') is None
     panel.populate_upcoming(START + timedelta(seconds=2), limit=20)
     assert panel.row_item('event-99') is not None
-    assert len(store.upcoming_reads) == 1
+    assert len(store.upcoming_reads) == 3
     store.calendars = [replace(store.calendars[0], visible=False)]
     panel.populate_upcoming(START + timedelta(seconds=2), limit=20)
     assert panel.event_id(panel.item(0)) is None
-    assert len(store.upcoming_reads) == 2
+    assert len(store.upcoming_reads) == 3
 
 
-def test_upcoming_visibility_contexts_are_reused_and_event_updates_invalidate_them(panel_factory):
+def test_upcoming_visibility_and_event_updates_are_queried_each_time(panel_factory):
     store = ProjectionStore([event(0), event(1, calendar_id='other')])
     store.calendars.append(Calendar('other', 'Other', '#654321'))
     panel = panel_factory(store)
@@ -269,12 +276,12 @@ def test_upcoming_visibility_contexts_are_reused_and_event_updates_invalidate_th
     store.calendars[1] = replace(store.calendars[1], visible=True)
     panel.populate_upcoming(START)
     assert panel.row_item('event-1') is not None
-    assert len(store.upcoming_reads) == 2
+    assert len(store.upcoming_reads) == 3
     store.events['event-1'] = replace(store.events['event-1'], title='Updated')
     store.version += 1
     panel.populate_upcoming(START)
     assert panel.row_item('event-1').text() == 'Updated'
-    assert len(store.upcoming_reads) == 3
+    assert len(store.upcoming_reads) == 4
 
 
 def test_external_store_commit_invalidates_projection_without_explicit_panel_signal(panel_factory, tmp_path):

@@ -1,4 +1,4 @@
-"""Applying presentation settings must reuse indexed calendar data."""
+"""Applying presentation settings preserves unchanged render geometry."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -48,12 +48,13 @@ def workspace():
 def test_year_style_and_sync_changes_do_not_restyle_or_reindex_the_year(workspace):
     app, store, window = workspace
     with (patch.object(window.year, '_event_interval', side_effect=AssertionError('Do not scan events')),
-         patch.object(store, 'query_occurrences', side_effect=AssertionError('Reuse the requested range')),
+         patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries,
           patch.object(window, 'setStyleSheet', side_effect=AssertionError('Keep unchanged stylesheet'))):
         window.apply_preferences(replace(window.preferences, year_view_style='tints'), window.bindings)
         app.processEvents()
         window.apply_preferences(replace(window.preferences, sync_interval_minutes=19), window.bindings)
         app.processEvents()
+        assert queries.call_count == 2
     assert window.year.preferences.year_view_style == 'tints'
     assert Preferences.load(store).sync_interval_minutes == 19
 

@@ -17,8 +17,9 @@ _TIMESETS = {'htimeset', 'mtimeset', 'stimeset'}
 
 
 class _Work:
-    def __init__(self, error, limit=None):
+    def __init__(self, error, limit=None, window_end=None):
         self.error, self.periods, self.clocks = error, 0, 0
+        self.window_end = window_end.date() if window_end is not None else None
         self.period_limit = MAX_PERIOD_WORK if limit is None else limit
         self.candidate_limit = MAX_CANDIDATE_WORK if limit is None else limit
 
@@ -27,7 +28,10 @@ class _Work:
                          'Inspect dates nearer its start, shorten its recurrence, or use a simpler rule. '
                          'Its saved definition is unchanged.')
 
-    def period(self):
+    def period(self, year=None, month=None, day=None):
+        if self.window_end is not None and (year, month, day) > (
+                self.window_end.year, self.window_end.month, self.window_end.day):
+            raise _WindowComplete
         self.periods += 1
         if self.periods > self.period_limit:
             self.fail()
@@ -46,7 +50,14 @@ class _CalendarInfo:
         value = getattr(self.original, name)
         if name in _DAYSETS:
             def dayset(*args):
-                self.work.period()
+                year, month, day = args
+                # A yearly/monthly period may contain selected dates before
+                # DTSTART's original month/day in later iterations.
+                if name == 'ydayset':
+                    month, day = 1, 1
+                elif name == 'mdayset':
+                    day = 1
+                self.work.period(year, month, day)
                 return value(*args)
             return dayset
         if name in _TIMESETS:
@@ -61,16 +72,17 @@ class _CalendarInfo:
 
 
 class BoundedRule:
-    def __init__(self, rule, error, *, calendar_periods=False, limit=None):
+    def __init__(self, rule, error, *, calendar_periods=False, limit=None, window_end=None):
         self.rule, self.error, self.calendar_periods = rule, error, calendar_periods
         self.limit = limit
+        self.window_end = window_end
 
     def __getattr__(self, name):
         return getattr(self.rule, name)
 
     def __iter__(self):
-        work = _Work(self.error, self.limit)
-        if self.calendar_periods:
+        work = _Work(self.error, self.limit, self.window_end)
+        if self.calendar_periods or self.window_end is not None:
             iterator = type(self.rule)._iter
             code = getattr(iterator, '__code__', None)
             namespace = getattr(iterator, '__globals__', {})
@@ -86,10 +98,17 @@ class BoundedRule:
             values = guarded(_Rule(self.rule, work))
         else:
             values = iter(self.rule)
-        for index, value in enumerate(values):
-            if index >= work.candidate_limit:
-                work.fail()
-            yield value
+        try:
+            for index, value in enumerate(values):
+                if index >= work.candidate_limit:
+                    work.fail()
+                yield value
+        except _WindowComplete:
+            return
+
+
+class _WindowComplete(Exception):
+    """The engine reached the first calendar period beyond a query window."""
 
 
 class _Times:

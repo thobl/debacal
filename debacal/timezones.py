@@ -2,17 +2,20 @@
 
 VTIMEZONE names are identifiers, not necessarily IANA database keys. Definitions
 travel with their resource and override database rules when present. Two
-resources can use the same TZID for different rules, so caches include the text.
+resources can use the same TZID for different rules. Definition interning uses
+the complete text and shares only eagerly prepared immutable rules, never
+date-query results. Explicit transition lookups use binary-search data from
+the first query onward.
 Without an explicit definition, known producer namespaces can name IANA zones.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from bisect import bisect_left, bisect_right
-from datetime import tzinfo
+from datetime import timedelta, tzinfo
 from functools import lru_cache
 import re
-from threading import RLock
+from types import MethodType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .recurrence_budget import BoundedRule
@@ -23,6 +26,10 @@ MAX_CONTEXT_BYTES = 1024 * 1024
 MAX_CONTEXT_ZONES = 64
 MAX_OBSERVANCES = 256
 MAX_CACHED_DEFINITION_BYTES = 64 * 1024
+# Preparation has a shared 20,000-transition ceiling and a fair per-observance
+# share. Each rule also has that share as a calendar/candidate work ceiling.
+# A full supported-year table is retained when it fits; otherwise the proven
+# prefix remains usable and later clocks raise a diagnostic without new work.
 MAX_TRANSITION_PERIODS = 20_000
 MAX_IDENTIFIER_LENGTH = 1024
 
@@ -66,39 +73,50 @@ def _database_alias(identifier):
 
 
 class _TransitionIndex:
-    """Seek cached transitions in logarithmic time, extending them lazily.
+    """Immutable transitions prepared before any date lookup.
 
-    Dateutil's rruleset.before scans all cached history on each call. A timezone
-    declared from year 1601 otherwise repeats that work for every visible event.
-    The shared count bounds retained transitions across all observances.
+    The fair per-observance quota prevents one component's distant future from
+    consuming another's current coverage. If preparation reaches a computation
+    limit, its proven prefix remains usable; later dates consistently raise
+    the retained diagnostic rather than silently freezing the final offset.
     """
-    def __init__(self, rules, identifier, budget):
-        self.iterator, self.identifier, self.budget = iter(rules), identifier, budget
-        self.values, self.exhausted, self.failure = [], False, None
-        self.lock = RLock()
+    def __init__(self, rules, identifier, budget, quota):
+        values = []
+        self.failure, self.failure_from, self.inclusive_failure = None, None, False
+        try:
+            for following in rules:
+                if budget[0] <= 0 or len(values) >= quota:
+                    self.failure_from, self.inclusive_failure = following, True
+                    raise _transition_error(identifier)('transition count')
+                budget[0] -= 1
+                values.append(following)
+        except (ValueError, TypeError, OverflowError) as error:
+            self.failure = error.with_traceback(None)
+            if self.failure_from is None and values:
+                self.failure_from = values[-1]
+        self.values = tuple(values)
 
     def before(self, value, inc=False):
-        with self.lock:
-            if self.failure is not None:
-                raise self.failure.with_traceback(None)
-            try:
-                while not self.exhausted and (not self.values or self.values[-1] <= value):
-                    try:
-                        following = next(self.iterator)
-                    except StopIteration:
-                        self.exhausted = True
-                        break
-                    self.budget[0] -= 1
-                    if self.budget[0] < 0:
-                        raise _transition_error(self.identifier)('transition count')
-                    self.values.append(following)
-            except (ValueError, TypeError, OverflowError) as error:
-                # A stopped generator must not make a later retry look like a
-                # successfully exhausted rule with an incorrect final offset.
-                self.failure = error
-                raise
-            position = bisect_right(self.values, value) if inc else bisect_left(self.values, value)
-            return self.values[position - 1] if position else None
+        if self.failure is not None and (self.failure_from is None or value > self.failure_from
+                                         or value == self.failure_from and self.inclusive_failure and inc):
+            raise type(self.failure)(*self.failure.args) from None
+        position = bisect_right(self.values, value) if inc else bisect_left(self.values, value)
+        return self.values[position - 1] if position else None
+
+
+def _find_indexed_component(zone, value):
+    """Use prepared transition indexes without dateutil's last-ten-date cache."""
+    if len(zone._comps) == 1:
+        return zone._comps[0]
+    value = value.replace(tzinfo=None)
+    previous, chosen = None, None
+    for component in zone._comps:
+        transition = zone._find_compdt(component, value)
+        if transition is not None and (previous is None or previous < transition):
+            previous, chosen = transition, component
+    if chosen is not None:
+        return chosen
+    return next((component for component in zone._comps if not component.isdst), zone._comps[0])
 
 
 class _ResourceTimezone(tzinfo):
@@ -110,11 +128,9 @@ class _ResourceTimezone(tzinfo):
     """
     def __init__(self, identifier, backend):
         self.identifier, self.backend = identifier, backend
-        self._wall_state = lru_cache(maxsize=512)(self._uncached_wall_state)
 
     def __deepcopy__(self, memo):
-        # Timezone rules are immutable; authoring drafts can share their lookup
-        # caches just as they share ZoneInfo objects.
+        # Authoring drafts share immutable prepared rules like ZoneInfo objects.
         return self
 
     def __str__(self):
@@ -125,7 +141,9 @@ class _ResourceTimezone(tzinfo):
 
     def _uncached_wall_state(self, wall, fold):
         local = wall.replace(tzinfo=self.backend, fold=fold)
-        offset = self.backend.utcoffset(local)
+        components = getattr(self.backend, '_comps', None)
+        component = self.backend._find_comp(local) if components is not None else None
+        offset = component.tzoffsetto if component is not None else self.backend.utcoffset(local)
         if offset is not None:
             try:
                 previous = self.backend.fromutc((wall - offset).replace(tzinfo=self.backend))
@@ -137,10 +155,13 @@ class _ResourceTimezone(tzinfo):
                 # The backend interpreted a missing clock with the new offset,
                 # taking its instant back to the valid side before the gap.
                 local = previous
+                component = self.backend._find_comp(local) if components is not None else None
+        if component is not None:
+            return component.tzoffsetto, component.tzoffsetdiff if component.isdst else timedelta(0), component.tzname
         return self.backend.utcoffset(local), self.backend.dst(local), self.backend.tzname(local)
 
     def _state(self, value):
-        return self._wall_state(value.replace(tzinfo=None, fold=0), value.fold)
+        return self._uncached_wall_state(value.replace(tzinfo=None, fold=0), value.fold)
 
     def utcoffset(self, value):
         return self._state(value)[0] if value is not None else self.backend.utcoffset(None)
@@ -186,11 +207,11 @@ def _transition_error(identifier):
 
 
 def _bound_transition_rules(zone, identifier):
-    """Keep dateutil's timezone calculations from scanning dense ancient rules.
+    """Prepare bounded timezone indexes before any event/view lookup.
 
     The declared python-dateutil 2.x backend represents each observance as an
-    rruleset. Guard its rule iterators, retaining dateutil's transition/cache
-    semantics and ordinary historic yearly rules through the supported years.
+    rruleset. Guard preparation, then replace it with immutable binary-search
+    data while retaining dateutil's offset and repeated-hour semantics.
     """
     observances = getattr(zone, '_comps', None)
     if observances is None:
@@ -210,7 +231,10 @@ def _bound_transition_rules(zone, identifier):
                 raise TimezoneError('The timezone backend cannot enforce transition computation limits.')
             setattr(rules, name, [BoundedRule(rule, error, calendar_periods=True,
                                             limit=per_observance) for rule in values])
-        observance.rrule = _TransitionIndex(rules, identifier, budget)
+        observance.rrule = _TransitionIndex(rules, identifier, budget, per_observance)
+    # Only this resource's backend changes; other dateutil timezone objects and
+    # library globals retain their normal implementation.
+    zone._find_comp = MethodType(_find_indexed_component, zone)
     return zone
 
 
@@ -259,6 +283,8 @@ def _explicit_timezone(identifier: str, definition: str) -> tzinfo:
 
 @lru_cache(maxsize=64)
 def _cached_explicit_timezone(identifier: str, definition: str) -> tzinfo:
+    # Interning parsed source definitions happens at load/write boundaries.
+    # No queried wall clock or event-window result is retained by the object.
     return _explicit_timezone(identifier, definition)
 
 

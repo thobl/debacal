@@ -1,4 +1,4 @@
-"""UI work is reused across navigation and invalidated by actual event writes."""
+"""Every navigation queries indexed event data without completed-page caches."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -69,92 +69,89 @@ def test_navigation_and_calendar_visibility_reuse_event_search_index(desktop):
         assert window.results.count() == 1
 
 
-def test_view_and_visibility_caches_are_invalidated_by_event_changes(desktop):
+def test_each_view_and_visibility_change_queries_current_events(desktop):
     _, window, store = desktop
     with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
         window.set_view('month')
         window.set_view('week')
         window.toggle_calendar('work', False)
         window.toggle_calendar('work', True)
-        assert queries.call_count == 1  # New month; hiding filters its cached superset.
+        assert queries.call_count == 4
         window.set_view('month')
-        assert queries.call_count == 1
+        assert queries.call_count == 5
         original = store.get_event('event-1')
         operation = store.apply('Rename', [replace(original, title='Updated immediately')])
         window.refresh()
-        assert queries.call_count == 2
+        assert queries.call_count == 6
         assert any(event.title == 'Updated immediately' for event in window.visible_events)
         window.toggle_calendar('work', False)
-        assert queries.call_count == 2
+        assert queries.call_count == 7
         assert all(event.calendar_id != 'work' for event in window.visible_events)
         assert any(event.title == 'Updated immediately' for event in window.visible_events)
         store.undo(operation)
         window.refresh()
-        assert queries.call_count == 3
+        assert queries.call_count == 8
         assert any(event.title == original.title for event in window.visible_events)
         assert all(event.title != 'Updated immediately' for event in window.visible_events)
         window.toggle_calendar('work', True)
-        assert queries.call_count == 4  # A cached subset cannot supply a wider selection.
+        assert queries.call_count == 9
 
 
-def test_visibility_reuses_superset_without_retaining_duplicate_filtered_pages(desktop):
+def test_visibility_queries_only_enabled_calendars_and_skips_an_empty_selection(desktop):
     _, window, store = desktop
     window.set_view('month')
     original = list(window.visible_events)
-    cached = dict(window._range_cache)
     with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
         window.toggle_calendar('work', False)
         assert window.visible_events == [event for event in original if event.calendar_id != 'work']
-        assert dict(window._range_cache) == cached
+        assert queries.call_count == 1
+        assert queries.call_args.args[2] == ('local',)
         window.toggle_calendar('local', False)
         assert window.visible_events == []
-        assert dict(window._range_cache) == cached
+        assert queries.call_count == 1
         window.toggle_calendar('local', True)
         window.toggle_calendar('work', True)
         assert window.visible_events == original
-        assert queries.call_count == 0
+        assert queries.call_count == 3
+        assert set(queries.call_args.args[2]) == {'local', 'work'}
 
 
-def test_visibility_cache_does_not_reuse_a_different_date_window(desktop):
+def test_each_date_window_uses_its_own_bounds(desktop):
     _, window, store = desktop
     window.set_view('month')
     with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
         window.toggle_calendar('work', False)
+        previous_bounds = queries.call_args.args[:2]
         window.navigate(1)
-        assert queries.call_count == 1
+        assert queries.call_count == 2
+        assert queries.call_args.args[:2] != previous_bounds
         assert all(event.calendar_id == 'local' for event in window.visible_events)
 
 
-def test_dense_current_page_is_reused_but_does_not_accumulate_old_pages(desktop):
+def test_repeated_range_requests_query_the_store_without_retaining_old_pages(desktop):
     _, window, store = desktop
     window.set_view('month')
-    days, calendars, revision = window.dates(), store.list_calendars(), store.events_revision()
-    window._range_cache.clear()
-    # Exercise the real cache boundary with a small, readable fixture.
-    with patch('debacal.ui.RANGE_CACHE_EVENT_LIMIT', 10), \
-            patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
-        dense = window.query_view_events(days, calendars, revision)
+    days, calendars = window.dates(), store.list_calendars()
+    with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries:
+        dense = window.query_view_events(days, calendars)
         assert len(dense) > 10
-        assert window.query_view_events(days, calendars, revision) == dense
+        assert window.query_view_events(days, calendars) == dense
         local_only = [replace(calendar, visible=calendar.id == 'local') for calendar in calendars]
-        assert window.query_view_events(days, local_only, revision) == [
+        assert window.query_view_events(days, local_only) == [
             event for event in dense if event.calendar_id == 'local']
-        assert queries.call_count == 1
-        assert len(window._range_cache) == 1
-        narrow = window.query_view_events([START.date()], calendars, revision)
-        assert len(narrow) <= 10
-        assert list(window._range_cache.values()) == [tuple(narrow)]
-        assert window.query_view_events(days, calendars, revision) == dense
         assert queries.call_count == 3
-        assert list(window._range_cache.values()) == [tuple(dense)]
+        narrow = window.query_view_events([START.date()], calendars)
+        assert len(narrow) <= 10
+        assert window.query_view_events(days, calendars) == dense
+        assert queries.call_count == 5
         original = store.get_event('event-1')
         store.apply('Rename', [replace(original, title='Changed in dense page')])
         window.refresh()
-        assert queries.call_count == 4
+        assert queries.call_count == 6
         assert any(event.title == 'Changed in dense page' for event in window.visible_events)
 
 
-def test_remote_connection_changes_invalidate_cached_pages(tmp_path):
+def test_range_queries_see_remote_connection_changes(tmp_path):
     app = QApplication.instance() or QApplication([])
     with Store(tmp_path / 'calendar.sqlite3') as store:
         window = MainWindow(store, enable_sync=False)

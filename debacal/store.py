@@ -44,6 +44,9 @@ class Store:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._transaction_sequence = 0
+        self._query_index = None
+        self._query_revision = -1
+        self._query_transactions = []
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys=ON")
@@ -154,6 +157,8 @@ class Store:
             self.connection.execute("CREATE INDEX IF NOT EXISTS outbox_calendar ON outbox(calendar_id,id)")
             self.connection.execute("CREATE TABLE IF NOT EXISTS event_revisions (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)")
             self.connection.execute("INSERT OR IGNORE INTO event_revisions(id,version) VALUES (1,0)")
+            self.connection.execute("CREATE TABLE IF NOT EXISTS event_query_changes (event_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS event_query_changes_version ON event_query_changes(version)")
             # These counters live in the same transaction as each event write.
             # Unlike data_version/total_changes they ignore settings, visibility,
             # outbox acknowledgments and unrelated ingestion metadata.
@@ -164,12 +169,28 @@ class Store:
                         f"old.{name} IS NOT new.{name}"
                         for name in ("id", "calendar_id", "start", "end", "data", "recurring", "group_id", "candidate")
                     )
-                self.connection.execute(
-                    f"CREATE TRIGGER IF NOT EXISTS event_revision_{action.lower()} AFTER {action} ON events"
-                    f"{condition} BEGIN UPDATE event_revisions SET version=version+1 WHERE id=1; END"
-                )
+                trigger = f'event_revision_{action.lower()}'
+                existing = self.connection.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (trigger,)).fetchone()
+                if existing is None or 'event_query_changes' not in existing[0]:
+                    self.connection.execute(f'DROP TRIGGER IF EXISTS {trigger}')
+                    identities = ('old.id', 'new.id') if action == 'UPDATE' else (
+                        'old.id' if action == 'DELETE' else 'new.id',)
+                    changes = ''.join(
+                        f'INSERT INTO event_query_changes(event_id,version) VALUES ({identity},(SELECT version FROM event_revisions WHERE id=1)) '
+                        'ON CONFLICT(event_id) DO UPDATE SET version=excluded.version;'
+                        for identity in identities)
+                    self.connection.execute(
+                        f"CREATE TRIGGER {trigger} AFTER {action} ON events"
+                        f"{condition} BEGIN UPDATE event_revisions SET version=version+1 WHERE id=1; {changes} END"
+                    )
             if not self.connection.execute("SELECT 1 FROM calendars LIMIT 1").fetchone():
                 self._write_calendar(Calendar("local", "Personal", "#4f7865"))
+        # Prepare the current data before the first user operation. Subsequent
+        # local writes maintain it at commit; other connections contribute only
+        # their changed IDs through the transactional change table.
+        from .event_range_index import EventRangeIndex
+        self._query_index = EventRangeIndex()
+        self._synchronize_query_index()
 
     def _enable_wal(self) -> None:
         # SQLite can return SQLITE_BUSY immediately for journal-mode changes,
@@ -192,12 +213,16 @@ class Store:
             nested = self.connection.in_transaction
             self._transaction_sequence += 1
             savepoint = f"debacal_{self._transaction_sequence}"
+            frame = {'revision': self._query_revision, 'before': {}}
+            self._query_transactions.append(frame)
             try:
                 self.connection.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN IMMEDIATE")
                 yield
                 if nested:
                     self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
                 else:
+                    if self._query_index is not None:
+                        self._synchronize_query_index()
                     self.connection.commit()
             except BaseException:
                 if nested:
@@ -205,7 +230,15 @@ class Store:
                     self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
                 else:
                     self.connection.rollback()
+                self._query_transactions.pop()
+                if self._query_index is not None:
+                    for identity, record in frame['before'].items():
+                        self._query_index.restore(identity, record)
+                    self._query_revision = frame['revision']
+                    self._synchronize_query_index()
                 raise
+            else:
+                self._query_transactions.pop()
 
     def close(self) -> None:
         with self._lock:
@@ -594,6 +627,77 @@ class Store:
         with self._lock:
             return self.connection.execute("SELECT version FROM event_revisions WHERE id=1").fetchone()[0]
 
+    def _synchronize_query_index(self) -> None:
+        """Maintain decoded sources using only changed IDs, never query results."""
+        with self._lock:
+            rejected = []
+            def prepare(index, row):
+                value = None
+                try:
+                    value = json.loads(row['data'])
+                    index.upsert(Event.from_dict(value))
+                except (ValueError, TypeError, KeyError, OverflowError) as error:
+                    # A broken retained database resource must not prevent
+                    # opening or querying every other calendar. Preserve its
+                    # original ICS and surface the problem through Issues.
+                    index.remove(row['id'])
+                    raw = value.get('raw_ics', '') if isinstance(value, dict) else ''
+                    rejected.append((row['calendar_id'], row['id'], raw,
+                                     f'The stored event could not be read: {error}'))
+            def remember(identity):
+                for frame in self._query_transactions:
+                    frame['before'].setdefault(identity, self._query_index.sources.get(identity))
+            own_transaction = not self.connection.in_transaction
+            if own_transaction:
+                self.connection.execute('BEGIN')
+            try:
+                revision = self.events_revision()
+                if revision == self._query_revision:
+                    return
+                if self._query_revision < 0 or revision < self._query_revision:
+                    from .event_range_index import EventRangeIndex
+                    index = EventRangeIndex()
+                    for identity in self._query_index.sources:
+                        remember(identity)
+                    for row in self.connection.execute('SELECT id,calendar_id,data FROM events'):
+                        remember(row['id'])
+                        prepare(index, row)
+                    self._query_index = index
+                else:
+                    rows = self.connection.execute(
+                        'SELECT changes.event_id AS id,events.calendar_id,events.data FROM event_query_changes AS changes '
+                        'LEFT JOIN events ON events.id=changes.event_id WHERE changes.version>?',
+                        (self._query_revision,))
+                    for row in rows:
+                        remember(row['id'])
+                        if row['data'] is None:
+                            self._query_index.remove(row['id'])
+                        else:
+                            prepare(self._query_index, row)
+                self._query_revision = revision
+            except BaseException:
+                # A partially prepared update must never masquerade as the
+                # previous complete revision after a transaction rolls back.
+                self._query_revision = -1
+                raise
+            finally:
+                if own_transaction:
+                    self.connection.rollback()
+            for calendar, identity, raw, reason in rejected:
+                resource = hashlib.sha256(identity.encode()).hexdigest()[:12]
+                self.set_quarantined_resource(calendar, resource, raw, reason)
+
+    def query_source_events(self, event_ids: Iterable[str]) -> list[Event]:
+        """Borrow prepared sources for internal read-only search/presentation.
+
+        Event is frozen, but its nested transport dictionaries must also be
+        treated as read-only. Editing uses replacements and durable snapshots.
+        """
+        with self._lock:
+            self._synchronize_query_index()
+            return [self._query_index.sources[identity].master for identity in event_ids
+                    if identity in self._query_index.sources]
+
     def event_ids(self) -> set[str]:
         """Return stored resource identities without decoding event payloads."""
         with self._lock:
@@ -688,7 +792,6 @@ class Store:
         append ``(master, error)`` for each omitted source while keeping all
         healthy output. A source is never silently or partially truncated.
         """
-        from .recurrence import expand_events_safe
         self._validate_datetime(start)
         self._validate_datetime(end)
         if end.timestamp() <= start.timestamp() and end.date() <= start.date():
@@ -696,66 +799,26 @@ class Store:
         ids = list(calendar_ids) if calendar_ids is not None else None
         if ids == []:
             return []
-        ordinary, masters = self._occurrence_sources(start, end, ids)
-        events, failures = expand_events_safe(ordinary + masters, start, end, range_issues=issues)
+        with self._lock:
+            self._synchronize_query_index()
+            events, failures = self._query_index.query(start, end, ids, issues=issues)
         self._quarantine_expansion_failures(failures)
         return events
 
     def _occurrence_sources(self, start: datetime, end: datetime, ids: list[str] | None,
                             ordinary_limit: int | None = None) -> tuple[list[Event], list[Event]]:
-        query, params = "SELECT data FROM events WHERE recurring=1", []
-        condition = ''
-        if ids is not None:
-            condition = " AND calendar_id IN (" + ",".join("?" for _ in ids) + ")"
-            query += condition
-            params.extend(ids)
+        """Select relevant source identities from the maintained interval trees."""
         with self._lock:
-            own_transaction = not self.connection.in_transaction
-            if own_transaction:
-                self.connection.execute("BEGIN")
-            try:
-                ordinary, rows = [], []
-                # Separate indexed searches keep the timed range selective;
-                # combining date and epoch conditions with OR scans every
-                # ordinary event when SQLite chooses its recurring index.
-                for all_day in (False, True, 'floating'):
-                    overlap, candidate_params = self._range_clause(start, end, all_day=all_day)
-                    projection = 'data'
-                    if ordinary_limit is not None:
-                        projection += ',start,end,id'
-                        if all_day == 'floating':
-                            projection += (f',({_EVENT_START_WALL_SQL}) AS wall_start,'
-                                           f'({_EVENT_END_WALL_SQL}) AS wall_end')
-                        elif all_day:
-                            projection += (f',({_EVENT_START_DATE_SQL}) AS date_start,'
-                                           f'({_EVENT_END_DATE_SQL}) AS date_end')
-                    candidate_query = f'SELECT {projection} FROM events WHERE recurring=0 AND {overlap}{condition}'
-                    candidate_params.extend(ids or ())
-                    if ordinary_limit is None:
-                        ordinary.extend(Event.from_dict(json.loads(row['data'])) for row
-                                        in self.connection.execute(candidate_query, candidate_params))
-                    else:
-                        order = ('wall_start,wall_end,id' if all_day == 'floating' else
-                                 'date_start,date_end,id' if all_day else 'start,end,id')
-                        rows.extend((all_day, row) for row in self.connection.execute(
-                            candidate_query + f' ORDER BY {order} LIMIT ?', [*candidate_params, ordinary_limit]))
-                if ordinary_limit is not None:
-                    def order(value):
-                        all_day, row = value
-                        if all_day == 'floating':
-                            from .timeutil import local_zone
-                            return (datetime.fromisoformat(row['wall_start']).replace(tzinfo=local_zone()).timestamp(),
-                                    datetime.fromisoformat(row['wall_end']).replace(tzinfo=local_zone()).timestamp(), row['id'])
-                        return ((self._floating_timestamp(row['date_start'], start.tzinfo),
-                                 self._floating_timestamp(row['date_end'], start.tzinfo), row['id']) if all_day
-                                else (row['start'], row['end'], row['id']))
-                    ordinary = [Event.from_dict(json.loads(row['data'])) for _all_day, row
-                                in sorted(rows, key=order)[:ordinary_limit]]
-                masters = [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(query, params)]
-            finally:
-                if own_transaction:
-                    self.connection.rollback()
-        return ordinary, masters
+            self._synchronize_query_index()
+            events, records = self._query_index.select(start, end, ids, ordinary_limit=ordinary_limit)
+            masters = {record.master.id: record.master for record in records}
+            ordinary = []
+            for item in events:
+                if item.series_id:
+                    masters[item.series_id] = self._query_index.sources[item.series_id].master
+                else:
+                    ordinary.append(item)
+            return ordinary, list(masters.values())
 
     def _quarantine_expansion_failures(self, failures) -> None:
         for master, error in failures:
@@ -765,7 +828,6 @@ class Store:
     def upcoming_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
                              *, limit: int = 10, issues: list | None = None) -> list[Event]:
         """Return only the earliest overlapping events, without expanding a full view."""
-        from .recurrence import RecurrenceError, RecurrenceRangeError, expand_series
         self._validate_datetime(start)
         self._validate_datetime(end)
         if end.timestamp() <= start.timestamp() and end.date() <= start.date():
@@ -775,48 +837,36 @@ class Store:
         ids = list(calendar_ids) if calendar_ids is not None else None
         if not limit or ids == []:
             return []
-        result, masters = self._occurrence_sources(start, end, ids, ordinary_limit=limit)
-        key = lambda event: self._occurrence_order(event, start.tzinfo)
-        failures = []
-        for master in masters:
-            try:
-                upper = end
-                if len(result) >= limit:
-                    # Later starts cannot enter the current top N. Keep a tiny
-                    # exclusive interval for equal-start ties and ongoing events.
-                    cutoff = min(end.timestamp(), max(start.timestamp(), key(result[-1])[0]) + 0.000001)
-                    if cutoff > start.timestamp():
-                        upper = datetime.fromtimestamp(cutoff, end.tzinfo)
-                result.extend(expand_series(master, start, upper, limit=limit, truncate=True))
-                result = sorted(result, key=key)[:limit]
-            except RecurrenceRangeError as error:
-                if issues is None:
-                    raise
-                issues.append((master, error))
-            except (ValueError, TypeError, OverflowError, KeyError):
-                failures.append((master, RecurrenceError("Unsupported or invalid recurrence rule.")))
+        with self._lock:
+            self._synchronize_query_index()
+            result, failures = self._query_index.query(start, end, ids, limit=limit, issues=issues)
         self._quarantine_expansion_failures(failures)
-        return sorted(result, key=key)
+        return result
 
     def get_occurrence(self, event_id: str) -> Event | None:
-        from .recurrence import split_occurrence_id, key_datetime, recurrence_set, occurrence, recurrence_key
+        from .recurrence import split_occurrence_id
         parts = split_occurrence_id(event_id)
         if parts is None:
-            return self.get_event(event_id)
+            values = self.query_source_events([event_id])
+            return values[0] if values else None
         master_id, key = parts
         with self._lock:
-            master = self.get_event(master_id)
-            if master is None or not master.recurring or key in master.excluded_dates:
+            self._synchronize_query_index()
+            record = self._query_index.sources.get(master_id)
+            if record is None or record.prepared is None or record.error is not None:
+                return None
+            item = record.occurrences.get(event_id)
+            if item is not None:
+                from .event_range_index import _local_floating
+                return _local_floating(item)
+            master = record.master
+            if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
                 return None
             try:
-                start = key_datetime(key, master)
-                if key in master.recurrence_overrides:
-                    return occurrence(master, start, key)
-                previous = recurrence_set(master, after=start).before(start, inc=True)
-                if previous is None or recurrence_key(previous, master.all_day, floating_time=master.floating_time) != key:
-                    return None
-                return occurrence(master, start, key)
-            except ValueError:
+                # Selection refresh uses the same prepared seek plan. It must
+                # not reparse a large master merely to confirm membership.
+                return record.prepared.occurrence_at(key)
+            except (ValueError, TypeError, OverflowError):
                 return None
 
     def _reviewed_master(self, reference: Event) -> Event:

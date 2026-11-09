@@ -53,8 +53,6 @@ DEFAULT_BINDINGS = {
     'select_up': 'Up', 'select_down': 'Down',
 } | DEFAULT_MODE_BINDINGS | DEFAULT_DIALOG_BINDINGS
 EVENT_MIME = 'application/x-debacal-events+json'
-RANGE_CACHE_EVENT_LIMIT = 50_000
-RANGE_CACHE_PAGE_LIMIT = 8
 
 
 class MainWindow(WorkspaceChrome, QMainWindow):
@@ -102,8 +100,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.full_day = bool(store.get_setting('show_full_day', False))
         self._search_index = None
         self._events_revision = None
-        self._range_cache = OrderedDict()
-        self._range_issue_cache = {}
         self._surface_data_key = None
         self._filter_masters = {}
         self._navigation_sources = None
@@ -213,8 +209,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         revision = self.store.events_revision()
         if revision != self._events_revision:
             self._events_revision = revision
-            self._range_cache.clear()
-            self._range_issue_cache.clear()
             self._filter_masters.clear()
             self._navigation_sources = None
             self._navigation_sources_key = None
@@ -226,7 +220,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.selected_day = self.anchor
         from .recurrence import RecurrenceRangeError
         try:
-            self.range_events = self.query_view_events(days, cals, revision)
+            self.range_events = self.query_view_events(days, cals)
         except RecurrenceRangeError as exc:
             self.range_events = []
             self.selection.clear()
@@ -302,45 +296,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._surface_data_key = key
         return True
 
-    def query_view_events(self, days, calendars, revision):
+    def query_view_events(self, days, calendars):
         identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
         if not identifiers:
             self._view_issues = ()
             return []
         begin, end = at(days[0]), at(days[-1] + timedelta(days=1))
-        key = revision, begin.timestamp(), end.timestamp(), identifiers
-        events = self._range_cache.get(key)
-        if events is not None:
-            self._range_cache.move_to_end(key)
-            self._view_issues = self._range_issue_cache.get(key, ())
-            return list(events)
-        selected = set(identifiers)
-        for cached_key, cached_events in reversed(self._range_cache.items()):
-            if cached_key[:3] == key[:3] and selected.issubset(cached_key[3]):
-                # The occurrence window and event revision are identical.
-                # Hiding sources only filters this complete page; retaining
-                # its superset avoids duplicate pages evicting useful data.
-                self._range_cache.move_to_end(cached_key)
-                self._view_issues = tuple(issue for issue in self._range_issue_cache.get(cached_key, ())
-                                          if issue[0].calendar_id in selected)
-                return [event for event in cached_events if event.calendar_id in selected]
         issues = []
         events = self.store.query_occurrences(begin, end, identifiers, issues=issues)
         self._view_issues = tuple(issues)
-        # Keep a dense current page too: these Event objects already belong
-        # to the displayed view. Re-decoding it for each preference or source
-        # toggle is expensive. An oversized page lives alone and is evicted
-        # as soon as another window is cached; ordinary pages share the budget.
-        if len(events) > RANGE_CACHE_EVENT_LIMIT:
-            self._range_cache.clear()
-            self._range_issue_cache.clear()
-        self._range_cache[key] = tuple(events)
-        self._range_issue_cache[key] = self._view_issues
-        while len(self._range_cache) > 1 and (
-                len(self._range_cache) > RANGE_CACHE_PAGE_LIMIT
-                or sum(map(len, self._range_cache.values())) > RANGE_CACHE_EVENT_LIMIT):
-            evicted, _events = self._range_cache.popitem(last=False)
-            self._range_issue_cache.pop(evicted, None)
         return events
 
     def update_hints(self):
@@ -2056,8 +2020,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests
                                          for source in sources if source.data is not None)
         self._import_requests.clear()
-        self._range_cache.clear()
-        self._range_issue_cache.clear()
         self._view_issues = ()
         if self.engine:
             self.engine.close()

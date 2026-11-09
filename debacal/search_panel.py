@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from collections import OrderedDict
 import calendar
 from heapq import merge
 from html import escape
@@ -130,17 +129,10 @@ class SearchPanel(QTreeWidget):
         self._context_signature = None
         self._presentation_revision = 0
         self._data_revision = None
-        self._cache_generation = 0
-        self._query_cache = OrderedDict()
+        self._data_generation = 0
         self._projection_index = False
-        self._models = OrderedDict()
-        self._entry_details = {}
-        self._representatives = OrderedDict()
-        self._override_events = {}
-        self._override_records = {}
         self._expansion_contexts = {}
         self._render_signature = None
-        self._agenda_caches = OrderedDict()
         self.agenda_issues = ()
         self._agenda_render_key = None
         self._agenda_presentation_events = ()
@@ -164,15 +156,8 @@ class SearchPanel(QTreeWidget):
 
     def invalidate(self):
         self._index = None
-        self._cache_generation += 1
-        self._query_cache.clear()
-        self._models.clear()
-        self._entry_details.clear()
-        self._representatives.clear()
-        self._override_events.clear()
-        self._override_records.clear()
+        self._data_generation += 1
         self._render_signature = None
-        self._agenda_caches.clear()
 
     def _check_data_revision(self):
         revision = getattr(self.store, 'events_revision', None)
@@ -372,58 +357,34 @@ class SearchPanel(QTreeWidget):
         self._expansion_contexts = {key: value for key, value in self._expansion_contexts.items() if key in present}
 
     def _matching_indices(self, query):
-        if query in self._query_cache:
-            self._query_cache.move_to_end(query)
-            return self._query_cache[query]
-        parents = [key for key in self._query_cache if key in query]
-        candidates = self._query_cache[max(parents, key=len)] if parents else range(len(self._index))
         if self._projection_index:
-            matches = [index for index in candidates if query in self._index[index][2]]
-        else:
-            matches = [index for index in candidates if query in self._index[index][1]
-                       or (self._index[index][2] and any(query in text for _key, _payload, text in self._index[index][2]))]
-        self._query_cache[query] = matches
-        while len(self._query_cache) > 8:
-            self._query_cache.popitem(last=False)
-        return matches
+            return [index for index, (_identity, _calendar, text) in enumerate(self._index) if query in text]
+        return [index for index, (_master, text, overrides) in enumerate(self._index)
+                if query in text or any(query in override_text for _key, _payload, override_text in overrides)]
 
-    def _load_models(self, indices):
-        identities = [self._index[index][0] for index in indices]
-        missing = [identity for identity in identities if identity not in self._models]
-        if missing:
-            for event in self.store.get_events(missing):
-                self._models[event.id] = event
-        for identity in identities:
-            if identity in self._models:
-                self._models.move_to_end(identity)
-        while len(self._models) > 1024:
-            identity, _event = self._models.popitem(last=False)
-            self._entry_details.pop(identity, None)
-            self._override_records.pop(identity, None)
-            self._override_events.pop(identity, None)
-
-    def _index_entry(self, index):
+    def _index_entry(self, index, models):
         if not self._projection_index:
             return self._index[index]
         identity = self._index[index][0]
-        master = self._models.get(identity)
+        master = models.get(identity)
         if master is None:
             return None
-        if identity not in self._entry_details:
-            overrides = [(key, payload, ' '.join(str(payload.get(field, '') or '') for field in
-                          ('title', 'description', 'location')).casefold())
-                         for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates]
-            self._entry_details[identity] = (master, self._searchable(master), overrides)
-        return self._entry_details[identity]
+        overrides = [(key, payload, ' '.join(str(payload.get(field, '') or '') for field in
+                      ('title', 'description', 'location')).casefold())
+                     for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates]
+        return master, self._searchable(master), overrides
 
     def _matching_descriptions(self, query, matching):
         result = []
         for offset in range(0, len(matching), 256):
             batch = matching[offset:offset + 256]
+            models = {}
             if self._projection_index:
-                self._load_models(batch)
+                read_sources = getattr(self.store, 'query_source_events', self.store.get_events)
+                identities = [self._index[index][0] for index in batch]
+                models = {event.id: event for event in read_sources(identities)}
             for index in batch:
-                entry = self._index_entry(index)
+                entry = self._index_entry(index, models)
                 if entry is None:
                     continue
                 _master, searchable, overrides = entry
@@ -436,26 +397,17 @@ class SearchPanel(QTreeWidget):
         return result, False
 
     def _override_event(self, master, key, payload):
-        values = self._override_events.setdefault(master.id, {})
-        if key not in values:
-            values[key] = Event.from_dict(payload)
-        return values[key]
+        return Event.from_dict(payload)
 
     def _context_floor(self, master_id):
         return self._expansion_contexts.get(master_id, self._range[0] if self._range else now())
 
     def _representative(self, master):
         floor = self._context_floor(master.id)
-        key = (master.id, floor)
-        if key not in self._representatives:
-            try:
-                self._representatives[key] = next(self._occurrences(master, floor=floor), None)
-            except (ValueError, OverflowError):
-                self._representatives[key] = None
-            while len(self._representatives) > 2048:
-                self._representatives.popitem(last=False)
-        self._representatives.move_to_end(key)
-        return self._representatives[key]
+        try:
+            return next(self._occurrences(master, floor=floor), None)
+        except (ValueError, OverflowError):
+            return None
 
     def _set_representative(self, item, master, representative):
         item.setData(EVENT_ROLE, representative)
@@ -485,10 +437,10 @@ class SearchPanel(QTreeWidget):
             matching = [index for index in matching
                         if (self._index[index][1] if self._projection_index else self._index[index][0].calendar_id) in active]
             descriptions, more = self._matching_descriptions(query, matching)
-            signature = (self._cache_generation, True, tuple((index, keys) for index, keys, _entry in descriptions), more)
+            signature = (self._data_generation, True, tuple((index, keys) for index, keys, _entry in descriptions), more)
         else:
             matching, descriptions = [], []
-            signature = (self._cache_generation, False, (), False)
+            signature = (self._data_generation, False, (), False)
         if not self.agenda_mode and signature == self._render_signature:
             if self._context_changed:
                 self._refresh_unopened_contexts()
@@ -552,7 +504,7 @@ class SearchPanel(QTreeWidget):
             self.blockSignals(blocked)
 
     def populate_upcoming(self, start, *, days=30, limit=10):
-        """Show bounded earliest overlaps, reusing a precise minute-wide cache."""
+        """Query the earliest overlaps for this exact interval and visibility."""
         if type(limit) is not int or limit < 0:
             raise ValueError('The upcoming event limit must be nonnegative.')
         self._check_data_revision()
@@ -562,34 +514,10 @@ class SearchPanel(QTreeWidget):
         end = start + timedelta(days=days)
         if end <= start:
             raise ValueError('The upcoming range must end after its start.')
-        identity = (self._cache_generation, visible, days, limit)
-        cache = self._agenda_caches.get(identity)
-        if cache is not None:
-            self._agenda_caches.move_to_end(identity)
-        instant = lambda value: value.astimezone(timezone.utc)
-        reusable = (cache is not None and cache['identity'] == identity
-                    and instant(cache['start']) <= instant(start)
-                    and instant(end) <= instant(cache['end']))
-        events = [event for event in cache['events'] if overlaps(event, start, end)] if reusable else []
-        self.agenda_issues = cache.get('issues', ()) if reusable else ()
-        if not reusable or (len(events) < limit and not cache['exhausted']):
-            # A little lookahead covers normal refreshes within this minute.
-            # If many short events expire, refill instead of returning too few.
-            padded = instant(end).replace(second=0, microsecond=0) + timedelta(minutes=1)
-            padded = padded.astimezone(end.tzinfo)
-            fetch_limit = max(1, limit * 2)
-            issues = []
-            values = self.store.upcoming_occurrences(start, padded, visible, limit=fetch_limit, issues=issues) if limit else []
-            self.agenda_issues = tuple(issues)
-            self._agenda_caches[identity] = {'identity': identity, 'start': start, 'end': padded,
-                                             'events': tuple(values), 'exhausted': len(values) < fetch_limit,
-                                             'issues': self.agenda_issues}
-            self._agenda_caches.move_to_end(identity)
-            while len(self._agenda_caches) > 8:
-                self._agenda_caches.popitem(last=False)
-            events = [event for event in values if overlaps(event, start, end)]
-        events = events[:limit]
-        render_key = (self._cache_generation, tuple(event.id for event in events), days)
+        issues = []
+        events = self.store.upcoming_occurrences(start, end, visible, limit=limit, issues=issues) if limit and visible else []
+        self.agenda_issues = tuple(issues)
+        render_key = (self._data_generation, tuple(event.id for event in events), days)
         if self.agenda_mode and render_key == self._agenda_render_key:
             self.refresh_agenda_presentation(start)
             return len(events)
@@ -708,17 +636,10 @@ class SearchPanel(QTreeWidget):
                 if floor is not None and start.timestamp() < floor.timestamp():
                     continue
                 yield occurrence(master, start, key)
-        if master.id not in self._override_records:
-            records = []
-            for key, payload in master.recurrence_overrides.items():
-                if key in master.excluded_dates:
-                    continue
-                start = self._override_event(master, key, payload).start
-                records.append((start.astimezone(timezone.utc), key, payload))
-            self._override_records[master.id] = sorted(records, key=lambda record: record[0])
-        detached = (self._override_event(master, key, payload)
-                    for start, key, payload in self._override_records[master.id]
-                    if floor is None or start >= floor.astimezone(timezone.utc))
+        detached = sorted((self._override_event(master, key, payload)
+                           for key, payload in master.recurrence_overrides.items() if key not in master.excluded_dates),
+                          key=lambda event: event.start.astimezone(timezone.utc))
+        detached = (event for event in detached if floor is None or event.start.timestamp() >= floor.timestamp())
         return merge(normal(), detached, key=lambda event: event.start.astimezone(timezone.utc))
 
     def _load_page(self, item, *, remember=True):

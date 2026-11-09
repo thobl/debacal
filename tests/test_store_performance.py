@@ -49,16 +49,17 @@ def test_optional_projection_issues_preserve_healthy_calendars_without_truncatin
 
 
 def test_upcoming_projection_budget_is_reported_instead_of_quarantining_valid_sources():
-    from debacal.recurrence import expand_series
+    from debacal.prepared_recurrence import PreparedSeries
     expensive = event('expensive', recurrence_rule='FREQ=HOURLY')
     healthy = event('healthy', recurrence_rule='FREQ=DAILY;COUNT=3')
-    def project(master, *args, **kwargs):
-        if master.id == expensive.id:
+    original = PreparedSeries.query_rule
+    def project(prepared, *args, **kwargs):
+        if prepared.master.id == expensive.id:
             raise RecurrenceRangeError('Projection budget exceeded. Choose a smaller date range.')
-        return expand_series(master, *args, **kwargs)
+        return original(prepared, *args, **kwargs)
     with Store(':memory:') as store:
         store.apply_remote([expensive, healthy])
-        with patch('debacal.recurrence.expand_series', side_effect=project):
+        with patch.object(PreparedSeries, 'query_rule', project):
             with pytest.raises(RecurrenceRangeError):
                 store.upcoming_occurrences(START, START + timedelta(days=7))
             issues = []
@@ -123,7 +124,7 @@ def test_resource_identity_snapshot_never_decodes_event_payloads():
             assert store.event_ids() == {'first', 'second'}
 
 
-def test_query_decodes_each_master_once_and_never_decodes_offscreen_ordinary_rows():
+def test_query_uses_prepared_sources_without_decoding_any_event_rows():
     with Store(":memory:") as store:
         ordinary = event("ordinary")
         active = event("active", recurrence_rule="FREQ=DAILY;COUNT=3")
@@ -135,7 +136,7 @@ def test_query_decodes_each_master_once_and_never_decodes_offscreen_ordinary_row
         with patch.object(Event, "from_dict", wraps=Event.from_dict) as decode:
             actual = store.query_occurrences(START, START + timedelta(days=1))
         assert len(actual) == 3
-        assert decode.call_count == 3
+        assert decode.call_count == 0
 
 
 def test_candidate_confirmation_uses_group_index_and_remains_undoable():
@@ -224,7 +225,7 @@ def test_legacy_index_backfill_happens_once(tmp_path):
     with patch("debacal.store.json.loads", wraps=json.loads) as decode:
         with Store(path):
             pass
-    assert decode.call_count == 2  # The migration markers, no event JSON.
+    assert decode.call_count == 4  # Two markers and one eager decode per source.
 
 
 @pytest.mark.parametrize("rule", [
