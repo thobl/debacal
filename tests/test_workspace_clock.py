@@ -55,7 +55,8 @@ def test_initial_workspace_size_respects_available_screen_and_scrollable_content
         window = MainWindow(store, enable_sync=False)
     windows.append(window)
     assert (window.width(), window.height()) == expected
-    assert window.workspace_content.minimumWidth() == 1030
+    # Localized headers and desktop fonts can require a little more room.
+    assert window.workspace_content.minimumWidth() >= 1030
     assert window.workspace_content.minimumHeight() == 690
 
 

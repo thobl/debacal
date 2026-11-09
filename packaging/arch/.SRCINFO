@@ -28,6 +28,6 @@ pkgbase = debacal
 	optdepends = kwallet: secure password storage in Plasma
 	optdepends = python-dbus: KWallet keyring backend support
 	source = debacal-0.1.0.tar.gz::https://github.com/thobl/debacal/releases/download/v0.1.0/debacal-0.1.0.tar.gz
-	sha256sums = a351a5b87b119e42b0f68b1f645cda7a311b35f3c7276064f999d39d0c342cfe
+	sha256sums = de12fce3774992a399911fff04bc240602d4766ed3cc2090e2222f7834d3b7fd
 
 pkgname = debacal
