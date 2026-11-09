@@ -11,11 +11,20 @@ automatically; Python 3.12 and newer keep their normal Qt version range.
 
 ## Arch Linux
 
-From a checkout, run `makepkg -si` in `packaging/arch`. Alternatively, download
+To build the current working tree from a checkout without downloading its
+sources, run this from the checkout root:
+
+```sh
+cd packaging/arch
+makepkg -p PKGBUILD.local -si
+```
+
+This includes local source edits. To build the published release instead, use
+plain `makepkg -si` in that directory, or download
 `debacal-0.1.0-arch.tar.gz` from the
 [release](https://github.com/thobl/debacal/releases/tag/v0.1.0), extract it,
 review `PKGBUILD`, then run `makepkg -si` in the extracted directory.
-The recipe downloads and verifies the matching source archive. Missing
+The release recipe downloads and verifies the matching source archive. Missing
 dependencies are installed using pacman; the build itself uses system Python
 packages. See [the recipe's documentation](../packaging/arch/README.md) for
 offline builds and test options.

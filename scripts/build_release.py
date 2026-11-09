@@ -54,12 +54,34 @@ def run_build(arguments, env):
         raise subprocess.CalledProcessError(result.returncode, result.args)
 
 
-def build(outdir, *, source_only=False, tag=None):
+def project_version(tag=None):
     version = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?', version):
         raise ValueError('Use a release version such as 0.1.0 in pyproject.toml.')
     if tag is not None and tag != 'v' + version:
         raise ValueError('The Git tag must match the project version: v' + version)
+    return version
+
+
+def stage_sources(destination, *, tag=None):
+    """Copy the declared package inputs into a fresh, data-free source tree."""
+    project_version(tag)
+    stage = Path(destination).resolve()
+    trees = ('debacal', 'tests', 'packaging/linux')
+    if stage == ROOT or any(stage.is_relative_to(ROOT / name) for name in trees):
+        raise ValueError('The staging directory must be outside the source inputs.')
+    stage.mkdir(parents=True)
+    for name in ('pyproject.toml', 'MANIFEST.in', 'README.md', 'LICENSE'):
+        shutil.copyfile(ROOT / name, stage / name)
+    for name in trees:
+        shutil.copytree(ROOT / name, stage / name,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
+    for path in stage.rglob('*'):
+        os.utime(path, (EPOCH, EPOCH))
+
+
+def build(outdir, *, source_only=False, tag=None):
+    version = project_version(tag)
     outdir = Path(outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     assets = []
@@ -67,14 +89,7 @@ def build(outdir, *, source_only=False, tag=None):
     with tempfile.TemporaryDirectory(prefix='debacal-release-') as temporary:
         work = Path(temporary)
         stage = work / 'source'
-        stage.mkdir()
-        for name in ('pyproject.toml', 'MANIFEST.in', 'README.md', 'LICENSE'):
-            shutil.copyfile(ROOT / name, stage / name)
-        for name in ('debacal', 'tests', 'packaging/linux'):
-            shutil.copytree(ROOT / name, stage / name,
-                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
-        for path in stage.rglob('*'):
-            os.utime(path, (EPOCH, EPOCH))
+        stage_sources(stage, tag='v' + version)
         raw = work / 'raw'
         run_build(['--sdist', '--no-isolation', '--outdir', str(raw), str(stage)], env)
         source = outdir / f'debacal-{version}.tar.gz'
@@ -113,10 +128,15 @@ def build(outdir, *, source_only=False, tag=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--outdir', type=Path, default=ROOT / 'dist')
-    parser.add_argument('--source-only', action='store_true', help='Build the source first to update its recipe hash')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--source-only', action='store_true', help='Build the source first to update its recipe hash')
+    mode.add_argument('--stage-only', type=Path, help='Stage checkout inputs in a fresh directory without building an archive')
     parser.add_argument('--tag', help='Verify that the release tag matches the package version')
     args = parser.parse_args()
-    build(args.outdir, source_only=args.source_only, tag=args.tag)
+    if args.stage_only is not None:
+        stage_sources(args.stage_only, tag=args.tag)
+    else:
+        build(args.outdir, source_only=args.source_only, tag=args.tag)
 
 
 if __name__ == '__main__':

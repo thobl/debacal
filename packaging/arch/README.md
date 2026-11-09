@@ -1,8 +1,8 @@
 # Arch Linux
 
-This recipe builds the published Debacal source release using Arch's Python and
-Qt packages. It does not run pip or download Python dependencies during the
-build. All runtime dependencies are available in Arch's official repositories.
+These recipes build Debacal using Arch's Python and Qt packages. They do not
+run pip or download Python dependencies during the build. All runtime
+dependencies are available in Arch's official repositories.
 
 Download the `debacal-0.1.0-arch.tar.gz` recipe asset from the
 [release](https://github.com/thobl/debacal/releases/tag/v0.1.0), extract it, review
@@ -13,9 +13,24 @@ makepkg -si
 debacal
 ```
 
-Alternatively, use `packaging/arch` from the matching Git tag. `makepkg -s`
-installs missing build/runtime dependencies with pacman; `-i` installs the built
-package. The desktop launcher and `text/calendar` file association are installed
+To build the current working tree from a checkout, run this from the checkout
+root instead:
+
+```sh
+cd packaging/arch
+makepkg -p PKGBUILD.local -si
+debacal
+```
+
+The local recipe stages the application sources and tests, including uncommitted
+edits, without downloading a source archive. Profiles, local calendar exports and
+virtual environments are excluded. Its version must match `pkgver` in
+`PKGBUILD`. Plain `makepkg -si` continues to build the checksum-pinned release,
+including when run in a checkout.
+
+`makepkg -s` installs missing build/runtime dependencies with pacman; `-i`
+installs the built package. The desktop launcher and `text/calendar` file
+association are installed
 alongside the command. No existing calendar application is replaced as the
 default. To choose Debacal explicitly:
 

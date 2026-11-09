@@ -1,0 +1,16 @@
+# Build the working tree while sharing the release package's dependencies,
+# build, checks and installation steps.
+source "${startdir}/PKGBUILD"
+source=()
+sha256sums=()
+
+prepare() {
+  local checkout="${startdir}/../.."
+  local destination="${srcdir}/${pkgname}-${pkgver}"
+  if [[ ! -f "${checkout}/scripts/build_release.py" || ! -d "${checkout}/debacal" ]]; then
+    error 'Use PKGBUILD.local from packaging/arch in a Debacal checkout.'
+    return 1
+  fi
+  rm -rf -- "$destination"
+  python "${checkout}/scripts/build_release.py" --stage-only "$destination" --tag "v${pkgver}"
+}

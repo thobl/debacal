@@ -38,10 +38,10 @@ Requires a Linux desktop and Python 3.11 or newer.
 ```sh
 git clone https://github.com/thobl/debacal.git
 cd debacal/packaging/arch
-makepkg -si
+makepkg -p PKGBUILD.local -si
 ```
 
-This installs the app, its dependencies, and a desktop launcher. A standalone Arch build bundle is also available on the [releases page](https://github.com/thobl/debacal/releases).
+This builds the checkout and installs the app, its dependencies, and a desktop launcher. To build the published release, use plain `makepkg -si` or the standalone Arch build bundle on the [releases page](https://github.com/thobl/debacal/releases).
 
 ### Other Linux distributions
 

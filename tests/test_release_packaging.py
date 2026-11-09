@@ -44,3 +44,64 @@ def test_release_tag_must_match_package_version_before_building(tmp_path):
     with pytest.raises(ValueError, match='tag must match'):
         builder().build(tmp_path, tag='v999.0.0')
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture
+def checkout(tmp_path, monkeypatch):
+    root = tmp_path / 'checkout'
+    files = {
+        'pyproject.toml': b'[project]\nname = "debacal"\nversion = "0.1.0"\n',
+        'MANIFEST.in': b'include LICENSE\n', 'README.md': b'Debacal\n', 'LICENSE': b'0BSD\n',
+        'debacal/__init__.py': b'', 'tests/test_example.py': b'assert True\n',
+        'packaging/linux/debacal.desktop': b'[Desktop Entry]\n',
+        'packaging/linux/debacal.svg': b'<svg/>\n',
+    }
+    for name, data in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    module = builder()
+    monkeypatch.setattr(module, 'ROOT', root)
+    return module, root, files
+
+
+def test_checkout_staging_copies_package_inputs_without_local_data_or_caches(checkout, tmp_path):
+    module, root, files = checkout
+    for name in ('.env', 'profile.sqlite3', 'private.ics', '.venv/local.py', 'docs/local-notes.md',
+                 'debacal/__pycache__/local.pyc', 'tests/local.pyc'):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'Local-only synthetic data')
+    destination = tmp_path / 'staged'
+    module.stage_sources(destination, tag='v0.1.0')
+    staged = {path.relative_to(destination).as_posix(): path.read_bytes()
+              for path in destination.rglob('*') if path.is_file()}
+    assert staged == files
+    assert all(path.stat().st_mtime == module.EPOCH for path in destination.rglob('*'))
+
+
+def test_checkout_version_mismatch_does_not_create_a_staging_directory(checkout, tmp_path):
+    module, _, _ = checkout
+    destination = tmp_path / 'staged'
+    with pytest.raises(ValueError, match='tag must match'):
+        module.stage_sources(destination, tag='v9.0.0')
+    assert not destination.exists()
+
+
+def test_checkout_staging_does_not_merge_stale_or_unrelated_files(checkout, tmp_path):
+    module, _, _ = checkout
+    destination = tmp_path / 'existing'
+    destination.mkdir()
+    marker = destination / 'keep.txt'
+    marker.write_bytes(b'Keep existing files')
+    with pytest.raises(FileExistsError):
+        module.stage_sources(destination)
+    assert list(destination.iterdir()) == [marker]
+    assert marker.read_bytes() == b'Keep existing files'
+
+
+@pytest.mark.parametrize('relative', ['', 'debacal/nested', 'tests/nested', 'packaging/linux/nested'])
+def test_checkout_staging_rejects_self_copying(checkout, relative):
+    module, root, _ = checkout
+    with pytest.raises(ValueError, match='outside the source inputs'):
+        module.stage_sources(root / relative)
