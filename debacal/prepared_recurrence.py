@@ -487,15 +487,17 @@ class PreparedSeries:
         instant = lower.timestamp()
         return (value for value in values if value.timestamp() >= instant)
 
-    def query_rule(self, start, end, *, limit=10000, truncate=False):
+    def query_rule(self, start, end, *, limit=10000, truncate=False, floating_zone=None):
+        """Project the native rule, optionally rebinding floating wall clocks.
+
+        The default uses the same scheduling zone as explicit/finite dates and
+        the canonical expansion engine. A workspace supplies its current viewer
+        zone explicitly; preparing a series does not bind it to an OS setting.
+        """
         if truncate and limit <= 0 or self.rule is None:
             return []
         master = self.master
-        if master.floating_time:
-            from .timeutil import local_zone
-            zone = local_zone()
-        else:
-            zone = self.event_zone
+        zone = floating_zone if master.floating_time and floating_zone is not None else self.event_zone
         lower = self._lower(start, zone)
         boundary = ((end.astimezone(zone) if master.floating_time else end)
                     .replace(tzinfo=timezone.utc, fold=0)) if self.floating else end
@@ -517,7 +519,7 @@ class PreparedSeries:
                     raise RecurrenceRangeError(f'This range exceeds {limit:,} occurrences. Choose a smaller date range.')
         return sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))
 
-    def occurrence_at(self, key):
+    def occurrence_at(self, key, *, floating_zone=None):
         """Return one native rule identity without looking back its duration.
 
         Store indexes explicit additions and detached payloads separately.
@@ -553,8 +555,7 @@ class PreparedSeries:
                 if master.all_day:
                     actual = datetime.combine(value.date(), time.min, self.event_zone)
                 elif master.floating_time:
-                    from .timeutil import local_zone
-                    actual = value.replace(tzinfo=local_zone())
+                    actual = value.replace(tzinfo=floating_zone if floating_zone is not None else self.event_zone)
                 else:
                     actual = value
                 return self._project(actual, key)
@@ -622,17 +623,33 @@ class PreparedSeries:
         result = {item.id: item for item in (*self.explicit_occurrences, *regular)}
         return tuple(sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))) if len(result) <= maximum else None
 
-    def query(self, start, end, *, limit=10000, truncate=False):
+    @staticmethod
+    def _rebind_floating(item, zone):
+        if zone is None or not item.floating_time or item.start.tzinfo == zone and item.end.tzinfo == zone:
+            return item
+        projected = copy_event(item)
+        object.__setattr__(projected, 'start', item.start.replace(tzinfo=zone, fold=0))
+        object.__setattr__(projected, 'end', item.end.replace(tzinfo=zone, fold=0))
+        return projected
+
+    def query(self, start, end, *, limit=10000, truncate=False, floating_zone=None):
+        """Query a complete series in its source or explicit viewer zone.
+
+        Rebinding floating clocks applies equally to ordinary masters, explicit
+        dates, detached ranges and the native rule, without mutating preparation.
+        """
         if not self.master.recurring:
-            return [self.master] if overlaps(self.master, start, end) else []
+            master = self._rebind_floating(self.master, floating_zone)
+            return [master] if overlaps(master, start, end) else []
         if self.master.all_day or self.master.floating_time:
             # Civil-date/floating semantics are indexed independently by Store.
-            explicit = [item for item in self.explicit_occurrences if overlaps(item, start, end)]
+            candidates = (self._rebind_floating(item, floating_zone) for item in self.explicit_occurrences)
+            explicit = [item for item in candidates if overlaps(item, start, end)]
         else:
             first = bisect_left(self._explicit_ends, start.timestamp())
             last = bisect_left(self._explicit_starts, end.timestamp())
             explicit = [item for item in self.explicit_occurrences[first:last] if overlaps(item, start, end)]
-        regular = self.query_rule(start, end, limit=limit, truncate=truncate)
+        regular = self.query_rule(start, end, limit=limit, truncate=truncate, floating_zone=floating_zone)
         result = {item.id: item for item in (*explicit, *regular)}
         if not truncate and len(result) > limit:
             raise RecurrenceRangeError(f'This range exceeds {limit:,} occurrences. Choose a smaller date range.')

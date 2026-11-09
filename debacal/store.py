@@ -1036,7 +1036,9 @@ class Store:
             try:
                 # Selection refresh uses the same prepared seek plan. It must
                 # not reparse a large master merely to confirm membership.
-                return record.prepared.occurrence_at(key)
+                from .timeutil import local_zone
+                return record.prepared.occurrence_at(
+                    key, floating_zone=local_zone() if master.floating_time else None)
             except (ValueError, TypeError, OverflowError):
                 return None
 

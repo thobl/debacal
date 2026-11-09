@@ -14,7 +14,7 @@ import pytest
 from debacal.models import Event, copy_event
 from debacal.prepared_recurrence import PreparedSeries
 from debacal.prepared_storage import FORMAT_VERSION, PreparedStateError, StateReader, StateWriter
-from debacal.recurrence import occurrence, recurrence_key
+from debacal.recurrence import expand_series, occurrence, recurrence_key
 from debacal.recurrence_budget import BoundedRule
 from debacal.timezones import (
     _cached_explicit_timezone, _prepared_definitions, _prepared_definitions_lock,
@@ -135,15 +135,34 @@ def test_occurrence_deltas_share_master_fields_and_can_reuse_indexed_events():
 
 
 @pytest.mark.parametrize('all_day,floating', [(True, False), (False, True)])
-def test_civil_date_and_floating_prepared_ranges_survive_storage(all_day, floating, monkeypatch):
-    first = START.replace(hour=0) if all_day else START
+@pytest.mark.parametrize('viewer', ['UTC', 'America/New_York', 'Europe/Berlin'])
+@pytest.mark.parametrize('count', [4, 400])
+def test_civil_date_and_floating_prepared_ranges_survive_storage(all_day, floating, viewer, count, monkeypatch):
+    first = START.replace(year=2026) if count == 4 else START
+    first = first.replace(hour=0) if all_day else first
     master = event(start=first, end=first + timedelta(days=2) if all_day else first + timedelta(hours=1),
-                   all_day=all_day, floating_time=floating, recurrence_rule='FREQ=MONTHLY;COUNT=400', range_policy='cut')
-    expected, restored, _writer, _reader = roundtrip(master)
+                   all_day=all_day, floating_time=floating, recurrence_rule=f'FREQ=MONTHLY;COUNT={count}', range_policy='cut')
     if floating:
-        monkeypatch.setattr('debacal.timeutil.local_zone', lambda: ZoneInfo('America/New_York'))
-    lower = datetime(2026, 3, 1, tzinfo=ZoneInfo('America/New_York'))
-    assert restored.query(lower, lower + timedelta(days=65)) == expected.query(lower, lower + timedelta(days=65))
+        added = first.replace(year=2026, month=3, day=3)
+        detached_start = first.replace(year=2026, month=3, day=4)
+        key = recurrence_key(first.replace(year=2026, month=3, day=1), floating_time=True)
+        detached = replace(occurrence(master, detached_start, key), title='Detached floating date')
+        master = replace(master, recurrence_dates=(recurrence_key(added, floating_time=True),),
+                         recurrence_overrides={key: detached.to_dict()})
+    expected, restored, _writer, _reader = roundtrip(master)
+    zone = ZoneInfo(viewer)
+    lower = datetime(2026, 3, 1, tzinfo=zone)
+    upper = lower + timedelta(days=65)
+    if floating:
+        original_zones = restored.master.start.tzinfo, expected.master.start.tzinfo
+        monkeypatch.setattr('debacal.timeutil.local_zone', lambda: zone)
+        rebound = replace(master, start=master.start.replace(tzinfo=zone), end=master.end.replace(tzinfo=zone))
+        actual = restored.query(lower, upper, floating_zone=zone)
+        assert actual == expected.query(lower, upper, floating_zone=zone) == expand_series(rebound, lower, upper)
+        assert {value.start.tzinfo for value in actual} == {zone}
+        assert (restored.master.start.tzinfo, expected.master.start.tzinfo) == original_zones
+    else:
+        assert restored.query(lower, upper) == expected.query(lower, upper)
 
 
 def test_numeric_types_and_datetime_extremes_are_exact():

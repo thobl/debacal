@@ -226,8 +226,13 @@ class EventRangeIndex:
             try:
                 if record.error is not None:
                     raise record.error
+                if master.floating_time:
+                    from .timeutil import local_zone
+                    floating_zone = local_zone()
+                else:
+                    floating_zone = None
                 values = record.prepared.query_rule(start, end, limit=limit if limit is not None else OCCURRENCE_LIMIT,
-                                                    truncate=limit is not None)
+                                                    truncate=limit is not None, floating_zone=floating_zone)
                 grouped.setdefault(master.id, {}).update((item.id, item) for item in values)
             except RecurrenceRangeError as error:
                 if issues is None:

@@ -176,6 +176,68 @@ def test_duration_and_month_boundary_cut_match_existing_occurrences(all_day, flo
         assert prepared.query(begin, end) == expand_series(master, begin, end)
 
 
+@pytest.mark.parametrize('rule', ['', 'FREQ=MONTHLY;COUNT=3', 'FREQ=MONTHLY;COUNT=1000'])
+@pytest.mark.parametrize('cut', [False, True])
+def test_floating_preparation_uses_one_zone_for_explicit_finite_and_native_rule_dates(rule, cut):
+    first = datetime(2026, 1, 28, 10, tzinfo=BERLIN)
+    master = source(rule, start=first, end=first + timedelta(days=4), floating_time=True,
+                    range_policy='cut' if cut else '')
+    begin, end = datetime(2026, 2, 1, tzinfo=BERLIN), datetime(2026, 3, 2, tzinfo=BERLIN)
+    expected = expand_series(master, begin, end)
+    # Direct expansion operates in the supplied master's scheduling zone. The
+    # host timezone must not change just the prepared rule's projection.
+    with patch('debacal.timeutil.local_zone', side_effect=AssertionError('Implicit viewer zone')):
+        prepared = PreparedSeries(master)
+        assert prepared.query(begin, end) == expected
+        finite = prepared.finite_rule_occurrences(4)
+        if finite is not None:
+            assert all(value.start.tzinfo == BERLIN for value in finite)
+        if rule:
+            key = recurrence_key(first, floating_time=True)
+            assert prepared.occurrence_at(key) == occurrence(master, first, key)
+
+
+@pytest.mark.parametrize('cut', [False, True])
+def test_floating_index_and_membership_follow_viewer_zone_changes_without_repreparation(cut):
+    from debacal.event_range_index import EventRangeIndex
+
+    first = datetime(2026, 1, 28, 10, tzinfo=BERLIN)
+    master = source('FREQ=MONTHLY;COUNT=1000', start=first, end=first + timedelta(days=4),
+                    floating_time=True, range_policy='cut' if cut else '')
+    index = EventRangeIndex()
+    index.upsert(master)
+    prepared = index.sources[master.id].prepared
+    for zone in (UTC, ZoneInfo('America/New_York'), BERLIN):
+        rebound = replace(master, start=master.start.replace(tzinfo=zone), end=master.end.replace(tzinfo=zone))
+        for month in (2, 3, 10):
+            begin = datetime(2026, month, 1, tzinfo=zone)
+            end = begin + timedelta(days=40)
+            with patch('debacal.timeutil.local_zone', return_value=zone):
+                actual, failures = index.query(begin, end)
+            assert not failures
+            expected = expand_series(rebound, begin, end)
+            assert actual == expected
+            for value in expected:
+                if value.recurrence_id not in prepared.override_keys:
+                    assert prepared.occurrence_at(value.recurrence_id, floating_zone=zone) == value
+        assert index.sources[master.id].prepared is prepared
+
+
+@pytest.mark.parametrize('viewer', ['UTC', 'America/New_York', 'Europe/Berlin'])
+@pytest.mark.parametrize('added', [False, True])
+def test_explicit_floating_viewer_zone_applies_to_standalone_and_date_only_series(viewer, added):
+    first = datetime(2026, 3, 28, 9, tzinfo=BERLIN)
+    master = source('', start=first, end=first + timedelta(hours=1), floating_time=True)
+    if added:
+        master = replace(master, recurrence_dates=('2026-03-29T09:00:00',))
+    prepared = PreparedSeries(master)
+    zone = ZoneInfo(viewer)
+    rebound = replace(master, start=master.start.replace(tzinfo=zone), end=master.end.replace(tzinfo=zone))
+    begin, end = datetime(2026, 3, 28, tzinfo=zone), datetime(2026, 3, 31, tzinfo=zone)
+    assert prepared.query(begin, end, floating_zone=zone) == expand_series(rebound, begin, end)
+    assert prepared.master.start.tzinfo is BERLIN
+
+
 def test_short_monthly_count_does_not_build_a_gregorian_cycle():
     with patch('debacal.prepared_recurrence._CalendarSeek', side_effect=AssertionError('Full cycle built')):
         prepared = PreparedSeries(source('FREQ=MONTHLY;COUNT=18'))
