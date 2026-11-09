@@ -2,7 +2,9 @@
 import gzip
 import importlib.util
 from pathlib import Path
+import re
 import tarfile
+import tomllib
 
 import pytest
 
@@ -44,6 +46,19 @@ def test_release_tag_must_match_package_version_before_building(tmp_path):
     with pytest.raises(ValueError, match='tag must match'):
         builder().build(tmp_path, tag='v999.0.0')
     assert list(tmp_path.iterdir()) == []
+
+
+def test_release_version_matches_runtime_lockfile_and_arch_metadata():
+    from debacal import __version__
+    root = SCRIPT.parents[1]
+    version = builder().project_version()
+    assert __version__ == version
+    lock = tomllib.loads((root / 'uv.lock').read_text())
+    assert next(item for item in lock['package'] if item['name'] == 'debacal')['version'] == version
+    recipe = (root / 'packaging/arch/PKGBUILD').read_text()
+    assert re.search(r'^pkgver=(.+)$', recipe, re.MULTILINE)[1] == version
+    metadata = (root / 'packaging/arch/.SRCINFO').read_text()
+    assert re.search(r'^\s*pkgver = (.+)$', metadata, re.MULTILINE)[1] == version
 
 
 @pytest.fixture

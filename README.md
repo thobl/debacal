@@ -43,12 +43,14 @@ makepkg -p PKGBUILD.local -si
 
 This builds the checkout and installs the app, its dependencies, and a desktop launcher. To build the published release, use plain `makepkg -si` or the standalone Arch build bundle on the [releases page](https://github.com/thobl/debacal/releases).
 
+To update a checkout, quit Debacal, run `git pull --ff-only` in the repository, then `makepkg -p PKGBUILD.local -sif` in `packaging/arch`. For a published release, use its updated recipe and plain `makepkg -sif`. Restart Debacal afterwards; profiles and settings are retained.
+
 ### Other Linux distributions
 
 Install [pipx](https://pipx.pypa.io/stable/installation/), then:
 
 ```sh
-pipx install https://github.com/thobl/debacal/releases/download/v0.1.0/debacal-0.1.0-py3-none-any.whl
+pipx install https://github.com/thobl/debacal/releases/download/v0.1.1/debacal-0.1.1-py3-none-any.whl
 debacal
 ```
 

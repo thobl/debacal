@@ -21,20 +21,39 @@ makepkg -p PKGBUILD.local -si
 
 This includes local source edits. To build the published release instead, use
 plain `makepkg -si` in that directory, or download
-`debacal-0.1.0-arch.tar.gz` from the
-[release](https://github.com/thobl/debacal/releases/tag/v0.1.0), extract it,
+`debacal-0.1.1-arch.tar.gz` from the
+[release](https://github.com/thobl/debacal/releases/tag/v0.1.1), extract it,
 review `PKGBUILD`, then run `makepkg -si` in the extracted directory.
 The release recipe downloads and verifies the matching source archive. Missing
 dependencies are installed using pacman; the build itself uses system Python
 packages. See [the recipe's documentation](../packaging/arch/README.md) for
 offline builds and test options.
 
+### Updating an Arch installation
+
+Fully quit Debacal, then update and rebuild the checkout:
+
+```sh
+git pull --ff-only
+cd packaging/arch
+makepkg -p PKGBUILD.local -sif
+```
+
+For a published release, use the new release's Arch recipe and run plain
+`makepkg -sif` in its directory. Pulling the repository updates the recipe too;
+plain `makepkg -sif` there still builds the published release. The `-f` option
+allows rebuilding when a package file already exists.
+
+Restart Debacal with your usual profile after installation. Profiles, settings
+and stored passwords are retained. Each release uses a new source filename;
+cached `0.1.0` archives do not conflict with the `0.1.1` source.
+
 ## Other Linux distributions
 
 Install pipx using your distribution's package manager, then:
 
 ```sh
-pipx install https://github.com/thobl/debacal/releases/download/v0.1.0/debacal-0.1.0-py3-none-any.whl
+pipx install https://github.com/thobl/debacal/releases/download/v0.1.1/debacal-0.1.1-py3-none-any.whl
 debacal
 ```
 
