@@ -50,21 +50,6 @@ source archive intentionally excludes this directory, so its checksum does not
 depend on a recipe containing that same checksum. The release recipe records
 the archive's SHA-256 digest.
 
-Private repositories require an authenticated download: makepkg's downloader
-does not share your browser login or SSH authentication. Download the source
-asset from the release page while signed in, then place it beside `PKGBUILD`.
-Alternatively, after `gh auth login`, run this from the checkout root:
-
-```sh
-gh release download v0.1.0 --repo thobl/debacal --pattern debacal-0.1.0.tar.gz --dir packaging/arch --clobber
-cd packaging/arch
-makepkg -si
-```
-
-The [GitHub CLI download command](https://cli.github.com/manual/gh_release_download)
-supports selecting the source asset and destination directory. Missing system
-dependencies may still require network access through pacman.
-
 Maintainers can refresh package metadata after changing the recipe with:
 
 ```sh
