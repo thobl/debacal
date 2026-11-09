@@ -15,8 +15,10 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from debacal.dialogs import CalendarDialog, EventDialog
+from debacal.choice_control import ChoiceControl
 from debacal.discovery import DiscoveredCalendar
 from debacal.models import Calendar, Event
+from debacal.preferences import Preferences
 from debacal.recurrence import base_schedule_starts, expand_series, occurrence, recurrence_key
 from debacal.shortcuts import KeyboardShortcutsEditor
 from debacal.store import Store
@@ -98,6 +100,36 @@ def test_event_tab_order_mnemonics_and_plain_title_field(desktop):
     labels = {label.buddy(): label for label in dialog.findChildren(QLabel) if label.buddy()}
     assert '&Title' in labels[dialog.title].text()
     assert '&Location' in labels[dialog.location].text()
+
+
+@pytest.mark.parametrize('font_scale', [100, 140])
+@pytest.mark.parametrize('width', [760, 1120])
+def test_schedule_mode_labels_remain_readable_in_compact_and_large_text_editors(desktop, font_scale, width):
+    app, _, _, create, _ = desktop
+    dialog = create(preferences=Preferences(font_scale=font_scale, locale_name='en_GB'))
+    dialog.resize(width, 700)
+    app.processEvents()
+    for identity, caption in [('single', 'Single'), ('repeat', 'Series'), ('alternatives', 'Choices')]:
+        button = dialog.schedule_mode.buttons[identity]
+        assert button.isVisible() and button.text() == caption
+        assert button.fontMetrics().horizontalAdvance(caption) + 4 <= button.width()
+        assert button.toolTip() != caption
+    assert 'removes the other choices' in dialog.schedule_mode.buttons['alternatives'].toolTip()
+
+
+def test_required_choice_labels_take_priority_over_icons_and_restore_them_when_space_returns(desktop):
+    app, _, show, _, _ = desktop
+    choices = ChoiceControl([('Single', 'single'), ('Series', 'repeat'), ('Choices', 'alternatives')],
+        Preferences(), icons={'single': 'single', 'repeat': 'series', 'alternatives': 'alternatives'},
+        always_show_labels=True)
+    choices.resize(choices.minimumSizeHint().width(), choices.height())
+    show(choices)
+    assert [button.text() for button in choices.buttons.values()] == ['Single', 'Series', 'Choices']
+    assert all(button.icon().isNull() for button in choices.buttons.values())
+    choices.resize(600, choices.height())
+    app.processEvents()
+    assert [button.text() for button in choices.buttons.values()] == ['Single', 'Series', 'Choices']
+    assert all(not button.icon().isNull() for button in choices.buttons.values())
 
 
 def test_enter_saves_form_inputs_but_notes_enter_inserts_newline_and_ctrl_enter_saves(desktop):

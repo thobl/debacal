@@ -1,5 +1,6 @@
 """Keyboard-operable choices painted with the workspace's shared group style."""
 from PySide6.QtCore import Signal, QSize
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QButtonGroup, QSizePolicy
 
 from .workspace_header import SegmentedControl
@@ -12,12 +13,14 @@ class ChoiceControl(SegmentedControl):
     currentIndexChanged = Signal(int)
     currentChanged = Signal(object)
 
-    def __init__(self, options, preferences, parent=None, *, icons=None, icon_only=False):
+    def __init__(self, options, preferences, parent=None, *, icons=None, icon_only=False, always_show_labels=False):
         super().__init__(parent)
         self.preferences = preferences
         self.options = list(options)
         self.icons = icons or {}
         self.icon_only = bool(icon_only)
+        self.always_show_labels = bool(always_show_labels) and not self.icon_only
+        self._choice_icons = {}
         self.buttons = {}
         self.group = QButtonGroup(self)
         self._index = 0
@@ -29,6 +32,7 @@ class ChoiceControl(SegmentedControl):
             button.setAccessibleName(caption)
             if data in self.icons:
                 button.setIcon(icon(self.icons[data], scheme_for(preferences).accent))
+                self._choice_icons[data] = button.icon()
                 button.setIconSize(QSize(round(18 * preferences.font_scale / 100), round(18 * preferences.font_scale / 100)))
                 if self.icon_only:
                     button.setText('')
@@ -53,6 +57,11 @@ class ChoiceControl(SegmentedControl):
 
     def minimumSizeHint(self):
         # Hidden stacked pages must not retain an earlier button-width minimum.
+        if self.always_show_labels:
+            labels = [button.fontMetrics().horizontalAdvance(caption) + 8
+                      for (caption, data), button, visible in zip(self.options, self._choice_buttons, self._option_visible)
+                      if visible]
+            return QSize(max(labels, default=0) * len(labels), self.height())
         return QSize(0, self.height())
 
     def currentIndex(self):
@@ -110,5 +119,10 @@ class ChoiceControl(SegmentedControl):
                            for index, button in choices for caption, data in [self.options[index]])
         for position, (index, button) in enumerate(choices):
             if self.icons:
-                button.setText(self.options[index][0] if captions_fit and not self.icon_only else '')
+                caption, data = self.options[index]
+                if self.always_show_labels:
+                    chosen_icon = self._choice_icons.get(data, QIcon()) if captions_fit else QIcon()
+                    if chosen_icon.cacheKey() != button.icon().cacheKey():
+                        button.setIcon(chosen_icon)
+                button.setText(caption if self.always_show_labels or captions_fit and not self.icon_only else '')
             button.setFixedSize(width + (position < remainder), self.height())

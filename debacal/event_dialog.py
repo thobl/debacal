@@ -317,9 +317,12 @@ class EventDialog(FormDialog):
         self._divider(sections)
         self.schedule_section, scheduling = self._section(sections)
         scheduling.addWidget(self._heading('Schedule'))
-        self.schedule_mode = ChoiceControl([('One event', 'single'), ('Repeating', 'repeat'), ('Alternative dates', 'alternatives')], self.preferences,
-                                          icons={'single': 'single', 'repeat': 'series', 'alternatives': 'alternatives'})
-        self.schedule_mode.buttons['alternatives'].setToolTip('Alternative dates — confirming one removes the other choices.')
+        self.schedule_mode = ChoiceControl([('Single', 'single'), ('Series', 'repeat'), ('Choices', 'alternatives')], self.preferences,
+                                          icons={'single': 'single', 'repeat': 'series', 'alternatives': 'alternatives'},
+                                          always_show_labels=True)
+        self.schedule_mode.buttons['single'].setToolTip('Single event — create one event.')
+        self.schedule_mode.buttons['repeat'].setToolTip('Event series — keep every occurrence in the schedule.')
+        self.schedule_mode.buttons['alternatives'].setToolTip('Alternative choices — confirming one removes the other choices.')
         self.schedule_mode_row = QHBoxLayout()
         self.schedule_mode_row.setContentsMargins(0, 0, 0, 0)
         self.schedule_mode_row.setSpacing(round(14 * scale))
