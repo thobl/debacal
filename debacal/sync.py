@@ -203,7 +203,9 @@ class SyncEngine:
 
     def _run(self):
         try:
-            store = Store(self.store_path)
+            # The worker maintains durable source/query projections on writes;
+            # it never displays a time window and needs no second in-memory tree.
+            store = Store(self.store_path, query_index=False)
         except Exception as exc:
             self._worker_error = f"Could not start the sync worker: {exc}"
             self._stop.set()

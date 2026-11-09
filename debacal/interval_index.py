@@ -117,6 +117,43 @@ class IntervalIndex(Generic[T]):
     def __init__(self):
         self._root: _Node[T] | None = None
 
+    @classmethod
+    def from_sorted(cls, intervals) -> IntervalIndex[T]:
+        """Build an AVL tree in linear time from intervals ordered by key.
+
+        Equal keys retain the last value, just like repeated ``add`` calls.
+        Construction retains no input array or auxiliary search structure.
+        """
+        values = []
+        previous = None
+        for item in intervals:
+            if item.end < item.start:
+                raise ValueError('An indexed interval must have ordered endpoints.')
+            key = item.key
+            if previous is not None and key < previous:
+                raise ValueError('Bulk intervals must be ordered by key.')
+            if previous == key:
+                values[-1] = item
+            else:
+                values.append(item)
+            previous = key
+
+        def build(begin, end):
+            if begin == end:
+                return None
+            middle = (begin + end) // 2
+            node = _Node(values[middle], build(begin, middle), build(middle + 1, end))
+            return _refresh(node)
+
+        result = cls()
+        result._root = build(0, len(values))
+        return result
+
+    @classmethod
+    def from_intervals(cls, intervals) -> IntervalIndex[T]:
+        """Sort arbitrary intervals once, then build without insertions/rotations."""
+        return cls.from_sorted(sorted(intervals, key=lambda item: item.key))
+
     def add(self, interval: Interval[T]) -> None:
         if interval.end < interval.start:
             raise ValueError('An indexed interval must have ordered endpoints.')

@@ -77,6 +77,26 @@ class EventRangeIndex:
         self.sources: dict[str, IndexedSource] = {}
         self.trees: dict[tuple[str, str, bool], IntervalIndex] = {}
 
+    def bulk_load(self, records: Iterable[IndexedSource]) -> None:
+        """Replace all data with already-prepared sources and balanced trees.
+
+        Loading durable projections must not rerun rule preparation or expand
+        occurrences. The source records retain the same removal handles used
+        by individual updates; only initial tree construction changes.
+        """
+        sources = {record.master.id: record for record in records}
+        intervals = {}
+        for record in sources.values():
+            for tree_key, (start, end, identifier) in record.entries:
+                if (tree_key[0] != record.master.calendar_id
+                        or tree_key[1] not in ('instant', 'date', 'wall')
+                        or type(tree_key[2]) is not bool):
+                    raise ValueError('A prepared interval has an invalid calendar or time type.')
+                value = record if tree_key[2] else record.occurrences[identifier]
+                intervals.setdefault(tree_key, []).append(Interval(start, end, identifier, value))
+        trees = {key: IntervalIndex.from_intervals(values) for key, values in intervals.items()}
+        self.sources, self.trees = sources, trees
+
     def remove(self, identity: str) -> None:
         previous = self.sources.pop(identity, None)
         if previous is not None:
@@ -90,7 +110,10 @@ class EventRangeIndex:
             self.sources[identity] = record
             for tree_key, (start, end, identifier) in record.entries:
                 value = record if tree_key[2] else record.occurrences[identifier]
-                self.trees.setdefault(tree_key, IntervalIndex()).add(Interval(start, end, identifier, value))
+                tree = self.trees.get(tree_key)
+                if tree is None:
+                    tree = self.trees[tree_key] = IntervalIndex()
+                tree.add(Interval(start, end, identifier, value))
 
     def _remove_entry(self, tree_key, key):
         tree = self.trees[tree_key]
@@ -98,28 +121,27 @@ class EventRangeIndex:
         if tree._root is None:
             del self.trees[tree_key]
 
-    def _add(self, record, kind, start, end, identity, value, *, rule=False):
+    @staticmethod
+    def _add(record, kind, start, end, identity, value, *, rule=False):
         tree_key = record.master.calendar_id, kind, rule
-        tree = self.trees.setdefault(tree_key, IntervalIndex())
-        entry = Interval(start, end, identity, value)
-        tree.add(entry)
-        record.entries.append((tree_key, entry.key))
+        record.entries.append((tree_key, (start, end, identity)))
 
-    def _add_event(self, record, event):
+    @classmethod
+    def _add_event(cls, record, event):
         lower, upper = _coordinates(event)
-        self._add(record, _kind(event), lower, upper, event.id, event)
+        cls._add(record, _kind(event), lower, upper, event.id, event)
         record.occurrences[event.id] = event
 
-    def upsert(self, event: Event) -> None:
+    @classmethod
+    def prepare(cls, event: Event) -> IndexedSource:
+        """Prepare one source without allocating or inserting tree nodes."""
         from .prepared_recurrence import PreparedSeries
         from .recurrence import RecurrenceError
 
-        self.remove(event.id)
         record = IndexedSource(event)
-        self.sources[event.id] = record
         if not event.recurring:
-            self._add_event(record, event)
-            return
+            cls._add_event(record, event)
+            return record
         try:
             prepared = record.prepared = PreparedSeries(event)
             finite = prepared.finite_rule_occurrences(FINITE_RULE_LIMIT)
@@ -127,7 +149,7 @@ class EventRangeIndex:
             if finite is not None:
                 entries.update((item.id, item) for item in finite)
             for item in entries.values():
-                self._add_event(record, item)
+                cls._add_event(record, item)
             if finite is None and prepared.rule_bounds is not None:
                 lower, upper = prepared.rule_bounds
                 kind = _kind(event)
@@ -138,16 +160,18 @@ class EventRangeIndex:
                     begin, finish = _wall(lower), _wall(upper) if upper else float('inf')
                 else:
                     begin, finish = lower.timestamp(), upper.timestamp() if upper else float('inf')
-                self._add(record, kind, begin, finish, event.id, record, rule=True)
+                cls._add(record, kind, begin, finish, event.id, record, rule=True)
         except (ValueError, TypeError, OverflowError, KeyError) as error:
             # Retain malformed resources and isolate them in the same way as
             # projection errors. They must not prevent the workspace opening.
-            for tree_key, key in record.entries:
-                self._remove_entry(tree_key, key)
             record.entries.clear()
             record.occurrences.clear()
             record.error = error if isinstance(error, RecurrenceError) else RecurrenceError('Unsupported or invalid recurrence rule.')
-            self._add(record, 'instant', float('-inf'), float('inf'), event.id, record, rule=True)
+            cls._add(record, 'instant', float('-inf'), float('inf'), event.id, record, rule=True)
+        return record
+
+    def upsert(self, event: Event) -> None:
+        self.restore(event.id, self.prepare(event))
 
     def select(self, start: datetime, end: datetime, calendars: Iterable[str] | None = None,
                *, ordinary_limit: int | None = None):

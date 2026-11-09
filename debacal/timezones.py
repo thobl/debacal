@@ -15,7 +15,9 @@ from bisect import bisect_left, bisect_right
 from datetime import timedelta, tzinfo
 from functools import lru_cache
 import re
+from threading import RLock
 from types import MethodType
+from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .recurrence_budget import BoundedRule
@@ -40,6 +42,13 @@ MAX_IDENTIFIER_LENGTH = 1024
 _DATABASE_PREFIXES = ('/freeassociation.sourceforge.net/Tzfile/',
                       '/freeassociation.sourceforge.net/')
 _VERSIONED_DATABASE_PREFIXES = ('/citadel.org/', '/mozilla.org/')
+
+# Active query structures already own these immutable source rules. Publishing
+# weak references lets edit/replace/serialization paths use the same prepared
+# definition rather than compiling it again on their first use after restart.
+# Keys include exact text because unrelated resources may share a TZID.
+_prepared_definitions = WeakValueDictionary()
+_prepared_definitions_lock = RLock()
 
 
 class TimezoneError(ValueError):
@@ -296,6 +305,19 @@ def _scoped_database_alias(identifier: str, database_id: str) -> tzinfo:
     return _ResourceTimezone(identifier, ZoneInfo(database_id))
 
 
+def register_prepared_timezone(identifier: str, definition: str, zone: tzinfo) -> tzinfo:
+    """Publish validated prepared source data without extending its lifetime."""
+    validate_definitions({identifier: definition})
+    if not isinstance(zone, _ResourceTimezone) or zone.identifier != identifier:
+        raise TimezoneError('The prepared timezone does not match its definition identifier.')
+    with _prepared_definitions_lock:
+        current = _prepared_definitions.get((identifier, definition))
+        if current is not None:
+            return current
+        _prepared_definitions[identifier, definition] = zone
+    return zone
+
+
 def resolve_timezone(identifier: str, definitions: Mapping[str, str] | None = None) -> tzinfo:
     """Resolve a name within its resource's explicit timezone context first."""
     _validate_identifier(identifier)
@@ -303,6 +325,10 @@ def resolve_timezone(identifier: str, definitions: Mapping[str, str] | None = No
     if definition is not None:
         # Validate direct resolver callers too; models validate the whole map.
         validate_definitions({identifier: definition})
+        with _prepared_definitions_lock:
+            prepared = _prepared_definitions.get((identifier, definition))
+        if prepared is not None:
+            return prepared
         if len(definition.encode('utf-8')) <= MAX_CACHED_DEFINITION_BYTES:
             return _cached_explicit_timezone(identifier, definition)
         return _explicit_timezone(identifier, definition)

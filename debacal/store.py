@@ -38,13 +38,15 @@ class EventOwnershipConflict(ValueError):
 
 
 class Store:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, query_index: bool = True):
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._transaction_sequence = 0
         self._query_index = None
+        self._query_enabled = query_index
+        self._projection_storage = None
         self._query_revision = -1
         self._query_transactions = []
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
@@ -185,12 +187,19 @@ class Store:
                     )
             if not self.connection.execute("SELECT 1 FROM calendars LIMIT 1").fetchone():
                 self._write_calendar(Calendar("local", "Personal", "#4f7865"))
-        # Prepare the current data before the first user operation. Subsequent
-        # local writes maintain it at commit; other connections contribute only
-        # their changed IDs through the transactional change table.
-        from .event_range_index import EventRangeIndex
-        self._query_index = EventRangeIndex()
-        self._synchronize_query_index()
+        # Derived preparations are durable. Ordinary restarts read the compact
+        # representation and bulk-build only the in-memory search trees.
+        from .query_projection import ProjectionStorage
+        with self._transaction():
+            storage = ProjectionStorage(self.connection)
+            missing = storage.initialize()
+            self._projection_storage = storage
+            if missing:
+                self._maintain_query_projections(identities=missing)
+        if query_index:
+            from .event_range_index import EventRangeIndex
+            self._query_index = EventRangeIndex()
+            self._synchronize_query_index()
 
     def _enable_wal(self) -> None:
         # SQLite can return SQLITE_BUSY immediately for journal-mode changes,
@@ -221,6 +230,7 @@ class Store:
                 if nested:
                     self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
                 else:
+                    self._maintain_query_projections()
                     if self._query_index is not None:
                         self._synchronize_query_index()
                     self.connection.commit()
@@ -236,13 +246,29 @@ class Store:
                         self._query_index.restore(identity, record)
                     self._query_revision = frame['revision']
                     self._synchronize_query_index()
+                if self._projection_storage is not None:
+                    self._projection_storage.reader = None
+                    self._projection_storage.shared.clear()
                 raise
             else:
                 self._query_transactions.pop()
 
+    def _maintain_query_projections(self, identities=None):
+        if self._projection_storage is None:
+            return
+        rejected = self._projection_storage.maintain(self.events_revision(), identities=identities)
+        for calendar, identity, raw, reason in rejected:
+            resource = hashlib.sha256(identity.encode()).hexdigest()[:12]
+            self.set_quarantined_resource(calendar, resource, raw, reason)
+
     def close(self) -> None:
         with self._lock:
             self.connection.close()
+            self._query_index = None
+            if self._projection_storage is not None:
+                self._projection_storage.reader = None
+                self._projection_storage.shared.clear()
+            self._query_transactions.clear()
 
     def __enter__(self) -> Store:
         return self
@@ -628,53 +654,66 @@ class Store:
             return self.connection.execute("SELECT version FROM event_revisions WHERE id=1").fetchone()[0]
 
     def _synchronize_query_index(self) -> None:
-        """Maintain decoded sources using only changed IDs, never query results."""
+        """Load durable preparations and maintain only changed source entries."""
         with self._lock:
-            rejected = []
-            def prepare(index, row):
-                value = None
-                try:
-                    value = json.loads(row['data'])
-                    index.upsert(Event.from_dict(value))
-                except (ValueError, TypeError, KeyError, OverflowError) as error:
-                    # A broken retained database resource must not prevent
-                    # opening or querying every other calendar. Preserve its
-                    # original ICS and surface the problem through Issues.
-                    index.remove(row['id'])
-                    raw = value.get('raw_ics', '') if isinstance(value, dict) else ''
-                    rejected.append((row['calendar_id'], row['id'], raw,
-                                     f'The stored event could not be read: {error}'))
+            if not self._query_enabled:
+                return
+            from .query_projection import PreparedStateError, load_record, unpack_state
+            storage = self._projection_storage
+            if self.connection.in_transaction:
+                self._maintain_query_projections()
+            elif storage.version() != self.events_revision():
+                # Also repair writes from an older app or a direct SQL client.
+                # Normal sync writers already maintain these rows at commit.
+                with self._transaction():
+                    pass
             def remember(identity):
                 for frame in self._query_transactions:
                     frame['before'].setdefault(identity, self._query_index.sources.get(identity))
             own_transaction = not self.connection.in_transaction
             if own_transaction:
                 self.connection.execute('BEGIN')
+            invalid, records = set(), []
             try:
                 revision = self.events_revision()
                 if revision == self._query_revision:
                     return
-                if self._query_revision < 0 or revision < self._query_revision:
+                reader = storage.load_catalog()
+                full = self._query_revision < 0 or revision < self._query_revision
+                if full:
+                    rows = self.connection.execute('SELECT event_id AS id,data FROM event_query_projection')
+                else:
+                    rows = self.connection.execute(
+                        'SELECT changes.event_id AS id,projection.data FROM event_query_changes AS changes '
+                        'LEFT JOIN event_query_projection AS projection ON projection.event_id=changes.event_id '
+                        'WHERE changes.version>?', (self._query_revision,))
+                for row in rows:
+                    identity = row['id']
+                    remember(identity)
+                    if row['data'] is None:
+                        if not full:
+                            self._query_index.remove(identity)
+                        continue
+                    try:
+                        record = load_record(unpack_state(row['data']), reader)
+                        if record.master.id != identity:
+                            raise PreparedStateError('A prepared source has an inconsistent identity.')
+                    except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
+                        invalid.add(identity)
+                        continue
+                    if full:
+                        records.append(record)
+                    else:
+                        self._query_index.restore(identity, record)
+                if full and not invalid:
                     from .event_range_index import EventRangeIndex
                     index = EventRangeIndex()
                     for identity in self._query_index.sources:
                         remember(identity)
-                    for row in self.connection.execute('SELECT id,calendar_id,data FROM events'):
-                        remember(row['id'])
-                        prepare(index, row)
+                    index.bulk_load(records)
                     self._query_index = index
-                else:
-                    rows = self.connection.execute(
-                        'SELECT changes.event_id AS id,events.calendar_id,events.data FROM event_query_changes AS changes '
-                        'LEFT JOIN events ON events.id=changes.event_id WHERE changes.version>?',
-                        (self._query_revision,))
-                    for row in rows:
-                        remember(row['id'])
-                        if row['data'] is None:
-                            self._query_index.remove(row['id'])
-                        else:
-                            prepare(self._query_index, row)
-                self._query_revision = revision
+                if not invalid:
+                    self._query_revision = revision
             except BaseException:
                 # A partially prepared update must never masquerade as the
                 # previous complete revision after a transaction rolls back.
@@ -683,9 +722,15 @@ class Store:
             finally:
                 if own_transaction:
                     self.connection.rollback()
-            for calendar, identity, raw, reason in rejected:
-                resource = hashlib.sha256(identity.encode()).hexdigest()[:12]
-                self.set_quarantined_resource(calendar, resource, raw, reason)
+            if invalid:
+                # A damaged derived row is rebuilt from its canonical source;
+                # data corruption cannot silently hide an event or poison all
+                # other calendars. This is unrelated to viewed date windows.
+                with self._transaction():
+                    self._maintain_query_projections(identities=invalid)
+                    storage.reader = None
+                    self._query_revision = -1
+                self._synchronize_query_index()
 
     def query_source_events(self, event_ids: Iterable[str]) -> list[Event]:
         """Borrow prepared sources for internal read-only search/presentation.
@@ -694,6 +739,8 @@ class Store:
         treated as read-only. Editing uses replacements and durable snapshots.
         """
         with self._lock:
+            if not self._query_enabled:
+                return self.get_events(event_ids)
             self._synchronize_query_index()
             return [self._query_index.sources[identity].master for identity in event_ids
                     if identity in self._query_index.sources]
@@ -792,6 +839,8 @@ class Store:
         append ``(master, error)`` for each omitted source while keeping all
         healthy output. A source is never silently or partially truncated.
         """
+        if not self._query_enabled:
+            raise RuntimeError('This Store was opened without a calendar query index.')
         self._validate_datetime(start)
         self._validate_datetime(end)
         if end.timestamp() <= start.timestamp() and end.date() <= start.date():
@@ -823,11 +872,15 @@ class Store:
     def _quarantine_expansion_failures(self, failures) -> None:
         for master, error in failures:
             resource_id = hashlib.sha256((master.ical_uid or master.id).encode()).hexdigest()[:12]
-            self.set_quarantined_resource(master.calendar_id, resource_id, master.raw_ics or '', str(error))
+            source = self.get_event(master.id) if master._query_projection else master
+            self.set_quarantined_resource(master.calendar_id, resource_id,
+                                          source.raw_ics if source is not None else '', str(error))
 
     def upcoming_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
                              *, limit: int = 10, issues: list | None = None) -> list[Event]:
         """Return only the earliest overlapping events, without expanding a full view."""
+        if not self._query_enabled:
+            raise RuntimeError('This Store was opened without a calendar query index.')
         self._validate_datetime(start)
         self._validate_datetime(end)
         if end.timestamp() <= start.timestamp() and end.date() <= start.date():
@@ -847,18 +900,29 @@ class Store:
         from .recurrence import split_occurrence_id
         parts = split_occurrence_id(event_id)
         if parts is None:
+            if not self._query_enabled:
+                return self.get_event(event_id)
             values = self.query_source_events([event_id])
             return values[0] if values else None
         master_id, key = parts
         with self._lock:
-            self._synchronize_query_index()
-            record = self._query_index.sources.get(master_id)
-            if record is None or record.prepared is None or record.error is not None:
+            if self._query_enabled:
+                self._synchronize_query_index()
+                record = self._query_index.sources.get(master_id)
+            else:
+                # Writer-only stores never construct a complete UI index. An
+                # explicit semantic edit may still review one named resource.
+                from .event_range_index import EventRangeIndex
+                master = self.get_event(master_id)
+                record = EventRangeIndex.prepare(master) if master is not None else None
+            if record is None or record.error is not None:
                 return None
             item = record.occurrences.get(event_id)
             if item is not None:
                 from .event_range_index import _local_floating
                 return _local_floating(item)
+            if record.prepared is None:
+                return None  # A fully indexed finite schedule has no other IDs.
             master = record.master
             if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
                 return None
@@ -890,6 +954,8 @@ class Store:
         with self._transaction():
             master = self._reviewed_master(instance)
             if not instance.series_id:
+                if instance._query_projection and not edited.raw_ics:
+                    edited = replace(edited, raw_ics=master.raw_ics, _query_projection=False)
                 return self.apply(label, [replace(edited, id=master.id, calendar_id=master.calendar_id)])
             override = replace(
                 edited, id=occurrence_id(master.id, instance.recurrence_id),
@@ -1076,6 +1142,8 @@ class Store:
         for root in roots:
             root_scope = "group" if is_whole_root(root) else scope
             master = self.get_event(root.series_id or root.id)
+            if root._query_projection and not root.series_id:
+                root = replace(root, raw_ics=master.raw_ics, _query_projection=False)
             source = root if root_scope == "single" or root_scope == "future" else master
             zone = event_zone(master)
             wall = lambda value: value.astimezone(zone).replace(tzinfo=None)
@@ -1316,6 +1384,7 @@ class Store:
             from .recurrence import recurrence_set
             recurrence_set(event)
         self._assert_identity_owner(event.id, event.calendar_id, event.ical_uid)
+        self._retry_incomplete_projection(event.id)
         self.connection.execute(
             """INSERT INTO events(id,calendar_id,start,end,data,recurring,group_id,candidate,search_text) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET calendar_id=excluded.calendar_id,
@@ -1324,6 +1393,23 @@ class Store:
             (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), self._json(event.to_dict()),
              event.recurring, event.group_id, event.candidate, self._search_projection(event)),
         )
+
+    def _retry_incomplete_projection(self, event_id):
+        """Let an explicit reimport retry a formerly unsupported source.
+
+        Canonical bytes can be identical after a compatibility fix. Publish an
+        availability revision so all readers receive the repaired preparation,
+        without invalidating or recompiling unrelated sources.
+        """
+        if self._projection_storage is None:
+            return
+        failed = self.connection.execute('SELECT 1 FROM event_query_projection WHERE event_id=? AND data IS NULL',
+                                         (event_id,)).fetchone()
+        if failed is not None:
+            self.connection.execute('UPDATE event_revisions SET version=version+1 WHERE id=1')
+            self.connection.execute('INSERT INTO event_query_changes(event_id,version) '
+                                    'VALUES (?,(SELECT version FROM event_revisions WHERE id=1)) '
+                                    'ON CONFLICT(event_id) DO UPDATE SET version=excluded.version', (event_id,))
 
     def _assert_identity_owner(self, event_id: str, calendar_id: str, uid: str | None = None) -> None:
         """Check the global ID and calendar-scoped UID under the write lock.
@@ -1510,15 +1596,30 @@ class Store:
         with self._transaction():
             before = self._snapshot(ids)
             after = {event.id: event.to_dict() for event in upserts} | {event_id: None for event_id in delete_ids}
+            def preserve_transport(event):
+                original = before[event.id]
+                if event._query_projection and original is not None and not event.raw_ics:
+                    # Display values deliberately omit transport text. Keep
+                    # canonical unknown ICS properties when editing them.
+                    after[event.id]['raw_ics'] = original.get('raw_ics', '')
+                    for key, payload in after[event.id].get('recurrence_overrides', {}).items():
+                        prior = original.get('recurrence_overrides', {}).get(key, {})
+                        if 'raw_ics' not in payload and 'raw_ics' in prior:
+                            payload['raw_ics'] = prior['raw_ics']
+            for event in upserts:
+                preserve_transport(event)
             self._assert_writable(before.values())
             self._assert_writable(after.values())
             for event in upserts:
                 reconciled = self._reconcile_local_authoring(event, before[event.id], after[event.id])
                 if reconciled is not event:
                     after[event.id] = reconciled.to_dict()
+                    preserve_transport(event)
             # Ignore absent deletions and unchanged updates.
             changed = [key for key in ids if before[key] != after[key]]
             if not changed:
+                for event in upserts:
+                    self._retry_incomplete_projection(event.id)
                 return None
             before, after = ({key: value[key] for key in changed} for value in (before, after))
             self._restore(after)

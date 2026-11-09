@@ -93,6 +93,9 @@ class Event:
     # Timed ranges normally retain elapsed time. RFC DURATION day/week parts
     # retain nominal calendar days instead; clock-only durations need no flag.
     duration_spec: str = ""
+    # Internal display/query values omit transport text. Replacements retain
+    # this marker so edits can recover the canonical ICS before saving.
+    _query_projection: bool = field(default=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.id or not self.calendar_id:
@@ -197,7 +200,7 @@ class Event:
         # Custom dateutil tzinfo values hold locks and cannot be deep-copied.
         # Datetimes become strings anyway; copy only the remaining JSON data.
         value = {item.name: deepcopy(getattr(self, item.name)) for item in fields(self)
-                 if item.name not in {'start', 'end'}}
+                 if item.name not in {'start', 'end', '_query_projection'}}
         value["start"] = (self.start.replace(tzinfo=None) if self.floating_time else self.start).isoformat()
         value["end"] = (self.end.replace(tzinfo=None) if self.floating_time else self.end).isoformat()
         value["recurrence_dates"] = list(self.recurrence_dates)
@@ -229,3 +232,20 @@ class Event:
                 value["start"] = value["start"].astimezone(zone)
                 value["end"] = value["end"].astimezone(zone)
         return cls(**value)
+
+
+_EVENT_FIELD_NAMES = tuple(item.name for item in fields(Event))
+
+
+def copy_event(event: Event) -> Event:
+    """Shallow-copy a validated immutable event without pickle/validation work.
+
+    Internal projections share source strings and timezone data, then replace
+    only their identity and range. The static field list includes private
+    projection provenance so those replacements retain transport semantics.
+    """
+    result = object.__new__(Event)
+    write = object.__setattr__
+    for name in _EVENT_FIELD_NAMES:
+        write(result, name, getattr(event, name))
+    return result

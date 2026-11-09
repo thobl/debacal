@@ -8,14 +8,13 @@ from __future__ import annotations
 
 from array import array
 from bisect import bisect_left, bisect_right
-from copy import copy
 from datetime import date, datetime, time, timedelta, timezone
 from math import gcd
 
 from dateutil.rrule import DAILY, HOURLY, MINUTELY, MONTHLY, WEEKLY, YEARLY, _iterinfo, weekday
 
 from .event_duration import add_elapsed, elapsed_duration, parse_duration_spec
-from .models import Event
+from .models import Event, copy_event
 from .recurrence import (
     RecurrenceRangeError, _floating_master, _recurrence_set,
     _static_periods, event_zone, key_datetime, normalize_recurrence_stream,
@@ -564,7 +563,7 @@ class PreparedSeries:
     def _project(self, start, key):
         # The master was validated at the write boundary. A projection changes
         # only identity and range; don't sort/copy its entire recurrence again.
-        item = copy(self.master)
+        item = copy_event(self.master)
         zone = start.tzinfo if self.master.floating_time else self.event_zone
         if self.floating:
             end = start + self.duration
