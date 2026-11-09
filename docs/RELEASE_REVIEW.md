@@ -243,3 +243,12 @@ credentials, personal notes, or private server/account details are tracked.
 Historical image metadata and known-identifying-text checks were reviewed
 alongside their synthetic fixture generators. This is an audit of known
 identifiers and content, not a mathematical proof of the absence of all PII.
+
+### Release refresh — 9 November 2026
+
+The complete workspace suite passed **3,268 tests and 169 subtests**, including
+the review follow-ups, current date styling, focus handling and release-update
+checks. The rebuilt wheel launched from a temporary directory outside the
+checkout using a disposable demo profile. The source, wheel and Arch recipe
+bundle were rebuilt with refreshed checksums; the Arch package release is now
+`0.1.0-2`. The version tag remains `v0.1.0`.

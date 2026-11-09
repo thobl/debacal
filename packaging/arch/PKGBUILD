@@ -1,7 +1,7 @@
 # Maintainer: thobl (https://github.com/thobl)
 pkgname=debacal
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Local-first desktop calendar with CalDAV sync and flexible event series'
 arch=('any')
 url='https://github.com/thobl/debacal'
@@ -25,7 +25,7 @@ optdepends=(
 )
 source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 # Filled from the final release source archive; this recipe is excluded from it.
-sha256sums=('6ec8152a21300b7412971e71dbe7515d5a070cebe0652c4398cc7430b821ae1c')
+sha256sums=('a351a5b87b119e42b0f68b1f645cda7a311b35f3c7276064f999d39d0c342cfe')
 
 build() {
   cd "${srcdir}/${pkgname}-${pkgver}"

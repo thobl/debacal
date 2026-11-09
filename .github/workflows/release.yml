@@ -58,18 +58,7 @@ jobs:
       - name: Build and verify release assets
         run: python scripts/build_release.py --tag "$RELEASE_TAG"
       - name: Publish release
-        shell: bash
-        run: |
-          set -euo pipefail
-          notes="docs/releases/${RELEASE_TAG}.md"
-          test -f "$notes"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
-            gh release upload "$RELEASE_TAG" dist/* --clobber
-          else
-            gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "debacal ${RELEASE_TAG#v}" --notes-file "$notes"
-          fi
-          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file "$notes"
+        run: bash scripts/publish_release.sh
   receipt:
     if: always() && github.event_name != 'pull_request'
     needs: [test, release]

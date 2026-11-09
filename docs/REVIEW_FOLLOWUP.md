@@ -15,7 +15,7 @@ and structural checks with another ICS parser.
 | Repeated-hour dragging loses its phase | Preview and commit share a validated gesture range. Real Qt drags assert timestamp movement from the second repeated hour. Invalid target clocks reject the operation. |
 | Repeated-hour events cover each other | Allocate columns using the same clipped wall-coordinate ranges that are painted. Both phases remain selectable and show timezone labels; tooltips include endpoints and elapsed duration. |
 | Later search occurrences cannot be reached | At the paging cap, an explicit “Show dates near current view” action rebases that series. Ordinary following remains stable. Mouse/keyboard tests reach dates beyond the original cap. |
-| Action date has no visible feedback | Use the same roles in day/week/month: an accent border marks today, and a selected header background marks the action date. Both views share one paint helper and palette-derived selection tint, distinct from adjacent-month shading. The year view is unchanged. No selected column or whole month cell is filled. |
+| Action date has no visible feedback | Week/month use a quiet selected-header background. Day/week/month mark today with a bold TODAY label; the day view omits redundant selection shading. Adjacent-month content is muted rather than filled, and the year view uses a bold underlined today number. Shared paint helpers keep the roles consistent; no selected column or whole month cell is filled. |
 | Historical recurrence work is unbounded | Seek static hourly/daily/weekly periods while retaining selectors, phase and COUNT. Work-limit failures omit a whole series with an actionable warning while retaining healthy events. Tests count invisible historical work. |
 | Combined export duplicates TZIDs | Generate shared timezone coverage before serialization and consolidate retained generated definitions and equivalent observances. Conflicting imported definitions produce an actionable error rather than choosing an offset silently. Independent structural parsing verifies unique identifiers. |
 
@@ -23,7 +23,7 @@ The Apia skipped-date tail regression also checks that compact-language
 expansion and canonical recurrence expansion agree on coincident starts.
 
 The approved UI refinements rename the toolbar group to **Actions**, use
-**One event / Repeating / Alternative dates**, and keep compact recurrence
+**Single / Series / Choices**, and keep compact recurrence
 icons with tooltips. No additional sequence-help panel was added. Search and
 agenda rows expose complete date/time, calendar and location information to
 Qt accessibility alongside their visible titles. The main calendar's today
@@ -31,10 +31,8 @@ indicators refresh at midnight without navigating the user's view. A compact
 screen uses scrolling around the existing workspace; normal-size windows keep
 their existing geometry and theme.
 
-The bulk sync fixture is already generated and distributable. Private sync
-audit notes have been removed from current documentation; synthetic example
-people/accounts remain deliberately fictional. Existing published commits have
-not been rewritten.
+The bulk sync fixture is generated and distributable; example people and
+accounts are deliberately fictional. No private calendar fixture is required.
 
 ## Scope and remaining limits
 
