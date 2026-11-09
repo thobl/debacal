@@ -250,5 +250,11 @@ The complete workspace suite passed **3,268 tests and 169 subtests**, including
 the review follow-ups, current date styling, focus handling and release-update
 checks. The rebuilt wheel launched from a temporary directory outside the
 checkout using a disposable demo profile. The source, wheel and Arch recipe
-bundle were rebuilt with refreshed checksums; the Arch package release is now
-`0.1.0-2`. The version tag remains `v0.1.0`.
+bundle were rebuilt with refreshed checksums; that refresh used Arch package
+release `0.1.0-2`. The version tag remains `v0.1.0`.
+
+The subsequent packaging update adds `PKGBUILD.local` for building checkout
+edits through the shared package steps. Eighteen packaging/publication checks
+passed, along with isolated checkout and standalone release package builds.
+The current Arch package release is `0.1.0-3`; source, wheel and recipe bundle
+reproduced byte-for-byte, and the wheel launched outside the checkout.

@@ -30,9 +30,8 @@ including when run in a checkout.
 
 `makepkg -s` installs missing build/runtime dependencies with pacman; `-i`
 installs the built package. The desktop launcher and `text/calendar` file
-association are installed
-alongside the command. No existing calendar application is replaced as the
-default. To choose Debacal explicitly:
+association are installed alongside the command. No existing calendar
+application is replaced as the default. To choose Debacal explicitly:
 
 ```sh
 xdg-mime default debacal.desktop text/calendar
