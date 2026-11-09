@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
+import time
 
 
 UI_SETTINGS = frozenset({
@@ -32,19 +33,44 @@ class UiState:
         self._lock = RLock()
         self._sequence = 0
         self.connection = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
-        # A UI choice must never inherit the calendar database's five-second
-        # busy wait. This database has no sync writers or expensive work.
-        self.connection.execute('PRAGMA busy_timeout=0')
+        try:
+            self._startup(self._initialize)
+        except BaseException:
+            self.connection.close()
+            raise
+
+    def _startup(self, operation):
+        """Serialize first-use setup, then restore fail-fast runtime writes.
+
+        Independent processes/connections may open a new profile together.
+        Journal negotiation can ignore SQLite's busy handler, so retry it within
+        the same bounded startup deadline. Normal UI changes never retry/wait.
+        """
+        with self._lock:
+            deadline = time.monotonic() + 5
+            try:
+                while True:
+                    remaining = max(0, round((deadline - time.monotonic()) * 1000))
+                    self.connection.execute(f'PRAGMA busy_timeout={remaining}')
+                    try:
+                        return operation()
+                    except sqlite3.OperationalError as error:
+                        code = getattr(error, 'sqlite_errorcode', 0)
+                        if code & 255 not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or time.monotonic() >= deadline:
+                            raise
+                        time.sleep(min(.01, max(0, deadline - time.monotonic())))
+            finally:
+                self.connection.execute('PRAGMA busy_timeout=0')
+
+    def _initialize(self):
         if self.path != ':memory:' and self.connection.execute('PRAGMA journal_mode').fetchone()[0] != 'wal':
             self.connection.execute('PRAGMA journal_mode=WAL')
         tables = {row[0] for row in self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {'settings', 'calendar_visibility'}.issubset(tables):
-            self.connection.executescript('''
-                CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS calendar_visibility (
-                    calendar_id TEXT PRIMARY KEY, visible INTEGER NOT NULL CHECK(visible IN (0,1))
-                );
-            ''')
+            with self.transaction():
+                self.connection.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+                self.connection.execute('CREATE TABLE IF NOT EXISTS calendar_visibility ('
+                                        'calendar_id TEXT PRIMARY KEY, visible INTEGER NOT NULL CHECK(visible IN (0,1)))')
 
     @contextmanager
     def transaction(self):
@@ -101,19 +127,21 @@ class UiState:
         """
         if self.get('_legacy_import_complete')[0]:
             return
-        with self.transaction():
-            if self.get('_legacy_import_complete')[0]:
-                return
-            if seed:
-                for key, value in source.execute('SELECT key,value FROM settings'):
-                    if key in UI_SETTINGS:
-                        self.connection.execute('INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)',
-                                                (key, value))
-                for calendar_id, payload in source.execute('SELECT id,data FROM calendars'):
-                    visible = json.loads(payload).get('visible', True)
-                    self.connection.execute('INSERT OR IGNORE INTO calendar_visibility(calendar_id,visible) VALUES (?,?)',
-                                            (calendar_id, bool(visible)))
-            self.set('_legacy_import_complete', True)
+        def migrate():
+            with self.transaction():
+                if self.get('_legacy_import_complete')[0]:
+                    return
+                if seed:
+                    for key, value in source.execute('SELECT key,value FROM settings'):
+                        if key in UI_SETTINGS:
+                            self.connection.execute('INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)',
+                                                    (key, value))
+                    for calendar_id, payload in source.execute('SELECT id,data FROM calendars'):
+                        visible = json.loads(payload).get('visible', True)
+                        self.connection.execute('INSERT OR IGNORE INTO calendar_visibility(calendar_id,visible) VALUES (?,?)',
+                                                (calendar_id, bool(visible)))
+                self.set('_legacy_import_complete', True)
+        self._startup(migrate)
 
     def close(self):
         with self._lock:

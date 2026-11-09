@@ -20,7 +20,10 @@ from debacal.ui_database import DatabaseCommands
 START = datetime(2026, 11, 1, 9, tzinfo=timezone.utc)
 
 
-def wait_until(app, condition, timeout=4):
+def wait_until(app, condition, timeout=10):
+    # Worker connections may wait up to SQLite's five-second busy timeout.
+    # Responsiveness is asserted separately while that writer is held; this
+    # deadline only bounds asynchronous completion on a loaded CI runner.
     deadline = monotonic() + timeout
     while not condition() and monotonic() < deadline:
         app.processEvents()
