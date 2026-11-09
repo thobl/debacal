@@ -19,6 +19,7 @@ from debacal.recurrence import RecurrenceRangeError
 from debacal.preferences import Preferences
 from debacal.theme import scheme_for
 from debacal.ui import MainWindow
+from debacal.calendar_widgets import minimum_week_width
 
 
 NOW = datetime(2026, 11, 4, 23, 59, tzinfo=ZoneInfo('Europe/Berlin'))
@@ -76,6 +77,19 @@ def test_compact_workspace_scrolls_to_all_controls_and_returns_to_normal_without
     assert window.workspace_content.width() >= 1030 and window.workspace_content.height() >= 690
     assert scroll.horizontalScrollBar().maximum() > 0
     assert scroll.verticalScrollBar().maximum() > 0
+    # Large text must fit weekday names and TODAY without changing column
+    # positions as the user switches between month and week.
+    widths = []
+    for view in ('week', 'month', 'year', 'week'):
+        window.set_view(view)
+        for _ in range(6):
+            app.processEvents()
+        widths.append(window.workspace_content.width())
+        if view in ('week', 'month'):
+            surface = window.header if view == 'week' else window.month
+            assert surface.width() >= minimum_week_width(window.preferences)
+    assert len(set(widths)) == 1
+    assert window.header.width() == window.month.width()
 
     def visible(control):
         rect = QRect(control.mapTo(scroll.viewport(), QPoint()), control.size())

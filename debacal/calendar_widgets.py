@@ -37,6 +37,7 @@ ALL_DAY_SIZE = 7
 WEEK_CAPTION_SIZE = WEEKDAY_SIZE
 DAY_NUMBER_SIZE = 17
 WEEK_NUMBER_SIZE = 13
+TODAY_SIZE = 7
 
 
 @lru_cache(maxsize=64)
@@ -47,6 +48,16 @@ def calendar_gutter(preferences):
     metrics = QFontMetricsF(font)
     width = max(metrics.horizontalAdvance(preferences.format_time(time(hour))) for hour in range(24))
     return math.ceil(max(44 * scale, width + 12 * scale))
+
+
+@lru_cache(maxsize=64)
+def minimum_week_width(preferences):
+    """Keep weekday names and today's caption readable in seven columns."""
+    metrics = QFontMetricsF(ui_font(preferences, WEEKDAY_SIZE, True))
+    weekday = max(metrics.horizontalAdvance(preferences.weekday_name(day).upper()) for day in range(7))
+    today = QFontMetricsF(ui_font(preferences, TODAY_SIZE, True)).horizontalAdvance('TODAY')
+    # Match weekday_label_rect's left/right padding, plus a gap between texts.
+    return math.ceil(calendar_gutter(preferences) + 7 * (weekday + today + 24))
 
 
 def axis_label_rect(gutter, top, height, scale):
@@ -69,10 +80,22 @@ def paint_day_state(painter, header, day, selected, today, widget, *, show_selec
     if show_selection and day == selected:
         painter.fillRect(header, colors.date_selection)
     if day == today:
-        label = (QRectF(header.left() + 8, header.bottom() - 18 * scale,
-                        header.width() - 18, 16 * scale) if tall
-                 else header.adjusted(8, 0, -8, 0))
-        text(painter, label, 'TODAY', colors.weekend, 7,
+        label = weekday_label_rect(header.left(), header.width(), scale) if tall else header.adjusted(8, 0, -8, 0)
+        reference = QFontMetricsF(ui_font(widget.preferences, WEEKDAY_SIZE if tall else 10, True))
+        size = TODAY_SIZE
+        metrics = QFontMetricsF(ui_font(widget.preferences, size, True))
+        if not tall:
+            # Standalone month previews can be narrower than the workspace.
+            occupied = header.left() + 10 + reference.horizontalAdvance(str(day.day))
+            minimum = min(size, size / scale)
+            while size > minimum and metrics.horizontalAdvance('TODAY') > label.right() - occupied - 4:
+                size = max(minimum, size - .25)
+                metrics = QFontMetricsF(ui_font(widget.preferences, size, True))
+        if tall:
+            offset = ((reference.ascent() - reference.descent()) -
+                      (metrics.ascent() - metrics.descent())) / 2
+            label.translate(0, offset)
+        text(painter, label, 'TODAY', colors.weekend, size, True,
              align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     painter.restore()
 

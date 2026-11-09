@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QStackedWidget, QSizePolicy, QButtonGroup,
 )
 
-from .calendar_widgets import CalendarCanvas, MonthCanvas, DayHeader, AllDayCanvas
+from .calendar_widgets import CalendarCanvas, MonthCanvas, DayHeader, AllDayCanvas, minimum_week_width
 from .compact_controls import ElidedLabel
 from .dialogs import hint
 from .icons import icon
@@ -266,4 +266,13 @@ class WorkspaceChrome:
 
     def update_navigation_width(self):
         """Refresh shared header metrics for the current view and preferences."""
+        # Keep the same grid width in every view. On compact screens, larger
+        # text uses the outer scroll area rather than crowding date headers.
+        root = self.workspace_content.layout()
+        sidebar = root.itemAt(0).widget().width()
+        margins = root.itemAt(1).widget().layout().contentsMargins()
+        trailing = max(self.scroll.verticalScrollBar().sizeHint().width(),
+                       self.all_day_scroll.verticalScrollBar().sizeHint().width())
+        self.workspace_content.setMinimumWidth(max(1030, sidebar + margins.left() + margins.right()
+                                                  + trailing + minimum_week_width(self.preferences)))
         self.workspace_header.update_preferences()

@@ -9,12 +9,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontMetricsF
 from PySide6.QtWidgets import QApplication
 
 from debacal import calendar_widgets
 from debacal.calendar_widgets import DayHeader, MonthCanvas, paint_colors
 from debacal.event_style import contrast_ratio, event_colors
+from debacal.fonts import ui_font
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
 from debacal.year_view import YearView
@@ -91,6 +92,7 @@ def test_today_labels_use_weekend_ink_and_single_day_has_no_selection_fill(deskt
         assert label.args[3] == paint_colors(widget).weekend
         assert label.kwargs['align'] & Qt.AlignmentFlag.AlignRight
         assert label.args[4] < calendar_widgets.WEEKDAY_SIZE
+        assert label.args[5] is True
         if kind is DayHeader:
             assert image == before
             assert image.pixelColor(widget.gutter + 2, 35) == paint_colors(widget).background
@@ -98,6 +100,52 @@ def test_today_labels_use_weekend_ink_and_single_day_has_no_selection_fill(deskt
             assert image != before
             left, top, width, height = month_cell(widget, TODAY)
             assert image.pixelColor(round(left + 3), round(top + height / 2)) == paint_colors(widget).background
+
+
+@pytest.mark.parametrize('scale,width', [(80, 1040), (100, 1040), (140, 686)])
+@pytest.mark.parametrize('day', range(7))
+def test_bold_today_caption_aligns_with_weekday_baseline_and_stays_clear_of_its_name(desktop, scale, width, day):
+    _, preferences, make = desktop
+    header = make(DayHeader)
+    header.set_preferences(replace(preferences, font_scale=scale))
+    header.resize(max(width, calendar_widgets.minimum_week_width(header.preferences)), header.height())
+    today = CURRENT.replace(day=2 + day)
+    with patch('debacal.calendar_widgets.now', return_value=today), \
+         patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as rendered:
+        header.grab()
+    calls = rendered.call_args_list
+    label = next(call for call in calls if call.args[2] == 'TODAY')
+    name = header.preferences.weekday_name(today.date()).upper()
+    weekday = next(call for call in calls if call.args[2] == name)
+    def metrics(call):
+        return QFontMetricsF(ui_font(header.preferences, call.args[4], call.args[5]))
+    def baseline(call):
+        font = metrics(call)
+        return call.args[1].center().y() + (font.ascent() - font.descent()) / 2
+    assert label.args[5] is True
+    assert baseline(label) == pytest.approx(baseline(weekday))
+    assert label.args[1].right() - metrics(label).horizontalAdvance('TODAY') >= (
+        weekday.args[1].left() + metrics(weekday).horizontalAdvance(name) + 3)
+
+
+def test_bold_month_today_caption_fits_beside_a_two_digit_date_at_large_text_size(desktop):
+    _, preferences, make = desktop
+    month = make(MonthCanvas)
+    month.set_preferences(replace(preferences, font_scale=140))
+    month.resize(686, 700)
+    today = CURRENT.replace(day=28)
+    with patch('debacal.calendar_widgets.now', return_value=today), \
+         patch('debacal.calendar_widgets.text', wraps=calendar_widgets.text) as rendered:
+        month.grab()
+    label = next(call for call in rendered.call_args_list if call.args[2] == 'TODAY')
+    _, top, _, height = month_cell(month, today.date())
+    number = next(call for call in rendered.call_args_list if call.args[2] == '28'
+                  and top < call.args[1].center().y() < top + height)
+    caption_metrics = QFontMetricsF(ui_font(month.preferences, label.args[4], label.args[5]))
+    number_metrics = QFontMetricsF(ui_font(month.preferences, number.args[4], number.args[5]))
+    assert label.args[5] is True
+    assert label.args[1].right() - caption_metrics.horizontalAdvance('TODAY') >= (
+        number.args[1].left() + number_metrics.horizontalAdvance('28') + 3)
 
 
 def test_week_and_month_selection_tints_are_subtle_but_visible(desktop):
