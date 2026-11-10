@@ -300,3 +300,21 @@ identities remain the public GitHub no-reply identity.
 Earlier release attempts were blocked before any assets were published. At the
 maintainer's request the completed release uses 0.1.3, replacing its failed,
 unpublished tag.
+
+### Release 0.1.4 — 10 November 2026
+
+DejaVu Sans is now the default, with an explicit Arch font dependency. Existing
+typeface preferences and the desktop-font option remain available. Startup clears
+the fixed Regular/Book face restriction supplied by some desktop themes while
+preserving their font attributes, allowing native controls to honor requested
+bold weights. Calendar and preferences selection weights agree with their
+programmatic fonts. Pixel regressions cover emphasis, focus/refresh stability,
+and system/custom families using both Qt installations.
+
+The full UTC suite passed **3,933 tests and 169 subtests**. The extracted source
+passed 68 focused font/alignment checks. The Arch recipe built `0.1.4-1` with its
+normal checks; a separately installed wheel verified its package path, default
+typeface, actual bold rendering, CLI and isolated demo screenshot. Source, wheel
+and Arch recipe assets reproduced byte-for-byte with the pinned toolchain, and
+the recipe's source checksum matches the archive. The deploy key and SSH setup
+remain outside tracked application files and release artifacts.
