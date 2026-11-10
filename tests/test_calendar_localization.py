@@ -8,10 +8,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QRectF, QCoreApplication, QEvent
-from PySide6.QtGui import QPainter, QFont, QFontMetricsF
+from PySide6.QtGui import QPainter, QFontMetricsF
 from PySide6.QtWidgets import QApplication, QWidget
 
 from debacal.calendar_widgets import CalendarCanvas, DayHeader, MonthCanvas, AllDayCanvas, text
+from debacal.fonts import ui_font
 from debacal.models import Event, Calendar
 from debacal.preferences import Preferences
 from debacal.series_preview import SeriesPreview
@@ -86,8 +87,7 @@ def test_large_fonts_keep_week_gutters_aligned_and_all_day_rows_usable(widgets):
     event = Event('trip', 'local', 'Trip', start, start + timedelta(days=3), all_day=True)
     strip.set_data([start.date() + timedelta(days=day) for day in range(7)], [event], [])
     rect, _ = strip.rects()[0]
-    font = QFont('Sans Serif')
-    font.setPointSizeF(8 * 1.4)
+    font = ui_font(preferences, 8)
     assert rect.height() >= QFontMetricsF(font).height()
     assert rect.bottom() <= strip.height()
     assert strip.day_at(rect.center()) in (start.date(), start.date() + timedelta(days=1), start.date() + timedelta(days=2))

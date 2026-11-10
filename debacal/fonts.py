@@ -2,6 +2,9 @@
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 
+DEFAULT_FONT_FAMILY = 'DejaVu Sans'
+
+
 def configure_application_font(app):
     """Retain desktop font choices without pinning every weight to one face.
 
@@ -16,7 +19,7 @@ def configure_application_font(app):
 
 
 def resolved_font_family(preferences=None):
-    family = getattr(preferences, 'font_family', 'system')
+    family = getattr(preferences, 'font_family', DEFAULT_FONT_FAMILY)
     if family != 'system':
         return family
     if QGuiApplication.instance() is not None:

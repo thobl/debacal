@@ -24,6 +24,7 @@ pkgbase = debacal
 	depends = python-keyring<26
 	depends = desktop-file-utils
 	depends = hicolor-icon-theme
+	depends = ttf-dejavu
 	optdepends = gnome-keyring: secure password storage with Secret Service
 	optdepends = kwallet: secure password storage in Plasma
 	optdepends = python-dbus: KWallet keyring backend support

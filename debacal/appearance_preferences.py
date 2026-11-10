@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from .event_style import event_colors
 from .calendar_appearance import weekend_fill, weekend_text
 from .theme import SCHEMES, corner_radius, scheme_for
-from .fonts import ui_font
+from .fonts import DEFAULT_FONT_FAMILY, ui_font
 from .year_presence import paint_day_presence
 
 
@@ -458,7 +458,7 @@ class AppearanceEditor(QWidget):
         layout = self._section(outer, 'Font')
         self.font_family = _ScrollSafeComboBox()
         self.font_family.setAccessibleName('Typeface')
-        self.font_family.setToolTip('Applies to interface controls and calendar text. System default follows your desktop font.')
+        self.font_family.setToolTip(f'{DEFAULT_FONT_FAMILY} is the default for controls and calendar text. System default follows your desktop font.')
         self.font_family.addItem('System default', 'system')
         for family in QFontDatabase.families():
             self.font_family.addItem(family, family)

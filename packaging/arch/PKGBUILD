@@ -16,6 +16,7 @@ depends=(
   'python-keyring>=25' 'python-keyring<26'
   'desktop-file-utils'
   'hicolor-icon-theme'
+  'ttf-dejavu'
 )
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
 optdepends=(

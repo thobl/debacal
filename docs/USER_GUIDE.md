@@ -155,9 +155,9 @@ Interface also sets Square, Subtle (default), or Rounded corners.
 Font sets the typeface and text size consistently for controls and painted
 calendar text. Scrolling over those fields scrolls the page without changing
 their values; type a size or use the field's arrow buttons/keyboard instead.
-System follows Qt's desktop font integration, whose default can differ between
-a system installation and a virtual environment. Select a named family here
-to use the same typeface in both.
+DejaVu Sans is the default typeface. System follows Qt's desktop font integration,
+whose default can differ between a system installation and a virtual environment.
+Select a named family here to use the same typeface in both.
 Sidebar sets a custom title or hides it to save space. When hidden, its Preferences
 button moves to the sidebar footer while retaining its horizontal position.
 Colors offers weekend text color (the default), background shading, or no

@@ -9,10 +9,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRectF, Qt
-from PySide6.QtGui import QFont, QFontMetricsF
+from PySide6.QtGui import QFontMetricsF
 from PySide6.QtWidgets import QApplication
 
 from debacal.appearance import stylesheet
+from debacal.fonts import ui_font
 from debacal import calendar_widgets
 from debacal.models import Event
 from debacal.preferences import Preferences
@@ -227,8 +228,7 @@ def test_all_day_caption_is_smaller_and_right_aligned_with_readable_timestamps(w
     for rect, value, size, align in times:
         assert rect.right() == pytest.approx(all_day[0].right())
         assert align & Qt.AlignmentFlag.AlignRight
-        font = QFont('Sans Serif')
-        font.setPointSizeF(size * scale / 100)
+        font = ui_font(window.preferences, size)
         assert QFontMetricsF(font).horizontalAdvance(value) <= rect.width()
 
 
@@ -246,9 +246,7 @@ def test_week_caption_and_number_align_with_day_labels_and_numbers(workspace, sc
                     and call.args[1].left() > header.gutter)
     assert week_call.args[4] == 13 < day_call.args[4] == 17
     def baseline(call):
-        font = QFont('Sans Serif')
-        font.setPointSizeF(call.args[4] * scale / 100)
-        font.setBold(True)
+        font = ui_font(window.preferences, call.args[4], bold=True)
         metrics = QFontMetricsF(font)
         return call.args[1].center().y() + (metrics.ascent() - metrics.descent()) / 2
     assert baseline(day_call) == pytest.approx(baseline(week_call))

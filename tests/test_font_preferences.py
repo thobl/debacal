@@ -3,15 +3,16 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QFontDatabase, QWheelEvent
+from PySide6.QtGui import QFont, QFontDatabase, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
 from debacal.appearance import stylesheet
-from debacal.fonts import resolved_font_family, ui_font
+from debacal.fonts import DEFAULT_FONT_FAMILY, resolved_font_family, ui_font
 from debacal.preferences import Preferences
 from debacal.preferences_dialog import PreferencesDialog
 from debacal.store import Store
@@ -77,14 +78,30 @@ def test_font_choice_previews_applies_and_persists_as_one_shared_family(dialog):
         widget.result_preferences.save(store)
         assert Preferences.load(store) == widget.result_preferences
     widget.restore_defaults()
-    assert widget.font_family.currentData() == 'system'
+    assert widget.font_family.currentData() == DEFAULT_FONT_FAMILY
+
+
+def test_default_typeface_is_explicit_and_system_font_remains_an_opt_in(dialog):
+    _, widget = dialog
+    assert DEFAULT_FONT_FAMILY == 'DejaVu Sans'
+    assert Preferences.from_dict({}).font_family == DEFAULT_FONT_FAMILY
+    assert widget.font_family.currentData() == DEFAULT_FONT_FAMILY
+    assert ui_font().family() == DEFAULT_FONT_FAMILY
+    assert 'font-family: "DejaVu Sans"' in stylesheet()
+    with patch.object(QFontDatabase, 'systemFont', return_value=QFont('Synthetic desktop font')):
+        assert resolved_font_family(Preferences()) == DEFAULT_FONT_FAMILY
+        assert resolved_font_family(Preferences(font_family='system')) == 'Synthetic desktop font'
+    for family in ('system', 'DejaVu Serif'):
+        with Store(':memory:') as store:
+            Preferences(font_family=family).save(store)
+            assert Preferences.load(store).font_family == family
 
 
 @pytest.mark.parametrize('family', ['', ' ', None, [], 'font\nfamily', 'x' * 121])
 def test_invalid_font_settings_cannot_break_startup(family):
     with pytest.raises(ValueError, match='font'):
         Preferences(font_family=family)
-    assert Preferences.from_dict({'font_family': family}).font_family == 'system'
+    assert Preferences.from_dict({'font_family': family}).font_family == DEFAULT_FONT_FAMILY
 
 
 def test_settings_put_explanations_and_format_samples_in_tooltips(dialog):

@@ -4,6 +4,11 @@ Debacal targets Linux desktops and requires Python 3.11 or newer. Releases
 provide an Arch build recipe, a Python wheel, a source archive, and SHA-256 sums.
 There is no PyPI or AUR publication yet.
 
+The default typeface is DejaVu Sans. The Arch recipe installs `ttf-dejavu`.
+For wheel/source installations, install DejaVu through your distribution if it
+is missing; Qt otherwise substitutes an available font. The typeface can be
+changed in Preferences → Appearance → Font.
+
 On Python 3.11 the dependency metadata excludes PySide6 6.12.0, whose
 [upstream reference-counting bug](https://qt-project.atlassian.net/browse/PYSIDE-3474)
 can abort ordinary GUI calls. Pip and uv select a compatible release

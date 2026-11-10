@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import QDate, QLocale, QTime
 
 from .theme import SCHEMES, CUSTOM_COLORS, valid_rgb
+from .fonts import DEFAULT_FONT_FAMILY
 
 
 SETTINGS_KEY = 'display_preferences'
@@ -56,7 +57,7 @@ class Preferences:
     sidebar_title: str = 'debacal'
     duration_presets_minutes: tuple[int, ...] = (30, 45, 60)
     corner_style: str = 'subtle'
-    font_family: str = 'system'
+    font_family: str = DEFAULT_FONT_FAMILY
     default_event_duration_minutes: int = 60
     year_view_style: str = 'tracks'
 
