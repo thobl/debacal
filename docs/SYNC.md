@@ -56,6 +56,15 @@ contains calendar data, but no saved password. The directory is private to the
 user; keep it with the database when backing up to preserve pending conflict
 choices. The SQLite outbox survives failed subprocesses and interrupted uploads.
 
+Imported invitation files can carry a `METHOD` header such as `REQUEST` or
+`PUBLISH`. CalDAV forbids that scheduling header in stored calendar objects
+([RFC 4791, section 4.1](https://www.rfc-editor.org/rfc/rfc4791.html#section-4.1)).
+Debacal removes it from uploads while retaining attendees, alarms, timezone
+definitions and event metadata. Ordinary file export keeps the imported header.
+When a server rejects an event upload, the issues dialog identifies that event
+and its HTTP status, and lets you inspect or save the attempted calendar data.
+The local event and its queued change are retained for retry.
+
 A fresh read-only remote pass establishes a current working mirror and
 synchronization baseline on each run before staging pending changes. Its snapshot
 is a diagnostic copy, rather than a separately maintained synchronization pair.

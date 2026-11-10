@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def install_write_guard(policy, storage_class=None):
+    from aiohttp import ClientResponseError
+    from http import HTTPStatus
     from vdirsyncer.exceptions import NotFoundError, PreconditionFailed
     if storage_class is None:
         from vdirsyncer.storage.dav import CalDAVStorage
@@ -23,7 +25,30 @@ def install_write_guard(policy, storage_class=None):
     from debacal.vdirsyncer_backend import _digest, atomic_write, parsed_one, raw_uid, semantic
     expected = policy.get("expected_existing", {})
     directory = Path(policy["conflict_directory"])
+    failure_directory = Path(policy["failure_directory"]) if policy.get("failure_directory") else None
     original_upload, original_update = storage_class.upload, storage_class.update
+
+    def failed_write(item, operation, error):
+        if failure_directory is None or error.status < 400:
+            return
+        # Response exceptions include the request URL and can contain server-
+        # supplied text. Retain only the standard HTTP meaning, never the URL,
+        # authentication data or an unbounded error response.
+        try:
+            uid = raw_uid(item.raw)
+            if not uid or len(uid.encode("utf-8")) > 4096:
+                return
+            try:
+                reason = HTTPStatus(error.status).phrase
+            except ValueError:
+                reason = "HTTP request failed"
+            atomic_write(failure_directory / (_digest(uid) + ".json"), json.dumps({
+                "uid": uid, "operation": operation, "status": error.status, "reason": reason,
+            }))
+        except (OSError, TypeError, ValueError, UnicodeError):
+            # Diagnostics are best-effort. Preserve the actual transport error
+            # and vdirsyncer's per-item rollback even if writing them fails.
+            pass
 
     def deleted_conflict(item):
         local = parsed_one(item.raw)
@@ -39,7 +64,11 @@ def install_write_guard(policy, storage_class=None):
         if raw_uid(item.raw) in expected:
             deleted_conflict(item)
             raise PreconditionFailed("Expected-existing event disappeared; review the deletion conflict in Debacal.")
-        return await original_upload(self, item)
+        try:
+            return await original_upload(self, item)
+        except ClientResponseError as error:
+            failed_write(item, "upload", error)
+            raise
 
     async def update(self, href, item, etag):
         try:
@@ -47,6 +76,9 @@ def install_write_guard(policy, storage_class=None):
         except NotFoundError:
             if raw_uid(item.raw) in expected:
                 deleted_conflict(item)
+            raise
+        except ClientResponseError as error:
+            failed_write(item, "update", error)
             raise
 
     storage_class.upload = upload

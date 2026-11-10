@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import timezone
 import hashlib
+from http import HTTPStatus
 from importlib.util import find_spec
 import json
 import os
@@ -22,7 +23,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
+from .ics import export_ics, normalize_caldav_ics, parse_ics, parse_ics_report, patch_ics
 from .ics_resources import ParseReport, ResourceIssue, RejectedResource, _safe_reason, reject_duplicate_identities
 from .import_sources import MAX_IMPORT_BYTES
 from .models import Calendar, Event
@@ -345,6 +346,44 @@ class VdirsyncerBackend:
             store.set_quarantined_resource(calendar_id, item.resource_id, item.raw_ics, item.reason)
 
     @staticmethod
+    def _upload_failures(path, staged):
+        """Identify rejected writes without parsing/trusting the CLI's log text.
+
+        A staged mirror also contains items whose PUT failed. Retain their
+        proposed data for review, but never treat it as a server acknowledgment.
+        Only bounded receipts for this write pass and its captured UIDs apply.
+        """
+        rejected = []
+        for file in (path / "write-failures").glob("*.json"):
+            try:
+                with file.open('rb') as stream:
+                    # Runner bounds UID text to 4096 UTF-8 bytes. JSON's
+                    # escaped representation can be several times larger.
+                    payload = stream.read(32769)
+                if len(payload) > 32768:
+                    continue
+                marker = json.loads(payload)
+                uid, status = marker['uid'], marker['status']
+                if (not isinstance(uid, str) or uid not in staged or type(status) is not int
+                        or not 400 <= status < 600 or marker.get('operation') not in {'upload', 'update'}):
+                    continue
+                _change, local, data = staged[uid]
+                if local is None or data is None:
+                    continue
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            try:
+                phrase = HTTPStatus(status).phrase
+            except ValueError:
+                phrase = 'HTTP error'
+            reason = (f'The server refused to upload this event (HTTP {status}: {phrase}). '
+                      'The event is saved locally and its changes remain queued.')
+            if status == 415:
+                reason += ' This can mean that the server rejected a property in the calendar data.'
+            rejected.append(RejectedResource(uid, data, _digest(uid)[:12], reason))
+        return rejected
+
+    @staticmethod
     def _state_event(state):
         payload = (state or {}).get("base_payload") or {}
         if payload.get("event"):
@@ -529,7 +568,8 @@ class VdirsyncerBackend:
                         issues.append(ResourceIssue(_digest(uid)[:12], "Source event requires review; its queued change was retained."))
                         continue
                     current, data = remote.get(uid, (None, None))
-                    local_data = (patch_ics(data, local) if data else export_ics([local])).decode() if local else None
+                    local_data = normalize_caldav_ics(
+                        patch_ics(data, local) if data else export_ics([local])).decode() if local else None
                     canonical_local = parsed_one(local_data, calendar.id) if local_data else None
                     staged[uid] = (change, local, local_data)
                     marker_path = self._marker(path, uid)
@@ -622,10 +662,15 @@ class VdirsyncerBackend:
                     target = files[0] if files else working / (_digest(uid) + ".ics")
                     atomic_write(target, data)
             force_delete = bool(deleted and not any(working.glob("*.ics")) and set(mirror_report.files) <= deleted)
+            failures = path / "write-failures"
+            _private_directory(failures)
+            for file in failures.glob('*.json'):
+                file.unlink()
             atomic_write(path / "write-policy.json", json.dumps({
                 "expected_existing": {uid: change["event_id"] for uid, (change, local, _) in staged.items()
                                       if local is not None and uid in remote},
                 "conflict_directory": str(path / "conflicts"),
+                "failure_directory": str(failures),
             }))
             code, output = self._run(calendar, path, password, pull=False, force_delete=force_delete)
             final_report = self._mirror_report(working, calendar.id)
@@ -639,9 +684,16 @@ class VdirsyncerBackend:
             self._quarantine(store, calendar.id, path, final_report.rejected)
             self._quarantine(store, calendar.id, path, identity_issues)
             if code:
+                rejected = self._upload_failures(path, staged)
+                issues.extend(ResourceIssue(item.resource_id, item.reason) for item in rejected)
+                self._quarantine(store, calendar.id, path, rejected)
                 conflicts = self._conflicts(path, calendar.id, id_by_uid)
                 if conflicts:
                     return finish(received, 0, conflicts)
+                if rejected:
+                    raise ValueError(f'The server rejected {len(rejected)} event upload(s). '
+                                     'Open the issues dialog to review the affected events and HTTP errors. '
+                                     'Local changes remain queued.')
                 raise ValueError("vdirsyncer could not upload the calendar. Local changes remain queued. " + output)
             sent = 0
             for uid, (change, local, proposed_data) in staged.items():

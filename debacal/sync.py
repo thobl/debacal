@@ -16,7 +16,7 @@ from urllib.parse import quote, urlparse, urlsplit, unquote
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from .ics import export_ics, parse_ics, parse_ics_report, patch_ics
+from .ics import export_ics, normalize_caldav_ics, parse_ics, parse_ics_report, patch_ics
 from .credentials import CredentialStore, CredentialError, account_key
 from .models import Calendar, Event
 from .store import EventOwnershipConflict, HistoryConflict, Store
@@ -475,7 +475,7 @@ class SyncEngine:
                             transport.delete(resource.href, etag=resource.etag)
                         store.delete_sync_state(calendar.id, event_id)
                     else:
-                        data = patch_ics(resource.data, local) if resource else export_ics([local])
+                        data = normalize_caldav_ics(patch_ics(resource.data, local) if resource else export_ics([local]))
                         saved = transport.put(resource.href if resource else transport.new_href(event_id),
                                               data, etag=resource.etag if resource else None)
                         self._record(store, calendar.id, local, saved)
@@ -546,7 +546,7 @@ class SyncEngine:
                         transport.delete(href, etag=resource.etag)
                     resource, remote_event = None, None
                 else:
-                    data = patch_ics(resource.data, local_event) if resource else export_ics([local_event])
+                    data = normalize_caldav_ics(patch_ics(resource.data, local_event) if resource else export_ics([local_event]))
                     resource = transport.put(href, data, etag=resource.etag if resource else None)
                     remote_event = local_event
                 for change in changes:

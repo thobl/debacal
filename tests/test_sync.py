@@ -90,6 +90,22 @@ def test_upload_delete_undo(tmp_path):
         store.close()
 
 
+def test_alternative_transport_uploads_invitation_without_scheduling_envelope(tmp_path):
+    store, transport, engine = setup(tmp_path)
+    raw = export_ics([event()]).decode().replace('VERSION:2.0', 'VERSION:2.0\r\nMETHOD:PUBLISH')
+    imported, = parse_ics(raw, 'remote')
+    try:
+        store.apply('Import invitation', [imported])
+        assert not [message for message in synchronize(engine) if message.kind == 'error']
+        remote, = transport.resources.values()
+        assert 'METHOD:' not in remote.data
+        assert not store.pending_changes()
+        assert 'METHOD:PUBLISH' in export_ics([store.get_event(imported.id)]).decode()
+    finally:
+        engine.close()
+        store.close()
+
+
 def test_offline_keeps_durable_outbox(tmp_path):
     store, transport, engine = setup(tmp_path)
     try:

@@ -84,3 +84,9 @@ def patch_ics(data: str | bytes, event: Event) -> bytes:
     """Patch one complete UID resource, preserving server UID and unknown fields."""
     from .ics_resources import patch
     return patch(data, event)
+
+
+def normalize_caldav_ics(data: str | bytes) -> bytes:
+    """Prepare an ICS resource for calendar storage, rather than scheduling."""
+    from .ics_resources import normalize_caldav_resource
+    return normalize_caldav_resource(data)

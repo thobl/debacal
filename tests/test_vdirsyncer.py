@@ -203,6 +203,102 @@ def sync(store, calendar, backend):
     return backend.sync(store, calendar, "session-secret")
 
 
+@pytest.mark.parametrize('existing', [False, True])
+def test_imported_invitation_is_uploaded_as_calendar_object_and_not_scheduling_message(tmp_path, existing):
+    store, calendar, cli, backend = setup(tmp_path)
+    raw = ('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Synthetic Import//EN\r\nMETHOD:REQUEST\r\n'
+           'BEGIN:VEVENT\r\nUID:synthetic-invitation\r\nDTSTAMP:20260101T000000Z\r\n'
+           'SUMMARY:Imported invitation\r\nDTSTART:20261110T090000Z\r\nDTEND:20261110T100000Z\r\n'
+           'ORGANIZER:mailto:host@example.invalid\r\nATTENDEE:mailto:guest@example.invalid\r\n'
+           'BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\n'
+           'END:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n')
+    try:
+        if existing:
+            cli.remote['synthetic-invitation'] = raw
+            sync(store, calendar, backend)
+            event, = store.list_events(calendar_ids=[calendar.id])
+            store.apply('Edit imported invitation', [replace(event, title='Edited invitation')])
+        else:
+            from debacal.ics import parse_ics_report
+            store.import_report(parse_ics_report(raw, calendar.id), calendar_id=calendar.id)
+        local, = store.list_events(calendar_ids=[calendar.id])
+        assert 'METHOD:REQUEST' in local.raw_ics
+        assert sync(store, calendar, backend).sent == 1
+        uploaded = cli.remote['synthetic-invitation']
+        assert 'METHOD:' not in uploaded
+        assert 'ORGANIZER:mailto:host@example.invalid' in uploaded
+        assert 'ATTENDEE:mailto:guest@example.invalid' in uploaded
+        assert 'BEGIN:VALARM' in uploaded
+        assert not store.pending_changes()
+        # Retrying after a successful normalization does not create conflicts.
+        result = sync(store, calendar, backend)
+        assert not result.conflicts and not result.issues and result.sent == 0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('existing', [False, True], ids=['create', 'update'])
+def test_server_rejected_upload_is_identifiable_and_retry_clears_the_issue(tmp_path, existing):
+    from debacal.vdirsyncer_backend import atomic_write
+    store, calendar, cli, backend = setup(tmp_path)
+    event = sample('Imported event rejected by the server', id='rejected-import')
+    store.apply('Import', [event])
+    if existing:
+        sync(store, calendar, backend)
+        event = replace(event, title='Edited imported event rejected by the server')
+        store.apply('Edit imported event', [event])
+    original_remote = dict(cli.remote)
+
+    def reject_upload(arguments, *, env, **kwargs):
+        if (arguments[-2:] == ['sync', 'push'] and env.get('DEBACAL_VDIR_WRITE_POLICY')):
+            policy = json.loads(Path(env['DEBACAL_VDIR_WRITE_POLICY']).read_text())
+            atomic_write(Path(policy['failure_directory']) / 'failed.json', json.dumps({
+                'uid': event.ical_uid, 'operation': 'update' if existing else 'upload', 'status': 415,
+                'reason': 'Untrusted text must not enter the issue',
+            }))
+            return CompletedProcess(arguments, 1, '', 'HTTP 415 https://calendar.test/private/')
+        return cli(arguments, env=env, **kwargs)
+
+    try:
+        backend.runner = reject_upload
+        with pytest.raises(ValueError, match='issues dialog') as caught:
+            sync(store, calendar, backend)
+        assert 'calendar.test' not in str(caught.value)
+        retained, = store.quarantined_resource_summaries()
+        assert retained['diagnostics']['title'] == event.title
+        assert retained['diagnostics']['uid'] == event.ical_uid
+        assert 'HTTP 415: Unsupported Media Type' in retained['reason']
+        assert 'remain queued' in retained['reason']
+        assert 'Untrusted text' not in retained['reason']
+        original = store.get_quarantined_resource(calendar.id, retained['resource_id'])['raw_ics']
+        assert parse_ics(original, calendar.id)[0].title == event.title
+        assert store.get_event(event.id) == event
+        assert [change['event_id'] for change in store.pending_changes()] == [event.id]
+        assert cli.remote == original_remote
+
+        backend.runner = cli
+        result = sync(store, calendar, backend)
+        assert result.sent == 1 and not result.issues
+        assert not store.pending_changes() and not store.list_quarantined_resources(calendar.id)
+        path = backend.calendar_path(calendar.id)
+        assert not list((path / 'write-failures').glob('*.json'))
+        assert not list((path / 'quarantine').glob('*.ics'))
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('marker', [None, [], {'uid': 'unrelated', 'status': 415, 'operation': 'upload'},
+                                  {'uid': 'event', 'status': '415', 'operation': 'upload'},
+                                  {'uid': 'event', 'status': 200, 'operation': 'upload'},
+                                  {'uid': 'event', 'status': 415, 'operation': 'delete'},
+                                  {'uid': ['event'], 'status': 415, 'operation': 'upload'}])
+def test_invalid_or_unrelated_write_diagnostics_are_ignored(tmp_path, marker):
+    from debacal.vdirsyncer_backend import atomic_write
+    atomic_write(tmp_path / 'write-failures' / 'marker.json', json.dumps(marker))
+    staged = {'event': ({}, sample(), export_ics([sample()]).decode())}
+    assert not VdirsyncerBackend._upload_failures(tmp_path, staged)
+
+
 @pytest.mark.parametrize('arrival', ['bootstrap', 'during-upload'])
 def test_copied_native_id_cannot_replace_cached_uid_and_healthy_upload_continues(tmp_path, arrival):
     store, calendar, cli, backend = setup(tmp_path)

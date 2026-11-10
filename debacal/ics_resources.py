@@ -954,6 +954,23 @@ def _unique_timezones(blocks):
     return result
 
 
+def normalize_caldav_resource(data: str | bytes) -> bytes:
+    """Remove scheduling-envelope metadata forbidden in CalDAV storage.
+
+    RFC 4791 section 4.1 forbids VCALENDAR's METHOD property in calendar
+    object resources. Imported invitations may retain it for file export, so
+    remove it only at the upload boundary. Event properties, alarms, timezone
+    definitions and unknown metadata remain intact.
+    """
+    header, blocks = _blocks(data)
+    stored_header = [line for line in header
+                     if line.split(":", 1)[0].split(";", 1)[0].upper() != "METHOD"]
+    if len(stored_header) == len(header):
+        return data.encode("utf-8") if isinstance(data, str) else data
+    return fallback.folded(["BEGIN:VCALENDAR", *stored_header,
+                            *(line for block in blocks for line in block), "END:VCALENDAR"])
+
+
 def serialize_resource(event, *, timezone_spans=None):
     raw = event.raw_ics
     header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
