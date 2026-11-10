@@ -7,6 +7,7 @@ resource-scoped VTIMEZONE definitions or the IANA timezone database.
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+import quopri
 import re
 
 from .models import Event
@@ -18,7 +19,11 @@ class CalendarValueError(ValueError):
 
 def unfolded(data):
     if isinstance(data, bytes):
-        data = data.decode("utf-8-sig")
+        # RFC 5545 section 3.1 explicitly allows recovering producer folds
+        # that split a UTF-8 sequence. Unfold bytes before decoding, rather
+        # than rejecting valid text whose individual physical lines are not
+        # independently decodable. Other invalid bytes still fail strictly.
+        data = re.sub(rb"(?:\r\n|\r|\n)[ \t]", b"", data).decode("utf-8-sig")
     logical = re.sub(r"(?:\r\n|\r|\n)[ \t]", "", data).replace("\r\n", "\n").replace("\r", "\n")
     # Unicode line/paragraph separators are valid TEXT content, including
     # whitespace in a custom sequence. Only physical ICS newlines split lines.
@@ -113,8 +118,37 @@ def escaped(value):
     return value.replace("\r\n", "\n").replace("\r", "\n").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
 
 
+def _display_text(parameters, value):
+    """Decode explicitly declared legacy text without guessing an encoding.
+
+    Some vCalendar producers kept quoted-printable TEXT in iCalendar exports.
+    Only fields represented as editable text in our model use this repair;
+    identities, date properties and unknown raw metadata remain untouched.
+    """
+    encoding = str(parameters.get('ENCODING', '')).upper()
+    if encoding not in {'', '7BIT', '8BIT', 'QUOTED-PRINTABLE'}:
+        raise CalendarValueError('Unsupported encoding on a calendar text property. View the original resource to inspect its ENCODING parameter.')
+    if encoding == 'QUOTED-PRINTABLE':
+        # quopri otherwise silently drops a dangling '=' and accepts malformed
+        # escape sequences. Neither behavior is a safe way to recover text.
+        if re.search(r'=(?![0-9A-Fa-f]{2})', value):
+            raise CalendarValueError('Invalid quoted-printable calendar text. View the original resource to inspect its encoded text properties.')
+        try:
+            value = quopri.decodestring(value.encode('utf-8')).decode(str(parameters.get('CHARSET', 'UTF-8')))
+        except LookupError:
+            raise CalendarValueError('Unsupported character set on an encoded calendar text property. View the original resource to inspect its CHARSET parameter.') from None
+        except UnicodeError:
+            raise CalendarValueError('Encoded calendar text does not match its declared character set. View the original resource to inspect its CHARSET parameter.') from None
+    return text(value)
+
+
 def prop(component, key, default=""):
-    return text(component[key][0][1]) if key in component else default
+    if key not in component:
+        return default
+    parameters, value = component[key][0]
+    if key in {'SUMMARY', 'DESCRIPTION', 'LOCATION'}:
+        return _display_text(parameters, value)
+    return text(value)
 
 
 def dt(value, params, tz, definitions=None):

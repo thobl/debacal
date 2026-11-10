@@ -45,6 +45,12 @@ class PeriodError(fallback.CalendarValueError):
     """A safe, property-specific explanation for a malformed RDATE period."""
 
 
+class ConflictingTimezoneDefinitions(ValueError):
+    def __init__(self, identifier):
+        self.identifier = identifier
+        super().__init__(f'Incompatible timezone definitions for {identifier!r}. Export the affected events separately.')
+
+
 @dataclass(frozen=True)
 class _RecurrencePeriod:
     start: datetime
@@ -111,6 +117,9 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
     lines = fallback.unfolded(data)
     if not lines or "BEGIN:VCALENDAR" not in {line.upper() for line in lines} or "END:VCALENDAR" not in {line.upper() for line in lines}:
         raise ValueError("Expected a complete VCALENDAR document.")
+    if sum(line.upper() == 'BEGIN:VCALENDAR' for line in lines) > 1:
+        return _parse_calendar_stream(lines, calendar_id, limit=limit, use_full=use_full,
+                                      repair_missing_uids=repair_missing_uids)
     try:
         header, blocks = _blocks(data)
     except ValueError:
@@ -192,6 +201,67 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
         tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
 
 
+def _parse_calendar_stream(lines, calendar_id, *, limit, use_full, repair_missing_uids):
+    from .ics_stream import calendar_documents
+    try:
+        documents = list(calendar_documents(lines))
+    except ValueError:
+        raw = fallback.folded(lines).decode()
+        resource_id = hashlib.sha256(raw.encode()).hexdigest()[:12]
+        reason = 'Malformed or unclosed calendar stream. View the original to inspect its VCALENDAR boundaries.'
+        return ParseReport((), (ResourceIssue(resource_id, reason),),
+                           (RejectedResource('', raw, resource_id, reason),))
+    prepared, count, generated = [], 0, 0
+    for document in documents:
+        data = fallback.folded(document)
+        try:
+            context = _blocks(data)
+        except ValueError:
+            context = None  # The ordinary per-resource path retains damage.
+        event_blocks = [block for block in context[1] if block[0] == 'BEGIN:VEVENT'] if context else []
+        count += len(event_blocks)
+        generated += sum(_property_of(block, range_codec.GENERATED) is not None for block in event_blocks)
+        prepared.append((data, context, {_uid_of(block) for block in event_blocks if _uid_of(block)}))
+    if count - generated > limit or generated > range_codec.MAX_GENERATED_RANGES:
+        raise ValueError(f'Import exceeds {limit:,} event components.')
+    events, issues, rejected, sources, seen, duplicates = [], [], [], {}, set(), set()
+    for data, context, raw_uids in prepared:
+        report = parse_report(data, calendar_id, limit=limit, use_full=use_full,
+                              repair_missing_uids=repair_missing_uids)
+        present = raw_uids | {event.ical_uid for event in report.events} | {item.uid for item in report.rejected if item.uid}
+        duplicates.update(seen & present)
+        seen.update(present)
+        for uid in raw_uids:
+            try:
+                raw = _resource_for_uid(data, uid, context=context)
+            except (ValueError, TypeError, KeyError):
+                raw = data.decode()
+            sources.setdefault(uid, []).append(raw)
+        for item in (*report.events, *report.rejected):
+            uid = item.ical_uid if isinstance(item, Event) else item.uid
+            if uid and uid not in raw_uids:
+                sources.setdefault(uid, []).append(item.raw_ics)
+        events.extend(report.events)
+        issues.extend(report.issues)
+        rejected.extend(report.rejected)
+    if duplicates:
+        # Different documents can legitimately reuse timezone identifiers, but
+        # importing competing versions of one UID into one destination would
+        # silently overwrite an event. Retain both versions for review instead.
+        ids = {hashlib.sha256(uid.encode()).hexdigest()[:12] for uid in duplicates}
+        events = [event for event in events if event.ical_uid not in duplicates]
+        issues = [item for item in issues if item.resource_id not in ids]
+        rejected = [item for item in rejected if item.uid not in duplicates]
+        reason = ('Different calendar documents contain the same event UID. '
+                  'Import those calendars separately to choose which version to keep.')
+        for uid in sorted(duplicates):
+            resource_id = hashlib.sha256(uid.encode()).hexdigest()[:12]
+            issues.append(ResourceIssue(resource_id, reason))
+            rejected.append(RejectedResource(uid, '\r\n'.join(sources[uid]), resource_id, reason))
+    return reject_duplicate_identities(ParseReport(
+        tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
+
+
 _DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID'}
 
 
@@ -216,12 +286,25 @@ def _timezone_definitions(blocks, referenced=None):
         if identifier in definitions and definitions[identifier] != definition:
             raise TimezoneError(f'Timezone {identifier!r} has conflicting definitions in one calendar resource.')
         definitions[identifier] = definition
-    return definitions
+    # Authenticate generated source only after validating duplicate identifiers.
+    # Exact current/legacy output expresses native IANA intent; decode its
+    # clocks natively too, rather than merely removing its model metadata later.
+    return {identifier: definition for identifier, definition in definitions.items()
+            if _generated_timezone_coverage(tuple(fallback.unfolded(definition))) is None}
 
 
 def _read(data, use_full=True):
     from .ics import ICalendar
     header, blocks = _blocks(data)
+    for line in header:
+        if not line:
+            continue
+        name, _parameters, value = fallback.content_line(line)
+        if name.replace(' ', '').replace('\t', '') == 'CALSCALE':
+            if value.strip().upper() != 'GREGORIAN':
+                raise fallback.CalendarValueError(
+                    'Unsupported CALSCALE: Debacal can interpret Gregorian calendars only. '
+                    'The original resource is retained; its dates have not been converted.')
     lexical = fallback.components(data)
     referenced = {params['TZID'] for component in lexical for key in _DATE_PROPERTIES
                   for params, value in component.get(key, [])
@@ -262,6 +345,14 @@ def _read(data, use_full=True):
     for index, original in enumerate(originals):
         component = {"_decoded": {}, '_timezone_definitions': definitions}
         for key, values in original.items():
+            if key in {'SUMMARY', 'DESCRIPTION', 'LOCATION'} and any(
+                    str(params.get('ENCODING', '')).upper() == 'QUOTED-PRINTABLE'
+                    for params, _ in lexical[index].get(key, ())):
+                # Decode the declared transfer encoding before TEXT escapes.
+                # Library decode/to_ical round-trips can otherwise insert
+                # escapes into QP text and change its meaning a second time.
+                component[key] = lexical[index][key]
+                continue
             if key in _DATE_PROPERTIES or key == 'DURATION':
                 component[key] = lexical[index].get(key, [])
                 continue
@@ -290,7 +381,7 @@ def _decoded(component, key, tz):
     values = component.get("_decoded", {}).get(key)
     if values is not None:
         return values
-    result = []
+    result, date_context = [], None
     for parameters, raw in component.get(key, []):
         for piece in raw.split(","):
             if parameters.get('VALUE') == 'PERIOD' or '/' in piece:
@@ -298,7 +389,23 @@ def _decoded(component, key, tz):
                     raise PeriodError('Only RDATE can contain recurrence periods.')
                 result.append(_decode_period(piece, parameters, tz, component.get('_timezone_definitions')).start)
                 continue
-            decoded, all_day = fallback.dt(piece, parameters, tz, component.get('_timezone_definitions'))
+            decoded_parameters = parameters
+            if (key in {'RDATE', 'EXDATE'} and parameters.get('VALUE') in {None, 'DATE'}
+                    and re.fullmatch(r'\d{8}Z', piece)):
+                # Historical Google birthday exports append a meaningless UTC
+                # suffix to recurrence DATEs. Recover only within a proven
+                # all-day context, never by inventing a time for timed series.
+                if date_context is None:
+                    starts = component.get('DTSTART', [])
+                    date_context = False
+                    if len(starts) == 1:
+                        start_parameters, start_value = starts[0]
+                        _start, date_context = fallback.dt(start_value, start_parameters, tz,
+                                                           component.get('_timezone_definitions'))
+                if date_context:
+                    piece = piece[:-1]
+                    decoded_parameters = dict(parameters) | {'VALUE': 'DATE'}
+            decoded, all_day = fallback.dt(piece, decoded_parameters, tz, component.get('_timezone_definitions'))
             result.append(decoded.date() if all_day else decoded)
     return result
 
@@ -402,15 +509,39 @@ def _used_definitions(components):
 
 
 def _component_end(component, start, all_day, tz, *, inherited=None, duration_zone=None):
-    if 'DTEND' in component and 'DURATION' in component:
-        raise ValueError('An event must use DTEND or DURATION, not both.')
     if 'DTEND' in component:
         if len(component['DTEND']) != 1:
             raise ValueError('An event must have only one DTEND.')
         endpoint = _decoded(component, 'DTEND', tz)[0]
         if (not isinstance(endpoint, datetime)) != all_day:
             raise fallback.CalendarValueError('DTEND must use the same DATE or DATE-TIME value type as DTSTART.')
-        return _datetime(endpoint, tz), ''
+        end = _datetime(endpoint, tz)
+        if 'DURATION' in component:
+            # Legacy generators sometimes redundantly emit both. Recover only
+            # when each independently specifies the same end; disagreements
+            # must remain available for review rather than choosing a winner.
+            duration_component = {key: value for key, value in component.items() if key != 'DTEND'}
+            duration_end, _ = _component_end(duration_component, start, all_day, tz,
+                                            inherited=inherited, duration_zone=duration_zone)
+            floating = _floating(component) if 'DTSTART' in component else bool(inherited and inherited.floating_time)
+            if all_day:
+                matches = end.date() == duration_end.date()
+            elif floating:
+                matches = _floating(component, 'DTEND') and end.replace(tzinfo=None) == duration_end.replace(tzinfo=None)
+            else:
+                matches = not _floating(component, 'DTEND') and end.timestamp() == duration_end.timestamp()
+            if not matches:
+                raise fallback.CalendarValueError('DTEND and DURATION specify different event ends. View the original resource to choose the intended duration.')
+            nominal_days, _seconds = parse_duration_spec(fallback.prop(component, 'DURATION'))
+            if (nominal_days and not all_day and not floating
+                    and ('RRULE' in component or 'RDATE' in component)
+                    and not isinstance(duration_zone or start.tzinfo, timezone)):
+                # Agreement at the anchor does not prove agreement at later
+                # DST changes: DTEND retains elapsed duration, while P1D/P1W
+                # retain nominal calendar days. Only known fixed-offset zones
+                # make those declarations interchangeable for a recurrence.
+                raise fallback.CalendarValueError('DTEND and DURATION agree for the first occurrence but may differ across timezone changes. Remove one declaration to choose the intended recurring duration.')
+        return end, ''
     if 'DURATION' in component:
         if len(component['DURATION']) != 1:
             raise ValueError('An event must have only one DURATION.')
@@ -579,19 +710,27 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
     grouped = {}
     for component in source:
         if "EXRULE" in component:
-            raise ValueError("EXRULE calendars are unsupported. Convert exclusions to EXDATE before importing.")
+            raise fallback.CalendarValueError('This event uses legacy EXRULE exclusions, which Debacal cannot yet import. '
+                                              'Export exclusions as EXDATE in the source application, or retain the original for review.')
         if len(component.get("RRULE", [])) > 1:
-            raise ValueError("Multiple RRULE properties on one event are unsupported.")
+            raise fallback.CalendarValueError('This event contains multiple RRULE properties. '
+                                              'Debacal cannot safely choose which recurrence rule to use; the original is retained.')
         if any(str(params.get("RANGE", "")).upper() == "THISANDFUTURE"
                for params, _ in component.get("RECURRENCE-ID", [])):
-            raise ValueError("RECURRENCE-ID RANGE=THISANDFUTURE is unsupported; split the series before importing.")
+            raise fallback.CalendarValueError('This series changes this and all future occurrences '
+                                              '(RECURRENCE-ID;RANGE=THISANDFUTURE), which Debacal cannot yet import. '
+                                              'The original series is retained for review.')
         uid = fallback.prop(component, "UID") or str(uuid5(NAMESPACE_URL, repr(component)))
         grouped.setdefault(uid, []).append(component)
     result = []
     for uid, components in grouped.items():
         masters = [c for c in components if "RECURRENCE-ID" not in c]
-        if len(masters) != 1:
-            raise ValueError("Each recurring UID must contain exactly one master event; detached-only imports are unsupported.")
+        if not masters:
+            raise fallback.CalendarValueError('These are detached occurrences without their original recurring event. '
+                                              'Import the complete series from its source; the detached data is retained for review.')
+        if len(masters) > 1:
+            raise fallback.CalendarValueError('Several master events use the same UID. '
+                                              'Debacal cannot safely choose a version; the original resource is retained.')
         master_component = masters[0]
         if fallback.prop(master_component, "STATUS").upper() == "CANCELLED":
             continue
@@ -847,8 +986,10 @@ def _timezone_definition(timezone_id, first_date, last_date):
     except ImportError:
         raise ValueError("Exporting a named-timezone recurrence needs the 'icalendar' dependency to generate VTIMEZONE. "
                          "Install the project dependencies, or retain an imported timezone definition.") from None
-    return fallback.unfolded(Timezone.from_tzinfo(resolve_timezone(timezone_id), tzid=timezone_id,
-                                                 first_date=first_date, last_date=last_date).to_ical())
+    from .timezone_generation import generate_verified_timezone
+    zone = resolve_timezone(timezone_id)
+    generated = generate_verified_timezone(zone, timezone_id, first_date, last_date)
+    return fallback.unfolded(generated.to_ical())
 
 
 def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=False):
@@ -926,7 +1067,16 @@ def _cached_generated_timezone_coverage(block):
         first, last = map(date.fromisoformat, claims[0])
         if last <= first or (last.year, last.month, last.day) > (first.year + 512, first.month, first.day):
             return None
-        if _timezone_signature(block) == _timezone_signature(_timezone_definition(identifier, first, last)):
+        signature = _timezone_signature(block)
+        if signature == _timezone_signature(_timezone_definition(identifier, first, last)):
+            return first, last
+        # Older Debacal versions used the library generator directly. Its
+        # exact output can contain incorrect/missing transitions; recognize
+        # that complete source fingerprint as native intent so it does not
+        # become a foreign explicit rule after updating the generator.
+        from .timezone_generation import legacy_generated_timezone
+        legacy = legacy_generated_timezone(resolve_timezone(identifier), identifier, first, last)
+        if signature == _timezone_signature(fallback.unfolded(legacy.to_ical())):
             return first, last
     except (ValueError, KeyError, ImportError):
         pass
@@ -946,8 +1096,7 @@ def _unique_timezones(blocks):
                 if known[identifier] != signature:
                     # Never guess which imported offset rules should win.
                     # Separate resources remain valid sync/export units.
-                    raise ValueError(f'Incompatible timezone definitions for {identifier!r}. '
-                                     'Export the affected events separately.')
+                    raise ConflictingTimezoneDefinitions(identifier)
                 continue
             known[identifier] = signature
         result.append(block)
@@ -955,17 +1104,52 @@ def _unique_timezones(blocks):
 
 
 def normalize_caldav_resource(data: str | bytes) -> bytes:
-    """Remove scheduling-envelope metadata forbidden in CalDAV storage.
+    """Prepare a valid storage envelope without rewriting event semantics.
 
     RFC 4791 section 4.1 forbids VCALENDAR's METHOD property in calendar
-    object resources. Imported invitations may retain it for file export, so
-    remove it only at the upload boundary. Event properties, alarms, timezone
-    definitions and unknown metadata remain intact.
+    object resources. Imported files can also omit or duplicate their producer
+    and version headers, which strict servers reject. Repair that transport
+    metadata only at the upload boundary. Event properties, alarms, timezone
+    definitions and unknown metadata remain intact. A different calendar scale
+    cannot safely be relabelled Gregorian.
     """
-    header, blocks = _blocks(data)
-    stored_header = [line for line in header
-                     if line.split(":", 1)[0].split(";", 1)[0].upper() != "METHOD"]
-    if len(stored_header) == len(header):
+    from .caldav_validation import normalize_event_metadata, normalize_header_tokens
+    original_header, original_blocks = _blocks(data)
+    header = normalize_header_tokens(original_header)
+    blocks = normalize_event_metadata(original_blocks)
+    properties = {'VERSION': [], 'PRODID': [], 'CALSCALE': []}
+    named = []
+    for line in header:
+        key = line.split(':', 1)[0].split(';', 1)[0].upper()
+        named.append((key, line))
+        if key in properties:
+            properties[key].append((line, fallback.content_line(line)[2]))
+    scales = properties['CALSCALE']
+    if any(value.strip().upper() != 'GREGORIAN' for _line, value in scales):
+        raise fallback.CalendarValueError(
+            'Unsupported CALSCALE for CalDAV upload. Debacal uses the Gregorian calendar; '
+            'review the original calendar scale rather than changing its dates automatically.')
+    versions, producers = properties['VERSION'], properties['PRODID']
+    replacements = {
+        'VERSION': versions[0][0] if len(versions) == 1 and versions[0][1] == '2.0' else 'VERSION:2.0',
+        'PRODID': producers[0][0] if len(producers) == 1 and producers[0][1].strip()
+                  else 'PRODID:-//Debacal//Local-first calendar//EN',
+        'CALSCALE': scales[0][0] if len(scales) == 1 else 'CALSCALE:GREGORIAN',
+    }
+    stored_header, seen = [], set()
+    for key, line in named:
+        if key == 'METHOD':
+            continue
+        if key in replacements:
+            if key not in seen:
+                stored_header.append(replacements[key])
+                seen.add(key)
+        else:
+            stored_header.append(line)
+    for key in ('VERSION', 'PRODID'):
+        if key not in seen:
+            stored_header.append(replacements[key])
+    if stored_header == original_header and blocks == original_blocks:
         return data.encode("utf-8") if isinstance(data, str) else data
     return fallback.folded(["BEGIN:VCALENDAR", *stored_header,
                             *(line for block in blocks for line in block), "END:VCALENDAR"])
@@ -995,12 +1179,12 @@ def serialize_resource(event, *, timezone_spans=None):
         if identifier not in existing_ids:
             result.append(fallback.unfolded(definition))
             existing_ids.add(identifier)
-    if timezone_spans:
-        for index, block in enumerate(result):
-            if block[0] == 'BEGIN:VTIMEZONE' and _generated_timezone_coverage(tuple(block)) is not None:
+    for index, block in enumerate(result):
+        if block[0] == 'BEGIN:VTIMEZONE':
+            coverage = _generated_timezone_coverage(tuple(block))
+            if coverage is not None:
                 identifier = fallback.text(_property_of(block, 'TZID') or '')
-                if identifier in timezone_spans:
-                    result[index] = _timezone_definition(identifier, *timezone_spans[identifier])
+                result[index] = _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, coverage))
     if _named_start(event):
         existing_ids = {fallback.text(_property_of(block, 'TZID') or '')
                         for block in result if block[0] == 'BEGIN:VTIMEZONE'}
@@ -1063,8 +1247,20 @@ def export(events):
     for event in events:
         _, blocks = _blocks(serialize_resource(event, timezone_spans=spans))
         components.extend(blocks)
+    try:
+        components = _unique_timezones(components)
+    except ConflictingTimezoneDefinitions as error:
+        # Independent, parsed resources can use the same TZID for different
+        # explicit clocks. RFC 5545 streams preserve those calendar scopes.
+        # Do not apply this to a native event with a contradictory raw template:
+        # its model has not established which definition owns the timestamps.
+        affected = [event for event in events if error.identifier in event.timezone_definitions
+                    or event.timezone_id == error.identifier]
+        if not affected or any(error.identifier not in event.timezone_definitions for event in affected):
+            raise
+        return b''.join(serialize_resource(event) for event in events)
     return fallback.folded(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN",
-                            *(line for block in _unique_timezones(components) for line in block), "END:VCALENDAR"])
+                            *(line for block in components for line in block), "END:VCALENDAR"])
 
 
 def patch(data, event):

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from bisect import bisect_left, bisect_right
-from datetime import timedelta, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from functools import lru_cache
 import re
 from threading import RLock
@@ -76,6 +76,12 @@ def _database_alias(identifier):
                 if not separator or not revision or revision in {'.', '..'}:
                     return None
                 break
+    if candidate is None and identifier.startswith('/'):
+        # Some producers use a global TZID consisting of one slash and an
+        # exact database name (for example /Europe/Stockholm). Match that
+        # spelling only if ZoneInfo can resolve the entire remaining name;
+        # arbitrary namespaces never acquire rules from a familiar suffix.
+        candidate = identifier[1:]
     if not candidate or any(part in {'', '.', '..'} for part in candidate.split('/')):
         return None
     return candidate
@@ -155,7 +161,7 @@ class _ResourceTimezone(tzinfo):
         offset = component.tzoffsetto if component is not None else self.backend.utcoffset(local)
         if offset is not None:
             try:
-                previous = self.backend.fromutc((wall - offset).replace(tzinfo=self.backend))
+                previous = self.fromutc((wall - offset).replace(tzinfo=self))
             except OverflowError:
                 # A valid year-1/year-9999 local clock may have no representable
                 # UTC datetime; its declared offset still remains available.
@@ -184,7 +190,43 @@ class _ResourceTimezone(tzinfo):
     def fromutc(self, value):
         if value.tzinfo is not self:
             raise ValueError('fromutc requires this timezone on its input.')
-        return self.backend.fromutc(value.replace(tzinfo=self.backend)).replace(tzinfo=self)
+        components = getattr(self.backend, '_comps', None)
+        if components is None:
+            return self.backend.fromutc(value.replace(tzinfo=self.backend)).replace(tzinfo=self)
+        wall = value.replace(tzinfo=None)
+        if len(components) == 1:
+            return (wall + components[0].tzoffsetto).replace(tzinfo=self, fold=0)
+
+        # Dateutil's generic fromutc assumes a stable standard offset and can
+        # shift instants for valid negative-DST observances. Select the last
+        # actual UTC onset directly from the prepared transition indexes.
+        # An onset is expressed in its previous offset, independent of whether
+        # the producer named the observance STANDARD or DAYLIGHT.
+        def microseconds(delta):
+            return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+        def clock_key(clock):
+            return ((clock.toordinal() * 86400 + clock.hour * 3600 + clock.minute * 60 + clock.second)
+                    * 1_000_000 + clock.microsecond)
+
+        instant, previous, chosen = clock_key(wall), None, None
+        for component in components:
+            try:
+                query = wall + component.tzoffsetfrom
+            except OverflowError:
+                query = datetime.max if component.tzoffsetfrom > timedelta(0) else datetime.min
+            onset = component.rrule.before(query, inc=True)
+            if onset is None:
+                continue
+            # Integer keys also represent onsets whose UTC instant falls just
+            # outside Python's years 1–9999 without overflowing or rounding.
+            candidate = clock_key(onset) - microseconds(component.tzoffsetfrom)
+            if candidate <= instant and (previous is None or candidate > previous):
+                previous, chosen = candidate, component
+        if chosen is None:
+            chosen = next((component for component in components if not component.isdst), components[0])
+        fold = (previous is not None and chosen.tzoffsetdiff < timedelta(0)
+                and instant - previous < microseconds(-chosen.tzoffsetdiff))
+        return (wall + chosen.tzoffsetto).replace(tzinfo=self, fold=int(fold))
 
 
 def validate_definitions(definitions) -> dict[str, str]:
