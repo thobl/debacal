@@ -4,8 +4,8 @@ These recipes build Debacal using Arch's Python and Qt packages. They do not
 run pip or download Python dependencies during the build. All runtime
 dependencies are available in Arch's official repositories.
 
-Download the `debacal-0.1.4-arch.tar.gz` recipe asset from the
-[release](https://github.com/thobl/debacal/releases/tag/v0.1.4), extract it, review
+Download the `debacal-0.1.5-arch.tar.gz` recipe asset from the
+[release](https://github.com/thobl/debacal/releases/tag/v0.1.5), extract it, review
 `PKGBUILD`, and run these commands in that directory:
 
 ```sh
@@ -74,7 +74,7 @@ DEBACAL_FULL_CHECK=1 makepkg -s
 
 Use `makepkg -si --nocheck` to skip package checks.
 
-For an offline build, put the matching `debacal-0.1.4.tar.gz` source asset beside
+For an offline build, put the matching `debacal-0.1.5.tar.gz` source asset beside
 `PKGBUILD`; makepkg will verify and use it without downloading it again. The
 source archive intentionally excludes this directory, so its checksum does not
 depend on a recipe containing that same checksum. The release recipe records
