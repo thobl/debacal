@@ -269,7 +269,7 @@ The full suite passed **3,284 tests and 169 subtests** with the installed Python
 using offscreen Fusion and disabling desktop theme/shortcut overrides for the
 test baseline. The system CalDAV dependency remained missing throughout.
 
-### Release candidate 0.1.3 — 9 November 2026
+### Release 0.1.3 — 10 November 2026
 
 This release includes every change since 0.1.2: producer-prefixed timezone
 support, maintained range indexes, compact persistent preparations and bulk
@@ -277,32 +277,26 @@ startup construction, and UI database contention fixes. The current
 [performance report](PERFORMANCE.md) supersedes the earlier cached-query
 measurements above and includes held-writer checks.
 
-The workspace suite passed **3,885 tests and 169 subtests** before packaging.
-The extracted release passed **3,841 tests and 169 subtests**, with 34
-maintainer-only checks skipped. Local-socket tests ran outside the restricted
-sandbox. Benchmark tests now skip cleanly when their maintainer scripts are
-absent from a source archive; a separate regression protects that collection path.
+The complete local UTC suite passed **3,928 tests and 169 subtests**. The corrected
+application and tests also passed the full Python 3.11/3.14 GitHub matrix.
+Cross-zone recurrence and persistence checks passed under both UTC and Berlin.
+Targeted tests from the extracted source cover the query and queue fixes.
 
-The Arch release recipe built `0.1.3-1` and passed its normal offline checks
-without installing it. The wheel installed into a temporary environment,
-resolved to its installed package outside the checkout, and passed CLI and
-offscreen demo/screenshot checks. Source, wheel and Arch recipe assets reproduced
-byte-for-byte in independent staging trees; package checksums match the recipe.
-UI choices now use a separate `.ui.sqlite3` sidecar, documented in profile backup
-instructions. New tracked files were checked for private paths, server/account
-identifiers and accidental calendar/database inclusion; commit identities remain
-the public GitHub no-reply identity.
+Concurrent profile initialization uses bounded startup-only handling; runtime
+UI choices retain their zero busy timeout. Prepared floating queries explicitly
+distinguish source and viewer timezones, including after restoration. The Qt test
+polling helper now releases Python's GIL rather than starving database workers;
+the same 13 coordinator checks fell from 14.99 seconds to 0.38 seconds locally,
+with unchanged responsiveness assertions.
 
-GitHub's UTC checks subsequently blocked publication: prepared floating-date
-queries used inconsistent timezone defaults, and simultaneous first opens could
-race while creating the UI-state tables. No 0.1.3 release assets were published.
-Version 0.1.4 addresses these cases with explicit viewer-zone query parameters,
-bounded startup-only initialization handling, and cross-zone/concurrency tests.
-Runtime UI settings retain their zero busy timeout.
+Source, wheel and Arch recipe assets are built with the pinned toolchain and
+checksum-pinned recipe. Validation covers an extracted-source Arch build, a
+wheel installed outside the checkout, CLI/demo rendering and reproducible
+assets. UI choices now use a separate `.ui.sqlite3` sidecar, documented in profile
+backup instructions. New tracked files were checked for private paths,
+server/account identifiers and accidental calendar/database inclusion; commit
+identities remain the public GitHub no-reply identity.
 
-The completed 0.1.4 assets passed 217 targeted tests from their extracted source
-and 196 recurrence/persistence checks in each of UTC and Berlin. The final Arch
-recipe built `0.1.4-1` with its normal checks, and a fresh wheel installation
-passed CLI and isolated demo/screenshot checks. All three assets reproduced
-byte-for-byte again, with regenerated recipe checksums. The release workflow
-requires the complete Python 3.11/3.14 matrix before publication.
+Earlier release attempts were blocked before any assets were published. At the
+maintainer's request the completed release uses 0.1.3, replacing its failed,
+unpublished tag.
