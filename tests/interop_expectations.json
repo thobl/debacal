@@ -1,0 +1,20 @@
+{
+  "cases": {
+    "debacal-public-corpus/kewisch/ical.js/samples/google_birthday.ics": {
+      "outcome": "partial",
+      "classification": "unsupported"
+    },
+    "debacal-public-corpus/KDE/kcalendarcore/autotests/data/Compat/AppleICal_1.5.ics": {
+      "outcome": "partial",
+      "classification": "unsupported"
+    },
+    "debacal-public-corpus/KDE/kcalendarcore/autotests/data/test_recurrenceid_single.ics": {
+      "outcome": "rejected",
+      "classification": "unsupported"
+    },
+    "debacal-public-corpus/KDE/kcalendarcore/autotests/data/test_recurrenceid_thisandfuture.ics": {
+      "outcome": "rejected",
+      "classification": "unsupported"
+    }
+  }
+}

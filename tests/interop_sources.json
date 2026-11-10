@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/day_long_recur_yearly.ics",
+      "git_blob_sha1": "0c0aeb56ef5972809175e457e34541123177ff9f",
+      "sha256": "447d9e5311be264c8ab19126b944f3d7e6eb00f6476985b2f0f3d57b76f5f054",
+      "bytes": 1177,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/0c0aeb56ef5972809175e457e34541123177ff9f"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/duration_instead_of_dtend.ics",
+      "git_blob_sha1": "8f4fc274f3335f89864c29c82e00657d53acd87b",
+      "sha256": "629249c6930fe0bcdeb5b1cd9da86eca14ccdd1dd95c368d221f4ebedcd32ef7",
+      "bytes": 859,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/8f4fc274f3335f89864c29c82e00657d53acd87b"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/google_birthday.ics",
+      "git_blob_sha1": "f9b7c9da10776ff945bfe7c17a4018684ea309d3",
+      "sha256": "e4f0b8493cbaeb16f7d761ad0dd1b184881c0ce26a24cf4c8434bf1c664a0aec",
+      "bytes": 2770,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/f9b7c9da10776ff945bfe7c17a4018684ea309d3"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/only_dtstart_date.ics",
+      "git_blob_sha1": "37a32dd1a91df18989ba001bcf3d08a1ec0b9816",
+      "sha256": "5371028f9dcac2a91e1777f2bdeac57294c11e09ebce650519d8554dd9710d62",
+      "bytes": 825,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/37a32dd1a91df18989ba001bcf3d08a1ec0b9816"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/only_dtstart_time.ics",
+      "git_blob_sha1": "fa6e9f689e799bf944413d7336f7f3eb40ebe504",
+      "sha256": "3a5ced401c767ea30ebee624177304bf9a60a8ffb53c009fdd1537bcc02e5f35",
+      "bytes": 845,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/fa6e9f689e799bf944413d7336f7f3eb40ebe504"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/recur_duplicate_dates.ics",
+      "git_blob_sha1": "64407974bd0cc442ddc20b6ec91827769a9fe9a6",
+      "sha256": "c199b563a018bd88b8c373cfabd10e04e377588aed2afa6e71fdb6c2d0204e1d",
+      "bytes": 264,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/64407974bd0cc442ddc20b6ec91827769a9fe9a6"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/recur_instances.ics",
+      "git_blob_sha1": "52b8320f52b85ddb86c1dd35e44aa38cdf2ef1a2",
+      "sha256": "47c2fad6ee4677f4f37d05ab55d2768d43e48c939e9b4ff5b082f2db77371aa6",
+      "bytes": 2779,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/52b8320f52b85ddb86c1dd35e44aa38cdf2ef1a2"
+    },
+    {
+      "project": "ICAL.js",
+      "repository": "https://github.com/kewisch/ical.js",
+      "license": "MPL-2.0",
+      "path": "samples/utc_negative_zero.ics",
+      "git_blob_sha1": "e61ad9a93cefb5f65a5b9a80bad85dca847f1fe0",
+      "sha256": "c9538176a562559ad4bb16ff56aa81fafd637008c02f6b28e8851e58de05a57c",
+      "bytes": 576,
+      "url": "https://api.github.com/repos/kewisch/ical.js/git/blobs/e61ad9a93cefb5f65a5b9a80bad85dca847f1fe0"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/AppleICal_1.5.ics",
+      "git_blob_sha1": "9887fe5530d5549cb15f52716eff54115f9aeb12",
+      "sha256": "192d171046fb1995de10be820e89bae7ee329c9377e3a1ea534fbea8e8c471dc",
+      "bytes": 6273,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/9887fe5530d5549cb15f52716eff54115f9aeb12"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/Evolution_2.8.2_timezone_test.ics",
+      "git_blob_sha1": "9ce6c2ef01d6f70741c6327aafadb9a56bd34b07",
+      "sha256": "0a9c52e72e50948beca880e8d97c7e335f5c34284323d2ca676cbb9050e6f8e8",
+      "bytes": 431,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/9ce6c2ef01d6f70741c6327aafadb9a56bd34b07"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/Mozilla_1.0.ics",
+      "git_blob_sha1": "d03ec0117f45ad5852aa4386538c268996f9f64d",
+      "sha256": "f52383ba210e6495ecf7a9e7e29bc37e4b73558998c2beaec9ec6d0f1798aca3",
+      "bytes": 1308,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/d03ec0117f45ad5852aa4386538c268996f9f64d"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/KOrganizer_3.1.ics",
+      "git_blob_sha1": "2c764d95a4300446ae06af9b1ae6459f33c02eab",
+      "sha256": "b04bcc3102b5abff9355f3229df9ac6186da527200ceb9ff0e1395dd17a2998f",
+      "bytes": 6019,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/2c764d95a4300446ae06af9b1ae6459f33c02eab"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/KOrganizer_3.2.ics",
+      "git_blob_sha1": "1e73607ce1cab1dcf3fd59c5bd9cecfcaac64f9e",
+      "sha256": "cf083fc5d6ba6236516b518373632354f7623f23af1282a05fe270c2d3487bec",
+      "bytes": 1949,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/1e73607ce1cab1dcf3fd59c5bd9cecfcaac64f9e"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/Compat/eGroupware.ics",
+      "git_blob_sha1": "72c58fd41119c91ca51364fc116f21e6e09d6a5e",
+      "sha256": "bd3f939dcac3ad1f8876f05fde53c37414f65f4ff1a2aedb8d93fc19b487b69f",
+      "bytes": 624,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/72c58fd41119c91ca51364fc116f21e6e09d6a5e"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/test_recurrenceid_single.ics",
+      "git_blob_sha1": "019fb7882df653b793ae1f70f53f3d0085d32c48",
+      "sha256": "6960a89332e9c9f7134b8b4116b8d615beeb928f0763ef412694cab204d23dcf",
+      "bytes": 452,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/019fb7882df653b793ae1f70f53f3d0085d32c48"
+    },
+    {
+      "project": "KCalendarCore",
+      "repository": "https://github.com/KDE/kcalendarcore",
+      "license": "See upstream REUSE licensing metadata",
+      "path": "autotests/data/test_recurrenceid_thisandfuture.ics",
+      "git_blob_sha1": "534c505adc085b6a0d0221889b2ff5bd9de5a0f1",
+      "sha256": "c30864cbc3ed71682d18d55627a82a1c24626f7cc8d8f19a57289e87ad20dea9",
+      "bytes": 471,
+      "url": "https://api.github.com/repos/KDE/kcalendarcore/git/blobs/534c505adc085b6a0d0221889b2ff5bd9de5a0f1"
+    }
+  ],
+  "public_feeds": [
+    {
+      "path": "fosdem-2026.ics",
+      "url": "https://fosdem.org/2026/schedule/ical",
+      "license": "CC-BY-4.0",
+      "retrieved": "2026-11-10",
+      "sha256": "5893cd8aa79198af42f1802a7dc040f164aa29f14b12204e190cac79fedb3fcc",
+      "bytes": 539469,
+      "mutable": true
+    },
+    {
+      "path": "england-and-wales.ics",
+      "url": "https://www.gov.uk/bank-holidays/england-and-wales.ics",
+      "license": "Open Government Licence v3.0",
+      "retrieved": "2026-11-10",
+      "sha256": "4791e216de169cfeb0463417eb2a04b6f7e3d850a33fdc17d4df9dc599c3063e",
+      "bytes": 18206,
+      "mutable": true
+    }
+  ]
+}

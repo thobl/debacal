@@ -24,6 +24,8 @@ This documents tested behavior, rather than claiming complete RFC compliance.
   Matching embedded definitions still take priority; arbitrary vendor prefixes
   are not guessed. Database aliases are normalized consistently through storage,
   edits and export without rebinding unrelated resource-local definitions.
+  Global forms such as `/Europe/Stockholm` also resolve when the entire name
+  after the leading slash is an available IANA database identifier.
 - Floating times retain their wall clocks when the viewing system's zone changes.
   All-day events retain calendar dates, including across daylight-saving changes.
   Floating durations use wall-clock arithmetic, independent of the viewing zone.
@@ -46,9 +48,23 @@ zoned rules use UTC UNTIL values. The editor's custom sequence metadata augments
 the standard recurrence rather than replacing it for other clients.
 
 Parsing handles case-insensitive property/component names, quoted parameters,
-escaped text and folded UTF-8 lines. Unrecognized event properties and nested
+escaped text and folded UTF-8 lines, including folds inside a multi-byte
+character. Explicit legacy quoted-printable display text is decoded with its
+declared character set. Unrecognized event properties and nested
 alarms survive edits; retaining an alarm does not imply delivering notifications
 for it. Blank or absent SUMMARY uses an untitled display name.
+
+Multiple VCALENDAR documents can be imported without mixing their timezone
+contexts. Independently established explicit definitions that share a TZID can
+be exported as separate envelopes in a standard calendar stream. Competing
+versions of the same UID across documents are retained for review.
+
+Safe compatibility repairs include equal redundant DTEND/DURATION declarations
+and date-only RDATE/EXDATE values with a meaningless `Z` in an all-day series.
+Conflicting declarations and recurring nominal durations that could diverge
+across DST remain reviewable. CalDAV uploads normalize required envelope
+headers, omit scheduling METHOD, and collapse exact duplicate singleton
+metadata. Conflicting organizers or statuses stay queued with a specific issue.
 
 ## Limits and recovery
 
@@ -61,9 +77,9 @@ These cases currently require review instead of being silently approximated:
 - Sub-minute recurrence frequencies and rules exceeding the bounded expansion
   budget. Dense or oversized timezone definitions also have computation/size
   limits; ordinary historic yearly transition rules are supported.
-- Combining resources with conflicting definitions for the same TZID into one
-  export. Export the affected events separately; individual-resource sync
-  keeps their rules scoped correctly.
+- A native event whose retained raw template contradicts its modeled timezone.
+  Separate export/review is required when the source does not establish which
+  definition owns its timestamps. Non-Gregorian CALSCALE values are unsupported.
 
 A bad UID does not block healthy neighbors. The source is retained privately,
 with event-level diagnostics and inspection/export/retry actions under **Issues**
@@ -77,3 +93,6 @@ name collisions, floating clocks, SQLite persistence, editing, copies, splits,
 recurrence exceptions, sync comparisons and import/export round trips. Reference:
 [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545.html), especially sections
 3.3.5, 3.3.6, 3.3.10, 3.6.1 and 3.6.5.
+
+The [interoperability audit](INTEROPERABILITY.md) records public producer
+samples, independent server validation, reproducible corpus tools and known gaps.
