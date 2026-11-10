@@ -2,6 +2,19 @@
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 
+def configure_application_font(app):
+    """Retain desktop font choices without pinning every weight to one face.
+
+    Desktop themes can supply a named face such as Regular or Book. Qt gives
+    that face precedence over setBold and stylesheet weights, so native labels
+    and buttons can stay regular even when their requested weight is bold.
+    """
+    font = app.font()
+    if font.styleName():
+        font.setStyleName('')
+        app.setFont(font)
+
+
 def resolved_font_family(preferences=None):
     family = getattr(preferences, 'font_family', 'system')
     if family != 'system':

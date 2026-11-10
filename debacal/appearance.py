@@ -97,7 +97,7 @@ QCheckBox::indicator:disabled, QAbstractItemView::indicator:disabled { border-co
 QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled { image: url("$checkmark_disabled"); }
 QCheckBox[keyboardFocus="true"]::indicator:focus { border-color: $focus; }
 QPushButton#calendarChoice, QPushButton#calendarChoice:checked { text-align: left; background: transparent; color: $ink; border: 1px solid transparent; padding: 5px 7px; }
-QPushButton#calendarChoice:checked { font-weight: 600; }
+QPushButton#calendarChoice:checked { font-weight: bold; }
 QPushButton#calendarChoice:focus { border-color: transparent; }
 QPushButton#calendarVisibility, QPushButton#calendarVisibility:checked { background: transparent; border-color: transparent; }
 QPushButton#calendarVisibility:hover { background: $hover; }

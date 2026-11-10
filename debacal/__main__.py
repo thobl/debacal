@@ -19,6 +19,7 @@ from .profiles import resolve_profile, validate_profile_name
 from .single_instance import InstanceCoordinator, InstanceError
 from .import_request import ImportRequest
 from .import_sources import ImportSource, MAX_IMPORT_BYTES
+from .fonts import configure_application_font
 
 
 def seed_demo(store):
@@ -147,6 +148,7 @@ class FileOpeningApplication(QApplication):
 
 def configure_application(app):
     app.setStyle('Fusion')
+    configure_application_font(app)
     palette = QPalette()
     for role, color in [
         (QPalette.ColorRole.Window, '#fafbf8'),

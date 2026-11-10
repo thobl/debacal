@@ -316,7 +316,7 @@ class PreferencesDialog(QDialog):
             QListWidget#preferencesCategories {{ border: none; border-radius: 0; outline: 0; }}
             QListWidget#preferencesCategories::item {{ padding: 11px 14px; border-left: 3px solid transparent; }}
             QListWidget#preferencesCategories::item:selected {{ background: {colors.selection}; color: {colors.ink};
-                border-left: 3px solid {colors.accent}; font-weight: 600; }}
+                border-left: 3px solid {colors.accent}; font-weight: bold; }}
             QListWidget#preferencesCategories::item:hover:!selected {{ background: {colors.hover}; }}
         '''
         if style != self.styleSheet():
