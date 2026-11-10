@@ -1,0 +1,315 @@
+{
+  "result": "skipped",
+  "checks": "success",
+  "reference": "refs/heads/main",
+  "commit": "15822717f3cad55afa8542a5a11f8ccbd70cac50",
+  "workflow_url": "https://github.com/thobl/debacal/actions/runs/42826223840",
+  "jobs": {
+    "total_count": 4,
+    "jobs": [
+      {
+        "id": 129864114943,
+        "run_id": 42826223840,
+        "workflow_name": "main \u00b7 push",
+        "head_branch": "main",
+        "run_url": "https://api.github.com/repos/thobl/debacal/actions/runs/42826223840",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOVnNCXM8AAAAePIEi_w",
+        "head_sha": "15822717f3cad55afa8542a5a11f8ccbd70cac50",
+        "url": "https://api.github.com/repos/thobl/debacal/actions/jobs/129864114943",
+        "html_url": "https://github.com/thobl/debacal/actions/runs/42826223840/job/129864114943",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-11-10T13:37:29Z",
+        "started_at": "2026-11-10T13:37:31Z",
+        "completed_at": "2026-11-10T13:45:46Z",
+        "name": "test (3.11)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-11-10T13:37:32Z",
+            "completed_at": "2026-11-10T13:37:33Z"
+          },
+          {
+            "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-11-10T13:37:33Z",
+            "completed_at": "2026-11-10T13:37:35Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-11-10T13:37:35Z",
+            "completed_at": "2026-11-10T13:37:35Z"
+          },
+          {
+            "name": "Install desktop libraries and validation tools",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-11-10T13:37:35Z",
+            "completed_at": "2026-11-10T13:37:44Z"
+          },
+          {
+            "name": "Install app and tests",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-11-10T13:37:44Z",
+            "completed_at": "2026-11-10T13:38:04Z"
+          },
+          {
+            "name": "Run desktop-file-validate packaging/linux/debacal.desktop",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-11-10T13:38:04Z",
+            "completed_at": "2026-11-10T13:38:04Z"
+          },
+          {
+            "name": "Run python -m pytest -q --tb=short --maxfail=5",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-11-10T13:38:04Z",
+            "completed_at": "2026-11-10T13:45:42Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-11-10T13:45:42Z",
+            "completed_at": "2026-11-10T13:45:43Z"
+          },
+          {
+            "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-11-10T13:45:43Z",
+            "completed_at": "2026-11-10T13:45:43Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-11-10T13:45:43Z",
+            "completed_at": "2026-11-10T13:45:43Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/thobl/debacal/check-runs/129864114943",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000000102,
+        "runner_name": "GitHub Actions 1000000102",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 129864115388,
+        "run_id": 42826223840,
+        "workflow_name": "main \u00b7 push",
+        "head_branch": "main",
+        "run_url": "https://api.github.com/repos/thobl/debacal/actions/runs/42826223840",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOVnNCXM8AAAAePIEkvA",
+        "head_sha": "15822717f3cad55afa8542a5a11f8ccbd70cac50",
+        "url": "https://api.github.com/repos/thobl/debacal/actions/jobs/129864115388",
+        "html_url": "https://github.com/thobl/debacal/actions/runs/42826223840/job/129864115388",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-11-10T13:37:29Z",
+        "started_at": "2026-11-10T13:37:31Z",
+        "completed_at": "2026-11-10T13:45:48Z",
+        "name": "test (3.14)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-11-10T13:37:32Z",
+            "completed_at": "2026-11-10T13:37:33Z"
+          },
+          {
+            "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-11-10T13:37:33Z",
+            "completed_at": "2026-11-10T13:37:35Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-11-10T13:37:35Z",
+            "completed_at": "2026-11-10T13:37:35Z"
+          },
+          {
+            "name": "Install desktop libraries and validation tools",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-11-10T13:37:35Z",
+            "completed_at": "2026-11-10T13:38:21Z"
+          },
+          {
+            "name": "Install app and tests",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-11-10T13:38:21Z",
+            "completed_at": "2026-11-10T13:38:41Z"
+          },
+          {
+            "name": "Run desktop-file-validate packaging/linux/debacal.desktop",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-11-10T13:38:41Z",
+            "completed_at": "2026-11-10T13:38:41Z"
+          },
+          {
+            "name": "Run python -m pytest -q --tb=short --maxfail=5",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-11-10T13:38:41Z",
+            "completed_at": "2026-11-10T13:45:44Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-11-10T13:45:44Z",
+            "completed_at": "2026-11-10T13:45:44Z"
+          },
+          {
+            "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-11-10T13:45:44Z",
+            "completed_at": "2026-11-10T13:45:45Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-11-10T13:45:45Z",
+            "completed_at": "2026-11-10T13:45:45Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/thobl/debacal/check-runs/129864115388",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000000103,
+        "runner_name": "GitHub Actions 1000000103",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 129868492640,
+        "run_id": 42826223840,
+        "workflow_name": "main \u00b7 push",
+        "head_branch": "main",
+        "run_url": "https://api.github.com/repos/thobl/debacal/actions/runs/42826223840",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOVnNCXM8AAAAePMPvYA",
+        "head_sha": "15822717f3cad55afa8542a5a11f8ccbd70cac50",
+        "url": "https://api.github.com/repos/thobl/debacal/actions/jobs/129868492640",
+        "html_url": "https://github.com/thobl/debacal/actions/runs/42826223840/job/129868492640",
+        "status": "in_progress",
+        "conclusion": null,
+        "created_at": "2026-11-10T13:45:48Z",
+        "started_at": "2026-11-10T13:45:50Z",
+        "completed_at": null,
+        "name": "receipt",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-11-10T13:45:51Z",
+            "completed_at": "2026-11-10T13:45:52Z"
+          },
+          {
+            "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-11-10T13:45:52Z",
+            "completed_at": "2026-11-10T13:45:54Z"
+          },
+          {
+            "name": "Record publication receipt for SSH-only maintainers",
+            "status": "in_progress",
+            "conclusion": null,
+            "number": 3,
+            "started_at": "2026-11-10T13:45:54Z",
+            "completed_at": null
+          },
+          {
+            "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "status": "pending",
+            "conclusion": null,
+            "number": 6,
+            "started_at": null,
+            "completed_at": null
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/thobl/debacal/check-runs/129868492640",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000000104,
+        "runner_name": "GitHub Actions 1000000104",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 129868493769,
+        "run_id": 42826223840,
+        "workflow_name": "main \u00b7 push",
+        "head_branch": "main",
+        "run_url": "https://api.github.com/repos/thobl/debacal/actions/runs/42826223840",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOVnNCXM8AAAAePMPzyQ",
+        "head_sha": "15822717f3cad55afa8542a5a11f8ccbd70cac50",
+        "url": "https://api.github.com/repos/thobl/debacal/actions/jobs/129868493769",
+        "html_url": "https://github.com/thobl/debacal/actions/runs/42826223840/job/129868493769",
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-11-10T13:45:48Z",
+        "started_at": "2026-11-10T13:45:48Z",
+        "completed_at": "2026-11-10T13:45:48Z",
+        "name": "release",
+        "steps": [],
+        "check_run_url": "https://api.github.com/repos/thobl/debacal/check-runs/129868493769",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": null,
+        "runner_name": null,
+        "runner_group_id": null,
+        "runner_group_name": null
+      }
+    ]
+  }
+}
