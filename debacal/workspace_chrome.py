@@ -214,8 +214,9 @@ class WorkspaceChrome:
                 self.creation_button_group.addButton(row.choice)
                 self.calendar_rows[calendar.id] = row
                 self.calendar_list.attach_row(row)
-            item = self.calendar_box.itemAt(index)
-            if item is None or item.widget() is not row:
+            # Borrowing QWidgetItem wrappers before Qt moves/removes their
+            # widgets can leave stale binding entries on affected PySide builds.
+            if self.calendar_box.indexOf(row) != index:
                 self.calendar_box.insertWidget(index, row)
             if row.preferences != self.preferences:
                 row.set_preferences(self.preferences)

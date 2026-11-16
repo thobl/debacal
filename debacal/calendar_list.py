@@ -149,8 +149,12 @@ class CalendarList(QWidget):
         self._scroll_timer.timeout.connect(self._scroll_drag)
 
     def rows(self):
-        return [self.box.itemAt(index).widget() for index in range(self.box.count())
-                if isinstance(self.box.itemAt(index).widget(), CalendarRow)]
+        # Keep layout-owned non-QObject items out of Python's wrapper map:
+        # native moves/removal can destroy those items without invalidating a
+        # borrowed wrapper. The CalendarRow QObjects have normal parent ownership.
+        positioned = [(self.box.indexOf(child), child) for child in self.children()
+                      if isinstance(child, CalendarRow)]
+        return [row for index, row in sorted(positioned, key=lambda item: item[0]) if index >= 0]
 
     def ordered_ids(self):
         return [row.calendar.id for row in self.rows()]

@@ -87,6 +87,38 @@ def test_unchanged_rows_skip_native_polishing_but_keep_current_action_identity(d
     assert created == [latest.id]
 
 
+def test_refresh_reorder_and_removal_never_borrow_layout_item_wrappers(desktop):
+    app, _owned = desktop
+    first, second = source(0), source(1)
+    context = listing(desktop, [first, second])
+
+    class LayoutAccess:
+        # Do not mock Qt's virtual itemAt: indexOf itself calls it natively.
+        # Guard Python access without interfering with C++ virtual dispatch.
+        def __init__(self, native):
+            self.native = native
+
+        def __getattr__(self, name):
+            if name == 'itemAt':
+                raise AssertionError('Borrowed QWidgetItem wrappers may outlive native row moves/removal')
+            return getattr(self.native, name)
+
+    context.calendar_box = LayoutAccess(context.calendar_box)
+    context.calendar_list.box = context.calendar_box
+    for index in range(20):
+        added = source(index + 10)
+        WorkspaceChrome.refresh_calendar_list(context, [first, added, second])
+        assert context.calendar_list.ordered_ids() == [first.id, added.id, second.id]
+        WorkspaceChrome.refresh_calendar_list(context, [second, first, added])
+        assert context.calendar_list.ordered_ids() == [second.id, first.id, added.id]
+        WorkspaceChrome.refresh_calendar_list(context, [first, second])
+        # Removed rows remain QObjects until DeferredDelete; rows() must
+        # already exclude them while retaining the native layout order.
+        assert context.calendar_list.ordered_ids() == [first.id, second.id]
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
+
+
 def test_presentation_changes_update_colors_scale_corners_and_readonly_state(desktop):
     widget = row(desktop)
     original = widget.swatch.styleSheet()
