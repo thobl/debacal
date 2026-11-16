@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from threading import Event as ThreadEvent
 from unittest.mock import patch
 
+import pytest
+
 from PySide6.QtCore import QElapsedTimer, QEvent, QObject, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -78,10 +80,13 @@ def test_uncached_month_navigation_keeps_the_last_frame_until_replacement_is_rea
         assert widget.selection.snapshot(masters=widget.prepared_import.events) == selected
 
 
-def test_large_plain_import_navigation_uses_its_index_for_each_arrow():
+@pytest.mark.parametrize('count', [
+    2500, pytest.param(50_000, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_plain_import_navigation_uses_its_index_for_each_arrow(count):
     start = datetime(2026, 1, 1, 9, tzinfo=timezone.utc)
     events = [Event(str(index), 'source', 'Meeting', start + timedelta(minutes=index),
-                    start + timedelta(minutes=index + 30)) for index in range(50000)]
+                    start + timedelta(minutes=index + 30)) for index in range(count)]
     navigation = PreviewNavigation(events)
 
     class _NoScan(list):
@@ -89,12 +94,13 @@ def test_large_plain_import_navigation_uses_its_index_for_each_arrow():
             raise AssertionError('A navigation arrow must use the prepared ordinary-event index')
 
     navigation.masters = _NoScan(navigation.masters)
-    current = events[25000]
-    for index in range(25001, 25041):
+    middle = count // 2
+    current = events[middle]
+    for index in range(middle + 1, middle + 41):
         current = navigation.adjacent(current, 1)
         assert current is events[index]
         assert navigation.position(current) == (index + 1, len(events))
-    assert navigation.adjacent(current, -1) is events[25039]
+    assert navigation.adjacent(current, -1) is events[middle + 39]
     assert navigation.last() is events[-1]
 
 

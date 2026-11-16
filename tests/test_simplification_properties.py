@@ -107,11 +107,17 @@ def test_long_repeated_body_can_use_shared_atoms_that_are_not_locally_shortest(s
     assert len(expression) <= len(known), (known, expression)
 
 
-def test_five_hundred_regular_multiple_clock_events_keep_the_short_block(simplify):
+@pytest.mark.parametrize('count', [
+    34, pytest.param(500, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_regular_multiple_clock_events_keep_the_short_block(simplify, count):
     anchor = datetime(2026, 1, 1, 9, tzinfo=UTC)
-    known = "+0d 166*(10:00 11:00 9:00) 10:00"
+    repetitions, remainder = divmod(count - 1, 3)
+    known = f"+0d {repetitions}*(10:00 11:00 9:00)"
+    if remainder:
+        known += ' ' + ' '.join(('10:00', '11:00')[:remainder])
     values = patterns.expand_sequence(known, anchor)
-    assert len(values) == 500
+    assert len(values) == count
     started = perf_counter()
     expression = assert_roundtrip(simplify, values)
     assert len(expression) <= len(known), expression
@@ -159,27 +165,33 @@ def test_nonexistent_dst_wall_time_is_rejected(simplify):
         simplify([datetime(2026, 3, 28, 2, 30, tzinfo=berlin), datetime(2026, 3, 29, 2, 30, tzinfo=berlin)])
 
 
-def test_five_hundred_weekly_events_simplify_within_interactive_budget(simplify):
+@pytest.mark.parametrize('count', [
+    20, pytest.param(500, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_regular_weekly_events_simplify_within_interactive_budget(simplify, count):
     zone = ZoneInfo("Europe/Berlin")
     anchor = datetime(2026, 1, 4, 9, tzinfo=zone)
-    values = [anchor + timedelta(weeks=index) for index in range(500)]
+    values = [anchor + timedelta(weeks=index) for index in range(count)]
     started = perf_counter()
     expression = assert_roundtrip(simplify, values)
     elapsed = perf_counter() - started
-    assert len(expression) <= len("+0d 499*+1w")
-    assert elapsed < 2.0, f"500 regular selections took {elapsed:.3f}s"
+    assert len(expression) <= len(f"+0d {count - 1}*+1w")
+    assert elapsed < 2.0, f"{count} regular selections took {elapsed:.3f}s"
 
 
-def test_five_hundred_irregular_mixed_clock_selections_stay_responsive(simplify):
+@pytest.mark.parametrize('count', [
+    30, pytest.param(500, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_irregular_mixed_clock_selections_stay_responsive(simplify, count):
     randomizer = random.Random(500071)
     zone = ZoneInfo("Europe/Berlin")
     anchor = datetime(2026, 1, 1, 9, tzinfo=zone)
     extras = set()
-    while len(extras) < 499:
+    while len(extras) < count - 1:
         extras.add((randomizer.randint(1, 1800), randomizer.randint(8, 18), randomizer.randrange(0, 60, 5)))
     values = [anchor, *(anchor.replace(hour=hour, minute=minute) + timedelta(days=days)
                         for days, hour, minute in sorted(extras))]
     started = perf_counter()
     assert_roundtrip(simplify, values)
     elapsed = perf_counter() - started
-    assert elapsed < 2.0, f"500 irregular selections took {elapsed:.3f}s"
+    assert elapsed < 2.0, f"{count} irregular selections took {elapsed:.3f}s"

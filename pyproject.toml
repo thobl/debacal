@@ -51,3 +51,6 @@ include = ["debacal*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "local_performance: large-capacity and sustained timing checks run locally, outside release CI",
+]

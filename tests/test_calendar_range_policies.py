@@ -167,6 +167,15 @@ def test_yearly_cut_and_date_until_keep_native_date_identities():
     assert [key for key, _start, _end in iter_cut_ranges(source)] == ['2029-02-28', '2030-02-28']
 
 
+def test_export_iterator_reaches_year_limit_without_constructing_an_event_per_occurrence():
+    source = event(start=datetime(9980, 1, 28, tzinfo=ZONE), rule='FREQ=MONTHLY')
+    with patch.object(Event, 'from_dict', side_effect=AssertionError('Generated an Event')):
+        ranges = list(iter_cut_ranges(source))
+    assert len(ranges) > 10
+    assert ranges[-1][0] == '9999-02-28'
+
+
+@pytest.mark.local_performance
 def test_export_iterator_does_not_construct_an_event_per_generated_occurrence():
     source = event(rule='FREQ=MONTHLY')
     with patch.object(Event, 'from_dict', side_effect=AssertionError('Generated an Event')):

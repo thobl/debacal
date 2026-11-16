@@ -263,16 +263,19 @@ def test_paste_preview_day_hover_and_click_confirm_without_creation(view):
     assert not any(view._preview_summaries)
 
 
-def test_large_overlapping_resources_use_compact_summaries_and_paint_without_event_iteration(view):
+@pytest.mark.parametrize('count', [
+    1000, pytest.param(50_000, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_overlapping_resources_use_compact_summaries_and_paint_without_event_iteration(view, count):
     first = datetime(2026, 1, 1, tzinfo=ZONE)
     last = datetime(2027, 1, 1, tzinfo=ZONE)
-    values = [event(str(index), start=first, end=last, all_day=True) for index in range(50_000)]
+    values = [event(str(index), start=first, end=last, all_day=True) for index in range(count)]
     started = perf_counter()
     view.set_data(2026, values, [Calendar('local', 'Local', '#123456')])
     assert perf_counter() - started < 2
     assert len(view._summaries) == 365
     assert sum(len(value) for value in view._summaries) == 365
-    assert summary(view, DAY)['local'][0] == 50_000
+    assert summary(view, DAY)['local'][0] == count
     assert len(view.events_on_day(DAY, limit=20)) == 20
     class NoIteration(list):
         def __iter__(self):

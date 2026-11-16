@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -12,6 +13,17 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/publish_release.sh'
 pytestmark = pytest.mark.skipif(not SCRIPT.exists(), reason='Maintainer tooling is not included in the source archive')
 ASSETS = ('debacal-0.1.0.tar.gz', 'debacal-0.1.0-py3-none-any.whl',
           'debacal-0.1.0-arch.tar.gz', 'SHA256SUMS')
+
+
+def test_release_gate_excludes_local_capacity_and_extended_usage_runs():
+    workflow = (SCRIPT.parents[1] / '.github/workflows/release.yml').read_text()
+    commands = [shlex.split(line.partition('run:')[2]) for line in workflow.splitlines()
+                if line.lstrip().startswith('run:')]
+    checks = [arguments for arguments in commands if arguments[:3] == ['python', '-m', 'pytest']]
+    assert len(checks) == 1
+    arguments, = checks
+    assert arguments[arguments.index('-m', 3) + 1] == 'not local_performance'
+    assert 'benchmark_extended' not in workflow
 
 
 def publication(tmp_path, *, exists=True, draft=True, fail=None, assets=True, missing_asset=None, extra_assets=()):

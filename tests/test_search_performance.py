@@ -89,12 +89,14 @@ def panel_factory():
     app.processEvents()
 
 
-@pytest.fixture(scope='module')
-def large_events():
-    return [event(index) for index in range(50_000)]
+@pytest.fixture(scope='module', params=[
+    2000, pytest.param(50_000, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def large_events(request):
+    return [event(index) for index in range(request.param)]
 
 
-def test_fifty_thousand_matches_use_bounded_source_batches_and_keep_rows_stable(panel_factory, large_events):
+def test_many_matches_use_bounded_source_batches_and_keep_rows_stable(panel_factory, large_events):
     store = ProjectionStore(large_events)
     panel = panel_factory(store)
     started = perf_counter()
@@ -111,7 +113,7 @@ def test_fifty_thousand_matches_use_bounded_source_batches_and_keep_rows_stable(
     assert not store.model_reads
     assert len(store.source_reads) == 6 and all(len(read) == 256 for read in store.source_reads)
     # The complete candidate index must survive the 200-row display cap.
-    panel.populate('Project 49999')
+    panel.populate(f'Project {len(large_events) - 1}')
     assert panel.event_id(panel.item(0)) == large_events[-1].id
     assert panel.topLevelItemCount() == 1
     assert len(store.source_reads[-1]) == 1

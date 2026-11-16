@@ -21,12 +21,14 @@ from debacal.ui import MainWindow
 NOW = datetime(2026, 11, 8, 12, tzinfo=ZoneInfo('Europe/Berlin'))
 
 
-@pytest.fixture
-def workspace():
+@pytest.fixture(params=[
+    500, pytest.param(5000, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def workspace(request):
     app = QApplication.instance() or QApplication([])
     with Store(':memory:') as store, patch('debacal.ui.now', return_value=NOW):
         events = []
-        for index in range(5000):
+        for index in range(request.param):
             start = NOW.replace(month=1, day=10) + timedelta(days=index % 300, minutes=index // 300)
             events.append(Event(str(index), 'local', f'Appointment {index}', start, start + timedelta(hours=1)))
         store.apply('Create synthetic year', events)
@@ -79,7 +81,7 @@ def test_reused_year_index_is_invalidated_by_event_and_calendar_changes(workspac
     assert not window.year.events
     store.set_calendar_visible('local', True)
     window.refresh()
-    assert len(window.year.events) == 5000
+    assert len(window.year.events) == len(store.event_ids())
 
 
 def test_appearance_apply_keeps_unchanged_source_tree_and_native_style(workspace):

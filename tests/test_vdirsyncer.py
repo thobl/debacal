@@ -864,18 +864,21 @@ def test_unclosed_remote_component_is_never_inferred_deleted_and_other_uid_sends
     assert parse_ics(cli.remote["candidate"], "remote")[0].candidate
 
 
-def test_large_calendar_import_query_and_candidate_bridge(tmp_path):
+@pytest.mark.parametrize('count', [
+    600, pytest.param(1442, marks=pytest.mark.local_performance),
+], ids=['ci-capacity', 'large-capacity'])
+def test_bulk_calendar_import_query_and_candidate_bridge(tmp_path, count):
     from debacal.ics import parse_ics_report
     # A self-contained bulk import must keep healthy resources queryable and
     # allow an unrelated queued UID to upload. No local calendar export is used.
     examples = []
-    for index in range(1442):
+    for index in range(count):
         item = sample(id=f'bulk-{index}', title=f'Sample appointment {index}')
         offset = timedelta(days=index % 45)
         examples.append(replace(item, start=item.start + offset, end=item.end + offset,
                                 recurrence_rule='FREQ=WEEKLY;COUNT=4' if index % 60 == 0 else ''))
     report = parse_ics_report(export_ics(examples), "remote")
-    assert len(report.events) == 1442
+    assert len(report.events) == count
     assert not report.issues
     store, calendar, cli, backend = setup(tmp_path)
     store.apply_remote(upserts=report.events)

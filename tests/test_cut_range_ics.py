@@ -188,6 +188,23 @@ def test_disabling_policy_removes_derived_ranges_but_preserves_manual_ranges():
     assert ranges(reread) == ranges(plain)
 
 
+def test_unbounded_cut_reaches_year_limit_but_import_keeps_a_small_master():
+    # The same unbounded/year-9999 boundary contract does not need thousands
+    # of intervening years on a shared CI runner.
+    original = source(count=None)
+    original = replace(original, start=original.start.replace(year=9980),
+                       end=original.end.replace(year=9980))
+    raw = export_ics([original])
+    assert raw.count((GENERATED + ':').encode()) > 10
+    assert b'RECURRENCE-ID:99990228T090000Z' in raw
+    restored, = parse_ics(raw, 'local')
+    assert restored.range_policy == 'cut' and not restored.recurrence_overrides
+    assert len(restored.raw_ics) < 2000
+    assert semantic(restored) == semantic(original)
+    assert expected_ranges(restored) is expected_ranges(original)
+
+
+@pytest.mark.local_performance
 def test_unbounded_cut_materializes_future_years_but_import_keeps_a_small_master():
     original = source(count=None)
     raw = export_ics([original])
@@ -201,6 +218,22 @@ def test_unbounded_cut_materializes_future_years_but_import_keeps_a_small_master
     assert expected_ranges(restored) is expected_ranges(original)
 
 
+def test_derived_ranges_do_not_consume_the_ordinary_component_budget():
+    start = datetime(2027, 1, 29, tzinfo=UTC)
+    original = Event('budget-cuts', 'local', 'Three occupied days', start,
+                     start + timedelta(days=3), all_day=True,
+                     recurrence_rule='FREQ=MONTHLY;COUNT=60', range_policy='cut')
+    raw = export_ics([original])
+    ordinary_limit = 3
+    assert raw.count((GENERATED + ':').encode()) > ordinary_limit
+    restored, = parse_ics(raw, 'local', limit=ordinary_limit)
+    assert restored.range_policy == 'cut'
+    assert not restored.recurrence_overrides
+    assert len(restored.raw_ics) < 2000
+    assert semantic(restored) == semantic(original)
+
+
+@pytest.mark.local_performance
 def test_more_than_ten_thousand_derived_ranges_do_not_hit_the_regular_component_budget():
     start = datetime(2027, 1, 29, tzinfo=UTC)
     original = Event('many-cuts', 'local', 'Three occupied days', start,
