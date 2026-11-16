@@ -3,6 +3,11 @@
 The target is the slowest individual operation, including the first visit to an
 unrelated date. A fast median or repeated visit does not establish that target.
 
+The [16 November 2026 review](PERFORMANCE_2026-11-16.md) compares three versions
+on the current server, with extended native-X11 usage, fresh startups and
+isolated year queries. Older measurements below describe earlier machines and
+are not inputs to that comparison.
+
 ## Maintained representation
 
 SQLite retains canonical calendar resources and a separate compact prepared

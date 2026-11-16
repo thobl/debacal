@@ -1,0 +1,34 @@
+{
+  "application_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7",
+  "python": "3.14.10",
+  "ci_selected": {
+    "passed": 4467,
+    "optional_skips": 2,
+    "subtests_passed": 169,
+    "local_capacity_deselected": 15,
+    "wall_seconds": 271.58,
+    "skip_reason": "Optional pytz provider is not installed."
+  },
+  "local_capacity": {
+    "passed": 15,
+    "wall_seconds": 58.28
+  },
+  "focused_after_daily_change": {
+    "passed": 401,
+    "wall_seconds": 15.75
+  },
+  "native_gui": {
+    "versions": 3,
+    "timed_actions_per_version": 1937,
+    "operation_types": 201,
+    "repeated_interaction_types": 200,
+    "minimum_repeats": 8,
+    "fresh_startups_per_version": 7
+  },
+  "held_writer": {
+    "jumps": 80,
+    "visibility_changes": 160,
+    "writer_hold_ms": 1000,
+    "all_visibility_max_ms": 159.11
+  }
+}

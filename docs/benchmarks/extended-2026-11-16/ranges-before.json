@@ -1,0 +1,1952 @@
+{
+  "environment": {
+    "python": "3.14.10",
+    "storage": "file-backed SQLite",
+    "fresh_process_per_phase": true,
+    "warmup_queries": 0,
+    "physical_disk_cache_flushed": false,
+    "instrumented": true
+  },
+  "fixture": {
+    "ordinary": 20000,
+    "series": 2000,
+    "finite": 120,
+    "calendars": 8,
+    "payload_bytes": 2048,
+    "irrelevant": 0
+  },
+  "fixture_write_ms": 3478.76,
+  "request_count": 48,
+  "summary": {
+    "sources": {
+      "max_ms": 82.144,
+      "preparation_ms": 0.794,
+      "max_decoded_models": 1609,
+      "max_expanded_sources": 0
+    },
+    "query": {
+      "max_ms": 482.213,
+      "preparation_ms": 0.81,
+      "max_decoded_models": 1759,
+      "max_expanded_sources": 1609
+    }
+  },
+  "phases": [
+    {
+      "phase": "sources",
+      "preparation_ms": 0.794,
+      "records": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 42.979,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 17,
+          "recurring_sources": 1590,
+          "elapsed_ms": 82.144,
+          "decoded_models": 1607,
+          "decoded_ics_bytes": 3659691,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 92,
+          "recurring_sources": 1325,
+          "elapsed_ms": 48.279,
+          "decoded_models": 1417,
+          "decoded_ics_bytes": 3235118,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 3,
+          "recurring_sources": 1325,
+          "elapsed_ms": 39.243,
+          "decoded_models": 1328,
+          "decoded_ics_bytes": 2989310,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 53.362,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664211,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 90,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.853,
+          "decoded_models": 1415,
+          "decoded_ics_bytes": 3230125,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 3,
+          "recurring_sources": 1325,
+          "elapsed_ms": 39.155,
+          "decoded_models": 1328,
+          "decoded_ics_bytes": 2989312,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 51.829,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664223,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 90,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.296,
+          "decoded_models": 1415,
+          "decoded_ics_bytes": 3230125,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.634,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.82,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664060,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 91,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.437,
+          "decoded_models": 1416,
+          "decoded_ics_bytes": 3232695,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-12-22T00:00:00+00:00",
+          "end": "2028-12-23T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.404,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-05-10T00:00:00+00:00",
+          "end": "2029-05-17T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 51.848,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664213,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-03-01T00:00:00+00:00",
+          "end": "2027-04-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 91,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.135,
+          "decoded_models": 1416,
+          "decoded_ics_bytes": 3232542,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-06-16T00:00:00+00:00",
+          "end": "2029-06-17T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 1,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.33,
+          "decoded_models": 1326,
+          "decoded_ics_bytes": 2984788,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-09-20T00:00:00+00:00",
+          "end": "2024-09-27T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.474,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664221,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-05-13T00:00:00+00:00",
+          "end": "2026-06-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 91,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.284,
+          "decoded_models": 1416,
+          "decoded_ics_bytes": 3232542,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2024-01-28T00:00:00+00:00",
+          "end": "2024-01-29T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 3,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.94,
+          "decoded_models": 1328,
+          "decoded_ics_bytes": 2989312,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-04-06T00:00:00+00:00",
+          "end": "2027-04-13T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 51.843,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664066,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2028-10-31T00:00:00+00:00",
+          "end": "2028-12-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 87,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.195,
+          "decoded_models": 1412,
+          "decoded_ics_bytes": 3223502,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-09-15T00:00:00+00:00",
+          "end": "2029-09-16T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.327,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-02-18T00:00:00+00:00",
+          "end": "2027-02-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.485,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664213,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-02-20T00:00:00+00:00",
+          "end": "2029-04-03T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 90,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.842,
+          "decoded_models": 1415,
+          "decoded_ics_bytes": 3230749,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-12-25T00:00:00+00:00",
+          "end": "2028-12-26T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.426,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-08-30T00:00:00+00:00",
+          "end": "2027-09-06T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 17,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.137,
+          "decoded_models": 1607,
+          "decoded_ics_bytes": 3659542,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-10-26T00:00:00+00:00",
+          "end": "2029-12-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 88,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.143,
+          "decoded_models": 1413,
+          "decoded_ics_bytes": 3225756,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-09-19T00:00:00+00:00",
+          "end": "2029-09-20T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.261,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2026-07-13T00:00:00+00:00",
+          "end": "2026-07-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.977,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664215,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-12-11T00:00:00+00:00",
+          "end": "2027-01-22T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 92,
+          "recurring_sources": 1325,
+          "elapsed_ms": 48.256,
+          "decoded_models": 1417,
+          "decoded_ics_bytes": 3234959,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2027-10-16T00:00:00+00:00",
+          "end": "2027-10-17T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 1,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.626,
+          "decoded_models": 1326,
+          "decoded_ics_bytes": 2984790,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2028-02-15T00:00:00+00:00",
+          "end": "2028-02-22T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 16,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.262,
+          "decoded_models": 1606,
+          "decoded_ics_bytes": 3657119,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2024-03-31T00:00:00+00:00",
+          "end": "2024-05-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 93,
+          "recurring_sources": 1325,
+          "elapsed_ms": 48.315,
+          "decoded_models": 1418,
+          "decoded_ics_bytes": 3237223,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-09-29T00:00:00+00:00",
+          "end": "2028-09-30T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 39.042,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-02-18T00:00:00+00:00",
+          "end": "2029-02-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 19,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.591,
+          "decoded_models": 1609,
+          "decoded_ics_bytes": 3664058,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-08-08T00:00:00+00:00",
+          "end": "2029-09-19T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 89,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.825,
+          "decoded_models": 1414,
+          "decoded_ics_bytes": 3227865,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-05-01T00:00:00+00:00",
+          "end": "2028-05-02T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 4,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.976,
+          "decoded_models": 1329,
+          "decoded_ics_bytes": 2991572,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-03-03T00:00:00+00:00",
+          "end": "2027-03-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 18,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.914,
+          "decoded_models": 1608,
+          "decoded_ics_bytes": 3661961,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-25T00:00:00+00:00",
+          "end": "2027-04-08T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 92,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.608,
+          "decoded_models": 1417,
+          "decoded_ics_bytes": 3234957,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2027-06-26T00:00:00+00:00",
+          "end": "2027-06-27T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.734,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-08-25T00:00:00+00:00",
+          "end": "2024-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 17,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.581,
+          "decoded_models": 1607,
+          "decoded_ics_bytes": 3659544,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-07-14T00:00:00+00:00",
+          "end": "2027-08-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 92,
+          "recurring_sources": 1325,
+          "elapsed_ms": 47.684,
+          "decoded_models": 1417,
+          "decoded_ics_bytes": 3234955,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-08-05T00:00:00+00:00",
+          "end": "2029-08-06T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.65,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2026-12-09T00:00:00+00:00",
+          "end": "2026-12-16T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 18,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.347,
+          "decoded_models": 1608,
+          "decoded_ics_bytes": 3661953,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-11-30T00:00:00+00:00",
+          "end": "2030-01-11T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 90,
+          "recurring_sources": 1325,
+          "elapsed_ms": 50.749,
+          "decoded_models": 1415,
+          "decoded_ics_bytes": 3230755,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-08-06T00:00:00+00:00",
+          "end": "2028-08-07T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "ordinary_sources": 2,
+          "recurring_sources": 1325,
+          "elapsed_ms": 38.613,
+          "decoded_models": 1327,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-06-09T00:00:00+00:00",
+          "end": "2029-06-16T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "ordinary_sources": 17,
+          "recurring_sources": 1590,
+          "elapsed_ms": 52.414,
+          "decoded_models": 1607,
+          "decoded_ics_bytes": 3659222,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2024-06-25T00:00:00+00:00",
+          "end": "2024-08-06T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "ordinary_sources": 92,
+          "recurring_sources": 1325,
+          "elapsed_ms": 50.071,
+          "decoded_models": 1417,
+          "decoded_ics_bytes": 3235426,
+          "expanded_sources": 0,
+          "legacy_expansions": 0,
+          "prepared_expansions": 0
+        }
+      ]
+    },
+    {
+      "phase": "query",
+      "preparation_ms": 0.81,
+      "records": [
+        {
+          "kind": "day",
+          "start": "2024-05-17T00:00:00+00:00",
+          "end": "2024-05-18T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 16,
+          "elapsed_ms": 370.442,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-06-22T00:00:00+00:00",
+          "end": "2024-06-29T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 132,
+          "elapsed_ms": 415.389,
+          "decoded_models": 1757,
+          "decoded_ics_bytes": 3659691,
+          "expanded_sources": 1607,
+          "legacy_expansions": 1607,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2028-11-29T00:00:00+00:00",
+          "end": "2029-01-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 569,
+          "elapsed_ms": 350.28,
+          "decoded_models": 1517,
+          "decoded_ics_bytes": 3235118,
+          "expanded_sources": 1417,
+          "legacy_expansions": 1417,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2026-04-20T00:00:00+00:00",
+          "end": "2026-04-21T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 28,
+          "elapsed_ms": 379.054,
+          "decoded_models": 1478,
+          "decoded_ics_bytes": 2989310,
+          "expanded_sources": 1328,
+          "legacy_expansions": 1328,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-07-16T00:00:00+00:00",
+          "end": "2027-07-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 149,
+          "elapsed_ms": 439.497,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664211,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2025-02-27T00:00:00+00:00",
+          "end": "2025-04-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 536,
+          "elapsed_ms": 310.443,
+          "decoded_models": 1515,
+          "decoded_ics_bytes": 3230125,
+          "expanded_sources": 1415,
+          "legacy_expansions": 1415,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2024-05-18T00:00:00+00:00",
+          "end": "2024-05-19T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 23,
+          "elapsed_ms": 348.8,
+          "decoded_models": 1478,
+          "decoded_ics_bytes": 2989312,
+          "expanded_sources": 1328,
+          "legacy_expansions": 1328,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2028-10-17T00:00:00+00:00",
+          "end": "2028-10-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 139,
+          "elapsed_ms": 457.495,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664223,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-10-12T00:00:00+00:00",
+          "end": "2026-11-23T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 637,
+          "elapsed_ms": 330.088,
+          "decoded_models": 1515,
+          "decoded_ics_bytes": 3230125,
+          "expanded_sources": 1415,
+          "legacy_expansions": 1415,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2026-08-31T00:00:00+00:00",
+          "end": "2026-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 17,
+          "elapsed_ms": 386.819,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-06-13T00:00:00+00:00",
+          "end": "2027-06-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 141,
+          "elapsed_ms": 437.717,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664060,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-24T00:00:00+00:00",
+          "end": "2027-04-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 611,
+          "elapsed_ms": 333.12,
+          "decoded_models": 1516,
+          "decoded_ics_bytes": 3232695,
+          "expanded_sources": 1416,
+          "legacy_expansions": 1416,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-12-22T00:00:00+00:00",
+          "end": "2028-12-23T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 22,
+          "elapsed_ms": 425.256,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-05-10T00:00:00+00:00",
+          "end": "2029-05-17T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 134,
+          "elapsed_ms": 482.213,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664213,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-03-01T00:00:00+00:00",
+          "end": "2027-04-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 608,
+          "elapsed_ms": 352.971,
+          "decoded_models": 1516,
+          "decoded_ics_bytes": 3232542,
+          "expanded_sources": 1416,
+          "legacy_expansions": 1416,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-06-16T00:00:00+00:00",
+          "end": "2029-06-17T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 18,
+          "elapsed_ms": 429.403,
+          "decoded_models": 1476,
+          "decoded_ics_bytes": 2984788,
+          "expanded_sources": 1326,
+          "legacy_expansions": 1326,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-09-20T00:00:00+00:00",
+          "end": "2024-09-27T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 134,
+          "elapsed_ms": 393.664,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664221,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-05-13T00:00:00+00:00",
+          "end": "2026-06-24T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 666,
+          "elapsed_ms": 326.972,
+          "decoded_models": 1516,
+          "decoded_ics_bytes": 3232542,
+          "expanded_sources": 1416,
+          "legacy_expansions": 1416,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2024-01-28T00:00:00+00:00",
+          "end": "2024-01-29T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 21,
+          "elapsed_ms": 345.916,
+          "decoded_models": 1478,
+          "decoded_ics_bytes": 2989312,
+          "expanded_sources": 1328,
+          "legacy_expansions": 1328,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-04-06T00:00:00+00:00",
+          "end": "2027-04-13T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 148,
+          "elapsed_ms": 432.245,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664066,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2028-10-31T00:00:00+00:00",
+          "end": "2028-12-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 584,
+          "elapsed_ms": 350.498,
+          "decoded_models": 1512,
+          "decoded_ics_bytes": 3223502,
+          "expanded_sources": 1412,
+          "legacy_expansions": 1412,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-09-15T00:00:00+00:00",
+          "end": "2029-09-16T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 17,
+          "elapsed_ms": 431.785,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-02-18T00:00:00+00:00",
+          "end": "2027-02-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 149,
+          "elapsed_ms": 431.926,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664213,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-02-20T00:00:00+00:00",
+          "end": "2029-04-03T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 540,
+          "elapsed_ms": 352.218,
+          "decoded_models": 1515,
+          "decoded_ics_bytes": 3230749,
+          "expanded_sources": 1415,
+          "legacy_expansions": 1415,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-12-25T00:00:00+00:00",
+          "end": "2028-12-26T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 17,
+          "elapsed_ms": 421.122,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-08-30T00:00:00+00:00",
+          "end": "2027-09-06T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 139,
+          "elapsed_ms": 442.804,
+          "decoded_models": 1757,
+          "decoded_ics_bytes": 3659542,
+          "expanded_sources": 1607,
+          "legacy_expansions": 1607,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-10-26T00:00:00+00:00",
+          "end": "2029-12-07T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 534,
+          "elapsed_ms": 371.664,
+          "decoded_models": 1513,
+          "decoded_ics_bytes": 3225756,
+          "expanded_sources": 1413,
+          "legacy_expansions": 1413,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-09-19T00:00:00+00:00",
+          "end": "2029-09-20T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 16,
+          "elapsed_ms": 432.661,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2026-07-13T00:00:00+00:00",
+          "end": "2026-07-20T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 154,
+          "elapsed_ms": 423.927,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664215,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2026-12-11T00:00:00+00:00",
+          "end": "2027-01-22T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 623,
+          "elapsed_ms": 333.109,
+          "decoded_models": 1517,
+          "decoded_ics_bytes": 3234959,
+          "expanded_sources": 1417,
+          "legacy_expansions": 1417,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2027-10-16T00:00:00+00:00",
+          "end": "2027-10-17T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 20,
+          "elapsed_ms": 404.77,
+          "decoded_models": 1476,
+          "decoded_ics_bytes": 2984790,
+          "expanded_sources": 1326,
+          "legacy_expansions": 1326,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2028-02-15T00:00:00+00:00",
+          "end": "2028-02-22T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 139,
+          "elapsed_ms": 447.207,
+          "decoded_models": 1756,
+          "decoded_ics_bytes": 3657119,
+          "expanded_sources": 1606,
+          "legacy_expansions": 1606,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2024-03-31T00:00:00+00:00",
+          "end": "2024-05-12T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 539,
+          "elapsed_ms": 306.759,
+          "decoded_models": 1518,
+          "decoded_ics_bytes": 3237223,
+          "expanded_sources": 1418,
+          "legacy_expansions": 1418,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-09-29T00:00:00+00:00",
+          "end": "2028-09-30T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 16,
+          "elapsed_ms": 423.579,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-02-18T00:00:00+00:00",
+          "end": "2029-02-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 134,
+          "elapsed_ms": 467.363,
+          "decoded_models": 1759,
+          "decoded_ics_bytes": 3664058,
+          "expanded_sources": 1609,
+          "legacy_expansions": 1609,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-08-08T00:00:00+00:00",
+          "end": "2029-09-19T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 538,
+          "elapsed_ms": 357.26,
+          "decoded_models": 1514,
+          "decoded_ics_bytes": 3227865,
+          "expanded_sources": 1414,
+          "legacy_expansions": 1414,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-05-01T00:00:00+00:00",
+          "end": "2028-05-02T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 19,
+          "elapsed_ms": 413.015,
+          "decoded_models": 1479,
+          "decoded_ics_bytes": 2991572,
+          "expanded_sources": 1329,
+          "legacy_expansions": 1329,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2027-03-03T00:00:00+00:00",
+          "end": "2027-03-10T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 144,
+          "elapsed_ms": 434.991,
+          "decoded_models": 1758,
+          "decoded_ics_bytes": 3661961,
+          "expanded_sources": 1608,
+          "legacy_expansions": 1608,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-02-25T00:00:00+00:00",
+          "end": "2027-04-08T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 609,
+          "elapsed_ms": 347.172,
+          "decoded_models": 1517,
+          "decoded_ics_bytes": 3234957,
+          "expanded_sources": 1417,
+          "legacy_expansions": 1417,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2027-06-26T00:00:00+00:00",
+          "end": "2027-06-27T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 22,
+          "elapsed_ms": 403.557,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2024-08-25T00:00:00+00:00",
+          "end": "2024-09-01T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 125,
+          "elapsed_ms": 393.245,
+          "decoded_models": 1757,
+          "decoded_ics_bytes": 3659544,
+          "expanded_sources": 1607,
+          "legacy_expansions": 1607,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2027-07-14T00:00:00+00:00",
+          "end": "2027-08-25T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 604,
+          "elapsed_ms": 337.67,
+          "decoded_models": 1517,
+          "decoded_ics_bytes": 3234955,
+          "expanded_sources": 1417,
+          "legacy_expansions": 1417,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2029-08-05T00:00:00+00:00",
+          "end": "2029-08-06T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 17,
+          "elapsed_ms": 429.813,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2026-12-09T00:00:00+00:00",
+          "end": "2026-12-16T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 145,
+          "elapsed_ms": 431.638,
+          "decoded_models": 1758,
+          "decoded_ics_bytes": 3661953,
+          "expanded_sources": 1608,
+          "legacy_expansions": 1608,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2029-11-30T00:00:00+00:00",
+          "end": "2030-01-11T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 536,
+          "elapsed_ms": 360.072,
+          "decoded_models": 1515,
+          "decoded_ics_bytes": 3230755,
+          "expanded_sources": 1415,
+          "legacy_expansions": 1415,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "day",
+          "start": "2028-08-06T00:00:00+00:00",
+          "end": "2028-08-07T00:00:00+00:00",
+          "calendars": [
+            "cal-1",
+            "cal-2",
+            "cal-4",
+            "cal-5",
+            "cal-7"
+          ],
+          "occurrences": 22,
+          "elapsed_ms": 416.786,
+          "decoded_models": 1477,
+          "decoded_ics_bytes": 2987050,
+          "expanded_sources": 1327,
+          "legacy_expansions": 1327,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "week",
+          "start": "2029-06-09T00:00:00+00:00",
+          "end": "2029-06-16T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-1",
+            "cal-3",
+            "cal-4",
+            "cal-6",
+            "cal-7"
+          ],
+          "occurrences": 127,
+          "elapsed_ms": 467.681,
+          "decoded_models": 1757,
+          "decoded_ics_bytes": 3659222,
+          "expanded_sources": 1607,
+          "legacy_expansions": 1607,
+          "prepared_expansions": 0
+        },
+        {
+          "kind": "month",
+          "start": "2024-06-25T00:00:00+00:00",
+          "end": "2024-08-06T00:00:00+00:00",
+          "calendars": [
+            "cal-0",
+            "cal-2",
+            "cal-3",
+            "cal-5",
+            "cal-6"
+          ],
+          "occurrences": 536,
+          "elapsed_ms": 303.419,
+          "decoded_models": 1517,
+          "decoded_ics_bytes": 3235426,
+          "expanded_sources": 1417,
+          "legacy_expansions": 1417,
+          "prepared_expansions": 0
+        }
+      ]
+    }
+  ]
+}

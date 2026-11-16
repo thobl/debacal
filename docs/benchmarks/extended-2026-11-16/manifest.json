@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "before": {
+      "revision": "8d8da9951b9e52d35e5672741ade53a22af978c8",
+      "application_sha256": "5d49d7ab9af1ab8b34f794562409c2ec726389fc92b501cefd4860d4b000bc5d",
+      "application_files": 86
+    },
+    "current": {
+      "revision": "a03a60834f16e223ded2e870384d7de276a36b1f",
+      "application_sha256": "812ab121e07e87a33ab452ffd410726b4edea1eeef73c76738779a48b37eabcc",
+      "application_files": 97
+    },
+    "optimized": {
+      "revision": "29a7751ad68aee3c559d928bd1634640639dd3b7",
+      "application_sha256": "89ec799aeb91edf0e1ebc0efaa7e752309b99cd2a2d48247792c1a7c71484ea6",
+      "application_files": 99
+    }
+  },
+  "application_environment": {
+    "python": "3.14.10",
+    "pyside6": "6.12.0",
+    "backend": "xcb",
+    "qt_style": "fusion",
+    "font": "DejaVu Sans",
+    "window_size": [
+      1400,
+      900
+    ],
+    "screen_size": [
+      1600,
+      1000
+    ],
+    "cpus_available": 12,
+    "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+    "dependency_versions": {
+      "icalendar": "7.3.0",
+      "python-dateutil": "2.9.0.post0",
+      "PySide6": "6.12.0"
+    },
+    "profiled": false
+  },
+  "benchmark_tool_commit": "b2e35a3",
+  "harness": {
+    "script_sha256": "dd7f8c4751c149b68e957051891f54f0e5229fc446427cdc1721f5870a5e57ed",
+    "generator_sha256": "62a04c9356a5df635f904c2720b06e558a51c2c655b1812788bf268ff5551da7"
+  },
+  "year_and_range_counts_equal_across_all_versions": true,
+  "notes": [
+    "All source data are synthetic; no profiles or remote accounts are opened.",
+    "Only successful complete scored runs are included; failed and exploratory runs are excluded.",
+    "The GUI reports have identical workload, harness and runtime metadata.",
+    "Both year-viewer timezones have 3 fresh workers and 7 unique years per worker.",
+    "Range full answers are independently validated by the runner, then omitted from JSON; retained counts match across versions.",
+    "Before/current/optimized map to source commits above; the held-writer run uses optimized application code."
+  ],
+  "files": {
+    "all-operations.md": {
+      "sha256": "6682867c13bda7b8fd32d2473276622a027ced7d25d5b1c65220df067a0a9ac3",
+      "bytes": 20658
+    },
+    "before.json": {
+      "sha256": "fb90e3661b13f37faf9ae07e9b33bd5c4e4721ca724d51610b812ed6868b8993",
+      "bytes": 638712,
+      "source_revision": "8d8da9951b9e52d35e5672741ade53a22af978c8"
+    },
+    "ci-scope.json": {
+      "sha256": "b68864294137f32941baa6bc3fcab1b799477038fe531322459162846877b3c0",
+      "bytes": 958
+    },
+    "comparison.json": {
+      "sha256": "49345e1fa637bb54b3bb699fdc6a2ad7c6fc20bee64dc2ee4cd463bb1811ba20",
+      "bytes": 143368
+    },
+    "current.json": {
+      "sha256": "47f8e841a378ad1335c9f8feb5e2288b03d2d72f2bd98cae74f374731813e425",
+      "bytes": 638503,
+      "source_revision": "a03a60834f16e223ded2e870384d7de276a36b1f"
+    },
+    "held-writer-optimized.json": {
+      "sha256": "8b9500a12267f35a6a7010df212b392f549f821ea12fe5b973896b1b9ad91d83",
+      "bytes": 434874,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    },
+    "operations.csv": {
+      "sha256": "7e5ddbc3e37277893d23cc02c82492518c2e0d25ecff5e09e27d239aaf05d9a5",
+      "bytes": 26419
+    },
+    "optimized.json": {
+      "sha256": "5dddd8e0c6e6095e8fe5049b6ea6ee2a82e9967ea0319dd9e1f9fde3cd8b5e33",
+      "bytes": 638139,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    },
+    "ranges-before.json": {
+      "sha256": "0791d7806b0ce2b9b8ac0ee13171e3ab7083eee1b81f09637dd20797c37f2938",
+      "bytes": 53887,
+      "source_revision": "8d8da9951b9e52d35e5672741ade53a22af978c8"
+    },
+    "ranges-current.json": {
+      "sha256": "c6ebd60e8498e2f0503068560fd3a20ba755d27e5ab7653ec53745aeac6ad620",
+      "bytes": 52782,
+      "source_revision": "a03a60834f16e223ded2e870384d7de276a36b1f"
+    },
+    "ranges-optimized.json": {
+      "sha256": "b384490891c59e06126e560a2c397f8393ecb3214f791a8ba8d2cdab93cfa351",
+      "bytes": 52782,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    },
+    "serialization-before.json": {
+      "sha256": "2ad2891a9a0523d667119c686b70ee0f25e1b9160136eba3400400636c2e808f",
+      "bytes": 60534,
+      "source_revision": "8d8da9951b9e52d35e5672741ade53a22af978c8"
+    },
+    "serialization-current.json": {
+      "sha256": "08aba05fb1dc698dbdbb6f1f9deaea68c2227ce15b5b9352638d826515968551",
+      "bytes": 60604,
+      "source_revision": "a03a60834f16e223ded2e870384d7de276a36b1f"
+    },
+    "serialization-optimized.json": {
+      "sha256": "35bb9f6ef8e12f4e1cb4370e96feeda2abd53a6b73115bbd7aa738de6f8676ff",
+      "bytes": 60309,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    },
+    "validation.json": {
+      "sha256": "81829f5663eb9acfd2a009391edcc9ca3b32572aa2e27865adba1ffc406e19fe",
+      "bytes": 821
+    },
+    "year-before-berlin.json": {
+      "sha256": "555157affebb990ebcfb2b733da6de890eca416e7e6cb37d41506c02a78a7630",
+      "bytes": 8506,
+      "source_revision": "8d8da9951b9e52d35e5672741ade53a22af978c8"
+    },
+    "year-before-utc.json": {
+      "sha256": "81eac8eb8a6f29b3f33b0586d383a54b5bf3b63f7ace5bc5f4eeee6c4e1974c6",
+      "bytes": 8479,
+      "source_revision": "8d8da9951b9e52d35e5672741ade53a22af978c8"
+    },
+    "year-current-berlin.json": {
+      "sha256": "493311a69aa58d00f6c2cf64fd88457d853b855c968b082be89a35c5f6961545",
+      "bytes": 8533,
+      "source_revision": "a03a60834f16e223ded2e870384d7de276a36b1f"
+    },
+    "year-current-utc.json": {
+      "sha256": "ca394418ef06c27321d77295748b2e9101683e5d9514a55003df2e984a659ed8",
+      "bytes": 8483,
+      "source_revision": "a03a60834f16e223ded2e870384d7de276a36b1f"
+    },
+    "year-optimized-berlin.json": {
+      "sha256": "c7e8bbfc3e6382968ed7379fbe16ca5c67f721363666676b3508e489aac9ba25",
+      "bytes": 8290,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    },
+    "year-optimized-utc.json": {
+      "sha256": "8d224bc143cb19e4daa0fc078f739aab7d7689fc44a45d2976845c04371088dc",
+      "bytes": 8259,
+      "source_revision": "29a7751ad68aee3c559d928bd1634640639dd3b7"
+    }
+  }
+}

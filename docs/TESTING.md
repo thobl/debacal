@@ -72,6 +72,15 @@ commands. Run them sequentially on an otherwise quiet machine; concurrent test
 or profiling processes distort latency comparisons. Keep raw timings, sample
 counts and observed maxima rather than reporting only averages.
 
+`scripts/benchmark_extended.py` runs the large mixed GUI workload; `--quick`
+provides a small development smoke run. `scripts/benchmark_year_presence.py`
+isolates annual range/count processing without painting, and
+`scripts/benchmark_serialization.py` measures payload copying in fresh workers.
+`scripts/compare_performance.py` checks that three extended reports used the
+same harness, workload, environment and complete repeated interaction inventory.
+These CLI workloads are all local only; their small oracle/report tests remain
+in the release gate.
+
 The optional public calendar audit and independent CalDAV validation are
 documented in [calendar interoperability](INTEROPERABILITY.md). They are not
 required runtime dependencies or network-dependent release tests.

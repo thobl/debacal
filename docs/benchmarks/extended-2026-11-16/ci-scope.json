@@ -1,0 +1,27 @@
+{
+  "application_control_revision": "a03a60834f16e223ded2e870384d7de276a36b1f",
+  "comparison": "Affected correctness modules: original large workloads versus CI-sized counterparts, both using the frozen current application.",
+  "original": {
+    "cases": 196,
+    "testcase_seconds": 63.904
+  },
+  "ci": {
+    "cases": 196,
+    "testcase_seconds": 7.943
+  },
+  "modules": [
+    "tests.test_calendar_range_policies",
+    "tests.test_cut_range_ics",
+    "tests.test_import_preview_transition",
+    "tests.test_preference_refresh_performance",
+    "tests.test_search_performance",
+    "tests.test_simplification_properties",
+    "tests.test_vdirsyncer",
+    "tests.test_year_view"
+  ],
+  "notes": [
+    "The 15 original capacity variants remain in local_performance.",
+    "These are sums of testcase times, not a prediction of whole GitHub job wall time.",
+    "Python 3.11 and 3.14 correctness coverage is retained; timed usage CLIs do not run in CI."
+  ]
+}

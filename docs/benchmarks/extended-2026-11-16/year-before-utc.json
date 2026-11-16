@@ -1,0 +1,338 @@
+{
+  "benchmark": "isolated-year-presence",
+  "schema": 1,
+  "source": {
+    "revision": "8d8da9951b9e52d35e5672741ade53a22af978c8",
+    "application_sha256": "5d49d7ab9af1ab8b34f794562409c2ec726389fc92b501cefd4860d4b000bc5d",
+    "application_files": 86
+  },
+  "environment": {
+    "python": "3.14.10 (main, Nov  4 2026, 18:21:50) [GCC 16.2.1 20260810]",
+    "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+    "timezone": "UTC",
+    "fixture_timezone": "UTC"
+  },
+  "configuration": {
+    "events": 20000,
+    "series": 2000,
+    "finite": 120,
+    "active_series": 240,
+    "heavy_overrides": 400,
+    "candidate_dates": 500,
+    "calendars": 8,
+    "payload_bytes": 2048,
+    "rounds": 8,
+    "startup_runs": 5,
+    "import_events": 300,
+    "seed": 81423,
+    "width": 1400,
+    "height": 900,
+    "timeout_seconds": 3600
+  },
+  "fixture": {
+    "events": 22365,
+    "generation_ms": 638.448,
+    "write_ms": 3513.345,
+    "database_bytes": 96288768
+  },
+  "plan": [
+    {
+      "year": 2020,
+      "start": "2020-01-01T00:00:00+00:00",
+      "end": "2021-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2035,
+      "start": "2035-01-01T00:00:00+00:00",
+      "end": "2036-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2026,
+      "start": "2026-01-01T00:00:00+00:00",
+      "end": "2027-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2022,
+      "start": "2022-01-01T00:00:00+00:00",
+      "end": "2023-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2030,
+      "start": "2030-01-01T00:00:00+00:00",
+      "end": "2031-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2024,
+      "start": "2024-01-01T00:00:00+00:00",
+      "end": "2025-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 2034,
+      "start": "2034-01-01T00:00:00+00:00",
+      "end": "2035-01-01T00:00:00+00:00"
+    }
+  ],
+  "queries": {
+    "samples": 21,
+    "mean_ms": 1957.602,
+    "p95_ms": 2473.581,
+    "max_ms": 2483.147,
+    "min_ms": 862.009
+  },
+  "by_year": {
+    "2020": {
+      "samples": 3,
+      "mean_ms": 879.743,
+      "p95_ms": 906.644,
+      "max_ms": 906.644,
+      "min_ms": 862.009
+    },
+    "2035": {
+      "samples": 3,
+      "mean_ms": 2467.576,
+      "p95_ms": 2483.147,
+      "max_ms": 2483.147,
+      "min_ms": 2446.001
+    },
+    "2026": {
+      "samples": 3,
+      "mean_ms": 2384.966,
+      "p95_ms": 2400.341,
+      "max_ms": 2400.341,
+      "min_ms": 2363.071
+    },
+    "2022": {
+      "samples": 3,
+      "mean_ms": 876.939,
+      "p95_ms": 879.466,
+      "max_ms": 879.466,
+      "min_ms": 874.396
+    },
+    "2030": {
+      "samples": 3,
+      "mean_ms": 2407.728,
+      "p95_ms": 2421.049,
+      "max_ms": 2421.049,
+      "min_ms": 2394.361
+    },
+    "2024": {
+      "samples": 3,
+      "mean_ms": 2270.389,
+      "p95_ms": 2289.785,
+      "max_ms": 2289.785,
+      "min_ms": 2246.416
+    },
+    "2034": {
+      "samples": 3,
+      "mean_ms": 2415.874,
+      "p95_ms": 2418.483,
+      "max_ms": 2418.483,
+      "min_ms": 2413.837
+    }
+  },
+  "startup": {
+    "process_to_query_ready": {
+      "samples": 3,
+      "mean_ms": 87.409,
+      "p95_ms": 87.526,
+      "max_ms": 87.526,
+      "min_ms": 87.297
+    },
+    "application_import": {
+      "samples": 3,
+      "mean_ms": 7.545,
+      "p95_ms": 7.585,
+      "max_ms": 7.585,
+      "min_ms": 7.514
+    },
+    "store_open": {
+      "samples": 3,
+      "mean_ms": 0.779,
+      "p95_ms": 0.787,
+      "max_ms": 0.787,
+      "min_ms": 0.764
+    }
+  },
+  "samples": [
+    {
+      "records": [
+        {
+          "year": 2020,
+          "elapsed_ms": 870.5754879993037,
+          "occurrences": 9014,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2035,
+          "elapsed_ms": 2473.5811810005544,
+          "occurrences": 45279,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2026,
+          "elapsed_ms": 2400.3408779990423,
+          "occurrences": 48623,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2022,
+          "elapsed_ms": 879.4663770004263,
+          "occurrences": 8992,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2030,
+          "elapsed_ms": 2421.0489979996055,
+          "occurrences": 46637,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2024,
+          "elapsed_ms": 2289.7853670001496,
+          "occurrences": 46655,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2034,
+          "elapsed_ms": 2418.483121000463,
+          "occurrences": 45286,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        }
+      ],
+      "validated": true,
+      "ready": true,
+      "store_open_ms": 0.7640580006409436,
+      "application_import_ms": 7.585196999571053,
+      "viewer_timezone": "UTC",
+      "process_to_query_ready_ms": 87.40296699943428,
+      "sample": 0
+    },
+    {
+      "records": [
+        {
+          "year": 2020,
+          "elapsed_ms": 862.0086150003772,
+          "occurrences": 9014,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2035,
+          "elapsed_ms": 2446.0006240005896,
+          "occurrences": 45279,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2026,
+          "elapsed_ms": 2363.0710799989174,
+          "occurrences": 48623,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2022,
+          "elapsed_ms": 874.3961390009645,
+          "occurrences": 8992,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2030,
+          "elapsed_ms": 2394.360918999155,
+          "occurrences": 46637,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2024,
+          "elapsed_ms": 2246.416351001244,
+          "occurrences": 46655,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2034,
+          "elapsed_ms": 2415.3028550008457,
+          "occurrences": 45286,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        }
+      ],
+      "validated": true,
+      "ready": true,
+      "store_open_ms": 0.7846009993954794,
+      "application_import_ms": 7.513942000514362,
+      "viewer_timezone": "UTC",
+      "process_to_query_ready_ms": 87.29695900001389,
+      "sample": 1
+    },
+    {
+      "records": [
+        {
+          "year": 2020,
+          "elapsed_ms": 906.6443359988625,
+          "occurrences": 9014,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2035,
+          "elapsed_ms": 2483.147397000721,
+          "occurrences": 45279,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2026,
+          "elapsed_ms": 2391.486933000124,
+          "occurrences": 48623,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2022,
+          "elapsed_ms": 876.9539360000635,
+          "occurrences": 8992,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2030,
+          "elapsed_ms": 2407.7752249995683,
+          "occurrences": 46637,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2024,
+          "elapsed_ms": 2274.9666619984055,
+          "occurrences": 46655,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        },
+        {
+          "year": 2034,
+          "elapsed_ms": 2413.8366520001,
+          "occurrences": 45286,
+          "implementation": "full-events-and-counters",
+          "issues": []
+        }
+      ],
+      "validated": true,
+      "ready": true,
+      "store_open_ms": 0.7872299993323395,
+      "application_import_ms": 7.535020999057451,
+      "viewer_timezone": "UTC",
+      "process_to_query_ready_ms": 87.52629999980854,
+      "sample": 2
+    }
+  ]
+}
