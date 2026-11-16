@@ -1,11 +1,12 @@
 """Small, display-free contracts for the explicitly local annual benchmark."""
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from scripts.benchmark_year_presence import configuration, day_counts, issue_values, parser, query_presence, summary, year_plan
+from scripts.benchmark_year_presence import configuration, day_counts, issue_values, parser, query_presence, run_worker, summary, year_plan
 
 
 UTC = timezone.utc
@@ -21,6 +22,7 @@ def test_default_fixture_and_plan_match_the_extended_benchmark():
     assert (config.events, config.series, config.finite, config.active_series) == (20000, 2000, 120, 240)
     assert (config.heavy_overrides, config.candidate_dates, config.calendars) == (400, 500, 8)
     assert arguments.samples == 3
+    assert arguments.viewer_timezone == 'UTC'
     plan = year_plan(config.seed)
     years = [item['year'] for item in plan]
     assert len(years) == len(set(years)) == 7
@@ -33,6 +35,7 @@ def test_default_fixture_and_plan_match_the_extended_benchmark():
 @pytest.mark.parametrize('arguments', [
     ['--samples', '0'], ['--events', '-1'], ['--calendars', '0'],
     ['--candidate-dates', '0'], ['--timeout-seconds', '0'],
+    ['--viewer-timezone', 'Benchmark/Unavailable-Zone'],
 ])
 def test_invalid_cli_sizes_fail_before_creating_a_fixture(arguments):
     with pytest.raises(ValueError):
@@ -50,6 +53,33 @@ def test_custom_year_order_is_preserved_and_statistics_keep_the_worst_case():
     values = summary([2.0, 40.0, 3.0])
     assert values['samples'] == 3 and values['mean_ms'] == 15.0 and values['max_ms'] == 40.0
     assert summary([])['max_ms'] is None
+
+
+def test_viewer_timezone_changes_boundaries_without_changing_year_order():
+    default = year_plan()
+    berlin = year_plan(viewer_timezone='Europe/Berlin')
+    assert [request['year'] for request in default] == [request['year'] for request in berlin]
+    assert all(datetime.fromisoformat(request['start']).utcoffset() == timedelta(hours=1)
+               and datetime.fromisoformat(request['end']).utcoffset() == timedelta(hours=1) for request in berlin)
+
+
+@pytest.mark.parametrize('mode', ['query', 'fixture'])
+def test_worker_receives_viewer_zone_but_fixture_generation_stays_in_utc(tmp_path, monkeypatch, mode):
+    captured = {}
+    first_line = '{"ready": true}\n' if mode == 'query' else '{"fixture": {}}\n'
+    def launch(command, **options):
+        captured.update(command=command, **options)
+        return SimpleNamespace(stdout=StringIO(first_line), returncode=0,
+                               communicate=lambda **_kwargs: ('{"records": [], "validated": true}', None),
+                               poll=lambda: 0)
+    monkeypatch.setattr('scripts.benchmark_year_presence.subprocess.Popen', launch)
+    monkeypatch.setattr('scripts.benchmark_year_presence.select.select', lambda *args: ([args[0][0]], [], []))
+    config = configuration(parser().parse_args(['--viewer-timezone', 'Europe/Berlin']))
+    run_worker(tmp_path, tmp_path / 'calendar.sqlite3', config, year_plan(), mode,
+               tmp_path / 'isolated', viewer_timezone='Europe/Berlin')
+    command = captured['command']
+    assert command[command.index('--viewer-timezone') + 1] == 'Europe/Berlin'
+    assert captured['env']['TZ'] == ('Europe/Berlin' if mode == 'query' else 'UTC')
 
 
 def test_difference_counter_tracks_dates_points_clipping_and_exclusive_ends():
@@ -101,6 +131,16 @@ def test_old_sources_use_the_full_event_path_and_preserve_per_source_issues():
     assert counts == [{'a': (1, '')}] and count == 1
     assert implementation == 'full-events-and-counters'
     assert issue_values(issues) == [('budget-source', 'ValueError', 'Synthetic budget issue')]
+
+
+def test_full_event_summary_uses_the_selected_viewer_zone():
+    zone = ZoneInfo('Europe/Berlin')
+    first = datetime(2026, 1, 1, tzinfo=zone)
+    start = datetime(2026, 1, 1, 23, 30, tzinfo=UTC)
+    events = [event(start, start + timedelta(minutes=15))]
+    store = SimpleNamespace(query_occurrences=lambda *args, **kwargs: events)
+    counters, count, _issues, _implementation = query_presence(store, first, first + timedelta(days=2), ['a'], zone=zone)
+    assert counters == [{}, {'a': (1, '')}] and count == 1
 
 
 def test_compact_sources_use_counters_without_materializing_events():

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 from time import perf_counter
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if __package__:
     from .benchmark_extended import Config, build_fixture, isolated_environment, source_metadata, summary, verify_source
@@ -36,15 +37,23 @@ ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
 
 
-def year_plan(seed=81423, years=None):
+def viewer_zone(name):
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ValueError('Choose an available viewer timezone, such as UTC or Europe/Berlin.') from error
+
+
+def year_plan(seed=81423, years=None, *, viewer_timezone='UTC'):
     """One deterministic non-monotonic plan, identical across source roots."""
+    zone = viewer_zone(viewer_timezone)
     chosen = list(years) if years is not None else random.Random(seed).sample(range(2019, 2036), 7)
     if not chosen or len(set(chosen)) != len(chosen) or any(not 1 <= year < 9999 for year in chosen):
         raise ValueError('Choose distinct years between 1 and 9998.')
     if years is None and chosen in (sorted(chosen), sorted(chosen, reverse=True)):
         chosen[0], chosen[1] = chosen[1], chosen[0]
-    return [{'year': year, 'start': datetime(year, 1, 1, tzinfo=UTC).isoformat(),
-             'end': datetime(year + 1, 1, 1, tzinfo=UTC).isoformat()} for year in chosen]
+    return [{'year': year, 'start': datetime(year, 1, 1, tzinfo=zone).isoformat(),
+             'end': datetime(year + 1, 1, 1, tzinfo=zone).isoformat()} for year in chosen]
 
 
 def day_counts(events, start, end, *, zone=UTC):
@@ -89,7 +98,7 @@ def issue_values(issues):
     return sorted((master.id, type(error).__name__, str(error)) for master, error in issues)
 
 
-def query_presence(store, start, end, calendars):
+def query_presence(store, start, end, calendars, *, zone=UTC):
     """Select the actual implementation without importing new baseline code."""
     issues = []
     query = getattr(store, 'query_year_presence', None)
@@ -97,10 +106,11 @@ def query_presence(store, start, end, calendars):
         values = query(start, end, calendars, issues=issues)
         return values.summaries, len(values), issues, 'compact-ranges'
     values = store.query_occurrences(start, end, calendars, issues=issues)
-    return day_counts(values, start, end), len(values), issues, 'full-events-and-counters'
+    return day_counts(values, start, end, zone=zone), len(values), issues, 'full-events-and-counters'
 
 
-def worker(source_root, database, config, plan, mode):
+def worker(source_root, database, config, plan, mode, *, viewer_timezone='UTC'):
+    zone = viewer_zone(viewer_timezone)
     sys.path.insert(0, str(source_root))
     imported = perf_counter()
     from debacal.store import Store
@@ -114,14 +124,15 @@ def worker(source_root, database, config, plan, mode):
     started = perf_counter()
     store = Store(database)
     startup_ms = (perf_counter() - started) * 1000
-    print(json.dumps({'ready': True, 'store_open_ms': startup_ms, 'application_import_ms': import_ms}), flush=True)
+    print(json.dumps({'ready': True, 'store_open_ms': startup_ms, 'application_import_ms': import_ms,
+                      'viewer_timezone': viewer_timezone}), flush=True)
     records, measured = [], []
     calendars = [f'cal-{index}' for index in range(config.calendars)]
     try:
         for request in plan:
             start, end = datetime.fromisoformat(request['start']), datetime.fromisoformat(request['end'])
             started = perf_counter()
-            counters, count, issues, implementation = query_presence(store, start, end, calendars)
+            counters, count, issues, implementation = query_presence(store, start, end, calendars, zone=zone)
             elapsed = (perf_counter() - started) * 1000
             records.append({'year': request['year'], 'elapsed_ms': elapsed, 'occurrences': count,
                             'implementation': implementation, 'issues': issue_values(issues)})
@@ -132,7 +143,7 @@ def worker(source_root, database, config, plan, mode):
             start, end = datetime.fromisoformat(request['start']), datetime.fromisoformat(request['end'])
             issues = []
             events = store.query_occurrences(start, end, calendars, issues=issues)
-            expected = day_counts(events, start, end), len(events), issue_values(issues)
+            expected = day_counts(events, start, end, zone=zone), len(events), issue_values(issues)
             if actual != expected:
                 raise AssertionError(f"Annual presence disagrees with full Event query for {request['year']}.")
         verify_source(source_root)
@@ -141,14 +152,18 @@ def worker(source_root, database, config, plan, mode):
         store.close()
 
 
-def run_worker(source_root, database, config, plan, mode, directory):
+def run_worker(source_root, database, config, plan, mode, directory, *, viewer_timezone='UTC'):
     command = [sys.executable, str(Path(__file__).resolve()), '--worker', mode,
                '--source-root', str(source_root), '--database', str(database),
-               '--configuration', json.dumps(asdict(config)), '--plan', json.dumps(plan)]
+               '--configuration', json.dumps(asdict(config)), '--plan', json.dumps(plan),
+               '--viewer-timezone', viewer_timezone]
+    environment = isolated_environment(directory)
+    if mode == 'query':
+        environment['TZ'] = viewer_timezone
     started = perf_counter()
     with tempfile.TemporaryFile(mode='w+t') as errors:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
-                                   stdin=subprocess.DEVNULL, env=isolated_environment(directory))
+                                   stdin=subprocess.DEVNULL, env=environment)
         try:
             ready, _, _ = select.select([process.stdout], [], [], config.timeout_seconds)
             if not ready:
@@ -181,6 +196,8 @@ def parser():
     result.add_argument('--output', type=Path)
     result.add_argument('--samples', type=int, default=3)
     result.add_argument('--years', nargs='+', type=int)
+    result.add_argument('--viewer-timezone', default='UTC',
+                        help='Viewer timezone (default: UTC). Fixture event clocks remain UTC.')
     for name in ('events', 'series', 'finite', 'active_series', 'heavy_overrides',
                  'candidate_dates', 'calendars', 'payload_bytes', 'seed', 'timeout_seconds'):
         result.add_argument('--' + name.replace('_', '-'), type=int, default=getattr(Config(), name))
@@ -192,6 +209,7 @@ def parser():
 
 
 def configuration(arguments):
+    viewer_zone(arguments.viewer_timezone)
     names = ('events', 'series', 'finite', 'active_series', 'heavy_overrides',
              'candidate_dates', 'calendars', 'payload_bytes', 'seed', 'timeout_seconds')
     values = {name: getattr(arguments, name) for name in names}
@@ -209,30 +227,33 @@ def main(argv=None):
     source_root = arguments.source_root.resolve()
     if arguments.worker:
         worker(source_root, arguments.database, Config(**json.loads(arguments.configuration)),
-               json.loads(arguments.plan), arguments.worker)
+               json.loads(arguments.plan), arguments.worker, viewer_timezone=arguments.viewer_timezone)
         return
     try:
         config = configuration(arguments)
-        plan = year_plan(config.seed, arguments.years)
+        plan = year_plan(config.seed, arguments.years, viewer_timezone=arguments.viewer_timezone)
         metadata = source_metadata(source_root, arguments.revision)
     except ValueError as error:
         parser().error(str(error))
     with tempfile.TemporaryDirectory(prefix='debacal-year-presence-') as temporary:
         directory = Path(temporary)
         database = directory / 'fixture.sqlite3'
-        fixture = run_worker(source_root, database, config, plan, 'fixture', directory / 'build')
+        fixture = run_worker(source_root, database, config, plan, 'fixture', directory / 'build',
+                             viewer_timezone=arguments.viewer_timezone)
         samples = []
         for index in range(arguments.samples):
             sample_directory = directory / f'sample-{index}'
             sample_directory.mkdir()
             sample_database = sample_directory / 'calendar.sqlite3'
             shutil.copy2(database, sample_database)
-            result = run_worker(source_root, sample_database, config, plan, 'query', sample_directory)
+            result = run_worker(source_root, sample_database, config, plan, 'query', sample_directory,
+                                viewer_timezone=arguments.viewer_timezone)
             result['sample'] = index
             samples.append(result)
         timings = [item['elapsed_ms'] for sample in samples for item in sample['records']]
         output = {'benchmark': 'isolated-year-presence', 'schema': 1, 'source': metadata,
-                  'environment': {'python': sys.version, 'platform': platform.platform(), 'timezone': 'UTC'},
+                  'environment': {'python': sys.version, 'platform': platform.platform(),
+                                  'timezone': arguments.viewer_timezone, 'fixture_timezone': 'UTC'},
                   'configuration': asdict(config), 'fixture': fixture['fixture'], 'plan': plan,
                   'queries': summary(timings),
                   'by_year': {str(request['year']): summary([
