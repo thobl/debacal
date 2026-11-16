@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from bisect import bisect_left, bisect_right
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from heapq import nsmallest
 
 from .event_range_index import OCCURRENCE_LIMIT
+from .daily_presence import daily_day_span, merged_days
 from .models import copy_event
 from .recurrence import RecurrenceError, RecurrenceRangeError, overlaps, split_occurrence_id
 
@@ -87,6 +88,7 @@ class YearProjection(Sequence):
         self._by_source = grouped
         self._rules = rules
         counts, known, start_days, instant_days = {}, [], set(), set()
+        daily_spans = []
         for identity in grouped.keys() | rules.keys():
             if prevalidated and identity not in self._available:
                 continue
@@ -95,6 +97,8 @@ class YearProjection(Sequence):
             master_match = _matches(master, self._query)
             differences = [0] * (self._day_count + 1)
             native_keys = set()
+            native_count = 0
+            daily_span = None
             source_days = set()
             source_instants = set()
             count = 0
@@ -102,21 +106,35 @@ class YearProjection(Sequence):
                 if record.error is not None:
                     raise record.error
                 if identity in rules and (master_match or not prevalidated):
-                    for key, start, end, _spec in record.prepared.iter_rule_ranges(
-                            self.start, self.end, floating_zone=self.zone if master.floating_time else None):
-                        native_keys.add(key)
-                        if master_match:
-                            source_days.add(start.date() if master.all_day else viewer_day(start, self.zone))
-                            source_instants.add(int(start.timestamp() // 86400))
-                            interval = day_interval(start, end, master.all_day, self._first_ordinal,
-                                                    self._day_count, self.zone)
-                            if interval:
-                                first, last = interval
-                                differences[first] += 1
-                                differences[last] -= 1
-                            count += 1
+                    daily_span = daily_day_span(record.prepared, self.start, self.end, self.zone)
+                    if daily_span is not None:
+                        native_count = len(daily_span)
+                        if native_count > OCCURRENCE_LIMIT:
+                            raise RecurrenceRangeError(f'This range exceeds {OCCURRENCE_LIMIT:,} occurrences. Choose a smaller date range.')
+                        if master.start.date().toordinal() in daily_span:
+                            native_keys.update(event.recurrence_id for event in record.prepared.explicit_occurrences)
+                        if master_match and daily_span:
+                            first, last = daily_span.start - self._first_ordinal, daily_span.stop - self._first_ordinal
+                            differences[first] += 1
+                            differences[last] -= 1
+                            count += native_count
+                    else:
+                        for key, start, end, _spec in record.prepared.iter_rule_ranges(
+                                self.start, self.end, floating_zone=self.zone if master.floating_time else None):
+                            native_keys.add(key)
+                            native_count += 1
+                            if master_match:
+                                source_days.add(start.date() if master.all_day else viewer_day(start, self.zone))
+                                source_instants.add(int(start.timestamp() // 86400))
+                                interval = day_interval(start, end, master.all_day, self._first_ordinal,
+                                                        self._day_count, self.zone)
+                                if interval:
+                                    first, last = interval
+                                    differences[first] += 1
+                                    differences[last] -= 1
+                                count += 1
                 explicit = grouped.get(identity, ())
-                if not prevalidated and master.recurring and len(native_keys) + sum(
+                if not prevalidated and master.recurring and native_count + sum(
                         event.recurrence_id not in native_keys for event in explicit) > OCCURRENCE_LIMIT:
                     raise RecurrenceRangeError(f'This range exceeds {OCCURRENCE_LIMIT:,} occurrences. Choose a smaller date range.')
                 source_known = []
@@ -144,6 +162,8 @@ class YearProjection(Sequence):
                 self.failures.append((master, RecurrenceError('Unsupported or invalid recurrence rule.')))
                 continue
             self._available.add(identity)
+            if master_match and daily_span:
+                daily_spans.append(daily_span)
             start_days.update(source_days)
             instant_days.update(source_instants)
             known.extend(source_known)
@@ -161,6 +181,9 @@ class YearProjection(Sequence):
         self.known_events = tuple(known)
         self._known = {event.id: event for event in known}
         self.summaries = summaries
+        for ordinal in merged_days(daily_spans):
+            start_days.add(date.fromordinal(ordinal))
+            instant_days.add(ordinal - date(1970, 1, 1).toordinal())
         self._start_days = tuple(sorted(start_days))
         self._instant_days = tuple(sorted(instant_days))
 
