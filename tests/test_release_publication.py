@@ -24,6 +24,7 @@ def test_release_gate_excludes_local_capacity_and_extended_usage_runs():
     arguments, = checks
     assert arguments[arguments.index('-m', 3) + 1] == 'not local_performance'
     assert 'benchmark_extended' not in workflow
+    assert 'benchmark_year_presence' not in workflow
 
 
 def publication(tmp_path, *, exists=True, draft=True, fail=None, assets=True, missing_asset=None, extra_assets=()):
