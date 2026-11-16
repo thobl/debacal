@@ -231,7 +231,7 @@ class Store:
             nested = self.connection.in_transaction
             self._transaction_sequence += 1
             savepoint = f"debacal_{self._transaction_sequence}"
-            frame = {'revision': self._query_revision, 'before': {}}
+            frame = {'revision': self._query_revision, 'before': {}, 'written': {}}
             self._query_transactions.append(frame)
             try:
                 if not nested and not self._ui_access:
@@ -263,11 +263,28 @@ class Store:
                 raise
             else:
                 self._query_transactions.pop()
+                if nested and self._query_transactions:
+                    # A released savepoint becomes part of its parent's write
+                    # batch. Rolled-back frames never publish their models.
+                    self._query_transactions[-1]['written'].update(frame['written'])
 
     def _maintain_query_projections(self, identities=None):
         if self._projection_storage is None:
             return
-        rejected = self._projection_storage.maintain(self.events_revision(), identities=identities)
+        written = {}
+        for frame in self._query_transactions:
+            written.update(frame['written'])
+        selected = None if identities is None else tuple(identities)
+        rejected = self._projection_storage.maintain(
+            self.events_revision(), identities=selected, written_sources=written)
+        # Canonical rows remain authoritative after a savepoint rollback, so
+        # consumed handoffs need not be retained alongside the rebuilt index.
+        for frame in self._query_transactions:
+            if selected is None:
+                frame['written'].clear()
+            else:
+                for identity in selected:
+                    frame['written'].pop(identity, None)
         for calendar, identity, raw, reason in rejected:
             resource = hashlib.sha256(identity.encode()).hexdigest()[:12]
             self.set_quarantined_resource(calendar, resource, raw, reason)
@@ -936,6 +953,34 @@ class Store:
         self._quarantine_expansion_failures(failures)
         return events
 
+    def query_year_presence(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
+                            *, issues: list | None = None):
+        """Summarize a displayed year without allocating every recurring Event.
+
+        Select the same maintained interval-tree entries as query_occurrences.
+        Snapshot record references under the reader lock, then sweep their
+        prepared ranges without holding it. Writers replace records, so both
+        the counters and lazy detail lookups describe that same source revision.
+        """
+        from .year_projection import YearProjection
+        from .timeutil import local_zone
+        if not self._query_enabled:
+            raise RuntimeError('This Store was opened without a calendar query index.')
+        self._validate_datetime(start)
+        self._validate_datetime(end)
+        if end.timestamp() <= start.timestamp() and end.date() <= start.date():
+            raise ValueError('Occurrence range end must follow its start.')
+        ids = list(calendar_ids) if calendar_ids is not None else None
+        with self._lock:
+            self._synchronize_query_index()
+            events, records = self._query_index.select(start, end, ids)
+            source_ids = {event.series_id or event.id for event in events}
+            source_ids.update(record.master.id for record in records)
+            sources = {identity: self._query_index.sources[identity] for identity in source_ids}
+        result = YearProjection(start, end, events, records, sources, zone=local_zone(), issues=issues)
+        self._quarantine_expansion_failures(result.failures)
+        return result
+
     def _occurrence_sources(self, start: datetime, end: datetime, ids: list[str] | None,
                             ordinary_limit: int | None = None) -> tuple[list[Event], list[Event]]:
         """Select relevant source identities from the maintained interval trees."""
@@ -1488,7 +1533,7 @@ class Store:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Range boundaries must include a timezone.")
 
-    def _write_event(self, event: Event) -> None:
+    def _write_event(self, event: Event) -> str:
         if event.series_id:
             raise ValueError("Store recurring instances through edit_occurrence; keep the series as one master.")
         if event.recurring:
@@ -1496,14 +1541,16 @@ class Store:
             recurrence_set(event)
         self._assert_identity_owner(event.id, event.calendar_id, event.ical_uid)
         self._retry_incomplete_projection(event.id)
+        encoded = self._json(event.to_dict())
         self.connection.execute(
             """INSERT INTO events(id,calendar_id,start,end,data,recurring,group_id,candidate,search_text) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET calendar_id=excluded.calendar_id,
                start=excluded.start,end=excluded.end,data=excluded.data,recurring=excluded.recurring,
                group_id=excluded.group_id,candidate=excluded.candidate,search_text=excluded.search_text""",
-            (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), self._json(event.to_dict()),
+            (event.id, event.calendar_id, event.start.timestamp(), event.end.timestamp(), encoded,
              event.recurring, event.group_id, event.candidate, self._search_projection(event)),
         )
+        return encoded
 
     def _retry_incomplete_projection(self, event_id):
         """Let an explicit reimport retry a formerly unsupported source.
@@ -1647,16 +1694,33 @@ class Store:
              self._json(current) if current else None, datetime.now(timezone.utc).isoformat()),
         )
 
-    def _restore(self, target: dict[str, dict[str, Any] | None], *, enqueue: bool = True, preserve_source: bool = False) -> None:
+    def _restore(self, target: dict[str, dict[str, Any] | None], *, enqueue: bool = True,
+                 preserve_source: bool = False, before=None) -> None:
         for event_id, value in target.items():
-            old = self.get_event(event_id)
-            previous = old.to_dict() if old else None
+            old = None
+            if before is not None and not preserve_source:
+                previous = before[event_id]
+            elif enqueue or preserve_source:
+                old = self.get_event(event_id)
+                previous = old.to_dict() if old else None
+            else:
+                # Remote restoration does not enqueue a local operation or
+                # retain an earlier transport template. Its old model is unused.
+                previous = None
             if value is None:
                 self.connection.execute("DELETE FROM events WHERE id=?", (event_id,))
+                written = None
             else:
                 if preserve_source and old is not None:
                     value = value | {"raw_ics": old.raw_ics, "ical_uid": old.ical_uid}
-                self._write_event(Event.from_dict(value))
+                # This is a private normalized copy, not the caller's Event or
+                # a borrowed display projection. Keep it only until commit so
+                # derived-data maintenance need not decode the same JSON again.
+                event = Event.from_dict(value)
+                encoded = self._write_event(event)
+                written = (encoded, event) if not event._query_projection else None
+            if self._query_transactions:
+                self._query_transactions[-1]['written'][event_id] = written
             if enqueue:
                 self._enqueue(event_id, previous, value)
 
@@ -1733,7 +1797,7 @@ class Store:
                     self._retry_incomplete_projection(event.id)
                 return None
             before, after = ({key: value[key] for key in changed} for value in (before, after))
-            self._restore(after)
+            self._restore(after, before=before)
             cursor = self.connection.execute(
                 "INSERT INTO operations(label,created_at,before_data,after_data) VALUES (?,?,?,?)",
                 (label, datetime.now(timezone.utc).isoformat(), self._json(before), self._json(after)),

@@ -18,7 +18,7 @@ from .models import Event, copy_event
 from .recurrence import (
     RecurrenceRangeError, _floating_master, _recurrence_set,
     _static_periods, event_zone, key_datetime, normalize_recurrence_stream,
-    normalize_recurrence_time, occurrence, occurrence_id, overlaps, recurrence_key,
+    normalize_recurrence_time, occurrence, occurrence_id, overlaps, range_overlaps, recurrence_key,
 )
 from .recurrence_budget import BoundedRule
 
@@ -494,30 +494,48 @@ class PreparedSeries:
         the canonical expansion engine. A workspace supplies its current viewer
         zone explicitly; preparing a series does not bind it to an OS setting.
         """
+        values = [self._project_values(actual, key, endpoint, duration_spec)
+                  for key, actual, endpoint, duration_spec in self.iter_rule_ranges(
+                      start, end, limit=limit, truncate=truncate, floating_zone=floating_zone)]
+        return sorted(values, key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))
+
+    def iter_rule_ranges(self, start, end, *, limit=10000, truncate=False, floating_zone=None):
+        """Yield native rule ranges without allocating Events or encoded IDs.
+
+        Each result is ``(recurrence_key, actual_start, actual_end, duration_spec)``.
+        Explicit additions and detached overrides remain separately indexed;
+        callers combine those with this native stream when querying a complete
+        source, deduplicating shared DTSTART/RDATE identities by recurrence key.
+        Budgets, exclusions and overlap semantics match query_rule.
+        """
         if truncate and limit <= 0 or self.rule is None:
-            return []
+            return
         master = self.master
         zone = floating_zone if master.floating_time and floating_zone is not None else self.event_zone
         lower = self._lower(start, zone)
         boundary = ((end.astimezone(zone) if master.floating_time else end)
                     .replace(tzinfo=timezone.utc, fold=0)) if self.floating else end
-        result = {}
+        boundary_instant = boundary.timestamp()
+        window_timestamps = None if master.all_day else (start.timestamp(), end.timestamp())
+        seen = set()
         for value in self._regular(lower, boundary.astimezone(self.zone)):
-            if value.timestamp() >= boundary.timestamp():
+            if value.timestamp() >= boundary_instant:
                 break
             key = recurrence_key(value, master.all_day, floating_time=master.floating_time)
-            if key in self.excluded or key in self.override_keys:
+            if key in self.excluded or key in self.override_keys or key in seen:
                 continue
             actual = (datetime.combine(value.date(), time.min, zone) if master.all_day else
                       value.replace(tzinfo=zone) if master.floating_time else value)
-            item = self._project(actual, key)
-            if overlaps(item, start, end):
-                result[item.id] = item
-                if truncate and len(result) >= limit:
-                    break
-                if not truncate and len(result) > limit:
-                    raise RecurrenceRangeError(f'This range exceeds {limit:,} occurrences. Choose a smaller date range.')
-        return sorted(result.values(), key=lambda item: (item.start.timestamp(), item.end.timestamp(), item.id))
+            endpoint, duration_spec = self._project_range(actual, key)
+            if not range_overlaps(actual, endpoint, start, end, all_day=master.all_day,
+                                  window_timestamps=window_timestamps):
+                continue
+            seen.add(key)
+            if not truncate and len(seen) > limit:
+                raise RecurrenceRangeError(f'This range exceeds {limit:,} occurrences. Choose a smaller date range.')
+            yield key, actual, endpoint, duration_spec
+            if truncate and len(seen) >= limit:
+                break
 
     def occurrence_at(self, key, *, floating_zone=None):
         """Return one native rule identity without looking back its duration.
@@ -562,9 +580,11 @@ class PreparedSeries:
         return None
 
     def _project(self, start, key):
-        # The master was validated at the write boundary. A projection changes
-        # only identity and range; don't sort/copy its entire recurrence again.
-        item = copy_event(self.master)
+        end, duration_spec = self._project_range(start, key)
+        return self._project_values(start, key, end, duration_spec)
+
+    def _project_range(self, start, key):
+        """One endpoint/duration implementation for ranges and full Events."""
         zone = start.tzinfo if self.master.floating_time else self.event_zone
         if self.floating:
             end = start + self.duration
@@ -588,13 +608,16 @@ class PreparedSeries:
                 if end.timestamp() > boundary.timestamp():
                     end = boundary
                     duration_spec = ''
+        return end, duration_spec
+
+    def _project_values(self, start, key, end, duration_spec):
+        # The master and projected range have already been validated/prepared.
+        # Assign changed slots once and share untouched descriptive metadata.
         fields = {'id': occurrence_id(self.master.id, key), 'start': start, 'end': end,
                   'series_id': self.master.id, 'recurrence_id': key, 'recurrence_rule': '',
                   'recurrence_dates': (), 'excluded_dates': (), 'recurrence_overrides': {}, 'raw_ics': '',
                   'range_policy': '', 'duration_spec': duration_spec}
-        for name, value in fields.items():
-            object.__setattr__(item, name, value)
-        return item
+        return copy_event(self.master, fields)
 
     def finite_rule_occurrences(self, maximum):
         """Unroll a short bounded rule eagerly; never traverse an infinite one."""

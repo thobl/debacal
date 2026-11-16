@@ -105,6 +105,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._search_index = None
         self._events_revision = None
         self._surface_data_key = None
+        self._display_query_key = None
         self._filter_masters = {}
         self._navigation_sources = None
         self._navigation_sources_key = None
@@ -241,7 +242,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         start = self.preferences.week_start(start)
         return [start + timedelta(days=i) for i in range(42)]
 
-    def refresh(self, calendars=False):
+    def refresh(self, calendars=False, *, presentation_only=False):
         if self._closed:
             return
         revision = self.store.events_revision()
@@ -256,10 +257,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         days = self.dates()
         if self.selected_day not in days:
             self.selected_day = self.anchor
+        query_key = self.view, tuple(days), tuple(cals), revision, local_zone()
+        reuse_display = presentation_only and query_key == self._display_query_key
         from .recurrence import RecurrenceRangeError
         try:
-            self.range_events = self.query_view_events(days, cals)
+            if not reuse_display:
+                self.range_events = self.query_view_events(days, cals)
+            self._display_query_key = query_key
         except RecurrenceRangeError as exc:
+            self._display_query_key = None
             self.range_events = []
             self.selection.clear()
             self.selected_id = None
@@ -313,7 +319,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         can_undo, can_redo = self.store.history_availability()
         self.undo_button.setEnabled(can_undo)
         self.redo_button.setEnabled(can_redo)
-        if not self._revealing_search_result:
+        if not self._revealing_search_result and not reuse_display:
             self.run_search()
         self.update_sync_status()
 
@@ -321,27 +327,29 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         """Reuse indexed occurrences when only presentation preferences change."""
         query = self.search.text().strip() if self.filter_search.isChecked() else ''
         key = (self.view, self.anchor.month if self.view == 'month' else None, tuple(days), tuple(calendars),
-               revision, query, local_zone())
+               revision, query, local_zone(), id(self.visible_events) if self.view == 'year' else None)
         if key == self._surface_data_key:
             return False
         if self.view == 'year':
             self.year.set_data(self.anchor.year, self.visible_events, calendars)
+        elif self.view == 'month':
+            self.month.set_data(days[0], self.anchor.month, self.visible_events, calendars)
         else:
             self.canvas.set_data(days[:7], self.visible_events, calendars)
             self.all_day_canvas.set_data(days[:7], self.visible_events, calendars)
             self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
-            self.month.set_data(days[0], self.anchor.month, self.visible_events, calendars)
         self._surface_data_key = key
         return True
 
     def query_view_events(self, days, calendars):
-        identifiers = tuple(calendar.id for calendar in calendars if calendar.visible)
+        identifiers = tuple(calendar.id for calendar in calendars if calendar.visible and calendar.enabled)
         if not identifiers:
             self._view_issues = ()
             return []
         begin, end = at(days[0]), at(days[-1] + timedelta(days=1))
         issues = []
-        events = self.store.query_occurrences(begin, end, identifiers, issues=issues)
+        query = self.store.query_year_presence if self.view == 'year' else self.store.query_occurrences
+        events = query(begin, end, identifiers, issues=issues)
         self._view_issues = tuple(issues)
         return events
 
@@ -417,7 +425,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if ((previous.auto_sync_enabled, previous.sync_interval_minutes)
                 != (preferences.auto_sync_enabled, preferences.sync_interval_minutes)):
             self.configure_auto_sync()
-        self.refresh(calendars=True)
+        self.refresh(calendars=True, presentation_only=True)
         return True
 
     def set_creation_calendar(self, calendar_id):
@@ -620,7 +628,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 current = self.store.get_occurrence(cached.id)
                 if current is not None:
                     return current
-            visible = [value for value in self.visible_events if value.series_id == event.id]
+            visible = self.visible_events_for_sources({event.id})
             if visible:
                 return min(visible, key=lambda value: value.start.timestamp())
             from .recurrence import expand_event
@@ -630,6 +638,16 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 occurrences = expand_event(event, event.start, event.start + timedelta(days=1))
             return occurrences[0] if occurrences else None
         return event
+
+    def visible_event_by_id(self, identity):
+        resolver = getattr(self.visible_events, 'event_by_id', None)
+        return (resolver(identity) if resolver is not None else
+                next((event for event in self.visible_events if event.id == identity), None))
+
+    def visible_events_for_sources(self, identifiers):
+        resolver = getattr(self.visible_events, 'for_sources', None)
+        return (resolver(identifiers) if resolver is not None else
+                [event for event in self.visible_events if (event.series_id or event.id) in identifiers])
 
     def operation_scope(self, modifiers=None):
         return 'single' if self._search_selection_active else self.selection.scope
@@ -798,7 +816,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
 
     def select_event(self, event_id, day=None, additive=False):
-        event = next((value for value in self.visible_events if value.id == event_id), None) or self.event_by_id(event_id)
+        event = self.visible_event_by_id(event_id) or self.event_by_id(event_id)
         if event is None:
             return
         self._search_selection_active = False
@@ -869,7 +887,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.refresh()
         current_ids = self.store.event_ids()
         allowed = (current_ids - previous_ids) | {value.series_id or value.id for value in refs}
-        choices = [value for value in self.visible_events if (value.series_id or value.id) in allowed]
+        choices = self.visible_events_for_sources(allowed)
         selected = []
         for reference in refs:
             expected = reference.start if reference.all_day else reference.start.astimezone(local_zone())
@@ -1058,7 +1076,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.anchor = self.selected_day = (target.date() if all_day else target.astimezone(local_zone()).date())
             self.refresh()
             ids = {event.id for event in events}
-            choices = [event for event in self.visible_events if (event.series_id or event.id) in ids]
+            choices = self.visible_events_for_sources(ids)
             if choices:
                 same_kind = [event for event in choices if event.all_day == all_day]
                 selected = min(same_kind or choices, key=lambda event: abs(event.start.timestamp() - target.timestamp()))
@@ -1273,7 +1291,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def filter_calendar_events(self, events):
         query = self.search.text().strip()
         if not self.filter_search.isChecked() or not query:
-            return list(events)
+            return events if hasattr(events, 'filtered') else list(events)
+        if hasattr(events, 'filtered'):
+            return events.filtered(query)
         for event in events:
             if event.series_id and event.series_id not in self._filter_masters:
                 self._filter_masters[event.series_id] = self.store.get_event(event.series_id)
@@ -1335,7 +1355,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         master = self.store.get_occurrence(event_id)
         if master is None or master.series_id or not master.recurring:
             return master
-        visible = [event for event in self.visible_events if event.series_id == master.id]
+        visible = self.visible_events_for_sources({master.id})
         if visible:
             return min(visible, key=lambda event: event.start.timestamp())
         event = self.event_by_id(event_id)
@@ -1367,7 +1387,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         try:
             if not calendar.visible:
                 self.store.set_calendar_visible(calendar.id, True)
-            if not calendar.visible or not any(value.id == event.id for value in self.visible_events) or day not in self.dates():
+            if not calendar.visible or self.visible_event_by_id(event.id) is None or day not in self.dates():
                 self.anchor = day
                 self.refresh(calendars=not calendar.visible)
             if self.results.agenda_mode:
@@ -1933,11 +1953,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             step = -1 if direction == 'left' else 1
             zone = local_zone()
             current_day = event_day(current, zone)
-            options = [event for event in events if (event_day(event, zone) - current_day).days * step > 0]
-            if options:
-                day = min((event_day(event, zone) for event in options), key=lambda value: (value - current_day).days * step)
-                options = [event for event in options if event_day(event, zone) == day]
+            if hasattr(events, 'adjacent_start_day'):
+                day = events.adjacent_start_day(current_day, step)
+                options = events.events_starting_on(day) if day is not None else []
             else:
+                options = [event for event in events if (event_day(event, zone) - current_day).days * step > 0]
+                if options:
+                    day = min((event_day(event, zone) for event in options), key=lambda value: (value - current_day).days * step)
+                    options = [event for event in options if event_day(event, zone) == day]
+            if not options:
                 calendars = tuple(calendar.id for calendar in self.store.list_calendars() if calendar.visible)
                 key = self.store.events_revision(), calendars
                 if key != self._navigation_sources_key:
@@ -1960,9 +1984,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.anchor = day
                 self.refresh()
         else:
-            ids = [e.id for e in events]
-            index = ids.index(self.selected_id) if self.selected_id in ids else (-1 if direction == 'down' else 0)
-            event = events[(index + (-1 if direction == 'up' else 1)) % len(events)]
+            if hasattr(events, 'adjacent_event'):
+                event = events.adjacent_event(self.selected_id, -1 if direction == 'up' else 1)
+                if event is None:
+                    return
+            else:
+                ids = [e.id for e in events]
+                index = ids.index(self.selected_id) if self.selected_id in ids else (-1 if direction == 'down' else 0)
+                event = events[(index + (-1 if direction == 'up' else 1)) % len(events)]
         self.select_event(event.id)
         self.ensure_event_visible(event.id)
 

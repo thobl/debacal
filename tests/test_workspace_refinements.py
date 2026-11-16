@@ -63,8 +63,12 @@ def test_filter_is_optional_matches_effective_fields_and_restores_all_events(des
     QTest.mouseClick(window.filter_search, Qt.MouseButton.LeftButton)
     settle(app)
     assert {event.id for event in window.visible_events} == {'title', 'location'}
-    assert {event.id for event in window.canvas.events} == {'title', 'location'}
-    assert {event.id for event in window.month.events} == {'title', 'location'}
+    assert {event.id for event in window.active_canvas().events} == {'title', 'location'}
+    # Hidden surfaces are laid out only when opened, using the current filter.
+    window.set_view('week' if view == 'month' else 'month')
+    assert {event.id for event in window.active_canvas().events} == {'title', 'location'}
+    window.set_view(view)
+    assert {event.id for event in window.active_canvas().events} == {'title', 'location'}
     assert store.get_setting('filter_calendar_by_search') is True
     window.search.setText('Unrelated')
     assert [event.id for event in window.visible_events] == ['other']

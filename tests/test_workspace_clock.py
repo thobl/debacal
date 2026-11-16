@@ -169,7 +169,7 @@ def test_dense_series_keeps_healthy_events_visible_with_actionable_range_warning
     assert 'unavailable in this view' in window.status.text()
     assert not window.warning_button.isHidden()
     # Every visibility change queries the requested sources and current issues.
-    with patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as query:
+    with patch.object(store, 'query_year_presence', wraps=store.query_year_presence) as query:
         window.toggle_calendar(calendar.id, False)
         assert not window._view_issues and [event.id for event in window.range_events] == [healthy.id]
         window.toggle_calendar(calendar.id, True)

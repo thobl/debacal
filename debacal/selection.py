@@ -152,13 +152,55 @@ def selection_roots(store, refs: Iterable[Event], scope: str) -> list[Event]:
     return list(roots.values())
 
 
+class _SelectionPresentation:
+    """Borrow prepared sources for one highlight pass, never for mutations.
+
+    A selection's family and nominal boundaries do not need original ICS or
+    freshly decoded exception payloads. The operation-local lookup also avoids
+    resolving the same source again for every visible sibling. Nothing is kept
+    between UI operations; canonical edit/copy guards still use the real Store.
+    """
+    def __init__(self, store, refs):
+        self.store = store
+        self.sources = {value.id: value for value in store.query_source_events(
+            dict.fromkeys(_master_id(value) for value in refs))}
+
+    def get_event(self, identity):
+        if identity not in self.sources:
+            values = self.store.query_source_events([identity])
+            self.sources[identity] = values[0] if values else None
+        return self.sources[identity]
+
+    def list_group_events(self, calendar_id, group_id):
+        # Legacy multi-resource groups retain their established membership
+        # semantics. Remember those already-loaded sources within this pass.
+        values = (self.store.list_group_events(calendar_id, group_id)
+                  if hasattr(self.store, 'list_group_events')
+                  else self.store.list_events(calendar_ids=[calendar_id]))
+        for value in values:
+            self.sources.setdefault(value.id, value)
+        return values
+
+
 def affected_visible(store, refs: Iterable[Event], scope: str, visible_events: Iterable[Event]) -> set[str]:
     """Return exactly the visible occurrence IDs affected by the selection."""
+    scope = validate_scope(scope)
+    refs = tuple(refs)
+    if not refs:
+        return set()
+    if scope != 'single' and hasattr(store, 'query_source_events'):
+        store = _SelectionPresentation(store, refs)
     roots = selection_roots(store, refs, scope)
     if scope == "single":
         explicit = {root.id for root in roots}
         whole = {root.id for root in roots if is_whole_root(root)}
+        if not whole and hasattr(visible_events, 'selected_events'):
+            return {event.id for event in visible_events.selected_events(explicit)}
+        if hasattr(visible_events, 'for_sources'):
+            visible_events = visible_events.for_sources(_master_id(root) for root in roots)
         return {event.id for event in visible_events if event.id in explicit or _master_id(event) in whole}
+    if hasattr(visible_events, 'for_sources'):
+        visible_events = visible_events.for_sources(_master_id(root) for root in roots)
     by_master = {_master_id(root): root for root in roots}
     future_boundaries = {}
     result = set()

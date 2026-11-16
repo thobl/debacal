@@ -1,6 +1,6 @@
 """Calendar creation targets and independent visibility controls."""
 from PySide6.QtCore import QEvent, QMimeData, QPointF, Qt, Signal, QSize, QTimer
-from PySide6.QtGui import QColor, QDrag
+from PySide6.QtGui import QColor, QDrag, QFont
 from PySide6.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSizePolicy, QPushButton, QScrollArea
 
 from .compact_controls import ElidedButton
@@ -18,6 +18,7 @@ class CalendarRow(QWidget):
         super().__init__(parent)
         self.calendar = calendar
         self.preferences = None
+        self._presentation_key = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -54,19 +55,37 @@ class CalendarRow(QWidget):
         self.set_calendar(self.calendar, current=self.choice.isChecked(), scale=preferences.font_scale)
 
     def set_calendar(self, calendar, current=False, scale=100):
+        """Update source identity immediately and repaint changed presentation.
+
+        Sync can replace a Calendar with new transport metadata while its row
+        looks identical. Keep that latest value for action handlers without
+        repeatedly polishing native controls during date navigation.
+        """
         self.calendar = calendar
         scheme = scheme_for(self.preferences if self.preferences is not None else self)
-        factor = scale / 100
         writable = calendar.kind != 'ics' and not calendar.read_only
+        checked = bool(current and writable)
+        font = self.choice.font()
+        base_font = self.choice.font()
+        base_font.setBold(False)
+        base_font.setUnderline(False)
+        radius = corner_radius(self.preferences, 2)
+        key = (calendar.name, calendar.color, calendar.visible, writable,
+               bool(current), scale, scheme, radius, base_font.key())
+        if (self._presentation_key == key and self.choice.isChecked() == checked
+                and self.eye.isChecked() == calendar.visible
+                and font.weight() == (QFont.Weight.Bold if checked else QFont.Weight.Normal)
+                and font.underline() == checked):
+            return False
+        factor = scale / 100
         source = QColor(calendar.color)
         source = source.name() if source.isValid() else scheme.accent
         edge = source_outline(QColor(source).darker(145).name(), scheme.sidebar)
         self.swatch.setFixedSize(round(12 * factor), round(12 * factor))
         self.swatch.setStyleSheet(f'background: {source}; border: {max(1, round(factor))}px solid {edge}; '
-                                 f'border-radius: {round(corner_radius(self.preferences, 2) * factor)}px;')
+                                 f'border-radius: {round(radius * factor)}px;')
         self.swatch.setAccessibleName(calendar.name + ' calendar color')
         self.choice.setText(calendar.name.replace('&', '&&'))
-        checked = bool(current and writable)
         group = self.choice.group()
         exclusive = bool(group and group.exclusive())
         if exclusive and not checked:
@@ -98,6 +117,8 @@ class CalendarRow(QWidget):
         self.eye.setToolTip(title)
         self.eye.setAccessibleName(title)
         self.eye.setFixedSize(round(28 * scale / 100), round(28 * scale / 100))
+        self._presentation_key = key
+        return True
 
 
 CALENDAR_ORDER_MIME = 'application/x-debacal-calendar-order'
@@ -246,8 +267,7 @@ class CalendarList(QWidget):
         order = [row.calendar.id for row in rows]
         if order == previous:
             return False
-        for index, row in enumerate(rows):
-            self.box.insertWidget(index, row)
+        self.box.insertWidget(slot, source)
         self.order_changed.emit(order)
         return True
 

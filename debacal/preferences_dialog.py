@@ -455,12 +455,17 @@ class PreferencesDialog(QDialog):
             self.error.setText(str(error))
             self.error.show()
 
+        # Source drafts commonly complete synchronously without a write.
+        # Guard reentrancy immediately, but only disable the large control
+        # tree if a source operation remains pending after submission.
+        self._applying = True
         if self.source_editor is not None:
-            self._set_applying(True)
             try:
                 self.source_editor.apply(on_success=saved, on_error=failed)
             except ValueError as error:
                 failed(error)
+            if self._applying:
+                self._set_applying(True)
         else:
             saved()
         return completed

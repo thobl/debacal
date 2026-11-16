@@ -50,13 +50,13 @@ def workspace(request):
 def test_year_style_and_sync_changes_do_not_restyle_or_reindex_the_year(workspace):
     app, store, window = workspace
     with (patch.object(window.year, '_event_interval', side_effect=AssertionError('Do not scan events')),
-         patch.object(store, 'query_occurrences', wraps=store.query_occurrences) as queries,
+         patch.object(store, 'query_year_presence', wraps=store.query_year_presence) as queries,
           patch.object(window, 'setStyleSheet', side_effect=AssertionError('Keep unchanged stylesheet'))):
         window.apply_preferences(replace(window.preferences, year_view_style='tints'), window.bindings)
         app.processEvents()
         window.apply_preferences(replace(window.preferences, sync_interval_minutes=19), window.bindings)
         app.processEvents()
-        assert queries.call_count == 2
+        assert queries.call_count == 0
     assert window.year.preferences.year_view_style == 'tints'
     assert Preferences.load(store).sync_interval_minutes == 19
 

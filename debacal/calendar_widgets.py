@@ -236,6 +236,17 @@ def display_scale(widget):
     return getattr(preferences, 'font_scale', 100) / 100
 
 
+def _surface_geometry_preferences(preferences):
+    """Formatting and metrics that can change calendar coordinates.
+
+    Colors, control styling, titles and sync settings only affect paint or
+    unrelated controls; changing them must not rebuild event placements.
+    """
+    return (preferences.font_scale, preferences.font_family, preferences.qt_locale().name(),
+            preferences.qt_date_pattern(), preferences.qt_time_pattern(),
+            preferences.first_weekday, preferences.show_week_numbers)
+
+
 def text(painter, rect, value, color=None, size=10, bold=False, align=None):
     if rect.width() <= 0 or rect.height() <= 0:
         return
@@ -759,7 +770,8 @@ class CalendarCanvas(QWidget):
         self.full_day = bool(full_day)
         if self.drag:
             return
-        key = (self._viewport_height, self.full_day, self.preferences, tuple(self.days),
+        key = (self._viewport_height, self.full_day, _surface_geometry_preferences(self.preferences),
+               self.preferences.visible_start_hour, self.preferences.visible_end_hour, tuple(self.days),
                self._data_version, self._preview_version, self.width(), self.gutter, self.time_top, local_zone())
         geometry = self.start_hour, self.end_hour, self.hour_height, self.minimumHeight()
         if key == getattr(self, '_fit_key', None) and geometry == self._fit_geometry:
@@ -797,12 +809,16 @@ class CalendarCanvas(QWidget):
     def set_preferences(self, preferences):
         if preferences == self.preferences:
             return
+        previous = self.preferences
         self.preferences = preferences
-        self.invalidate_geometry()
-        scale = display_scale(self)
-        self.gutter = calendar_gutter(preferences)
-        self.all_day_height = math.ceil(44 * scale)
-        self._refit()
+        if (_surface_geometry_preferences(preferences) != _surface_geometry_preferences(previous)
+                or (preferences.visible_start_hour, preferences.visible_end_hour)
+                != (previous.visible_start_hour, previous.visible_end_hour)):
+            self.invalidate_geometry()
+            scale = display_scale(self)
+            self.gutter = calendar_gutter(preferences)
+            self.all_day_height = math.ceil(44 * scale)
+            self._refit()
         self.update()
 
     def set_selected_day(self, day):
@@ -1292,9 +1308,11 @@ class MonthCanvas(QWidget):
     def set_preferences(self, preferences):
         if preferences == self.preferences:
             return
+        previous = self.preferences
         self.preferences = preferences
-        self.invalidate_geometry()
-        self.setMinimumHeight(math.ceil(440 * display_scale(self)))
+        if _surface_geometry_preferences(preferences) != _surface_geometry_preferences(previous):
+            self.invalidate_geometry()
+            self.setMinimumHeight(math.ceil(440 * display_scale(self)))
         self.update()
 
     @property
@@ -1760,12 +1778,14 @@ class AllDayCanvas(MonthCanvas):
     def set_preferences(self, preferences):
         if preferences == self.preferences:
             return
+        previous = self.preferences
         self.preferences = preferences
-        self.invalidate_geometry()
-        scale = display_scale(self)
-        self.gutter = calendar_gutter(preferences)
-        self.lane_height = math.ceil(27 * scale)
-        self._resize_lanes()
+        if _surface_geometry_preferences(preferences) != _surface_geometry_preferences(previous):
+            self.invalidate_geometry()
+            scale = display_scale(self)
+            self.gutter = calendar_gutter(preferences)
+            self.lane_height = math.ceil(27 * scale)
+            self._resize_lanes()
         self.update()
 
     def _resize_lanes(self):

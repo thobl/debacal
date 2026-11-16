@@ -170,7 +170,7 @@ class ProjectionStorage:
                                 'WHERE kind IS NOT excluded.kind OR data IS NOT excluded.data',
                                 (key, kind, data))
 
-    def maintain(self, revision, *, identities=None):
+    def maintain(self, revision, *, identities=None, written_sources=None):
         """Compile only modified canonical sources, in the same transaction."""
         indexed = self.version()
         if identities is None and indexed == revision:
@@ -206,8 +206,17 @@ class ProjectionStorage:
             value = None
             writer.reset_references()
             try:
-                value = json.loads(row['data'])
-                event = Event.from_dict(value)
+                written = written_sources.get(identity) if written_sources is not None else None
+                if (written is not None and written[0] == row['data']
+                        and written[1].id == identity and written[1].calendar_id == row['calendar_id']):
+                    # Only the current transaction supplies these privately
+                    # normalized models. Exact source equality also protects
+                    # direct SQL edits made after an earlier model was written.
+                    event = written[1]
+                    value = {'raw_ics': event.raw_ics}
+                else:
+                    value = json.loads(row['data'])
+                    event = Event.from_dict(value)
                 record = EventRangeIndex.prepare(event)
                 data = pack_state(record_state(record, writer))
             except (ValueError, TypeError, KeyError, OverflowError) as error:

@@ -216,8 +216,16 @@ def base_schedule_starts(master: Event, *, limit: int = 10000) -> list[datetime]
     return result
 
 
+_QUICK_OCCURRENCE_KEY = re.compile(r"[A-Za-z0-9_.:~+-]*\Z")
+
+
 def occurrence_id(master_id: str, key: str) -> str:
-    return master_id + "::occurrence::" + quote(key, safe="")
+    # Native ISO keys contain only unreserved ASCII plus ':' and '+'. Keep
+    # urllib's exact escaping for every other input, including Unicode/bytes.
+    encoded = (key.replace(':', '%3A').replace('+', '%2B')
+               if type(key) is str and _QUICK_OCCURRENCE_KEY.fullmatch(key)
+               else quote(key, safe=''))
+    return master_id + "::occurrence::" + encoded
 
 
 def split_occurrence_id(value: str) -> tuple[str, str] | None:
@@ -1110,16 +1118,29 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
     return replace(master, end=end, **values)
 
 
+def range_overlaps(event_start: datetime, event_end: datetime, start: datetime, end: datetime,
+                   *, all_day=False, window_timestamps=None) -> bool:
+    """Test a range without constructing an Event, retaining DATE/point rules.
+
+    Prepared iterators may provide precomputed window timestamps. DATE events
+    always compare civil dates; timed/floating values compare their actual
+    instants after the caller has applied the appropriate viewer timezone.
+    """
+    if all_day:
+        begins_before_end = (event_start.date() < end.date()
+                             or event_start.date() == end.date() and end.time() != time.min)
+        return begins_before_end and event_end.date() > start.date()
+    first, last = ((start.timestamp(), end.timestamp()) if window_timestamps is None
+                   else window_timestamps)
+    event_start, event_end = event_start.timestamp(), event_end.timestamp()
+    if event_start == event_end:
+        return first <= event_start < last
+    return event_start < last and event_end > first
+
+
 def overlaps(event: Event, start: datetime, end: datetime) -> bool:
     """Include point events at a range's start, preserving its exclusive end."""
-    if event.all_day:
-        begins_before_end = (event.start.date() < end.date()
-                             or event.start.date() == end.date() and end.time() != time.min)
-        return begins_before_end and event.end.date() > start.date()
-    event_start, event_end = event.start.timestamp(), event.end.timestamp()
-    if event_start == event_end:
-        return start.timestamp() <= event_start < end.timestamp()
-    return event_start < end.timestamp() and event_end > start.timestamp()
+    return range_overlaps(event.start, event.end, start, end, all_day=event.all_day)
 
 
 def expand_series(master: Event, start: datetime, end: datetime, *, limit: int = 10000,

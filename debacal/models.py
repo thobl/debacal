@@ -15,6 +15,42 @@ from urllib.parse import urlsplit
 from .timezones import event_timezone, resolve_timezone, timezone_identifier, validate_definitions
 
 
+_SNAPSHOT_ATOMIC_TYPES = frozenset((type(None), str, int, float, bool, bytes))
+
+
+def _copy_event_payload(value, memo=None):
+    """Copy JSON-like payloads, retaining deepcopy semantics for other values.
+
+    Most exception fields are immutable scalars. Copy the container directly
+    and revisit only its mutable values, rather than dispatching deepcopy for
+    every title, identifier and boolean. Memoization preserves shared nested
+    values and cycles; custom mappings, keys and objects keep the general path.
+    """
+    kind = type(value)
+    if kind in _SNAPSHOT_ATOMIC_TYPES:
+        return value
+    if kind not in (dict, list):
+        return deepcopy(value, memo)
+    if memo is None:
+        memo = {}
+    identity = id(value)
+    if identity in memo:
+        return memo[identity]
+    if kind is dict and any(type(key) not in _SNAPSHOT_ATOMIC_TYPES for key in value):
+        return deepcopy(value, memo)
+    result = value.copy()
+    memo[identity] = result
+    if kind is dict:
+        for key, item in value.items():
+            if type(item) not in _SNAPSHOT_ATOMIC_TYPES:
+                result[key] = _copy_event_payload(item, memo)
+    else:
+        for index, item in enumerate(value):
+            if type(item) not in _SNAPSHOT_ATOMIC_TYPES:
+                result[index] = _copy_event_payload(item, memo)
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class Calendar:
     id: str
@@ -164,7 +200,8 @@ class Event:
 
         object.__setattr__(self, "recurrence_dates", tuple(sorted({canonical_date(value) for value in self.recurrence_dates})))
         object.__setattr__(self, "excluded_dates", tuple(sorted({canonical_date(value) for value in self.excluded_dates})))
-        object.__setattr__(self, "recurrence_overrides", {canonical_date(key): deepcopy(value) for key, value in self.recurrence_overrides.items()})
+        object.__setattr__(self, "recurrence_overrides", {canonical_date(key): _copy_event_payload(value)
+                                                       for key, value in self.recurrence_overrides.items()})
         if not isinstance(self.duration_spec, str):
             raise ValueError('An event duration specification must be text.')
         if self.duration_spec:
@@ -198,13 +235,22 @@ class Event:
 
     def to_dict(self) -> dict[str, Any]:
         # Custom dateutil tzinfo values hold locks and cannot be deep-copied.
-        # Datetimes become strings anyway; copy only the remaining JSON data.
-        value = {item.name: deepcopy(getattr(self, item.name)) for item in fields(self)
-                 if item.name not in {'start', 'end', '_query_projection'}}
+        # Datetimes become strings; immutable fields need no copying and date
+        # tuples are converted directly instead of copying them twice.
+        names = (_EVENT_SNAPSHOT_FIELDS if type(self) is Event else
+                 tuple(item.name for item in fields(self)
+                       if item.name not in {'start', 'end', '_query_projection'}))
+        value = {}
+        for name in names:
+            item = getattr(self, name)
+            if type(item) in _SNAPSHOT_ATOMIC_TYPES:
+                value[name] = item
+            elif name in ('recurrence_dates', 'excluded_dates'):
+                value[name] = list(item)
+            else:
+                value[name] = _copy_event_payload(item)
         value["start"] = (self.start.replace(tzinfo=None) if self.floating_time else self.start).isoformat()
         value["end"] = (self.end.replace(tzinfo=None) if self.floating_time else self.end).isoformat()
-        value["recurrence_dates"] = list(self.recurrence_dates)
-        value["excluded_dates"] = list(self.excluded_dates)
         return value
 
     @classmethod
@@ -235,17 +281,27 @@ class Event:
 
 
 _EVENT_FIELD_NAMES = tuple(item.name for item in fields(Event))
+_EVENT_SNAPSHOT_FIELDS = tuple(name for name in _EVENT_FIELD_NAMES
+                              if name not in {'start', 'end', '_query_projection'})
 
 
-def copy_event(event: Event) -> Event:
+def copy_event(event: Event, replacements: dict[str, Any] | None = None) -> Event:
     """Shallow-copy a validated immutable event without pickle/validation work.
 
-    Internal projections share source strings and timezone data, then replace
-    only their identity and range. The static field list includes private
-    projection provenance so those replacements retain transport semantics.
+    Internal projections share source strings and timezone data. Trusted
+    replacement fields are assigned directly instead of copying and immediately
+    overwriting those slots. The static field list includes private projection
+    provenance so replacements retain transport semantics.
     """
     result = object.__new__(Event)
     write = object.__setattr__
-    for name in _EVENT_FIELD_NAMES:
-        write(result, name, getattr(event, name))
+    if replacements:
+        for name in _EVENT_FIELD_NAMES:
+            if name not in replacements:
+                write(result, name, getattr(event, name))
+        for name, value in replacements.items():
+            write(result, name, value)
+    else:
+        for name in _EVENT_FIELD_NAMES:
+            write(result, name, getattr(event, name))
     return result

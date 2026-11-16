@@ -1,7 +1,7 @@
 """A twelve-month overview with preindexed, calendar-colored day markers."""
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from heapq import heappush, heappop
 from html import escape
 import calendar
@@ -19,6 +19,7 @@ from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
 from .year_presence import paint_day_presence
 from .calendar_choice import calendar_color_icon
+from .year_projection import day_interval
 
 
 class YearView(QWidget):
@@ -60,6 +61,8 @@ class YearView(QWidget):
         self.creation_calendar = None
         self._placement_consumed = False
         self._event_map = {}
+        self._projection = None
+        self._known_event_map = {}
         self._intervals = {}
         self._summaries = []
         self._selected_summaries = []
@@ -138,19 +141,8 @@ class YearView(QWidget):
         return QSize(width, self.heightForWidth(width))
 
     def _event_interval(self, event, zone=None):
-        if event.all_day:
-            first, last = event.start.date().toordinal(), event.end.date().toordinal()
-            if last == first:
-                last += 1
-        else:
-            zone = zone or local_zone()
-            first = event.start.astimezone(zone).date().toordinal()
-            if event.end.timestamp() == event.start.timestamp():
-                last = first + 1
-            else:
-                last = (event.end.astimezone(timezone.utc) - timedelta(microseconds=1)).astimezone(zone).date().toordinal() + 1
-        first, last = max(0, first - self._first_ordinal), min(self._day_count, last - self._first_ordinal)
-        return (first, last) if first < last else None
+        return day_interval(event.start, event.end, event.all_day, self._first_ordinal,
+                            self._day_count, zone or local_zone())
 
     def _summarize(self, values):
         """Sweep interval endpoints; keep only one event per day/calendar."""
@@ -179,46 +171,61 @@ class YearView(QWidget):
         return result
 
     def set_data(self, year, events, calendars):
-        # Query pages reuse frozen Event values. Retain one shallow input
-        # snapshot, including filtered sources, so appearance-only refreshes
-        # need neither rebuild intervals nor discard valid grid geometry.
-        events, calendars = tuple(events), tuple(calendars)
-        zone = local_zone()
+        projection = events if hasattr(events, 'known_events') and hasattr(events, 'summaries') else None
+        events, calendars = events if projection is not None else tuple(events), tuple(calendars)
+        inactive = {source.id for source in calendars if not source.visible or not source.enabled}
+        if projection is not None and inactive:
+            events = projection = projection.without_calendars(inactive)
+        zone = projection.zone if projection is not None else local_zone()
         inputs = year, events, calendars, zone
         previous = self._data_inputs
-        # Value equality can equate distinct repeated-hour instants; require
-        # the unchanged Event objects supplied by the occurrence-page cache.
+        # Equality can equate distinct repeated-hour instants. Reuse only an
+        # unchanged view model or the same Event objects in the same order.
         if (type(year) is int and previous is not None and year == previous[0]
                 and calendars == previous[2] and zone == previous[3]
-                and len(events) == len(previous[1])
-                and all(current is old for current, old in zip(events, previous[1]))):
+                and (events is previous[1] or (projection is None and self._projection is None
+                     and len(events) == len(previous[1])
+                     and all(current is old for current, old in zip(events, previous[1]))))):
             return
         self._data_inputs = None
-        self._set_year(year)
-        self.events = list(events)
+        if type(year) is not int or year != self.year:
+            self._set_year(year)
+        self._projection = projection
         self.calendars = {value.id: value for value in calendars}
         self._source_order = {identity: index for index, identity in enumerate(self.calendars)}
-        self.events = [value for value in self.events
-                       if value.calendar_id not in self.calendars
-                       or (self.calendars[value.calendar_id].visible and self.calendars[value.calendar_id].enabled)]
-        self._event_map = {value.id: value for value in self.events}
         self._intervals = {}
-        values = []
-        for position, event in enumerate(self.events):
-            interval = self._event_interval(event, zone)
-            if interval is not None:
-                self._intervals[event.id] = interval
-                values.append((position, event, interval))
-        self._summaries = self._summarize(values)
+        if projection is not None:
+            self.events = projection
+            self._known_event_map = {value.id: value for value in projection.known_events
+                                     if self._calendar_active(value.calendar_id)}
+            self._event_map = dict(self._known_event_map)
+            offset = (self._first - projection.first_day).days
+            self._summaries = [
+                {identity: value for identity, value in projection.summaries[index].items()
+                 if self._calendar_active(identity)} if 0 <= index < len(projection.summaries) else {}
+                for index in range(offset, offset + self._day_count)]
+        else:
+            self.events = [value for value in events if self._calendar_active(value.calendar_id)]
+            self._known_event_map = {}
+            self._event_map = {value.id: value for value in self.events}
+            values = []
+            for position, event in enumerate(self.events):
+                interval = self._event_interval(event, zone)
+                if interval is not None:
+                    self._intervals[event.id] = interval
+                    values.append((position, event, interval))
+            self._summaries = self._summarize(values)
         self._day_sources = [tuple(sorted(summary, key=lambda identity:
                              (self._source_order.get(identity, len(self._source_order)), identity)))
                              for summary in self._summaries]
         self._update_selected()
         self._update_preview()
         self._data_inputs = inputs
-        self._geometry_key = None
-        self.updateGeometry()
         self.update()
+
+    def _calendar_active(self, identity):
+        source = self.calendars.get(identity)
+        return source is None or (source.visible and source.enabled)
 
     def set_selection(self, identifiers):
         identifiers = set(identifiers)
@@ -231,6 +238,18 @@ class YearView(QWidget):
         self.update()
 
     def _update_selected(self):
+        if self._projection is not None:
+            # Keep only the explicit records and current selection, rather
+            # than accumulating every occurrence previously inspected.
+            self._event_map = dict(self._known_event_map)
+            self._intervals = {}
+            for event in self._projection.selected_events(self.selected_ids):
+                if not self._calendar_active(event.calendar_id):
+                    continue
+                interval = self._event_interval(event, self._projection.zone)
+                if interval is not None:
+                    self._event_map[event.id] = event
+                    self._intervals[event.id] = interval
         self._selected_summaries = self._summarize(
             (position, self._event_map[identity], self._intervals[identity])
             for position, identity in enumerate(sorted(self.selected_ids)) if identity in self._intervals)
@@ -333,6 +352,10 @@ class YearView(QWidget):
     def event_rect(self, identity):
         self._ensure_geometry()
         interval = self._intervals.get(identity)
+        if interval is None and self._projection is not None:
+            event = self._projection.event_by_id(identity)
+            if event is not None and self._calendar_active(event.calendar_id):
+                interval = self._event_interval(event, self._projection.zone)
         return self.day_rect(self.days[interval[0]]) if interval else None
 
     def ensure_event_visible(self, identity):
@@ -343,6 +366,9 @@ class YearView(QWidget):
         offset = (day - self._first).days
         if not 0 <= offset < self._day_count or limit <= 0:
             return []
+        if self._projection is not None:
+            return [event for event in self._projection.events_on_day(day, limit=limit)
+                    if self._calendar_active(event.calendar_id)]
         result = []
         for event in self.events:
             interval = self._intervals.get(event.id)
