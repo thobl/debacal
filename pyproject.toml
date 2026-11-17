@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "debacal"
-version = "0.1.5"
+version = "0.1.6"
 description = "A local-first, keyboard-friendly desktop calendar"
 readme = "README.md"
 license = "0BSD"
@@ -34,7 +34,7 @@ Issues = "https://github.com/thobl/debacal/issues"
 Releases = "https://github.com/thobl/debacal/releases"
 
 [project.optional-dependencies]
-dev = ["pytest>=9", "build>=1.2,<2", "setuptools>=77"]
+dev = ["pytest>=9", "build>=1.2,<2", "setuptools>=77", "pytz>=2025.2"]
 
 [project.scripts]
 debacal = "debacal.__main__:main"

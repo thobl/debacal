@@ -6,6 +6,10 @@ is needed. Qt's offscreen platform supports the automated GUI checks without a
 desktop or X11 server. Tests using local IPC need permission to create local
 sockets.
 
+The development extra includes `pytz` for the alternate timezone-provider tests.
+Installing it system-wide alone does not make it available in uv's isolated
+project environment; refresh that environment with `uv sync --extra dev`.
+
 ## GitHub release gate
 
 The workflow runs correctness checks on Python 3.11 and 3.14:

@@ -318,3 +318,33 @@ typeface, actual bold rendering, CLI and isolated demo screenshot. Source, wheel
 and Arch recipe assets reproduced byte-for-byte with the pinned toolchain, and
 the recipe's source checksum matches the archive. The deploy key and SSH setup
 remain outside tracked application files and release artifacts.
+
+### Release 0.1.6 — 17 November 2026
+
+This release includes the calendar-interoperability work and the full performance
+round since 0.1.5. The detailed performance report retains all three versions,
+raw measurements, observed regressions and remaining limits. Extended usage and
+large capacity workloads remain local; release CI retains correctness checks
+on Python 3.11 and 3.14 with smaller capacity counterparts.
+
+The local Python 3.14 CI-selected suite passed **4,469 tests and 169 subtests**,
+with no skipped provider tests. `pytz` is now included in the development extra;
+its two alternate-provider cases passed after installation into the project
+environment. It is not a new runtime dependency.
+
+The extracted source archive collected 4,422 tests without importing excluded
+maintainer tools. Installed-wheel checks outside the checkout verified version
+0.1.6, CLI startup, offline discovery and an isolated offscreen demo screenshot.
+The standalone Arch bundle verified its preseeded source checksum and completed
+its normal build, smoke checks and packaging. Payload paths are under `/usr`,
+including the launcher, Python package, desktop entry, icon and license; the
+launcher uses `/usr/bin/python`. This local Arch check used `--nodeps` with
+isolated Python dependencies and the system installer because the host's pacman
+runtime dependencies were absent. It does not establish pacman dependency
+resolution, and no system installation was performed.
+
+Source, wheel, Arch recipe bundle and checksum manifest reproduced byte-for-byte
+in separate staging trees using the pinned release toolchain. The recipe and
+`.SRCINFO` source checksums match the final source archive. Installation links
+and version metadata now consistently reference 0.1.6; published older assets
+remain unchanged.

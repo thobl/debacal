@@ -1,10 +1,14 @@
 """Small, display-free contracts for the explicitly local annual benchmark."""
 from datetime import datetime, timedelta, timezone
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+
+if not (Path(__file__).resolve().parents[1] / 'scripts/benchmark_year_presence.py').is_file():
+    pytest.skip('Maintainer tooling is not included in the source archive', allow_module_level=True)
 
 from scripts.benchmark_year_presence import configuration, day_counts, issue_values, parser, query_presence, run_worker, summary, year_plan
 
