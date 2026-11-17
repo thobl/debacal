@@ -574,7 +574,7 @@ wheels = [
 
 [[package]]
 name = "debacal"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "caldav" },

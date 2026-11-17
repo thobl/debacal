@@ -50,7 +50,7 @@ To update a checkout, quit Debacal, run `git pull --ff-only` in the repository, 
 Install [pipx](https://pipx.pypa.io/stable/installation/), then:
 
 ```sh
-pipx install https://github.com/thobl/debacal/releases/download/v0.1.7/debacal-0.1.7-py3-none-any.whl
+pipx install https://github.com/thobl/debacal/releases/download/v0.1.8/debacal-0.1.8-py3-none-any.whl
 debacal
 ```
 
