@@ -5,8 +5,10 @@ unrelated date. A fast median or repeated visit does not establish that target.
 
 The [16 November 2026 review](PERFORMANCE_2026-11-16.md) compares three versions
 on the current server, with extended native-X11 usage, fresh startups and
-isolated year queries. Older measurements below describe earlier machines and
-are not inputs to that comparison.
+isolated year queries. The [17 November follow-up](PERFORMANCE_2026-11-17.md)
+examines preferences responsiveness during real background parsing and sync
+updates, including large undo histories. Older measurements below describe
+earlier machines and are not inputs to those comparisons.
 
 ## Maintained representation
 

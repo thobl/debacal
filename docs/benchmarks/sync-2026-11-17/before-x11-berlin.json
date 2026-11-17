@@ -1,0 +1,2664 @@
+{
+  "schema_version": 1,
+  "source": {
+    "revision": "18f0eac",
+    "application_sha256": "4d54eeabf6c48c7578f452d1883c6c37cc30f1b32545c2455ae595ef4ab90cbb",
+    "application_files": 99
+  },
+  "configuration": {
+    "events": 20000,
+    "series": 2000,
+    "finite": 120,
+    "active_series": 240,
+    "heavy_overrides": 400,
+    "candidate_dates": 500,
+    "calendars": 8,
+    "payload_bytes": 2048,
+    "rounds": 1,
+    "startup_runs": 1,
+    "import_events": 300,
+    "seed": 81423,
+    "width": 1400,
+    "height": 900,
+    "timeout_seconds": 3600,
+    "subscription_events": 1500,
+    "samples": 1,
+    "history_events": 1500,
+    "timezone": "Europe/Berlin",
+    "views": [
+      "week",
+      "year"
+    ],
+    "categories": [
+      "Calendar",
+      "Appearance"
+    ],
+    "workloads": [
+      "idle",
+      "sync_unchanged",
+      "sync_changed"
+    ]
+  },
+  "fixture": {
+    "events": 22365,
+    "generation_ms": 590.295,
+    "write_ms": 7864.182,
+    "database_bytes": 106905600,
+    "subscription_sha256": "94d798a7c42f50c2ad230babb03338f7614ec655ab67ab445e79312a6285982d"
+  },
+  "harness_sha256": "ecc13023c66c4b838bed9efe1c1ac991e071576ef5c4877828dc96d1ec6d7937",
+  "records": [
+    {
+      "workload": "idle",
+      "view": "week",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 366.986,
+            "cpu_ms": 365.657
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.014
+          },
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.009
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 7.104,
+            "cpu_ms": 6.564
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 435.572,
+      "open_cpu_ms": 435.979,
+      "open_to_form_ready_ms": 460.59,
+      "close_to_return_ms": 10.089,
+      "close_cpu_ms": 9.442,
+      "delete_ms": 0.553,
+      "delete_cpu_ms": 0.552,
+      "open_to_first_paint_ms": 438.519,
+      "close_to_responsive_ms": 84.681,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "week",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 364.125,
+            "cpu_ms": 362.723
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.01
+          },
+          {
+            "wall_ms": 0.005,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 21.13,
+            "cpu_ms": 20.617
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 428.725,
+      "open_cpu_ms": 429.087,
+      "open_to_form_ready_ms": 457.104,
+      "close_to_return_ms": 24.512,
+      "close_cpu_ms": 23.942,
+      "delete_ms": 0.565,
+      "delete_cpu_ms": 0.561,
+      "open_to_first_paint_ms": 431.914,
+      "close_to_responsive_ms": 100.458,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "week",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 366.015,
+            "cpu_ms": 364.761
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.014
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.008
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 8.122,
+            "cpu_ms": 7.778
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 434.495,
+      "open_cpu_ms": 434.988,
+      "open_to_form_ready_ms": 486.974,
+      "close_to_return_ms": 11.25,
+      "close_cpu_ms": 10.846,
+      "delete_ms": 0.659,
+      "delete_cpu_ms": 0.655,
+      "open_to_first_paint_ms": 437.773,
+      "close_to_responsive_ms": 87.888,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "week",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 375.76,
+            "cpu_ms": 374.475
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.01
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 22.348,
+            "cpu_ms": 21.979
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 445.351,
+      "open_cpu_ms": 445.727,
+      "open_to_form_ready_ms": 495.335,
+      "close_to_return_ms": 25.906,
+      "close_cpu_ms": 25.419,
+      "delete_ms": 0.588,
+      "delete_cpu_ms": 0.585,
+      "open_to_first_paint_ms": 448.463,
+      "close_to_responsive_ms": 103.117,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "year",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 370.561,
+            "cpu_ms": 369.323
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.013
+          },
+          {
+            "wall_ms": 0.007,
+            "cpu_ms": 0.008
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 7.326,
+            "cpu_ms": 6.942
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 508.359,
+      "open_cpu_ms": 508.724,
+      "open_to_form_ready_ms": 532.44,
+      "close_to_return_ms": 10.453,
+      "close_cpu_ms": 10.001,
+      "delete_ms": 0.554,
+      "delete_cpu_ms": 0.553,
+      "open_to_first_paint_ms": 511.366,
+      "close_to_responsive_ms": 112.864,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "year",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 375.204,
+            "cpu_ms": 373.887
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.007,
+            "cpu_ms": 0.01
+          },
+          {
+            "wall_ms": 0.007,
+            "cpu_ms": 0.009
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 21.059,
+            "cpu_ms": 20.59
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 416.429,
+      "open_cpu_ms": 416.9,
+      "open_to_form_ready_ms": 440.732,
+      "close_to_return_ms": 24.545,
+      "close_cpu_ms": 23.983,
+      "delete_ms": 0.551,
+      "delete_cpu_ms": 0.55,
+      "open_to_first_paint_ms": 419.511,
+      "close_to_responsive_ms": 125.907,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "year",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 373.747,
+            "cpu_ms": 372.468
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.009,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 8.662,
+            "cpu_ms": 8.268
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 424.334,
+      "open_cpu_ms": 425.136,
+      "open_to_form_ready_ms": 471.95,
+      "close_to_return_ms": 11.674,
+      "close_cpu_ms": 11.191,
+      "delete_ms": 0.657,
+      "delete_cpu_ms": 0.656,
+      "open_to_first_paint_ms": 427.735,
+      "close_to_responsive_ms": 118.34,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "idle",
+      "view": "year",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": false,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 376.264,
+            "cpu_ms": 375.034
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 22.662,
+            "cpu_ms": 22.206
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 422.723,
+      "open_cpu_ms": 423.213,
+      "open_to_form_ready_ms": 466.375,
+      "close_to_return_ms": 26.055,
+      "close_cpu_ms": 25.514,
+      "delete_ms": 0.589,
+      "delete_cpu_ms": 0.585,
+      "open_to_first_paint_ms": 425.636,
+      "close_to_responsive_ms": 128.397,
+      "revision_after": 23865,
+      "sync_active_after": false
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "week",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 436.522,
+            "cpu_ms": 405.255
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.013
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 10.274,
+            "cpu_ms": 9.802
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 535.297,
+      "open_cpu_ms": 490.214,
+      "open_to_form_ready_ms": 577.38,
+      "close_to_return_ms": 14.729,
+      "close_cpu_ms": 13.512,
+      "delete_ms": 0.721,
+      "delete_cpu_ms": 0.57,
+      "open_to_first_paint_ms": 538.875,
+      "close_to_responsive_ms": 135.071,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1496.813,
+      "sync_cycle_elapsed_ms": 2516.555,
+      "sync_cycle_refresh_max_ms": 156.604,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "week",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1809.753,
+            "cpu_ms": 505.165
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.005,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 31.84,
+            "cpu_ms": 27.483
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1905.004,
+      "open_cpu_ms": 588.744,
+      "open_to_form_ready_ms": 1945.107,
+      "close_to_return_ms": 37.015,
+      "close_cpu_ms": 31.852,
+      "delete_ms": 0.679,
+      "delete_cpu_ms": 0.604,
+      "open_to_first_paint_ms": 1908.3,
+      "close_to_responsive_ms": 156.471,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1931.066,
+      "sync_cycle_elapsed_ms": 2403.238,
+      "sync_cycle_refresh_max_ms": 133.677,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "week",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1815.313,
+            "cpu_ms": 412.725
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.008
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 8.265,
+            "cpu_ms": 7.918
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1917.597,
+      "open_cpu_ms": 503.058,
+      "open_to_form_ready_ms": 1980.66,
+      "close_to_return_ms": 12.889,
+      "close_cpu_ms": 11.759,
+      "delete_ms": 0.964,
+      "delete_cpu_ms": 0.777,
+      "open_to_first_paint_ms": 1921.349,
+      "close_to_responsive_ms": 128.441,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1946.491,
+      "sync_cycle_elapsed_ms": 2403.744,
+      "sync_cycle_refresh_max_ms": 127.309,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "week",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1828.915,
+            "cpu_ms": 416.618
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 32.997,
+            "cpu_ms": 28.782
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1939.314,
+      "open_cpu_ms": 512.035,
+      "open_to_form_ready_ms": 2001.054,
+      "close_to_return_ms": 37.947,
+      "close_cpu_ms": 33.038,
+      "delete_ms": 0.784,
+      "delete_cpu_ms": 0.735,
+      "open_to_first_paint_ms": 1942.98,
+      "close_to_responsive_ms": 152.815,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1963.102,
+      "sync_cycle_elapsed_ms": 2452.399,
+      "sync_cycle_refresh_max_ms": 128.828,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "year",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 439.894,
+            "cpu_ms": 405.947
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.005,
+            "cpu_ms": 0.007
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 7.374,
+            "cpu_ms": 7.099
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 501.628,
+      "open_cpu_ms": 461.829,
+      "open_to_form_ready_ms": 536.854,
+      "close_to_return_ms": 11.137,
+      "close_cpu_ms": 10.394,
+      "delete_ms": 0.579,
+      "delete_cpu_ms": 0.55,
+      "open_to_first_paint_ms": 505.544,
+      "close_to_responsive_ms": 157.038,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1448.48,
+      "sync_cycle_elapsed_ms": 2934.197,
+      "sync_cycle_refresh_max_ms": 689.886,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "year",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1845.37,
+            "cpu_ms": 419.26
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.009,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 31.358,
+            "cpu_ms": 27.207
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1904.81,
+      "open_cpu_ms": 472.366,
+      "open_to_form_ready_ms": 1940.116,
+      "close_to_return_ms": 36.289,
+      "close_cpu_ms": 31.418,
+      "delete_ms": 0.701,
+      "delete_cpu_ms": 0.632,
+      "open_to_first_paint_ms": 1908.002,
+      "close_to_responsive_ms": 188.806,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1929.162,
+      "sync_cycle_elapsed_ms": 3273.758,
+      "sync_cycle_refresh_max_ms": 731.386,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "year",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1718.579,
+            "cpu_ms": 421.903
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.008
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 8.093,
+            "cpu_ms": 7.735
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1777.163,
+      "open_cpu_ms": 481.743,
+      "open_to_form_ready_ms": 1828.732,
+      "close_to_return_ms": 11.758,
+      "close_cpu_ms": 11.249,
+      "delete_ms": 0.704,
+      "delete_cpu_ms": 0.702,
+      "open_to_first_paint_ms": 1780.325,
+      "close_to_responsive_ms": 158.659,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1801.306,
+      "sync_cycle_elapsed_ms": 3210.325,
+      "sync_cycle_refresh_max_ms": 747.929,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_unchanged",
+      "view": "year",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1717.278,
+            "cpu_ms": 418.657
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.011,
+            "cpu_ms": 0.014
+          },
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.009
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 35.378,
+            "cpu_ms": 30.271
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1783.839,
+      "open_cpu_ms": 478.273,
+      "open_to_form_ready_ms": 1842.325,
+      "close_to_return_ms": 41.385,
+      "close_cpu_ms": 35.041,
+      "delete_ms": 0.811,
+      "delete_cpu_ms": 0.769,
+      "open_to_first_paint_ms": 1787.316,
+      "close_to_responsive_ms": 194.816,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1808.115,
+      "sync_cycle_elapsed_ms": 3188.736,
+      "sync_cycle_refresh_max_ms": 719.971,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "week",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 23865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 439.215,
+            "cpu_ms": 409.58
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.007,
+            "cpu_ms": 0.009
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 7.215,
+            "cpu_ms": 6.83
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 531.212,
+      "open_cpu_ms": 491.547,
+      "open_to_form_ready_ms": 568.44,
+      "close_to_return_ms": 11.147,
+      "close_cpu_ms": 10.351,
+      "delete_ms": 0.607,
+      "delete_cpu_ms": 0.575,
+      "open_to_first_paint_ms": 534.375,
+      "close_to_responsive_ms": 122.296,
+      "revision_after": 23865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1483.585,
+      "sync_cycle_elapsed_ms": 2907.038,
+      "sync_cycle_refresh_max_ms": 277.644,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "week",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 25365,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1724.262,
+            "cpu_ms": 420.06
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.008
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 34.331,
+            "cpu_ms": 27.665
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1809.133,
+      "open_cpu_ms": 504.803,
+      "open_to_form_ready_ms": 1843.767,
+      "close_to_return_ms": 44.87,
+      "close_cpu_ms": 32.234,
+      "delete_ms": 0.642,
+      "delete_cpu_ms": 0.615,
+      "open_to_first_paint_ms": 1812.775,
+      "close_to_responsive_ms": 157.278,
+      "revision_after": 25365,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1834.962,
+      "sync_cycle_elapsed_ms": 2983.032,
+      "sync_cycle_refresh_max_ms": 256.432,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "week",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 26865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1724.84,
+            "cpu_ms": 415.222
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.005,
+            "cpu_ms": 0.006
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 8.334,
+            "cpu_ms": 8.003
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1824.208,
+      "open_cpu_ms": 503.902,
+      "open_to_form_ready_ms": 1921.466,
+      "close_to_return_ms": 12.498,
+      "close_cpu_ms": 11.737,
+      "delete_ms": 1.015,
+      "delete_cpu_ms": 0.771,
+      "open_to_first_paint_ms": 1864.53,
+      "close_to_responsive_ms": 122.189,
+      "revision_after": 26865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1860.936,
+      "sync_cycle_elapsed_ms": 2751.847,
+      "sync_cycle_refresh_max_ms": 269.893,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "week",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 28365,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1840.202,
+            "cpu_ms": 416.207
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.009,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 32.316,
+            "cpu_ms": 28.102
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1941.411,
+      "open_cpu_ms": 505.573,
+      "open_to_form_ready_ms": 2001.957,
+      "close_to_return_ms": 37.618,
+      "close_cpu_ms": 32.691,
+      "delete_ms": 0.975,
+      "delete_cpu_ms": 0.773,
+      "open_to_first_paint_ms": 1945.081,
+      "close_to_responsive_ms": 152.854,
+      "revision_after": 28365,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1965.547,
+      "sync_cycle_elapsed_ms": 3098.867,
+      "sync_cycle_refresh_max_ms": 295.443,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "year",
+      "category": "Calendar",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 29865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 437.85,
+            "cpu_ms": 407.462
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.008,
+            "cpu_ms": 0.011
+          },
+          {
+            "wall_ms": 0.005,
+            "cpu_ms": 0.007
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 7.093,
+            "cpu_ms": 6.792
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 495.068,
+      "open_cpu_ms": 460.025,
+      "open_to_form_ready_ms": 527.95,
+      "close_to_return_ms": 11.158,
+      "close_cpu_ms": 10.34,
+      "delete_ms": 0.551,
+      "delete_cpu_ms": 0.531,
+      "open_to_first_paint_ms": 498.601,
+      "close_to_responsive_ms": 154.786,
+      "revision_after": 29865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1542.702,
+      "sync_cycle_elapsed_ms": 3439.53,
+      "sync_cycle_refresh_max_ms": 825.31,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "year",
+      "category": "Calendar",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 31365,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1732.644,
+            "cpu_ms": 417.162
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.009,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.008
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 32.556,
+            "cpu_ms": 27.727
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1792.638,
+      "open_cpu_ms": 471.507,
+      "open_to_form_ready_ms": 1826.56,
+      "close_to_return_ms": 37.56,
+      "close_cpu_ms": 32.057,
+      "delete_ms": 0.694,
+      "delete_cpu_ms": 0.594,
+      "open_to_first_paint_ms": 1796.275,
+      "close_to_responsive_ms": 182.533,
+      "revision_after": 31365,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1821.759,
+      "sync_cycle_elapsed_ms": 3309.065,
+      "sync_cycle_refresh_max_ms": 827.196,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "year",
+      "category": "Appearance",
+      "action": "cancel",
+      "sample": 0,
+      "revision_before": 32865,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1828.15,
+            "cpu_ms": 426.719
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.009,
+            "cpu_ms": 0.012
+          },
+          {
+            "wall_ms": 0.006,
+            "cpu_ms": 0.007
+          }
+        ],
+        "reject": [
+          {
+            "wall_ms": 9.189,
+            "cpu_ms": 8.757
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1894.604,
+      "open_cpu_ms": 488.293,
+      "open_to_form_ready_ms": 1951.316,
+      "close_to_return_ms": 13.157,
+      "close_cpu_ms": 12.225,
+      "delete_ms": 0.792,
+      "delete_cpu_ms": 0.711,
+      "open_to_first_paint_ms": 1898.692,
+      "close_to_responsive_ms": 158.688,
+      "revision_after": 32865,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1924.109,
+      "sync_cycle_elapsed_ms": 3629.273,
+      "sync_cycle_refresh_max_ms": 857.294,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "sync_changed",
+      "view": "year",
+      "category": "Appearance",
+      "action": "save",
+      "sample": 0,
+      "revision_before": 34365,
+      "sync_active_before": true,
+      "phases": {
+        "construct": [
+          {
+            "wall_ms": 1843.454,
+            "cpu_ms": 415.111
+          }
+        ],
+        "source_finish": [
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.013
+          },
+          {
+            "wall_ms": 0.01,
+            "cpu_ms": 0.009
+          }
+        ],
+        "save": [
+          {
+            "wall_ms": 34.563,
+            "cpu_ms": 29.71
+          }
+        ]
+      },
+      "heartbeat_gap_ms": 1910.758,
+      "open_cpu_ms": 477.089,
+      "open_to_form_ready_ms": 1965.25,
+      "close_to_return_ms": 39.801,
+      "close_cpu_ms": 34.374,
+      "delete_ms": 0.769,
+      "delete_cpu_ms": 0.689,
+      "open_to_first_paint_ms": 1914.575,
+      "close_to_responsive_ms": 182.693,
+      "revision_after": 34365,
+      "sync_active_after": true,
+      "sync_cycle_heartbeat_gap_ms": 1935.011,
+      "sync_cycle_elapsed_ms": 3420.863,
+      "sync_cycle_refresh_max_ms": 822.639,
+      "sync_cycle_refresh_count": 1
+    },
+    {
+      "workload": "large_history",
+      "view": "week",
+      "category": "Calendar",
+      "action": "refresh",
+      "sample": 0,
+      "phases": {
+        "refresh": [
+          {
+            "wall_ms": 265.275,
+            "cpu_ms": 264.643
+          }
+        ]
+      },
+      "refresh_dispatch_ms": 265.288,
+      "refresh_cpu_ms": 264.652,
+      "heartbeat_gap_ms": 298.306,
+      "refresh_to_responsive_ms": 298.305,
+      "history_pending_after": false
+    },
+    {
+      "workload": "large_history",
+      "view": "year",
+      "category": "Calendar",
+      "action": "refresh",
+      "sample": 0,
+      "phases": {
+        "refresh": [
+          {
+            "wall_ms": 831.025,
+            "cpu_ms": 829.19
+          }
+        ]
+      },
+      "refresh_dispatch_ms": 831.039,
+      "refresh_cpu_ms": 829.2,
+      "heartbeat_gap_ms": 876.54,
+      "refresh_to_responsive_ms": 876.539,
+      "history_pending_after": false
+    }
+  ],
+  "summary": {
+    "idle/week/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 435.572,
+        "max_ms": 435.572
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 435.979,
+        "max_ms": 435.979
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 460.59,
+        "max_ms": 460.59
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 10.089,
+        "max_ms": 10.089
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 9.442,
+        "max_ms": 9.442
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.553,
+        "max_ms": 0.553
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.552,
+        "max_ms": 0.552
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 438.519,
+        "max_ms": 438.519
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 84.681,
+        "max_ms": 84.681
+      }
+    },
+    "idle/week/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 428.725,
+        "max_ms": 428.725
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 429.087,
+        "max_ms": 429.087
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 457.104,
+        "max_ms": 457.104
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 24.512,
+        "max_ms": 24.512
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 23.942,
+        "max_ms": 23.942
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.565,
+        "max_ms": 0.565
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.561,
+        "max_ms": 0.561
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 431.914,
+        "max_ms": 431.914
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 100.458,
+        "max_ms": 100.458
+      }
+    },
+    "idle/week/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 434.495,
+        "max_ms": 434.495
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 434.988,
+        "max_ms": 434.988
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 486.974,
+        "max_ms": 486.974
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.25,
+        "max_ms": 11.25
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 10.846,
+        "max_ms": 10.846
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.659,
+        "max_ms": 0.659
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.655,
+        "max_ms": 0.655
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 437.773,
+        "max_ms": 437.773
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 87.888,
+        "max_ms": 87.888
+      }
+    },
+    "idle/week/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 445.351,
+        "max_ms": 445.351
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 445.727,
+        "max_ms": 445.727
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 495.335,
+        "max_ms": 495.335
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 25.906,
+        "max_ms": 25.906
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 25.419,
+        "max_ms": 25.419
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.588,
+        "max_ms": 0.588
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.585,
+        "max_ms": 0.585
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 448.463,
+        "max_ms": 448.463
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 103.117,
+        "max_ms": 103.117
+      }
+    },
+    "idle/year/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 508.359,
+        "max_ms": 508.359
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 508.724,
+        "max_ms": 508.724
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 532.44,
+        "max_ms": 532.44
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 10.453,
+        "max_ms": 10.453
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 10.001,
+        "max_ms": 10.001
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.554,
+        "max_ms": 0.554
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.553,
+        "max_ms": 0.553
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 511.366,
+        "max_ms": 511.366
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 112.864,
+        "max_ms": 112.864
+      }
+    },
+    "idle/year/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 416.429,
+        "max_ms": 416.429
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 416.9,
+        "max_ms": 416.9
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 440.732,
+        "max_ms": 440.732
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 24.545,
+        "max_ms": 24.545
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 23.983,
+        "max_ms": 23.983
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.551,
+        "max_ms": 0.551
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.55,
+        "max_ms": 0.55
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 419.511,
+        "max_ms": 419.511
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 125.907,
+        "max_ms": 125.907
+      }
+    },
+    "idle/year/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 424.334,
+        "max_ms": 424.334
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 425.136,
+        "max_ms": 425.136
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 471.95,
+        "max_ms": 471.95
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.674,
+        "max_ms": 11.674
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 11.191,
+        "max_ms": 11.191
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.657,
+        "max_ms": 0.657
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.656,
+        "max_ms": 0.656
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 427.735,
+        "max_ms": 427.735
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 118.34,
+        "max_ms": 118.34
+      }
+    },
+    "idle/year/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 422.723,
+        "max_ms": 422.723
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 423.213,
+        "max_ms": 423.213
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 466.375,
+        "max_ms": 466.375
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 26.055,
+        "max_ms": 26.055
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 25.514,
+        "max_ms": 25.514
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.589,
+        "max_ms": 0.589
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.585,
+        "max_ms": 0.585
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 425.636,
+        "max_ms": 425.636
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 128.397,
+        "max_ms": 128.397
+      }
+    },
+    "sync_unchanged/week/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 535.297,
+        "max_ms": 535.297
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 490.214,
+        "max_ms": 490.214
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 577.38,
+        "max_ms": 577.38
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 14.729,
+        "max_ms": 14.729
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 13.512,
+        "max_ms": 13.512
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.721,
+        "max_ms": 0.721
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.57,
+        "max_ms": 0.57
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 538.875,
+        "max_ms": 538.875
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 135.071,
+        "max_ms": 135.071
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1496.813,
+        "max_ms": 1496.813
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2516.555,
+        "max_ms": 2516.555
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 156.604,
+        "max_ms": 156.604
+      }
+    },
+    "sync_unchanged/week/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1905.004,
+        "max_ms": 1905.004
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 588.744,
+        "max_ms": 588.744
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1945.107,
+        "max_ms": 1945.107
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 37.015,
+        "max_ms": 37.015
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 31.852,
+        "max_ms": 31.852
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.679,
+        "max_ms": 0.679
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.604,
+        "max_ms": 0.604
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1908.3,
+        "max_ms": 1908.3
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 156.471,
+        "max_ms": 156.471
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1931.066,
+        "max_ms": 1931.066
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2403.238,
+        "max_ms": 2403.238
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 133.677,
+        "max_ms": 133.677
+      }
+    },
+    "sync_unchanged/week/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1917.597,
+        "max_ms": 1917.597
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 503.058,
+        "max_ms": 503.058
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1980.66,
+        "max_ms": 1980.66
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 12.889,
+        "max_ms": 12.889
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 11.759,
+        "max_ms": 11.759
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.964,
+        "max_ms": 0.964
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.777,
+        "max_ms": 0.777
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1921.349,
+        "max_ms": 1921.349
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 128.441,
+        "max_ms": 128.441
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1946.491,
+        "max_ms": 1946.491
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2403.744,
+        "max_ms": 2403.744
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 127.309,
+        "max_ms": 127.309
+      }
+    },
+    "sync_unchanged/week/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1939.314,
+        "max_ms": 1939.314
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 512.035,
+        "max_ms": 512.035
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 2001.054,
+        "max_ms": 2001.054
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 37.947,
+        "max_ms": 37.947
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 33.038,
+        "max_ms": 33.038
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.784,
+        "max_ms": 0.784
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.735,
+        "max_ms": 0.735
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1942.98,
+        "max_ms": 1942.98
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 152.815,
+        "max_ms": 152.815
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1963.102,
+        "max_ms": 1963.102
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2452.399,
+        "max_ms": 2452.399
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 128.828,
+        "max_ms": 128.828
+      }
+    },
+    "sync_unchanged/year/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 501.628,
+        "max_ms": 501.628
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 461.829,
+        "max_ms": 461.829
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 536.854,
+        "max_ms": 536.854
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.137,
+        "max_ms": 11.137
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 10.394,
+        "max_ms": 10.394
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.579,
+        "max_ms": 0.579
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.55,
+        "max_ms": 0.55
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 505.544,
+        "max_ms": 505.544
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 157.038,
+        "max_ms": 157.038
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1448.48,
+        "max_ms": 1448.48
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2934.197,
+        "max_ms": 2934.197
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 689.886,
+        "max_ms": 689.886
+      }
+    },
+    "sync_unchanged/year/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1904.81,
+        "max_ms": 1904.81
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 472.366,
+        "max_ms": 472.366
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1940.116,
+        "max_ms": 1940.116
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 36.289,
+        "max_ms": 36.289
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 31.418,
+        "max_ms": 31.418
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.701,
+        "max_ms": 0.701
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.632,
+        "max_ms": 0.632
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1908.002,
+        "max_ms": 1908.002
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 188.806,
+        "max_ms": 188.806
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1929.162,
+        "max_ms": 1929.162
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3273.758,
+        "max_ms": 3273.758
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 731.386,
+        "max_ms": 731.386
+      }
+    },
+    "sync_unchanged/year/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1777.163,
+        "max_ms": 1777.163
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 481.743,
+        "max_ms": 481.743
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1828.732,
+        "max_ms": 1828.732
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.758,
+        "max_ms": 11.758
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 11.249,
+        "max_ms": 11.249
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.704,
+        "max_ms": 0.704
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.702,
+        "max_ms": 0.702
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1780.325,
+        "max_ms": 1780.325
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 158.659,
+        "max_ms": 158.659
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1801.306,
+        "max_ms": 1801.306
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3210.325,
+        "max_ms": 3210.325
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 747.929,
+        "max_ms": 747.929
+      }
+    },
+    "sync_unchanged/year/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1783.839,
+        "max_ms": 1783.839
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 478.273,
+        "max_ms": 478.273
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1842.325,
+        "max_ms": 1842.325
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 41.385,
+        "max_ms": 41.385
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 35.041,
+        "max_ms": 35.041
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.811,
+        "max_ms": 0.811
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.769,
+        "max_ms": 0.769
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1787.316,
+        "max_ms": 1787.316
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 194.816,
+        "max_ms": 194.816
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1808.115,
+        "max_ms": 1808.115
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3188.736,
+        "max_ms": 3188.736
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 719.971,
+        "max_ms": 719.971
+      }
+    },
+    "sync_changed/week/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 531.212,
+        "max_ms": 531.212
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 491.547,
+        "max_ms": 491.547
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 568.44,
+        "max_ms": 568.44
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.147,
+        "max_ms": 11.147
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 10.351,
+        "max_ms": 10.351
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.607,
+        "max_ms": 0.607
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.575,
+        "max_ms": 0.575
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 534.375,
+        "max_ms": 534.375
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 122.296,
+        "max_ms": 122.296
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1483.585,
+        "max_ms": 1483.585
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2907.038,
+        "max_ms": 2907.038
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 277.644,
+        "max_ms": 277.644
+      }
+    },
+    "sync_changed/week/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1809.133,
+        "max_ms": 1809.133
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 504.803,
+        "max_ms": 504.803
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1843.767,
+        "max_ms": 1843.767
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 44.87,
+        "max_ms": 44.87
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 32.234,
+        "max_ms": 32.234
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.642,
+        "max_ms": 0.642
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.615,
+        "max_ms": 0.615
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1812.775,
+        "max_ms": 1812.775
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 157.278,
+        "max_ms": 157.278
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1834.962,
+        "max_ms": 1834.962
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2983.032,
+        "max_ms": 2983.032
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 256.432,
+        "max_ms": 256.432
+      }
+    },
+    "sync_changed/week/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1824.208,
+        "max_ms": 1824.208
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 503.902,
+        "max_ms": 503.902
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1921.466,
+        "max_ms": 1921.466
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 12.498,
+        "max_ms": 12.498
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 11.737,
+        "max_ms": 11.737
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 1.015,
+        "max_ms": 1.015
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.771,
+        "max_ms": 0.771
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1864.53,
+        "max_ms": 1864.53
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 122.189,
+        "max_ms": 122.189
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1860.936,
+        "max_ms": 1860.936
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 2751.847,
+        "max_ms": 2751.847
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 269.893,
+        "max_ms": 269.893
+      }
+    },
+    "sync_changed/week/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1941.411,
+        "max_ms": 1941.411
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 505.573,
+        "max_ms": 505.573
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 2001.957,
+        "max_ms": 2001.957
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 37.618,
+        "max_ms": 37.618
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 32.691,
+        "max_ms": 32.691
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.975,
+        "max_ms": 0.975
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.773,
+        "max_ms": 0.773
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1945.081,
+        "max_ms": 1945.081
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 152.854,
+        "max_ms": 152.854
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1965.547,
+        "max_ms": 1965.547
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3098.867,
+        "max_ms": 3098.867
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 295.443,
+        "max_ms": 295.443
+      }
+    },
+    "sync_changed/year/Calendar/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 495.068,
+        "max_ms": 495.068
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 460.025,
+        "max_ms": 460.025
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 527.95,
+        "max_ms": 527.95
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 11.158,
+        "max_ms": 11.158
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 10.34,
+        "max_ms": 10.34
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.551,
+        "max_ms": 0.551
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.531,
+        "max_ms": 0.531
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 498.601,
+        "max_ms": 498.601
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 154.786,
+        "max_ms": 154.786
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1542.702,
+        "max_ms": 1542.702
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3439.53,
+        "max_ms": 3439.53
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 825.31,
+        "max_ms": 825.31
+      }
+    },
+    "sync_changed/year/Calendar/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1792.638,
+        "max_ms": 1792.638
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 471.507,
+        "max_ms": 471.507
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1826.56,
+        "max_ms": 1826.56
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 37.56,
+        "max_ms": 37.56
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 32.057,
+        "max_ms": 32.057
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.694,
+        "max_ms": 0.694
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.594,
+        "max_ms": 0.594
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1796.275,
+        "max_ms": 1796.275
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 182.533,
+        "max_ms": 182.533
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1821.759,
+        "max_ms": 1821.759
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3309.065,
+        "max_ms": 3309.065
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 827.196,
+        "max_ms": 827.196
+      }
+    },
+    "sync_changed/year/Appearance/cancel": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1894.604,
+        "max_ms": 1894.604
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 488.293,
+        "max_ms": 488.293
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1951.316,
+        "max_ms": 1951.316
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 13.157,
+        "max_ms": 13.157
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 12.225,
+        "max_ms": 12.225
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.792,
+        "max_ms": 0.792
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.711,
+        "max_ms": 0.711
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1898.692,
+        "max_ms": 1898.692
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 158.688,
+        "max_ms": 158.688
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1924.109,
+        "max_ms": 1924.109
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3629.273,
+        "max_ms": 3629.273
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 857.294,
+        "max_ms": 857.294
+      }
+    },
+    "sync_changed/year/Appearance/save": {
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1910.758,
+        "max_ms": 1910.758
+      },
+      "open_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 477.089,
+        "max_ms": 477.089
+      },
+      "open_to_form_ready_ms": {
+        "samples": 1,
+        "mean_ms": 1965.25,
+        "max_ms": 1965.25
+      },
+      "close_to_return_ms": {
+        "samples": 1,
+        "mean_ms": 39.801,
+        "max_ms": 39.801
+      },
+      "close_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 34.374,
+        "max_ms": 34.374
+      },
+      "delete_ms": {
+        "samples": 1,
+        "mean_ms": 0.769,
+        "max_ms": 0.769
+      },
+      "delete_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 0.689,
+        "max_ms": 0.689
+      },
+      "open_to_first_paint_ms": {
+        "samples": 1,
+        "mean_ms": 1914.575,
+        "max_ms": 1914.575
+      },
+      "close_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 182.693,
+        "max_ms": 182.693
+      },
+      "sync_cycle_heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 1935.011,
+        "max_ms": 1935.011
+      },
+      "sync_cycle_elapsed_ms": {
+        "samples": 1,
+        "mean_ms": 3420.863,
+        "max_ms": 3420.863
+      },
+      "sync_cycle_refresh_max_ms": {
+        "samples": 1,
+        "mean_ms": 822.639,
+        "max_ms": 822.639
+      }
+    },
+    "large_history/week/Calendar/refresh": {
+      "refresh_dispatch_ms": {
+        "samples": 1,
+        "mean_ms": 265.288,
+        "max_ms": 265.288
+      },
+      "refresh_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 264.652,
+        "max_ms": 264.652
+      },
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 298.306,
+        "max_ms": 298.306
+      },
+      "refresh_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 298.305,
+        "max_ms": 298.305
+      }
+    },
+    "large_history/year/Calendar/refresh": {
+      "refresh_dispatch_ms": {
+        "samples": 1,
+        "mean_ms": 831.039,
+        "max_ms": 831.039
+      },
+      "refresh_cpu_ms": {
+        "samples": 1,
+        "mean_ms": 829.2,
+        "max_ms": 829.2
+      },
+      "heartbeat_gap_ms": {
+        "samples": 1,
+        "mean_ms": 876.54,
+        "max_ms": 876.54
+      },
+      "refresh_to_responsive_ms": {
+        "samples": 1,
+        "mean_ms": 876.539,
+        "max_ms": 876.539
+      }
+    }
+  },
+  "environment": {
+    "python": "3.14.10",
+    "pyside6": "6.12.0",
+    "backend": "xcb",
+    "font": "DejaVu Sans",
+    "window_size": [
+      1400,
+      900
+    ],
+    "background_processing": false,
+    "screen_size": [
+      1600,
+      1000
+    ],
+    "qt_style": "fusion",
+    "cpus_available": 12,
+    "platform": "linux",
+    "timezone": "Europe/Berlin",
+    "sqlite": "3.54.1",
+    "dependency_versions": {
+      "PySide6": "6.12.0",
+      "icalendar": "7.3.0",
+      "python-dateutil": "2.9.0.post0"
+    }
+  },
+  "methodology": {
+    "local_only": true,
+    "synthetic_only": true,
+    "network": "loopback HTTP server in a separate interpreter; no accounts or external requests",
+    "paint_instrumentation": "dialog and active canvas only, no application-wide event filter",
+    "open": "call through real show_preferences to first dialog paint",
+    "form_ready": "first queued form interaction, including a deliberate 15ms timer",
+    "close": "real Cancel/Save through native event-loop deletion, next calendar paint and heartbeat",
+    "deletion": "return to QObject.destroyed notification; following paint/heartbeat also awaited",
+    "sync_cycle": "heartbeat and refresh observer remains active through publication and following calendar paint",
+    "sync_overlap": "start after full HTTP body served; require real engine job still active",
+    "profiles": "timings are unprofiled; no historical query pages or warmup loops"
+  }
+}

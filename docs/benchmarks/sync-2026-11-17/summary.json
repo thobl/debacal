@@ -1,0 +1,834 @@
+{
+  "offscreen-utc": {
+    "idle": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 434.111,
+          "max": 513.758
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 452.036,
+          "max": 530.02
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 15.835,
+          "max": 29.866
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 96.419,
+          "max": 128.368
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 430.274,
+          "max": 511.134
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 432.442,
+          "max": 512.049
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 15.794,
+          "max": 29.79
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.427,
+          "max": 0.697
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.425,
+          "max": 0.688
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 107.781,
+          "max": 209.754
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 123.64,
+          "max": 225.753
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 15.308,
+          "max": 28.492
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 53.682,
+          "max": 80.473
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 106.55,
+          "max": 203.101
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 107.471,
+          "max": 209.088
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 15.268,
+          "max": 28.42
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.223,
+          "max": 0.314
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.221,
+          "max": 0.31
+        }
+      }
+    },
+    "large_history": {
+      "before": {
+        "heartbeat_gap_ms": {
+          "samples": 6,
+          "mean": 450.722,
+          "max": 584.579
+        },
+        "refresh_dispatch_ms": {
+          "samples": 6,
+          "mean": 414.179,
+          "max": 542.615
+        },
+        "refresh_to_responsive_ms": {
+          "samples": 6,
+          "mean": 450.721,
+          "max": 584.578
+        },
+        "refresh_cpu_ms": {
+          "samples": 6,
+          "mean": 413.2,
+          "max": 541.25
+        }
+      },
+      "optimized": {
+        "heartbeat_gap_ms": {
+          "samples": 6,
+          "mean": 168.588,
+          "max": 247.273
+        },
+        "refresh_dispatch_ms": {
+          "samples": 6,
+          "mean": 129.227,
+          "max": 202.813
+        },
+        "refresh_to_responsive_ms": {
+          "samples": 6,
+          "mean": 168.587,
+          "max": 247.271
+        },
+        "refresh_cpu_ms": {
+          "samples": 6,
+          "mean": 128.54,
+          "max": 201.874
+        }
+      }
+    },
+    "sync_changed": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 1779.868,
+          "max": 1943.194
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 1799.945,
+          "max": 2062.555
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 21.336,
+          "max": 39.804
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 116.685,
+          "max": 163.34
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 1773.695,
+          "max": 1918.873
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 1840.982,
+          "max": 1949.835
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 48,
+          "mean": 2922.164,
+          "max": 3344.748
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 48,
+          "mean": 407.244,
+          "max": 582.423
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 48,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 454.697,
+          "max": 527.671
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 19.151,
+          "max": 35.26
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.551,
+          "max": 0.889
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.485,
+          "max": 0.759
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 108.136,
+          "max": 205.596
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 123.776,
+          "max": 220.976
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 15.413,
+          "max": 28.392
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 56.461,
+          "max": 146.331
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 108.215,
+          "max": 199.274
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 256.699,
+          "max": 431.759
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 48,
+          "mean": 2627.353,
+          "max": 2911.576
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 48,
+          "mean": 214.613,
+          "max": 381.871
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 48,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 107.722,
+          "max": 203.905
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 15.37,
+          "max": 28.324
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.255,
+          "max": 0.385
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.251,
+          "max": 0.352
+        }
+      }
+    },
+    "sync_unchanged": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 1832.083,
+          "max": 1957.213
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 1852.718,
+          "max": 1999.992
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 22.705,
+          "max": 64.608
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 124.732,
+          "max": 274.704
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 1823.084,
+          "max": 1941.034
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 1869.579,
+          "max": 1967.726
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 48,
+          "mean": 2602.325,
+          "max": 3014.532
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 48,
+          "mean": 284.612,
+          "max": 528.922
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 48,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 475.55,
+          "max": 535.513
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 20.286,
+          "max": 59.591
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.591,
+          "max": 1.189
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.509,
+          "max": 0.786
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 48,
+          "mean": 109.378,
+          "max": 197.561
+        },
+        "open_to_form_ready_ms": {
+          "samples": 48,
+          "mean": 125.128,
+          "max": 213.714
+        },
+        "close_to_return_ms": {
+          "samples": 48,
+          "mean": 15.664,
+          "max": 33.559
+        },
+        "close_to_responsive_ms": {
+          "samples": 48,
+          "mean": 55.725,
+          "max": 89.495
+        },
+        "heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 107.856,
+          "max": 190.837
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 48,
+          "mean": 112.475,
+          "max": 196.042
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 48,
+          "mean": 1994.447,
+          "max": 2037.647
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 48,
+          "mean": 0,
+          "max": 0
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 48,
+          "mean": 0,
+          "max": 0
+        },
+        "open_cpu_ms": {
+          "samples": 48,
+          "mean": 109.031,
+          "max": 196.978
+        },
+        "close_cpu_ms": {
+          "samples": 48,
+          "mean": 15.622,
+          "max": 33.471
+        },
+        "delete_ms": {
+          "samples": 48,
+          "mean": 0.26,
+          "max": 0.408
+        },
+        "delete_cpu_ms": {
+          "samples": 48,
+          "mean": 0.256,
+          "max": 0.407
+        }
+      }
+    }
+  },
+  "x11-berlin": {
+    "idle": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 442.615,
+          "max": 511.366
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 476.438,
+          "max": 532.44
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 18.061,
+          "max": 26.055
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 107.707,
+          "max": 128.397
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 439.498,
+          "max": 508.359
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 439.969,
+          "max": 508.724
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 17.542,
+          "max": 25.514
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.59,
+          "max": 0.659
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.587,
+          "max": 0.656
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 98.169,
+          "max": 128.332
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 119.403,
+          "max": 156.309
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 17.522,
+          "max": 25.238
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 62.38,
+          "max": 80.986
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 98.576,
+          "max": 125.906
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 96.614,
+          "max": 126.885
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 16.954,
+          "max": 24.62
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.389,
+          "max": 0.469
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.386,
+          "max": 0.464
+        }
+      }
+    },
+    "large_history": {
+      "before": {
+        "heartbeat_gap_ms": {
+          "samples": 2,
+          "mean": 587.423,
+          "max": 876.54
+        },
+        "refresh_dispatch_ms": {
+          "samples": 2,
+          "mean": 548.163,
+          "max": 831.039
+        },
+        "refresh_to_responsive_ms": {
+          "samples": 2,
+          "mean": 587.422,
+          "max": 876.539
+        },
+        "refresh_cpu_ms": {
+          "samples": 2,
+          "mean": 546.926,
+          "max": 829.2
+        }
+      },
+      "optimized": {
+        "heartbeat_gap_ms": {
+          "samples": 2,
+          "mean": 178.086,
+          "max": 253.511
+        },
+        "refresh_dispatch_ms": {
+          "samples": 2,
+          "mean": 137.272,
+          "max": 208.367
+        },
+        "refresh_to_responsive_ms": {
+          "samples": 2,
+          "mean": 178.084,
+          "max": 253.51
+        },
+        "refresh_cpu_ms": {
+          "samples": 2,
+          "mean": 136.665,
+          "max": 207.377
+        }
+      }
+    },
+    "sync_changed": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 1533.113,
+          "max": 1945.081
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 1575.838,
+          "max": 2001.957
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 25.976,
+          "max": 44.87
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 154.165,
+          "max": 182.693
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 1524.879,
+          "max": 1941.411
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 1796.076,
+          "max": 1965.547
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 8,
+          "mean": 3192.439,
+          "max": 3629.273
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 8,
+          "mean": 553.981,
+          "max": 857.294
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 8,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 487.842,
+          "max": 505.573
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 22.001,
+          "max": 34.374
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.756,
+          "max": 1.015
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.657,
+          "max": 0.773
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 97.991,
+          "max": 135.088
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 119.712,
+          "max": 158.736
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 18.935,
+          "max": 26.77
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 65.307,
+          "max": 83.68
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 99.296,
+          "max": 132.324
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 250.678,
+          "max": 341.735
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 8,
+          "mean": 2615.789,
+          "max": 2755.197
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 8,
+          "mean": 219.579,
+          "max": 296.171
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 8,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 96.668,
+          "max": 133.75
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 18.427,
+          "max": 26.229
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.364,
+          "max": 0.455
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.361,
+          "max": 0.45
+        }
+      }
+    },
+    "sync_unchanged": {
+      "before": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 1536.586,
+          "max": 1942.98
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 1581.529,
+          "max": 2001.054
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 25.394,
+          "max": 41.385
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 159.015,
+          "max": 194.816
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 1533.082,
+          "max": 1939.314
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 1790.567,
+          "max": 1963.102
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 8,
+          "mean": 2797.869,
+          "max": 3273.758
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 8,
+          "mean": 429.449,
+          "max": 747.929
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 8,
+          "mean": 1,
+          "max": 1
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 498.533,
+          "max": 588.744
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 22.283,
+          "max": 35.041
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.743,
+          "max": 0.964
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.667,
+          "max": 0.777
+        }
+      },
+      "optimized": {
+        "open_to_first_paint_ms": {
+          "samples": 8,
+          "mean": 95.791,
+          "max": 133.009
+        },
+        "open_to_form_ready_ms": {
+          "samples": 8,
+          "mean": 117.771,
+          "max": 158.49
+        },
+        "close_to_return_ms": {
+          "samples": 8,
+          "mean": 18.552,
+          "max": 26.228
+        },
+        "close_to_responsive_ms": {
+          "samples": 8,
+          "mean": 65.571,
+          "max": 85.643
+        },
+        "heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 97.249,
+          "max": 129.957
+        },
+        "sync_cycle_heartbeat_gap_ms": {
+          "samples": 8,
+          "mean": 101.502,
+          "max": 136.127
+        },
+        "sync_cycle_elapsed_ms": {
+          "samples": 8,
+          "mean": 1951.306,
+          "max": 2035.431
+        },
+        "sync_cycle_refresh_max_ms": {
+          "samples": 8,
+          "mean": 0,
+          "max": 0
+        },
+        "sync_cycle_refresh_count": {
+          "samples": 8,
+          "mean": 0,
+          "max": 0
+        },
+        "open_cpu_ms": {
+          "samples": 8,
+          "mean": 94.299,
+          "max": 131.113
+        },
+        "close_cpu_ms": {
+          "samples": 8,
+          "mean": 18.135,
+          "max": 25.765
+        },
+        "delete_ms": {
+          "samples": 8,
+          "mean": 0.393,
+          "max": 0.493
+        },
+        "delete_cpu_ms": {
+          "samples": 8,
+          "mean": 0.39,
+          "max": 0.492
+        }
+      }
+    }
+  }
+}

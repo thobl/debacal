@@ -1,0 +1,889 @@
+comparison,workload,view,category,action,metric,samples,before_mean,before_max,optimized_mean,optimized_max,mean_speedup,max_speedup
+offscreen-utc,all,,,,open_to_first_paint_ms,144,1348.687,1957.213,108.432,209.754,12.438,9.331
+offscreen-utc,all,,,,open_to_form_ready_ms,144,1368.233,2062.555,124.181,225.753,11.018,9.136
+offscreen-utc,all,,,,close_to_return_ms,144,19.959,64.608,15.462,33.559,1.291,1.925
+offscreen-utc,all,,,,close_to_responsive_ms,144,112.612,274.704,55.289,146.331,2.037,1.877
+offscreen-utc,all,,,,heartbeat_gap_ms,150,1306.686,1941.034,109.983,247.273,11.881,7.85
+offscreen-utc,all,,,,sync_cycle_heartbeat_gap_ms,96,1855.281,1967.726,184.587,431.759,10.051,4.557
+offscreen-utc,all,,,,sync_cycle_elapsed_ms,96,2762.244,3344.748,2310.9,2911.576,1.195,1.149
+offscreen-utc,all,,,,sync_cycle_refresh_max_ms,96,345.928,582.423,107.307,381.871,3.224,1.525
+offscreen-utc,all,,,,sync_cycle_refresh_count,96,1,1,0.5,1,2.0,1.0
+offscreen-utc,all,,,,refresh_dispatch_ms,6,414.179,542.615,129.227,202.813,3.205,2.675
+offscreen-utc,all,,,,refresh_to_responsive_ms,6,450.721,584.578,168.587,247.271,2.674,2.364
+offscreen-utc,all,,,,open_cpu_ms,144,454.23,535.513,108.075,209.088,4.203,2.561
+offscreen-utc,all,,,,close_cpu_ms,144,18.41,59.591,15.42,33.471,1.194,1.78
+offscreen-utc,all,,,,refresh_cpu_ms,6,413.2,541.25,128.54,201.874,3.215,2.681
+offscreen-utc,all,,,,delete_ms,144,0.523,1.189,0.246,0.408,2.126,2.914
+offscreen-utc,all,,,,delete_cpu_ms,144,0.473,0.786,0.243,0.407,1.947,1.931
+offscreen-utc,idle,week,Appearance,cancel,open_to_first_paint_ms,3,429.096,444.938,101.531,101.63,4.226,4.378
+offscreen-utc,idle,week,Appearance,cancel,open_to_form_ready_ms,3,455.675,472.181,117.68,117.822,3.872,4.008
+offscreen-utc,idle,week,Appearance,cancel,close_to_return_ms,3,7.849,8.291,7.299,7.325,1.075,1.132
+offscreen-utc,idle,week,Appearance,cancel,close_to_responsive_ms,3,74.523,77.848,34.468,34.951,2.162,2.227
+offscreen-utc,idle,week,Appearance,cancel,heartbeat_gap_ms,3,426.182,442.006,99.313,99.401,4.291,4.447
+offscreen-utc,idle,week,Appearance,cancel,open_cpu_ms,3,427.486,443.164,101.255,101.339,4.222,4.373
+offscreen-utc,idle,week,Appearance,cancel,close_cpu_ms,3,7.831,8.271,7.283,7.307,1.075,1.132
+offscreen-utc,idle,week,Appearance,cancel,delete_ms,3,0.563,0.653,0.207,0.214,2.72,3.051
+offscreen-utc,idle,week,Appearance,cancel,delete_cpu_ms,3,0.561,0.65,0.205,0.21,2.737,3.095
+offscreen-utc,idle,week,Appearance,save,open_to_first_paint_ms,3,429.242,431.181,101.704,102.084,4.221,4.224
+offscreen-utc,idle,week,Appearance,save,open_to_form_ready_ms,3,453.762,456.702,117.727,118.29,3.854,3.861
+offscreen-utc,idle,week,Appearance,save,close_to_return_ms,3,22.506,23.689,20.829,20.859,1.081,1.136
+offscreen-utc,idle,week,Appearance,save,close_to_responsive_ms,3,90.953,92.729,47.587,47.791,1.911,1.94
+offscreen-utc,idle,week,Appearance,save,heartbeat_gap_ms,3,425.943,427.742,99.403,99.825,4.285,4.285
+offscreen-utc,idle,week,Appearance,save,open_cpu_ms,3,427.665,429.785,101.399,101.783,4.218,4.223
+offscreen-utc,idle,week,Appearance,save,close_cpu_ms,3,22.452,23.624,20.771,20.809,1.081,1.135
+offscreen-utc,idle,week,Appearance,save,delete_ms,3,0.585,0.697,0.251,0.31,2.331,2.248
+offscreen-utc,idle,week,Appearance,save,delete_cpu_ms,3,0.582,0.688,0.248,0.309,2.347,2.227
+offscreen-utc,idle,week,Calendar,cancel,open_to_first_paint_ms,3,427.098,457.07,63.471,80.779,6.729,5.658
+offscreen-utc,idle,week,Calendar,cancel,open_to_form_ready_ms,3,442.96,473.193,79.208,96.134,5.592,4.922
+offscreen-utc,idle,week,Calendar,cancel,close_to_return_ms,3,6.451,6.605,6.495,6.513,0.993,1.014
+offscreen-utc,idle,week,Calendar,cancel,close_to_responsive_ms,3,69.979,70.425,30.285,31.051,2.311,2.268
+offscreen-utc,idle,week,Calendar,cancel,heartbeat_gap_ms,3,423.933,451.633,60.878,76.142,6.964,5.931
+offscreen-utc,idle,week,Calendar,cancel,open_cpu_ms,3,424.586,452.632,63.293,80.559,6.708,5.619
+offscreen-utc,idle,week,Calendar,cancel,close_cpu_ms,3,6.436,6.591,6.48,6.497,0.993,1.014
+offscreen-utc,idle,week,Calendar,cancel,delete_ms,3,0.417,0.536,0.182,0.188,2.291,2.851
+offscreen-utc,idle,week,Calendar,cancel,delete_cpu_ms,3,0.415,0.533,0.181,0.187,2.293,2.85
+offscreen-utc,idle,week,Calendar,save,open_to_first_paint_ms,3,409.108,409.926,52.14,52.557,7.846,7.8
+offscreen-utc,idle,week,Calendar,save,open_to_form_ready_ms,3,425.092,425.875,67.927,68.309,6.258,6.235
+offscreen-utc,idle,week,Calendar,save,close_to_return_ms,3,20.932,21.18,19.464,19.646,1.075,1.078
+offscreen-utc,idle,week,Calendar,save,close_to_responsive_ms,3,84.479,84.638,43.222,43.624,1.955,1.94
+offscreen-utc,idle,week,Calendar,save,heartbeat_gap_ms,3,406.862,407.82,50.658,51.106,8.032,7.98
+offscreen-utc,idle,week,Calendar,save,open_cpu_ms,3,407.681,408.452,51.988,52.415,7.842,7.793
+offscreen-utc,idle,week,Calendar,save,close_cpu_ms,3,20.887,21.134,19.42,19.606,1.076,1.078
+offscreen-utc,idle,week,Calendar,save,delete_ms,3,0.366,0.374,0.177,0.179,2.068,2.089
+offscreen-utc,idle,week,Calendar,save,delete_cpu_ms,3,0.365,0.371,0.175,0.177,2.086,2.096
+offscreen-utc,idle,week,Calendar sources,cancel,open_to_first_paint_ms,3,425.495,434.121,78.198,78.644,5.441,5.52
+offscreen-utc,idle,week,Calendar sources,cancel,open_to_form_ready_ms,3,441.229,450.302,94.344,94.873,4.677,4.746
+offscreen-utc,idle,week,Calendar sources,cancel,close_to_return_ms,3,5.872,6.016,5.795,5.807,1.013,1.036
+offscreen-utc,idle,week,Calendar sources,cancel,close_to_responsive_ms,3,72.964,74.779,31.685,32.393,2.303,2.308
+offscreen-utc,idle,week,Calendar sources,cancel,heartbeat_gap_ms,3,423.325,432.116,76.889,77.328,5.506,5.588
+offscreen-utc,idle,week,Calendar sources,cancel,open_cpu_ms,3,423.783,432.252,77.967,78.421,5.435,5.512
+offscreen-utc,idle,week,Calendar sources,cancel,close_cpu_ms,3,5.859,6.002,5.782,5.793,1.013,1.036
+offscreen-utc,idle,week,Calendar sources,cancel,delete_ms,3,0.409,0.493,0.187,0.192,2.187,2.568
+offscreen-utc,idle,week,Calendar sources,cancel,delete_cpu_ms,3,0.407,0.49,0.187,0.192,2.176,2.552
+offscreen-utc,idle,week,Calendar sources,save,open_to_first_paint_ms,3,416.651,426.331,82.605,85.725,5.044,4.973
+offscreen-utc,idle,week,Calendar sources,save,open_to_form_ready_ms,3,432.467,441.777,98.494,101.888,4.391,4.336
+offscreen-utc,idle,week,Calendar sources,save,close_to_return_ms,3,20.792,21.304,19.968,20.284,1.041,1.05
+offscreen-utc,idle,week,Calendar sources,save,close_to_responsive_ms,3,85.443,85.7,46.577,47.47,1.834,1.805
+offscreen-utc,idle,week,Calendar sources,save,heartbeat_gap_ms,3,414.388,423.994,81.248,84.347,5.1,5.027
+offscreen-utc,idle,week,Calendar sources,save,open_cpu_ms,3,414.568,423.101,82.368,85.471,5.033,4.95
+offscreen-utc,idle,week,Calendar sources,save,close_cpu_ms,3,20.739,21.253,19.924,20.238,1.041,1.05
+offscreen-utc,idle,week,Calendar sources,save,delete_ms,3,0.38,0.395,0.212,0.213,1.792,1.854
+offscreen-utc,idle,week,Calendar sources,save,delete_cpu_ms,3,0.378,0.389,0.209,0.211,1.809,1.844
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,452.943,459.483,184.86,185.525,2.45,2.477
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,468.774,474.987,200.219,200.987,2.341,2.363
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,close_to_return_ms,3,13.296,13.536,13.062,13.139,1.018,1.03
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,close_to_responsive_ms,3,78.631,78.682,47.115,47.771,1.669,1.647
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,445.704,452.192,178.725,179.467,2.494,2.52
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,open_cpu_ms,3,451.264,457.814,184.359,185.01,2.448,2.475
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,close_cpu_ms,3,13.247,13.505,13.034,13.108,1.016,1.03
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,delete_ms,3,0.347,0.36,0.259,0.262,1.34,1.374
+offscreen-utc,idle,week,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.344,0.357,0.259,0.261,1.328,1.368
+offscreen-utc,idle,week,Keyboard shortcuts,save,open_to_first_paint_ms,3,453.035,456.114,189.475,194.935,2.391,2.34
+offscreen-utc,idle,week,Keyboard shortcuts,save,open_to_form_ready_ms,3,468.331,471.45,204.923,210.603,2.285,2.239
+offscreen-utc,idle,week,Keyboard shortcuts,save,close_to_return_ms,3,28.6,29.681,27.742,28.492,1.031,1.042
+offscreen-utc,idle,week,Keyboard shortcuts,save,close_to_responsive_ms,3,95.653,98.487,61.94,62.88,1.544,1.566
+offscreen-utc,idle,week,Keyboard shortcuts,save,heartbeat_gap_ms,3,445.907,449.079,183.182,188.568,2.434,2.382
+offscreen-utc,idle,week,Keyboard shortcuts,save,open_cpu_ms,3,451.588,454.672,188.865,194.346,2.391,2.339
+offscreen-utc,idle,week,Keyboard shortcuts,save,close_cpu_ms,3,28.528,29.606,27.673,28.42,1.031,1.042
+offscreen-utc,idle,week,Keyboard shortcuts,save,delete_ms,3,0.386,0.415,0.299,0.314,1.291,1.322
+offscreen-utc,idle,week,Keyboard shortcuts,save,delete_cpu_ms,3,0.384,0.415,0.296,0.31,1.297,1.339
+offscreen-utc,idle,year,Appearance,cancel,open_to_first_paint_ms,3,424.39,425.218,106.45,111.068,3.987,3.828
+offscreen-utc,idle,year,Appearance,cancel,open_to_form_ready_ms,3,447.666,448.529,122.562,127.316,3.653,3.523
+offscreen-utc,idle,year,Appearance,cancel,close_to_return_ms,3,7.685,7.719,7.437,7.517,1.033,1.027
+offscreen-utc,idle,year,Appearance,cancel,close_to_responsive_ms,3,101.349,102.247,55.159,55.917,1.837,1.829
+offscreen-utc,idle,year,Appearance,cancel,heartbeat_gap_ms,3,421.12,421.94,104.103,108.789,4.045,3.879
+offscreen-utc,idle,year,Appearance,cancel,open_cpu_ms,3,423.008,423.769,106.142,110.706,3.985,3.828
+offscreen-utc,idle,year,Appearance,cancel,close_cpu_ms,3,7.667,7.702,7.418,7.493,1.034,1.028
+offscreen-utc,idle,year,Appearance,cancel,delete_ms,3,0.525,0.531,0.218,0.225,2.408,2.36
+offscreen-utc,idle,year,Appearance,cancel,delete_cpu_ms,3,0.524,0.528,0.215,0.221,2.437,2.389
+offscreen-utc,idle,year,Appearance,save,open_to_first_paint_ms,3,432.754,436.598,104.572,107.383,4.138,4.066
+offscreen-utc,idle,year,Appearance,save,open_to_form_ready_ms,3,456.011,459.995,120.692,123.522,3.778,3.724
+offscreen-utc,idle,year,Appearance,save,close_to_return_ms,3,22.348,22.468,20.887,21.425,1.07,1.049
+offscreen-utc,idle,year,Appearance,save,close_to_responsive_ms,3,118.444,120.316,69.994,73.185,1.692,1.644
+offscreen-utc,idle,year,Appearance,save,heartbeat_gap_ms,3,429.365,433.357,102.334,105.152,4.196,4.121
+offscreen-utc,idle,year,Appearance,save,open_cpu_ms,3,431.343,435.212,104.269,107.024,4.137,4.066
+offscreen-utc,idle,year,Appearance,save,close_cpu_ms,3,22.281,22.401,20.835,21.375,1.069,1.048
+offscreen-utc,idle,year,Appearance,save,delete_ms,3,0.553,0.556,0.227,0.233,2.436,2.386
+offscreen-utc,idle,year,Appearance,save,delete_cpu_ms,3,0.551,0.553,0.226,0.231,2.438,2.394
+offscreen-utc,idle,year,Calendar,cancel,open_to_first_paint_ms,3,450.542,513.758,72.648,103.031,6.202,4.986
+offscreen-utc,idle,year,Calendar,cancel,open_to_form_ready_ms,3,466.514,530.02,88.254,118.456,5.286,4.474
+offscreen-utc,idle,year,Calendar,cancel,close_to_return_ms,3,6.432,6.728,6.736,7.388,0.955,0.911
+offscreen-utc,idle,year,Calendar,cancel,close_to_responsive_ms,3,100.464,101.194,54.389,56.538,1.847,1.79
+offscreen-utc,idle,year,Calendar,cancel,heartbeat_gap_ms,3,447.992,511.134,73.781,101.385,6.072,5.042
+offscreen-utc,idle,year,Calendar,cancel,open_cpu_ms,3,449.04,512.049,72.399,102.721,6.202,4.985
+offscreen-utc,idle,year,Calendar,cancel,close_cpu_ms,3,6.411,6.711,6.719,7.366,0.954,0.911
+offscreen-utc,idle,year,Calendar,cancel,delete_ms,3,0.374,0.395,0.18,0.189,2.078,2.09
+offscreen-utc,idle,year,Calendar,cancel,delete_cpu_ms,3,0.372,0.394,0.179,0.188,2.078,2.096
+offscreen-utc,idle,year,Calendar,save,open_to_first_paint_ms,3,428.597,436.257,54.446,56.172,7.872,7.766
+offscreen-utc,idle,year,Calendar,save,open_to_form_ready_ms,3,444.477,452.289,70.217,71.989,6.33,6.283
+offscreen-utc,idle,year,Calendar,save,close_to_return_ms,3,21.74,22.433,22.447,27.617,0.969,0.812
+offscreen-utc,idle,year,Calendar,save,close_to_responsive_ms,3,118.359,121.517,68.482,72.869,1.728,1.668
+offscreen-utc,idle,year,Calendar,save,heartbeat_gap_ms,3,426.005,433.583,75.083,79.982,5.674,5.421
+offscreen-utc,idle,year,Calendar,save,open_cpu_ms,3,427.178,434.848,54.293,56.015,7.868,7.763
+offscreen-utc,idle,year,Calendar,save,close_cpu_ms,3,21.682,22.362,22.379,27.541,0.969,0.812
+offscreen-utc,idle,year,Calendar,save,delete_ms,3,0.419,0.485,0.196,0.213,2.138,2.277
+offscreen-utc,idle,year,Calendar,save,delete_cpu_ms,3,0.417,0.482,0.193,0.209,2.161,2.306
+offscreen-utc,idle,year,Calendar sources,cancel,open_to_first_paint_ms,3,421.915,426.363,78.166,79.253,5.398,5.38
+offscreen-utc,idle,year,Calendar sources,cancel,open_to_form_ready_ms,3,437.784,441.583,94.082,95.074,4.653,4.645
+offscreen-utc,idle,year,Calendar sources,cancel,close_to_return_ms,3,6.126,6.341,5.902,6.143,1.038,1.032
+offscreen-utc,idle,year,Calendar sources,cancel,close_to_responsive_ms,3,101.577,104.078,51.267,51.47,1.981,2.022
+offscreen-utc,idle,year,Calendar sources,cancel,heartbeat_gap_ms,3,419.966,424.568,76.866,77.929,5.464,5.448
+offscreen-utc,idle,year,Calendar sources,cancel,open_cpu_ms,3,420.348,424.779,77.948,79.04,5.393,5.374
+offscreen-utc,idle,year,Calendar sources,cancel,close_cpu_ms,3,6.11,6.327,5.888,6.126,1.038,1.033
+offscreen-utc,idle,year,Calendar sources,cancel,delete_ms,3,0.379,0.394,0.192,0.196,1.974,2.01
+offscreen-utc,idle,year,Calendar sources,cancel,delete_cpu_ms,3,0.378,0.391,0.19,0.195,1.989,2.005
+offscreen-utc,idle,year,Calendar sources,save,open_to_first_paint_ms,3,425.362,434.146,78.028,78.613,5.451,5.523
+offscreen-utc,idle,year,Calendar sources,save,open_to_form_ready_ms,3,441.268,450.371,93.932,94.116,4.698,4.785
+offscreen-utc,idle,year,Calendar sources,save,close_to_return_ms,3,21.013,21.726,20.808,23.841,1.01,0.911
+offscreen-utc,idle,year,Calendar sources,save,close_to_responsive_ms,3,116.79,118.639,68.849,77.021,1.696,1.54
+offscreen-utc,idle,year,Calendar sources,save,heartbeat_gap_ms,3,423.383,431.656,78.652,83.182,5.383,5.189
+offscreen-utc,idle,year,Calendar sources,save,open_cpu_ms,3,423.335,431.192,77.805,78.404,5.441,5.5
+offscreen-utc,idle,year,Calendar sources,save,close_cpu_ms,3,20.951,21.644,20.747,23.747,1.01,0.911
+offscreen-utc,idle,year,Calendar sources,save,delete_ms,3,0.392,0.405,0.219,0.252,1.79,1.607
+offscreen-utc,idle,year,Calendar sources,save,delete_cpu_ms,3,0.392,0.404,0.217,0.251,1.806,1.61
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,457.958,461.952,192.378,209.754,2.381,2.202
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,473.285,477.237,208.42,225.753,2.271,2.114
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,close_to_return_ms,3,13.045,13.304,13.254,13.677,0.984,0.973
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,close_to_responsive_ms,3,107.988,108.077,67.556,69.399,1.598,1.557
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,450.55,454.533,185.978,203.101,2.423,2.238
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,open_cpu_ms,3,456.145,459.86,191.832,209.088,2.378,2.199
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,close_cpu_ms,3,13.012,13.273,13.202,13.647,0.986,0.973
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,delete_ms,3,0.339,0.348,0.274,0.311,1.237,1.119
+offscreen-utc,idle,year,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.339,0.348,0.272,0.307,1.246,1.134
+offscreen-utc,idle,year,Keyboard shortcuts,save,open_to_first_paint_ms,3,461.591,467.164,183.826,184.298,2.511,2.535
+offscreen-utc,idle,year,Keyboard shortcuts,save,open_to_form_ready_ms,3,477.287,483.158,199.555,200.494,2.392,2.41
+offscreen-utc,idle,year,Keyboard shortcuts,save,close_to_return_ms,3,28.676,29.866,26.806,27.089,1.07,1.103
+offscreen-utc,idle,year,Keyboard shortcuts,save,close_to_responsive_ms,3,125.116,128.368,80.334,80.473,1.557,1.595
+offscreen-utc,idle,year,Keyboard shortcuts,save,heartbeat_gap_ms,3,453.763,459.441,177.715,178.184,2.553,2.578
+offscreen-utc,idle,year,Keyboard shortcuts,save,open_cpu_ms,3,460.049,465.716,183.352,183.811,2.509,2.534
+offscreen-utc,idle,year,Keyboard shortcuts,save,close_cpu_ms,3,28.614,29.79,26.739,27.036,1.07,1.102
+offscreen-utc,idle,year,Keyboard shortcuts,save,delete_ms,3,0.398,0.41,0.292,0.297,1.363,1.38
+offscreen-utc,idle,year,Keyboard shortcuts,save,delete_cpu_ms,3,0.395,0.407,0.291,0.296,1.357,1.375
+offscreen-utc,large_history,week,Calendar,refresh,heartbeat_gap_ms,3,322.434,384.718,98.613,99.082,3.27,3.883
+offscreen-utc,large_history,week,Calendar,refresh,refresh_dispatch_ms,3,291.487,354.423,64.985,65.396,4.485,5.42
+offscreen-utc,large_history,week,Calendar,refresh,refresh_to_responsive_ms,3,322.433,384.717,98.612,99.081,3.27,3.883
+offscreen-utc,large_history,week,Calendar,refresh,refresh_cpu_ms,3,290.826,353.675,64.507,65.019,4.508,5.44
+offscreen-utc,large_history,year,Calendar,refresh,heartbeat_gap_ms,3,579.009,584.579,238.562,247.273,2.427,2.364
+offscreen-utc,large_history,year,Calendar,refresh,refresh_dispatch_ms,3,536.871,542.615,193.468,202.813,2.775,2.675
+offscreen-utc,large_history,year,Calendar,refresh,refresh_to_responsive_ms,3,579.008,584.578,238.561,247.271,2.427,2.364
+offscreen-utc,large_history,year,Calendar,refresh,refresh_cpu_ms,3,535.573,541.25,192.572,201.874,2.781,2.681
+offscreen-utc,sync_changed,week,Appearance,cancel,open_to_first_paint_ms,3,1846.659,1883.736,107.642,109.637,17.156,17.182
+offscreen-utc,sync_changed,week,Appearance,cancel,open_to_form_ready_ms,3,1871.86,1909.005,123.46,125.794,15.162,15.176
+offscreen-utc,sync_changed,week,Appearance,cancel,close_to_return_ms,3,7.683,7.807,7.704,7.919,0.997,0.986
+offscreen-utc,sync_changed,week,Appearance,cancel,close_to_responsive_ms,3,75.984,78.962,36.276,36.617,2.095,2.156
+offscreen-utc,sync_changed,week,Appearance,cancel,heartbeat_gap_ms,3,1842.919,1880.092,105.315,107.317,17.499,17.519
+offscreen-utc,sync_changed,week,Appearance,cancel,sync_cycle_heartbeat_gap_ms,3,1862.217,1900.638,191.378,205.729,9.731,9.239
+offscreen-utc,sync_changed,week,Appearance,cancel,sync_cycle_elapsed_ms,3,2720.747,2769.106,2489.323,2522.487,1.093,1.098
+offscreen-utc,sync_changed,week,Appearance,cancel,sync_cycle_refresh_max_ms,3,261.764,266.022,150.955,160.434,1.734,1.658
+offscreen-utc,sync_changed,week,Appearance,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Appearance,cancel,open_cpu_ms,3,447.49,451.354,107.236,109.077,4.173,4.138
+offscreen-utc,sync_changed,week,Appearance,cancel,close_cpu_ms,3,7.631,7.777,7.673,7.901,0.995,0.984
+offscreen-utc,sync_changed,week,Appearance,cancel,delete_ms,3,0.718,0.794,0.283,0.353,2.537,2.249
+offscreen-utc,sync_changed,week,Appearance,cancel,delete_cpu_ms,3,0.605,0.606,0.281,0.352,2.153,1.722
+offscreen-utc,sync_changed,week,Appearance,save,open_to_first_paint_ms,3,1832.13,1865.043,106.464,109.611,17.209,17.015
+offscreen-utc,sync_changed,week,Appearance,save,open_to_form_ready_ms,3,1858.184,1890.814,122.551,125.789,15.163,15.032
+offscreen-utc,sync_changed,week,Appearance,save,close_to_return_ms,3,33.913,34.727,22.07,22.606,1.537,1.536
+offscreen-utc,sync_changed,week,Appearance,save,close_to_responsive_ms,3,100.904,101.759,50.762,52.126,1.988,1.952
+offscreen-utc,sync_changed,week,Appearance,save,heartbeat_gap_ms,3,1828.317,1861.19,104.139,107.296,17.557,17.346
+offscreen-utc,sync_changed,week,Appearance,save,sync_cycle_heartbeat_gap_ms,3,1855.829,1890.52,191.732,208.014,9.679,9.088
+offscreen-utc,sync_changed,week,Appearance,save,sync_cycle_elapsed_ms,3,2829.368,2999.268,2496.832,2517.915,1.133,1.191
+offscreen-utc,sync_changed,week,Appearance,save,sync_cycle_refresh_max_ms,3,269.179,292.711,153.545,167.286,1.753,1.75
+offscreen-utc,sync_changed,week,Appearance,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Appearance,save,open_cpu_ms,3,454.772,460.628,105.743,108.196,4.301,4.257
+offscreen-utc,sync_changed,week,Appearance,save,close_cpu_ms,3,29.211,29.803,21.968,22.534,1.33,1.323
+offscreen-utc,sync_changed,week,Appearance,save,delete_ms,3,0.769,0.849,0.256,0.261,3.004,3.253
+offscreen-utc,sync_changed,week,Appearance,save,delete_cpu_ms,3,0.692,0.759,0.253,0.259,2.735,2.931
+offscreen-utc,sync_changed,week,Calendar,cancel,open_to_first_paint_ms,3,1375.746,1876.646,53.691,53.954,25.623,34.782
+offscreen-utc,sync_changed,week,Calendar,cancel,open_to_form_ready_ms,3,1391.637,1892.736,69.385,69.672,20.057,27.166
+offscreen-utc,sync_changed,week,Calendar,cancel,close_to_return_ms,3,6.56,6.764,6.35,6.388,1.033,1.059
+offscreen-utc,sync_changed,week,Calendar,cancel,close_to_responsive_ms,3,74.988,77.748,31.49,31.662,2.381,2.456
+offscreen-utc,sync_changed,week,Calendar,cancel,heartbeat_gap_ms,3,1372.913,1873.907,52.16,52.405,26.321,35.758
+offscreen-utc,sync_changed,week,Calendar,cancel,sync_cycle_heartbeat_gap_ms,3,1737.202,1904.595,190.577,198.552,9.115,9.592
+offscreen-utc,sync_changed,week,Calendar,cancel,sync_cycle_elapsed_ms,3,2794.43,2821.168,2532.399,2588.492,1.103,1.09
+offscreen-utc,sync_changed,week,Calendar,cancel,sync_cycle_refresh_max_ms,3,298.838,362.462,152.746,163.098,1.956,2.222
+offscreen-utc,sync_changed,week,Calendar,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Calendar,cancel,open_cpu_ms,3,437.431,445.881,53.504,53.73,8.176,8.299
+offscreen-utc,sync_changed,week,Calendar,cancel,close_cpu_ms,3,6.507,6.742,6.333,6.37,1.027,1.058
+offscreen-utc,sync_changed,week,Calendar,cancel,delete_ms,3,0.544,0.758,0.192,0.194,2.833,3.907
+offscreen-utc,sync_changed,week,Calendar,cancel,delete_cpu_ms,3,0.495,0.688,0.191,0.193,2.592,3.565
+offscreen-utc,sync_changed,week,Calendar,save,open_to_first_paint_ms,3,1802.874,1864.704,53.847,54.353,33.481,34.307
+offscreen-utc,sync_changed,week,Calendar,save,open_to_form_ready_ms,3,1818.568,1880.181,69.449,70.035,26.186,26.846
+offscreen-utc,sync_changed,week,Calendar,save,close_to_return_ms,3,32.243,32.397,20.23,20.505,1.594,1.58
+offscreen-utc,sync_changed,week,Calendar,save,close_to_responsive_ms,3,101.743,107.663,44.866,45.026,2.268,2.391
+offscreen-utc,sync_changed,week,Calendar,save,heartbeat_gap_ms,3,1799.771,1861.181,52.278,52.736,34.427,35.292
+offscreen-utc,sync_changed,week,Calendar,save,sync_cycle_heartbeat_gap_ms,3,1828.386,1890.5,228.661,256.57,7.996,7.368
+offscreen-utc,sync_changed,week,Calendar,save,sync_cycle_elapsed_ms,3,2740.4,2822.49,2582.292,2686.3,1.061,1.051
+offscreen-utc,sync_changed,week,Calendar,save,sync_cycle_refresh_max_ms,3,295.89,374.16,200.67,246.866,1.475,1.516
+offscreen-utc,sync_changed,week,Calendar,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Calendar,save,open_cpu_ms,3,441.157,450.529,53.647,54.097,8.223,8.328
+offscreen-utc,sync_changed,week,Calendar,save,close_cpu_ms,3,27.825,28.239,20.166,20.452,1.38,1.381
+offscreen-utc,sync_changed,week,Calendar,save,delete_ms,3,0.474,0.477,0.202,0.203,2.347,2.35
+offscreen-utc,sync_changed,week,Calendar,save,delete_cpu_ms,3,0.442,0.446,0.2,0.201,2.21,2.219
+offscreen-utc,sync_changed,week,Calendar sources,cancel,open_to_first_paint_ms,3,1828.872,1872.835,80.465,81.914,22.729,22.863
+offscreen-utc,sync_changed,week,Calendar sources,cancel,open_to_form_ready_ms,3,1844.464,1888.13,96.273,97.246,19.159,19.416
+offscreen-utc,sync_changed,week,Calendar sources,cancel,close_to_return_ms,3,6.064,6.211,6.152,6.46,0.986,0.961
+offscreen-utc,sync_changed,week,Calendar sources,cancel,close_to_responsive_ms,3,73.79,75.912,34.037,37.156,2.168,2.043
+offscreen-utc,sync_changed,week,Calendar sources,cancel,heartbeat_gap_ms,3,1826.203,1869.964,78.994,80.305,23.118,23.286
+offscreen-utc,sync_changed,week,Calendar sources,cancel,sync_cycle_heartbeat_gap_ms,3,1853.535,1893.869,181.572,183.251,10.208,10.335
+offscreen-utc,sync_changed,week,Calendar sources,cancel,sync_cycle_elapsed_ms,3,2744.057,2793.906,2496.757,2499.113,1.099,1.118
+offscreen-utc,sync_changed,week,Calendar sources,cancel,sync_cycle_refresh_max_ms,3,251.109,253.816,146.662,147.102,1.712,1.725
+offscreen-utc,sync_changed,week,Calendar sources,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Calendar sources,cancel,open_cpu_ms,3,436.454,440.853,80.155,81.607,5.445,5.402
+offscreen-utc,sync_changed,week,Calendar sources,cancel,close_cpu_ms,3,6.029,6.189,6.135,6.435,0.983,0.962
+offscreen-utc,sync_changed,week,Calendar sources,cancel,delete_ms,3,0.43,0.459,0.22,0.233,1.955,1.97
+offscreen-utc,sync_changed,week,Calendar sources,cancel,delete_cpu_ms,3,0.4,0.403,0.218,0.229,1.835,1.76
+offscreen-utc,sync_changed,week,Calendar sources,save,open_to_first_paint_ms,3,1816.644,1858.669,82.138,86.7,22.117,21.438
+offscreen-utc,sync_changed,week,Calendar sources,save,open_to_form_ready_ms,3,1832.392,1874.118,97.844,102.536,18.728,18.278
+offscreen-utc,sync_changed,week,Calendar sources,save,close_to_return_ms,3,32.027,33.006,19.97,20.347,1.604,1.622
+offscreen-utc,sync_changed,week,Calendar sources,save,close_to_responsive_ms,3,99.822,101.327,80.622,146.331,1.238,0.692
+offscreen-utc,sync_changed,week,Calendar sources,save,heartbeat_gap_ms,3,1813.965,1855.909,105.748,153.483,17.154,12.092
+offscreen-utc,sync_changed,week,Calendar sources,save,sync_cycle_heartbeat_gap_ms,3,1843.807,1886.857,178.382,184.928,10.336,10.203
+offscreen-utc,sync_changed,week,Calendar sources,save,sync_cycle_elapsed_ms,3,2752.601,2822.872,2496.015,2518.944,1.103,1.121
+offscreen-utc,sync_changed,week,Calendar sources,save,sync_cycle_refresh_max_ms,3,277.954,302.882,150.315,165.044,1.849,1.835
+offscreen-utc,sync_changed,week,Calendar sources,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Calendar sources,save,open_cpu_ms,3,436.192,439.56,81.79,86.336,5.333,5.091
+offscreen-utc,sync_changed,week,Calendar sources,save,close_cpu_ms,3,27.571,27.798,19.914,20.273,1.385,1.371
+offscreen-utc,sync_changed,week,Calendar sources,save,delete_ms,3,0.498,0.592,0.224,0.23,2.223,2.574
+offscreen-utc,sync_changed,week,Calendar sources,save,delete_cpu_ms,3,0.461,0.523,0.222,0.228,2.077,2.294
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,1883.538,1917.403,193.918,205.596,9.713,9.326
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,1899.313,1932.756,209.304,220.976,9.074,8.746
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,close_to_return_ms,3,13.844,14.185,13.297,13.404,1.041,1.058
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,close_to_responsive_ms,3,85.339,87.848,48.083,48.172,1.775,1.824
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,1873.39,1905.411,187.586,199.274,9.987,9.562
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,sync_cycle_heartbeat_gap_ms,3,1901.188,1936.57,196.145,208.51,9.693,9.288
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,sync_cycle_elapsed_ms,3,2784.754,2819.51,2491.302,2501.983,1.118,1.127
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,sync_cycle_refresh_max_ms,3,269.148,284.046,147.525,149.261,1.824,1.903
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,open_cpu_ms,3,488.057,490.131,192.997,203.905,2.529,2.404
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,close_cpu_ms,3,13.734,14.128,13.27,13.377,1.035,1.056
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,delete_ms,3,0.501,0.512,0.329,0.385,1.523,1.33
+offscreen-utc,sync_changed,week,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.406,0.425,0.312,0.339,1.301,1.254
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,open_to_first_paint_ms,3,1853.776,1927.869,188.598,189.71,9.829,10.162
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,open_to_form_ready_ms,3,1869.236,1943.002,204.134,205.384,9.157,9.46
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,close_to_return_ms,3,39.182,39.804,27.766,27.948,1.411,1.424
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,close_to_responsive_ms,3,108.938,110.792,62.709,63.152,1.737,1.754
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,heartbeat_gap_ms,3,1845.111,1918.873,182.274,183.418,10.123,10.462
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,sync_cycle_heartbeat_gap_ms,3,1875.436,1949.835,191.594,191.845,9.789,10.164
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,sync_cycle_elapsed_ms,3,2785.746,2820.143,2502.343,2523.755,1.113,1.117
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,sync_cycle_refresh_max_ms,3,288.883,354.204,147.913,153.945,1.953,2.301
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,open_cpu_ms,3,483.851,489.144,188.016,189.117,2.573,2.586
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,close_cpu_ms,3,34.836,35.21,27.686,27.877,1.258,1.263
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,delete_ms,3,0.494,0.535,0.33,0.339,1.497,1.578
+offscreen-utc,sync_changed,week,Keyboard shortcuts,save,delete_cpu_ms,3,0.441,0.467,0.327,0.337,1.349,1.386
+offscreen-utc,sync_changed,year,Appearance,cancel,open_to_first_paint_ms,3,1855.616,1943.194,106.131,108.387,17.484,17.928
+offscreen-utc,sync_changed,year,Appearance,cancel,open_to_form_ready_ms,3,1911.911,2062.555,121.933,124.411,15.68,16.579
+offscreen-utc,sync_changed,year,Appearance,cancel,close_to_return_ms,3,7.643,7.717,7.543,7.592,1.013,1.016
+offscreen-utc,sync_changed,year,Appearance,cancel,close_to_responsive_ms,3,131.704,135.09,55.875,56.435,2.357,2.394
+offscreen-utc,sync_changed,year,Appearance,cancel,heartbeat_gap_ms,3,1827.363,1866.417,103.665,106.094,17.628,17.592
+offscreen-utc,sync_changed,year,Appearance,cancel,sync_cycle_heartbeat_gap_ms,3,1856.289,1894.499,345.487,431.759,5.373,4.388
+offscreen-utc,sync_changed,year,Appearance,cancel,sync_cycle_elapsed_ms,3,3183.813,3307.591,2745.405,2911.576,1.16,1.136
+offscreen-utc,sync_changed,year,Appearance,cancel,sync_cycle_refresh_max_ms,3,552.02,565.043,297.25,381.871,1.857,1.48
+offscreen-utc,sync_changed,year,Appearance,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Appearance,cancel,open_cpu_ms,3,472.992,527.671,105.754,107.985,4.473,4.887
+offscreen-utc,sync_changed,year,Appearance,cancel,close_cpu_ms,3,7.605,7.654,7.525,7.576,1.011,1.01
+offscreen-utc,sync_changed,year,Appearance,cancel,delete_ms,3,0.796,0.889,0.254,0.269,3.134,3.305
+offscreen-utc,sync_changed,year,Appearance,cancel,delete_cpu_ms,3,0.663,0.689,0.252,0.265,2.631,2.6
+offscreen-utc,sync_changed,year,Appearance,save,open_to_first_paint_ms,3,1841.5,1872.902,104.205,104.296,17.672,17.958
+offscreen-utc,sync_changed,year,Appearance,save,open_to_form_ready_ms,3,1866.553,1897.529,119.701,119.802,15.593,15.839
+offscreen-utc,sync_changed,year,Appearance,save,close_to_return_ms,3,34.093,34.922,21.044,21.067,1.62,1.658
+offscreen-utc,sync_changed,year,Appearance,save,close_to_responsive_ms,3,156.347,160.136,69.36,69.774,2.254,2.295
+offscreen-utc,sync_changed,year,Appearance,save,heartbeat_gap_ms,3,1837.585,1869.291,101.596,101.762,18.087,18.369
+offscreen-utc,sync_changed,year,Appearance,save,sync_cycle_heartbeat_gap_ms,3,1868.298,1900.939,304.86,311.691,6.128,6.099
+offscreen-utc,sync_changed,year,Appearance,save,sync_cycle_elapsed_ms,3,3093.005,3183.521,2750.577,2757.878,1.124,1.154
+offscreen-utc,sync_changed,year,Appearance,save,sync_cycle_refresh_max_ms,3,522.258,526.042,256.651,262.3,2.035,2.005
+offscreen-utc,sync_changed,year,Appearance,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Appearance,save,open_cpu_ms,3,451.238,455.538,103.897,103.926,4.343,4.383
+offscreen-utc,sync_changed,year,Appearance,save,close_cpu_ms,3,29.342,29.989,21.001,21.022,1.397,1.427
+offscreen-utc,sync_changed,year,Appearance,save,delete_ms,3,0.733,0.789,0.258,0.278,2.841,2.838
+offscreen-utc,sync_changed,year,Appearance,save,delete_cpu_ms,3,0.66,0.666,0.257,0.277,2.568,2.404
+offscreen-utc,sync_changed,year,Calendar,cancel,open_to_first_paint_ms,3,1374.087,1852.46,54.271,54.623,25.319,33.914
+offscreen-utc,sync_changed,year,Calendar,cancel,open_to_form_ready_ms,3,1390.004,1868.083,69.678,70.367,19.949,26.548
+offscreen-utc,sync_changed,year,Calendar,cancel,close_to_return_ms,3,6.451,6.642,6.367,6.378,1.013,1.041
+offscreen-utc,sync_changed,year,Calendar,cancel,close_to_responsive_ms,3,127.908,128.141,51.779,51.962,2.47,2.466
+offscreen-utc,sync_changed,year,Calendar,cancel,heartbeat_gap_ms,3,1371.256,1849.542,57.932,58.14,23.67,31.812
+offscreen-utc,sync_changed,year,Calendar,cancel,sync_cycle_heartbeat_gap_ms,3,1697.736,1871.057,319.308,336.946,5.317,5.553
+offscreen-utc,sync_changed,year,Calendar,cancel,sync_cycle_elapsed_ms,3,3041.292,3161.104,2748.31,2766.68,1.107,1.143
+offscreen-utc,sync_changed,year,Calendar,cancel,sync_cycle_refresh_max_ms,3,549.442,579.929,273.157,293.895,2.011,1.973
+offscreen-utc,sync_changed,year,Calendar,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Calendar,cancel,open_cpu_ms,3,436.623,443.4,54.097,54.484,8.071,8.138
+offscreen-utc,sync_changed,year,Calendar,cancel,close_cpu_ms,3,6.416,6.567,6.352,6.363,1.01,1.032
+offscreen-utc,sync_changed,year,Calendar,cancel,delete_ms,3,0.476,0.507,0.193,0.195,2.466,2.6
+offscreen-utc,sync_changed,year,Calendar,cancel,delete_cpu_ms,3,0.408,0.415,0.192,0.194,2.125,2.139
+offscreen-utc,sync_changed,year,Calendar,save,open_to_first_paint_ms,3,1799.634,1856.714,54.097,54.531,33.267,34.049
+offscreen-utc,sync_changed,year,Calendar,save,open_to_form_ready_ms,3,1815.469,1872.42,69.725,69.929,26.038,26.776
+offscreen-utc,sync_changed,year,Calendar,save,close_to_return_ms,3,31.215,32.593,20.127,20.165,1.551,1.616
+offscreen-utc,sync_changed,year,Calendar,save,close_to_responsive_ms,3,145.947,150.66,65.08,65.47,2.243,2.301
+offscreen-utc,sync_changed,year,Calendar,save,heartbeat_gap_ms,3,1796.856,1853.622,71.601,72.659,25.095,25.511
+offscreen-utc,sync_changed,year,Calendar,save,sync_cycle_heartbeat_gap_ms,3,1824.777,1878.176,312.475,325.298,5.84,5.774
+offscreen-utc,sync_changed,year,Calendar,save,sync_cycle_elapsed_ms,3,3088.42,3244.971,2734.59,2746.21,1.129,1.182
+offscreen-utc,sync_changed,year,Calendar,save,sync_cycle_refresh_max_ms,3,528.497,541.784,263.201,276.83,2.008,1.957
+offscreen-utc,sync_changed,year,Calendar,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Calendar,save,open_cpu_ms,3,437.317,440.313,53.916,54.385,8.111,8.096
+offscreen-utc,sync_changed,year,Calendar,save,close_cpu_ms,3,27.895,28.318,20.084,20.122,1.389,1.407
+offscreen-utc,sync_changed,year,Calendar,save,delete_ms,3,0.46,0.487,0.208,0.215,2.212,2.265
+offscreen-utc,sync_changed,year,Calendar,save,delete_cpu_ms,3,0.435,0.472,0.206,0.213,2.112,2.216
+offscreen-utc,sync_changed,year,Calendar sources,cancel,open_to_first_paint_ms,3,1811.935,1860.295,80.946,82.579,22.384,22.527
+offscreen-utc,sync_changed,year,Calendar sources,cancel,open_to_form_ready_ms,3,1827.628,1875.56,96.603,98.285,18.919,19.083
+offscreen-utc,sync_changed,year,Calendar sources,cancel,close_to_return_ms,3,6.18,6.223,6.724,8.179,0.919,0.761
+offscreen-utc,sync_changed,year,Calendar sources,cancel,close_to_responsive_ms,3,130.033,130.711,53.509,55.201,2.43,2.368
+offscreen-utc,sync_changed,year,Calendar sources,cancel,heartbeat_gap_ms,3,1809.319,1857.53,79.183,80.727,22.85,23.01
+offscreen-utc,sync_changed,year,Calendar sources,cancel,sync_cycle_heartbeat_gap_ms,3,1834.989,1881.453,305.343,310.104,6.01,6.067
+offscreen-utc,sync_changed,year,Calendar sources,cancel,sync_cycle_elapsed_ms,3,3025.036,3082.395,2746.119,2750.207,1.102,1.121
+offscreen-utc,sync_changed,year,Calendar sources,cancel,sync_cycle_refresh_max_ms,3,545.884,553.748,258.01,262.458,2.116,2.11
+offscreen-utc,sync_changed,year,Calendar sources,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Calendar sources,cancel,open_cpu_ms,3,441.923,446.155,80.63,82.261,5.481,5.424
+offscreen-utc,sync_changed,year,Calendar sources,cancel,close_cpu_ms,3,6.127,6.201,6.706,8.155,0.914,0.76
+offscreen-utc,sync_changed,year,Calendar sources,cancel,delete_ms,3,0.458,0.473,0.24,0.29,1.908,1.631
+offscreen-utc,sync_changed,year,Calendar sources,cancel,delete_cpu_ms,3,0.41,0.432,0.238,0.285,1.723,1.516
+offscreen-utc,sync_changed,year,Calendar sources,save,open_to_first_paint_ms,3,1819.576,1860.056,80.586,80.955,22.579,22.976
+offscreen-utc,sync_changed,year,Calendar sources,save,open_to_form_ready_ms,3,1835.398,1876.145,96.224,96.691,19.074,19.404
+offscreen-utc,sync_changed,year,Calendar sources,save,close_to_return_ms,3,31.92,32.588,19.766,20.018,1.615,1.628
+offscreen-utc,sync_changed,year,Calendar sources,save,close_to_responsive_ms,3,153.398,155.886,65.978,66.105,2.325,2.358
+offscreen-utc,sync_changed,year,Calendar sources,save,heartbeat_gap_ms,3,1816.991,1857.581,78.91,79.253,23.026,23.439
+offscreen-utc,sync_changed,year,Calendar sources,save,sync_cycle_heartbeat_gap_ms,3,1845.988,1886.614,312.272,346.169,5.911,5.45
+offscreen-utc,sync_changed,year,Calendar sources,save,sync_cycle_elapsed_ms,3,3012.088,3046.582,2758.665,2780.006,1.092,1.096
+offscreen-utc,sync_changed,year,Calendar sources,save,sync_cycle_refresh_max_ms,3,528.317,534.502,275.231,296.5,1.92,1.803
+offscreen-utc,sync_changed,year,Calendar sources,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Calendar sources,save,open_cpu_ms,3,441.419,443.011,80.281,80.624,5.498,5.495
+offscreen-utc,sync_changed,year,Calendar sources,save,close_cpu_ms,3,27.649,27.941,19.71,19.928,1.403,1.402
+offscreen-utc,sync_changed,year,Calendar sources,save,delete_ms,3,0.486,0.496,0.228,0.233,2.132,2.129
+offscreen-utc,sync_changed,year,Calendar sources,save,delete_cpu_ms,3,0.445,0.449,0.226,0.231,1.969,1.944
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,1865.991,1908.332,189.236,190.04,9.861,10.042
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,1881.429,1923.747,204.791,205.778,9.187,9.349
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,close_to_return_ms,3,13.339,13.44,13.392,13.648,0.996,0.985
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,close_to_responsive_ms,3,138.444,143.882,68.801,69.212,2.012,2.079
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,1856.81,1898.709,182.64,183.303,10.167,10.358
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,sync_cycle_heartbeat_gap_ms,3,1883.227,1922.516,310.243,317.064,6.07,6.063
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,sync_cycle_elapsed_ms,3,3012.918,3065.559,2737.745,2758.86,1.101,1.111
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,sync_cycle_refresh_max_ms,3,533.405,541.014,260.45,267.166,2.048,2.025
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,open_cpu_ms,3,486.655,490.807,188.573,189.448,2.581,2.591
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,close_cpu_ms,3,13.264,13.396,13.352,13.615,0.993,0.984
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,delete_ms,3,0.495,0.612,0.332,0.378,1.491,1.619
+offscreen-utc,sync_changed,year,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.385,0.422,0.317,0.333,1.215,1.267
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,open_to_first_paint_ms,3,1869.311,1909.895,193.938,199.133,9.639,9.591
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,open_to_form_ready_ms,3,1885.074,1925.775,209.362,214.614,9.004,8.973
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,close_to_return_ms,3,39.015,39.562,28.113,28.392,1.388,1.393
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,close_to_responsive_ms,3,161.674,163.34,84.142,85.382,1.921,1.913
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,heartbeat_gap_ms,3,1860.354,1901.195,187.425,192.744,9.926,9.864
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,sync_cycle_heartbeat_gap_ms,3,1886.815,1930.376,347.146,396.967,5.435,4.863
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,sync_cycle_elapsed_ms,3,3145.951,3344.748,2728.983,2770.769,1.153,1.207
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,sync_cycle_refresh_max_ms,3,543.309,582.423,299.531,352.699,1.814,1.651
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,sync_cycle_refresh_count,3,1,1,1,1,1.0,1.0
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,open_cpu_ms,3,481.581,484.663,193.323,198.464,2.491,2.442
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,close_cpu_ms,3,34.771,35.26,28.039,28.324,1.24,1.245
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,delete_ms,3,0.48,0.494,0.33,0.335,1.455,1.475
+offscreen-utc,sync_changed,year,Keyboard shortcuts,save,delete_cpu_ms,3,0.415,0.43,0.327,0.333,1.269,1.291
+offscreen-utc,sync_unchanged,week,Appearance,cancel,open_to_first_paint_ms,3,1862.03,1916.053,108.537,108.762,17.156,17.617
+offscreen-utc,sync_unchanged,week,Appearance,cancel,open_to_form_ready_ms,3,1888.528,1942.601,124.388,124.734,15.183,15.574
+offscreen-utc,sync_unchanged,week,Appearance,cancel,close_to_return_ms,3,8.014,8.083,7.74,7.818,1.035,1.034
+offscreen-utc,sync_unchanged,week,Appearance,cancel,close_to_responsive_ms,3,83.318,85.632,37.232,37.749,2.238,2.268
+offscreen-utc,sync_unchanged,week,Appearance,cancel,heartbeat_gap_ms,3,1858.328,1912.558,105.883,106.11,17.551,18.024
+offscreen-utc,sync_unchanged,week,Appearance,cancel,sync_cycle_heartbeat_gap_ms,3,1869.635,1912.711,112.121,112.338,16.675,17.026
+offscreen-utc,sync_unchanged,week,Appearance,cancel,sync_cycle_elapsed_ms,3,2425.627,2477.638,1988.856,2001.154,1.22,1.238
+offscreen-utc,sync_unchanged,week,Appearance,cancel,sync_cycle_refresh_max_ms,3,151.851,162.919,0,0,,
+offscreen-utc,sync_unchanged,week,Appearance,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Appearance,cancel,open_cpu_ms,3,477.396,482.666,108.173,108.424,4.413,4.452
+offscreen-utc,sync_unchanged,week,Appearance,cancel,close_cpu_ms,3,7.93,7.956,7.721,7.797,1.027,1.02
+offscreen-utc,sync_unchanged,week,Appearance,cancel,delete_ms,3,0.856,1.189,0.254,0.257,3.37,4.626
+offscreen-utc,sync_unchanged,week,Appearance,cancel,delete_cpu_ms,3,0.67,0.774,0.252,0.254,2.659,3.047
+offscreen-utc,sync_unchanged,week,Appearance,save,open_to_first_paint_ms,3,1883.248,1930.978,108.955,110.148,17.285,17.531
+offscreen-utc,sync_unchanged,week,Appearance,save,open_to_form_ready_ms,3,1909.655,1957.448,124.651,125.521,15.32,15.595
+offscreen-utc,sync_unchanged,week,Appearance,save,close_to_return_ms,3,35.067,35.492,21.989,22.103,1.595,1.606
+offscreen-utc,sync_unchanged,week,Appearance,save,close_to_responsive_ms,3,110.29,112.755,51.48,51.737,2.142,2.179
+offscreen-utc,sync_unchanged,week,Appearance,save,heartbeat_gap_ms,3,1868.403,1893.853,106.139,107.098,17.603,17.683
+offscreen-utc,sync_unchanged,week,Appearance,save,sync_cycle_heartbeat_gap_ms,3,1890.909,1937.539,111.371,112.327,16.978,17.249
+offscreen-utc,sync_unchanged,week,Appearance,save,sync_cycle_elapsed_ms,3,2419.849,2481.267,1999.728,2033.118,1.21,1.22
+offscreen-utc,sync_unchanged,week,Appearance,save,sync_cycle_refresh_max_ms,3,134.618,135.731,0,0,,
+offscreen-utc,sync_unchanged,week,Appearance,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Appearance,save,open_cpu_ms,3,480.229,493.889,108.635,109.798,4.421,4.498
+offscreen-utc,sync_unchanged,week,Appearance,save,close_cpu_ms,3,30.083,30.539,21.939,22.055,1.371,1.385
+offscreen-utc,sync_unchanged,week,Appearance,save,delete_ms,3,0.738,0.785,0.271,0.276,2.723,2.844
+offscreen-utc,sync_unchanged,week,Appearance,save,delete_cpu_ms,3,0.673,0.714,0.269,0.274,2.502,2.606
+offscreen-utc,sync_unchanged,week,Calendar,cancel,open_to_first_paint_ms,3,1843.629,1923.618,55.127,55.723,33.443,34.521
+offscreen-utc,sync_unchanged,week,Calendar,cancel,open_to_form_ready_ms,3,1859.241,1939.397,70.948,71.69,26.206,27.053
+offscreen-utc,sync_unchanged,week,Calendar,cancel,close_to_return_ms,3,6.742,7.041,6.766,6.9,0.996,1.02
+offscreen-utc,sync_unchanged,week,Calendar,cancel,close_to_responsive_ms,3,81.966,82.174,32.7,34.035,2.507,2.414
+offscreen-utc,sync_unchanged,week,Calendar,cancel,heartbeat_gap_ms,3,1840.668,1920.117,53.448,53.835,34.438,35.667
+offscreen-utc,sync_unchanged,week,Calendar,cancel,sync_cycle_heartbeat_gap_ms,3,1870.794,1942.439,57.353,59.065,32.619,32.886
+offscreen-utc,sync_unchanged,week,Calendar,cancel,sync_cycle_elapsed_ms,3,2433.613,2560.842,1965.711,2000.745,1.238,1.28
+offscreen-utc,sync_unchanged,week,Calendar,cancel,sync_cycle_refresh_max_ms,3,144.548,148.784,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar,cancel,open_cpu_ms,3,476.63,494.173,54.948,55.523,8.674,8.9
+offscreen-utc,sync_unchanged,week,Calendar,cancel,close_cpu_ms,3,6.634,6.9,6.727,6.813,0.986,1.013
+offscreen-utc,sync_unchanged,week,Calendar,cancel,delete_ms,3,0.607,0.925,0.201,0.204,3.02,4.534
+offscreen-utc,sync_unchanged,week,Calendar,cancel,delete_cpu_ms,3,0.453,0.521,0.199,0.201,2.276,2.592
+offscreen-utc,sync_unchanged,week,Calendar,save,open_to_first_paint_ms,3,1878.337,1909.2,55.146,55.544,34.061,34.373
+offscreen-utc,sync_unchanged,week,Calendar,save,open_to_form_ready_ms,3,1893.982,1924.842,70.897,71.314,26.715,26.991
+offscreen-utc,sync_unchanged,week,Calendar,save,close_to_return_ms,3,34.571,35.713,20.338,20.474,1.7,1.744
+offscreen-utc,sync_unchanged,week,Calendar,save,close_to_responsive_ms,3,109.92,111.186,45.378,45.547,2.422,2.441
+offscreen-utc,sync_unchanged,week,Calendar,save,heartbeat_gap_ms,3,1875.302,1906.128,53.586,53.982,34.996,35.31
+offscreen-utc,sync_unchanged,week,Calendar,save,sync_cycle_heartbeat_gap_ms,3,1894.167,1935.843,58.808,59.193,32.209,32.704
+offscreen-utc,sync_unchanged,week,Calendar,save,sync_cycle_elapsed_ms,3,2440.808,2481.352,2011.444,2033.118,1.213,1.22
+offscreen-utc,sync_unchanged,week,Calendar,save,sync_cycle_refresh_max_ms,3,156.423,163.94,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar,save,open_cpu_ms,3,476.351,477.959,54.966,55.354,8.666,8.635
+offscreen-utc,sync_unchanged,week,Calendar,save,close_cpu_ms,3,29.335,29.742,20.291,20.416,1.446,1.457
+offscreen-utc,sync_unchanged,week,Calendar,save,delete_ms,3,0.507,0.535,0.21,0.219,2.414,2.443
+offscreen-utc,sync_unchanged,week,Calendar,save,delete_cpu_ms,3,0.459,0.478,0.204,0.207,2.25,2.309
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,open_to_first_paint_ms,3,1863.939,1957.213,84.03,85.136,22.182,22.989
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,open_to_form_ready_ms,3,1888.632,1999.992,100.069,101.092,18.873,19.784
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,close_to_return_ms,3,6.225,6.306,6.128,6.195,1.016,1.018
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,close_to_responsive_ms,3,81.135,82.704,33.652,33.995,2.411,2.433
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,heartbeat_gap_ms,3,1837.049,1881.349,82.405,83.29,22.293,22.588
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,sync_cycle_heartbeat_gap_ms,3,1847.64,1881.5,87.956,88.513,21.006,21.257
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,sync_cycle_elapsed_ms,3,2478.0,2679.127,2000.003,2001.992,1.239,1.338
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,sync_cycle_refresh_max_ms,3,154.597,170.764,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,open_cpu_ms,3,486.763,535.513,83.733,84.862,5.813,6.31
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,close_cpu_ms,3,6.168,6.243,6.114,6.181,1.009,1.01
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,delete_ms,3,0.562,0.756,0.227,0.235,2.476,3.217
+offscreen-utc,sync_unchanged,week,Calendar sources,cancel,delete_cpu_ms,3,0.526,0.717,0.226,0.234,2.327,3.064
+offscreen-utc,sync_unchanged,week,Calendar sources,save,open_to_first_paint_ms,3,1847.007,1913.311,82.866,83.393,22.289,22.943
+offscreen-utc,sync_unchanged,week,Calendar sources,save,open_to_form_ready_ms,3,1862.952,1929.302,98.561,99.205,18.902,19.448
+offscreen-utc,sync_unchanged,week,Calendar sources,save,close_to_return_ms,3,32.895,34.036,20.312,20.696,1.619,1.645
+offscreen-utc,sync_unchanged,week,Calendar sources,save,close_to_responsive_ms,3,104.999,107.83,48.151,48.995,2.181,2.201
+offscreen-utc,sync_unchanged,week,Calendar sources,save,heartbeat_gap_ms,3,1844.174,1911.043,81.308,81.624,22.681,23.413
+offscreen-utc,sync_unchanged,week,Calendar sources,save,sync_cycle_heartbeat_gap_ms,3,1863.387,1911.199,87.199,87.85,21.369,21.755
+offscreen-utc,sync_unchanged,week,Calendar sources,save,sync_cycle_elapsed_ms,3,2416.704,2471.6,1999.721,2036.829,1.209,1.213
+offscreen-utc,sync_unchanged,week,Calendar sources,save,sync_cycle_refresh_max_ms,3,154.123,166.728,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar sources,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Calendar sources,save,open_cpu_ms,3,463.993,466.41,82.566,83.122,5.62,5.611
+offscreen-utc,sync_unchanged,week,Calendar sources,save,close_cpu_ms,3,28.144,28.764,20.24,20.606,1.391,1.396
+offscreen-utc,sync_unchanged,week,Calendar sources,save,delete_ms,3,0.501,0.556,0.232,0.234,2.159,2.376
+offscreen-utc,sync_unchanged,week,Calendar sources,save,delete_cpu_ms,3,0.449,0.466,0.23,0.232,1.952,2.009
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,1885.392,1949.883,192.461,192.927,9.796,10.107
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,1901.176,1965.311,207.803,208.267,9.149,9.436
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,close_to_return_ms,3,13.668,13.805,13.647,13.757,1.002,1.003
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,close_to_responsive_ms,3,84.856,85.933,49.907,50.432,1.7,1.704
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,1876.27,1940.933,185.712,186.183,10.103,10.425
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,sync_cycle_heartbeat_gap_ms,3,1885.99,1941.069,191.605,192.412,9.843,10.088
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,sync_cycle_elapsed_ms,3,2415.113,2497.552,2009.768,2028.483,1.202,1.231
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,sync_cycle_refresh_max_ms,3,153.38,168.146,0,0,,
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,open_cpu_ms,3,503.901,507.899,191.837,192.284,2.627,2.641
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,close_cpu_ms,3,13.514,13.709,13.621,13.729,0.992,0.999
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,delete_ms,3,0.474,0.492,0.332,0.344,1.428,1.43
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.402,0.415,0.326,0.331,1.233,1.254
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,open_to_first_paint_ms,3,1899.634,1938.733,193.167,194.669,9.834,9.959
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,open_to_form_ready_ms,3,1915.411,1954.105,208.688,210.803,9.178,9.27
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,close_to_return_ms,3,41.681,43.869,28.311,28.752,1.472,1.526
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,close_to_responsive_ms,3,115.205,116.876,70.559,76.113,1.633,1.536
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,heartbeat_gap_ms,3,1879.561,1929.536,186.435,187.926,10.082,10.268
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,sync_cycle_heartbeat_gap_ms,3,1916.357,1957.57,190.324,193.149,10.069,10.135
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,sync_cycle_elapsed_ms,3,2444.203,2498.727,2002.343,2037.647,1.221,1.226
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,sync_cycle_refresh_max_ms,3,143.484,161.039,0,0,,
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,open_cpu_ms,3,500.684,503.97,192.607,194.127,2.6,2.596
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,close_cpu_ms,3,36.922,39.68,28.227,28.674,1.308,1.384
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,delete_ms,3,0.552,0.616,0.374,0.395,1.476,1.559
+offscreen-utc,sync_unchanged,week,Keyboard shortcuts,save,delete_cpu_ms,3,0.474,0.539,0.37,0.39,1.281,1.382
+offscreen-utc,sync_unchanged,year,Appearance,cancel,open_to_first_paint_ms,3,1870.941,1919.87,107.866,109.117,17.345,17.595
+offscreen-utc,sync_unchanged,year,Appearance,cancel,open_to_form_ready_ms,3,1896.784,1945.414,123.467,124.598,15.363,15.614
+offscreen-utc,sync_unchanged,year,Appearance,cancel,close_to_return_ms,3,7.799,8.053,7.619,7.691,1.024,1.047
+offscreen-utc,sync_unchanged,year,Appearance,cancel,close_to_responsive_ms,3,136.514,140.232,58.138,58.88,2.348,2.382
+offscreen-utc,sync_unchanged,year,Appearance,cancel,heartbeat_gap_ms,3,1867.472,1916.185,105.24,106.478,17.745,17.996
+offscreen-utc,sync_unchanged,year,Appearance,cancel,sync_cycle_heartbeat_gap_ms,3,1897.519,1944.16,110.811,112.083,17.124,17.346
+offscreen-utc,sync_unchanged,year,Appearance,cancel,sync_cycle_elapsed_ms,3,2771.325,2993.129,1999.301,2031.184,1.386,1.474
+offscreen-utc,sync_unchanged,year,Appearance,cancel,sync_cycle_refresh_max_ms,3,413.185,441.937,0,0,,
+offscreen-utc,sync_unchanged,year,Appearance,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Appearance,cancel,open_cpu_ms,3,480.182,506.685,107.455,108.745,4.469,4.659
+offscreen-utc,sync_unchanged,year,Appearance,cancel,close_cpu_ms,3,7.719,7.928,7.586,7.657,1.018,1.035
+offscreen-utc,sync_unchanged,year,Appearance,cancel,delete_ms,3,0.848,0.911,0.243,0.253,3.49,3.601
+offscreen-utc,sync_unchanged,year,Appearance,cancel,delete_cpu_ms,3,0.661,0.694,0.242,0.252,2.731,2.754
+offscreen-utc,sync_unchanged,year,Appearance,save,open_to_first_paint_ms,3,1825.412,1902.337,104.693,104.828,17.436,18.147
+offscreen-utc,sync_unchanged,year,Appearance,save,open_to_form_ready_ms,3,1851.0,1928.407,120.292,120.46,15.388,16.009
+offscreen-utc,sync_unchanged,year,Appearance,save,close_to_return_ms,3,34.101,35.604,21.839,23.559,1.561,1.511
+offscreen-utc,sync_unchanged,year,Appearance,save,close_to_responsive_ms,3,157.508,163.675,70.333,72.203,2.239,2.267
+offscreen-utc,sync_unchanged,year,Appearance,save,heartbeat_gap_ms,3,1821.786,1898.783,102.137,102.257,17.837,18.569
+offscreen-utc,sync_unchanged,year,Appearance,save,sync_cycle_heartbeat_gap_ms,3,1842.253,1898.928,108.034,108.474,17.053,17.506
+offscreen-utc,sync_unchanged,year,Appearance,save,sync_cycle_elapsed_ms,3,2745.539,2883.377,2001.477,2003.782,1.372,1.439
+offscreen-utc,sync_unchanged,year,Appearance,save,sync_cycle_refresh_max_ms,3,420.955,444.397,0,0,,
+offscreen-utc,sync_unchanged,year,Appearance,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Appearance,save,open_cpu_ms,3,461.7,465.163,104.385,104.465,4.423,4.453
+offscreen-utc,sync_unchanged,year,Appearance,save,close_cpu_ms,3,30.501,30.724,21.795,23.512,1.399,1.307
+offscreen-utc,sync_unchanged,year,Appearance,save,delete_ms,3,0.832,0.96,0.25,0.259,3.328,3.707
+offscreen-utc,sync_unchanged,year,Appearance,save,delete_cpu_ms,3,0.695,0.786,0.247,0.255,2.814,3.082
+offscreen-utc,sync_unchanged,year,Calendar,cancel,open_to_first_paint_ms,3,1388.721,1857.309,54.723,54.907,25.377,33.826
+offscreen-utc,sync_unchanged,year,Calendar,cancel,open_to_form_ready_ms,3,1404.58,1873.424,70.558,70.778,19.907,26.469
+offscreen-utc,sync_unchanged,year,Calendar,cancel,close_to_return_ms,3,6.444,6.535,6.441,6.582,1.0,0.993
+offscreen-utc,sync_unchanged,year,Calendar,cancel,close_to_responsive_ms,3,135.739,136.756,52.418,52.891,2.59,2.586
+offscreen-utc,sync_unchanged,year,Calendar,cancel,heartbeat_gap_ms,3,1386.02,1854.771,59.275,60.095,23.383,30.864
+offscreen-utc,sync_unchanged,year,Calendar,cancel,sync_cycle_heartbeat_gap_ms,3,1778.084,1878.471,63.337,71.376,28.073,26.318
+offscreen-utc,sync_unchanged,year,Calendar,cancel,sync_cycle_elapsed_ms,3,2734.123,2961.288,1934.231,2000.75,1.414,1.48
+offscreen-utc,sync_unchanged,year,Calendar,cancel,sync_cycle_refresh_max_ms,3,403.389,406.743,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar,cancel,open_cpu_ms,3,464.011,488.739,54.552,54.74,8.506,8.928
+offscreen-utc,sync_unchanged,year,Calendar,cancel,close_cpu_ms,3,6.423,6.501,6.426,6.566,1.0,0.99
+offscreen-utc,sync_unchanged,year,Calendar,cancel,delete_ms,3,0.467,0.484,0.187,0.193,2.497,2.508
+offscreen-utc,sync_unchanged,year,Calendar,cancel,delete_cpu_ms,3,0.414,0.422,0.187,0.192,2.214,2.198
+offscreen-utc,sync_unchanged,year,Calendar,save,open_to_first_paint_ms,3,1856.868,1901.115,54.778,55.093,33.898,34.507
+offscreen-utc,sync_unchanged,year,Calendar,save,open_to_form_ready_ms,3,1872.585,1916.702,70.679,71.159,26.494,26.935
+offscreen-utc,sync_unchanged,year,Calendar,save,close_to_return_ms,3,43.927,64.608,20.209,20.456,2.174,3.158
+offscreen-utc,sync_unchanged,year,Calendar,save,close_to_responsive_ms,3,200.799,274.704,66.362,66.596,3.026,4.125
+offscreen-utc,sync_unchanged,year,Calendar,save,heartbeat_gap_ms,3,1853.079,1895.23,73.256,73.507,25.296,25.783
+offscreen-utc,sync_unchanged,year,Calendar,save,sync_cycle_heartbeat_gap_ms,3,1884.107,1926.233,73.256,73.507,25.719,26.205
+offscreen-utc,sync_unchanged,year,Calendar,save,sync_cycle_elapsed_ms,3,2817.927,2959.621,2000.048,2002.315,1.409,1.478
+offscreen-utc,sync_unchanged,year,Calendar,save,sync_cycle_refresh_max_ms,3,416.177,437.677,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar,save,open_cpu_ms,3,460.043,479.608,54.587,54.806,8.428,8.751
+offscreen-utc,sync_unchanged,year,Calendar,save,close_cpu_ms,3,38.848,59.591,20.166,20.413,1.926,2.919
+offscreen-utc,sync_unchanged,year,Calendar,save,delete_ms,3,0.572,0.7,0.206,0.218,2.777,3.211
+offscreen-utc,sync_unchanged,year,Calendar,save,delete_cpu_ms,3,0.532,0.684,0.203,0.213,2.621,3.211
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,open_to_first_paint_ms,3,1822.987,1861.083,81.865,84.825,22.268,21.94
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,open_to_form_ready_ms,3,1866.911,1942.167,97.444,100.317,19.159,19.36
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,close_to_return_ms,3,6.095,6.327,5.906,5.972,1.032,1.059
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,close_to_responsive_ms,3,133.718,135.741,52.826,53.958,2.531,2.516
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,heartbeat_gap_ms,3,1795.854,1859.153,80.174,83.136,22.399,22.363
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,sync_cycle_heartbeat_gap_ms,3,1824.699,1887.892,84.077,84.368,21.703,22.377
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,sync_cycle_elapsed_ms,3,2727.618,2932.896,1998.565,2002.651,1.365,1.465
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,sync_cycle_refresh_max_ms,3,448.561,528.922,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,open_cpu_ms,3,469.295,522.55,81.61,84.579,5.75,6.178
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,close_cpu_ms,3,6.027,6.233,5.893,5.958,1.023,1.046
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,delete_ms,3,0.561,0.774,0.217,0.218,2.585,3.55
+offscreen-utc,sync_unchanged,year,Calendar sources,cancel,delete_cpu_ms,3,0.518,0.722,0.215,0.217,2.409,3.327
+offscreen-utc,sync_unchanged,year,Calendar sources,save,open_to_first_paint_ms,3,1837.509,1880.38,81.107,81.614,22.655,23.04
+offscreen-utc,sync_unchanged,year,Calendar sources,save,open_to_form_ready_ms,3,1853.126,1896.175,96.818,97.321,19.14,19.484
+offscreen-utc,sync_unchanged,year,Calendar sources,save,close_to_return_ms,3,32.085,33.42,19.759,19.943,1.624,1.676
+offscreen-utc,sync_unchanged,year,Calendar sources,save,close_to_responsive_ms,3,155.363,156.327,67.534,69.82,2.301,2.239
+offscreen-utc,sync_unchanged,year,Calendar sources,save,heartbeat_gap_ms,3,1834.864,1877.467,79.365,79.84,23.119,23.515
+offscreen-utc,sync_unchanged,year,Calendar sources,save,sync_cycle_heartbeat_gap_ms,3,1862.591,1907.86,83.264,85.087,22.37,22.422
+offscreen-utc,sync_unchanged,year,Calendar sources,save,sync_cycle_elapsed_ms,3,2819.394,2947.479,2000.183,2000.356,1.41,1.473
+offscreen-utc,sync_unchanged,year,Calendar sources,save,sync_cycle_refresh_max_ms,3,424.442,438.971,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar sources,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Calendar sources,save,open_cpu_ms,3,438.774,444.759,80.803,81.33,5.43,5.469
+offscreen-utc,sync_unchanged,year,Calendar sources,save,close_cpu_ms,3,27.909,28.788,19.703,19.901,1.416,1.447
+offscreen-utc,sync_unchanged,year,Calendar sources,save,delete_ms,3,0.474,0.557,0.263,0.297,1.802,1.875
+offscreen-utc,sync_unchanged,year,Calendar sources,save,delete_cpu_ms,3,0.446,0.48,0.244,0.263,1.828,1.825
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,open_to_first_paint_ms,3,1886.548,1926.874,191.901,194.751,9.831,9.894
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,open_to_form_ready_ms,3,1902.234,1942.19,207.935,210.777,9.148,9.214
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,close_to_return_ms,3,13.171,13.217,13.763,14.344,0.957,0.921
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,close_to_responsive_ms,3,137.376,138.087,70.14,71.325,1.959,1.936
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,heartbeat_gap_ms,3,1878.232,1918.539,185.233,188.09,10.14,10.2
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,sync_cycle_heartbeat_gap_ms,3,1906.598,1947.734,188.754,189.072,10.101,10.302
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,sync_cycle_elapsed_ms,3,2701.208,2743.963,1999.337,2000.896,1.351,1.371
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,sync_cycle_refresh_max_ms,3,405.278,408.368,0,0,,
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,open_cpu_ms,3,481.141,484.562,191.362,194.218,2.514,2.495
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,close_cpu_ms,3,13.111,13.16,13.725,14.301,0.955,0.92
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,delete_ms,3,0.404,0.462,0.307,0.336,1.316,1.375
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,cancel,delete_cpu_ms,3,0.359,0.374,0.302,0.324,1.189,1.154
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,open_to_first_paint_ms,3,1861.124,1950.512,192.822,197.561,9.652,9.873
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,open_to_form_ready_ms,3,1876.695,1966.503,208.857,213.714,8.986,9.202
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,close_to_return_ms,3,40.803,45.237,29.855,33.559,1.367,1.348
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,close_to_responsive_ms,3,167.008,175.456,84.79,89.495,1.97,1.961
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,heartbeat_gap_ms,3,1852.275,1941.034,186.109,190.837,9.953,10.171
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,sync_cycle_heartbeat_gap_ms,3,1878.537,1967.726,191.328,196.042,9.818,10.037
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,sync_cycle_elapsed_ms,3,2846.146,3014.532,2000.438,2001.416,1.423,1.506
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,sync_cycle_refresh_max_ms,3,428.786,438.601,0,0,,
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,sync_cycle_refresh_count,3,1,1,0,0,,
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,open_cpu_ms,3,487.71,496.892,192.284,196.978,2.536,2.523
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,close_cpu_ms,3,35.312,36.654,29.778,33.471,1.186,1.095
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,delete_ms,3,0.499,0.584,0.387,0.408,1.289,1.431
+offscreen-utc,sync_unchanged,year,Keyboard shortcuts,save,delete_cpu_ms,3,0.414,0.428,0.384,0.407,1.078,1.052
+x11-berlin,all,,,,open_to_first_paint_ms,24,1170.771,1945.081,97.317,135.088,12.03,14.399
+x11-berlin,all,,,,open_to_form_ready_ms,24,1211.268,2001.957,118.962,158.736,10.182,12.612
+x11-berlin,all,,,,close_to_return_ms,24,23.143,44.87,18.336,26.77,1.262,1.676
+x11-berlin,all,,,,close_to_responsive_ms,24,140.295,194.816,64.42,85.643,2.178,2.275
+x11-berlin,all,,,,heartbeat_gap_ms,26,1121.328,1941.411,104.505,253.511,10.73,7.658
+x11-berlin,all,,,,sync_cycle_heartbeat_gap_ms,16,1793.322,1965.547,176.09,341.735,10.184,5.752
+x11-berlin,all,,,,sync_cycle_elapsed_ms,16,2995.154,3629.273,2283.548,2755.197,1.312,1.317
+x11-berlin,all,,,,sync_cycle_refresh_max_ms,16,491.715,857.294,109.79,296.171,4.479,2.895
+x11-berlin,all,,,,sync_cycle_refresh_count,16,1,1,0.5,1,2.0,1.0
+x11-berlin,all,,,,refresh_dispatch_ms,2,548.163,831.039,137.272,208.367,3.993,3.988
+x11-berlin,all,,,,refresh_to_responsive_ms,2,587.422,876.539,178.084,253.51,3.299,3.458
+x11-berlin,all,,,,open_cpu_ms,24,475.448,588.744,95.86,133.75,4.96,4.402
+x11-berlin,all,,,,close_cpu_ms,24,20.609,35.041,17.839,26.229,1.155,1.336
+x11-berlin,all,,,,refresh_cpu_ms,2,546.926,829.2,136.665,207.377,4.002,3.999
+x11-berlin,all,,,,delete_ms,24,0.696,1.015,0.382,0.493,1.822,2.059
+x11-berlin,all,,,,delete_cpu_ms,24,0.637,0.777,0.379,0.492,1.681,1.579
+x11-berlin,idle,week,Appearance,cancel,open_to_first_paint_ms,1,437.773,437.773,128.332,128.332,3.411,3.411
+x11-berlin,idle,week,Appearance,cancel,open_to_form_ready_ms,1,486.974,486.974,156.309,156.309,3.115,3.115
+x11-berlin,idle,week,Appearance,cancel,close_to_return_ms,1,11.25,11.25,11.288,11.288,0.997,0.997
+x11-berlin,idle,week,Appearance,cancel,close_to_responsive_ms,1,87.888,87.888,47.598,47.598,1.846,1.846
+x11-berlin,idle,week,Appearance,cancel,heartbeat_gap_ms,1,434.495,434.495,125.906,125.906,3.451,3.451
+x11-berlin,idle,week,Appearance,cancel,open_cpu_ms,1,434.988,434.988,126.885,126.885,3.428,3.428
+x11-berlin,idle,week,Appearance,cancel,close_cpu_ms,1,10.846,10.846,10.741,10.741,1.01,1.01
+x11-berlin,idle,week,Appearance,cancel,delete_ms,1,0.659,0.659,0.423,0.423,1.558,1.558
+x11-berlin,idle,week,Appearance,cancel,delete_cpu_ms,1,0.655,0.655,0.422,0.422,1.552,1.552
+x11-berlin,idle,week,Appearance,save,open_to_first_paint_ms,1,448.463,448.463,126.365,126.365,3.549,3.549
+x11-berlin,idle,week,Appearance,save,open_to_form_ready_ms,1,495.335,495.335,148.648,148.648,3.332,3.332
+x11-berlin,idle,week,Appearance,save,close_to_return_ms,1,25.906,25.906,25.238,25.238,1.026,1.026
+x11-berlin,idle,week,Appearance,save,close_to_responsive_ms,1,103.117,103.117,61.706,61.706,1.671,1.671
+x11-berlin,idle,week,Appearance,save,heartbeat_gap_ms,1,445.351,445.351,123.651,123.651,3.602,3.602
+x11-berlin,idle,week,Appearance,save,open_cpu_ms,1,445.727,445.727,124.788,124.788,3.572,3.572
+x11-berlin,idle,week,Appearance,save,close_cpu_ms,1,25.419,25.419,24.62,24.62,1.032,1.032
+x11-berlin,idle,week,Appearance,save,delete_ms,1,0.588,0.588,0.435,0.435,1.352,1.352
+x11-berlin,idle,week,Appearance,save,delete_cpu_ms,1,0.585,0.585,0.43,0.43,1.36,1.36
+x11-berlin,idle,week,Calendar,cancel,open_to_first_paint_ms,1,438.519,438.519,85.414,85.414,5.134,5.134
+x11-berlin,idle,week,Calendar,cancel,open_to_form_ready_ms,1,460.59,460.59,105.572,105.572,4.363,4.363
+x11-berlin,idle,week,Calendar,cancel,close_to_return_ms,1,10.089,10.089,9.918,9.918,1.017,1.017
+x11-berlin,idle,week,Calendar,cancel,close_to_responsive_ms,1,84.681,84.681,43.618,43.618,1.941,1.941
+x11-berlin,idle,week,Calendar,cancel,heartbeat_gap_ms,1,435.572,435.572,83.116,83.116,5.241,5.241
+x11-berlin,idle,week,Calendar,cancel,open_cpu_ms,1,435.979,435.979,82.749,82.749,5.269,5.269
+x11-berlin,idle,week,Calendar,cancel,close_cpu_ms,1,9.442,9.442,9.447,9.447,0.999,0.999
+x11-berlin,idle,week,Calendar,cancel,delete_ms,1,0.553,0.553,0.355,0.355,1.558,1.558
+x11-berlin,idle,week,Calendar,cancel,delete_cpu_ms,1,0.552,0.552,0.353,0.353,1.564,1.564
+x11-berlin,idle,week,Calendar,save,open_to_first_paint_ms,1,431.914,431.914,76.582,76.582,5.64,5.64
+x11-berlin,idle,week,Calendar,save,open_to_form_ready_ms,1,457.104,457.104,95.464,95.464,4.788,4.788
+x11-berlin,idle,week,Calendar,save,close_to_return_ms,1,24.512,24.512,24.102,24.102,1.017,1.017
+x11-berlin,idle,week,Calendar,save,close_to_responsive_ms,1,100.458,100.458,57.332,57.332,1.752,1.752
+x11-berlin,idle,week,Calendar,save,heartbeat_gap_ms,1,428.725,428.725,74.298,74.298,5.77,5.77
+x11-berlin,idle,week,Calendar,save,open_cpu_ms,1,429.087,429.087,75.428,75.428,5.689,5.689
+x11-berlin,idle,week,Calendar,save,close_cpu_ms,1,23.942,23.942,23.571,23.571,1.016,1.016
+x11-berlin,idle,week,Calendar,save,delete_ms,1,0.565,0.565,0.335,0.335,1.687,1.687
+x11-berlin,idle,week,Calendar,save,delete_cpu_ms,1,0.561,0.561,0.333,0.333,1.685,1.685
+x11-berlin,idle,year,Appearance,cancel,open_to_first_paint_ms,1,427.735,427.735,105.68,105.68,4.047,4.047
+x11-berlin,idle,year,Appearance,cancel,open_to_form_ready_ms,1,471.95,471.95,127.678,127.678,3.696,3.696
+x11-berlin,idle,year,Appearance,cancel,close_to_return_ms,1,11.674,11.674,11.051,11.051,1.056,1.056
+x11-berlin,idle,year,Appearance,cancel,close_to_responsive_ms,1,118.34,118.34,67.5,67.5,1.753,1.753
+x11-berlin,idle,year,Appearance,cancel,heartbeat_gap_ms,1,424.334,424.334,103.318,103.318,4.107,4.107
+x11-berlin,idle,year,Appearance,cancel,open_cpu_ms,1,425.136,425.136,104.437,104.437,4.071,4.071
+x11-berlin,idle,year,Appearance,cancel,close_cpu_ms,1,11.191,11.191,10.501,10.501,1.066,1.066
+x11-berlin,idle,year,Appearance,cancel,delete_ms,1,0.657,0.657,0.469,0.469,1.401,1.401
+x11-berlin,idle,year,Appearance,cancel,delete_cpu_ms,1,0.656,0.656,0.464,0.464,1.414,1.414
+x11-berlin,idle,year,Appearance,save,open_to_first_paint_ms,1,425.636,425.636,106.545,106.545,3.995,3.995
+x11-berlin,idle,year,Appearance,save,open_to_form_ready_ms,1,466.375,466.375,128.602,128.602,3.626,3.626
+x11-berlin,idle,year,Appearance,save,close_to_return_ms,1,26.055,26.055,24.737,24.737,1.053,1.053
+x11-berlin,idle,year,Appearance,save,close_to_responsive_ms,1,128.397,128.397,80.986,80.986,1.585,1.585
+x11-berlin,idle,year,Appearance,save,heartbeat_gap_ms,1,422.723,422.723,104.142,104.142,4.059,4.059
+x11-berlin,idle,year,Appearance,save,open_cpu_ms,1,423.213,423.213,105.213,105.213,4.022,4.022
+x11-berlin,idle,year,Appearance,save,close_cpu_ms,1,25.514,25.514,24.158,24.158,1.056,1.056
+x11-berlin,idle,year,Appearance,save,delete_ms,1,0.589,0.589,0.449,0.449,1.312,1.312
+x11-berlin,idle,year,Appearance,save,delete_cpu_ms,1,0.585,0.585,0.444,0.444,1.318,1.318
+x11-berlin,idle,year,Calendar,cancel,open_to_first_paint_ms,1,511.366,511.366,100.262,100.262,5.1,5.1
+x11-berlin,idle,year,Calendar,cancel,open_to_form_ready_ms,1,532.44,532.44,118.541,118.541,4.492,4.492
+x11-berlin,idle,year,Calendar,cancel,close_to_return_ms,1,10.453,10.453,10.404,10.404,1.005,1.005
+x11-berlin,idle,year,Calendar,cancel,close_to_responsive_ms,1,112.864,112.864,63.67,63.67,1.773,1.773
+x11-berlin,idle,year,Calendar,cancel,heartbeat_gap_ms,1,508.359,508.359,97.524,97.524,5.213,5.213
+x11-berlin,idle,year,Calendar,cancel,open_cpu_ms,1,508.724,508.724,98.627,98.627,5.158,5.158
+x11-berlin,idle,year,Calendar,cancel,close_cpu_ms,1,10.001,10.001,9.733,9.733,1.028,1.028
+x11-berlin,idle,year,Calendar,cancel,delete_ms,1,0.554,0.554,0.322,0.322,1.72,1.72
+x11-berlin,idle,year,Calendar,cancel,delete_cpu_ms,1,0.553,0.553,0.321,0.321,1.723,1.723
+x11-berlin,idle,year,Calendar,save,open_to_first_paint_ms,1,419.511,419.511,56.174,56.174,7.468,7.468
+x11-berlin,idle,year,Calendar,save,open_to_form_ready_ms,1,440.732,440.732,74.411,74.411,5.923,5.923
+x11-berlin,idle,year,Calendar,save,close_to_return_ms,1,24.545,24.545,23.435,23.435,1.047,1.047
+x11-berlin,idle,year,Calendar,save,close_to_responsive_ms,1,125.907,125.907,76.63,76.63,1.643,1.643
+x11-berlin,idle,year,Calendar,save,heartbeat_gap_ms,1,416.429,416.429,76.652,76.652,5.433,5.433
+x11-berlin,idle,year,Calendar,save,open_cpu_ms,1,416.9,416.9,54.784,54.784,7.61,7.61
+x11-berlin,idle,year,Calendar,save,close_cpu_ms,1,23.983,23.983,22.861,22.861,1.049,1.049
+x11-berlin,idle,year,Calendar,save,delete_ms,1,0.551,0.551,0.326,0.326,1.69,1.69
+x11-berlin,idle,year,Calendar,save,delete_cpu_ms,1,0.55,0.55,0.324,0.324,1.698,1.698
+x11-berlin,large_history,week,Calendar,refresh,heartbeat_gap_ms,1,298.306,298.306,102.661,102.661,2.906,2.906
+x11-berlin,large_history,week,Calendar,refresh,refresh_dispatch_ms,1,265.288,265.288,66.176,66.176,4.009,4.009
+x11-berlin,large_history,week,Calendar,refresh,refresh_to_responsive_ms,1,298.305,298.305,102.659,102.659,2.906,2.906
+x11-berlin,large_history,week,Calendar,refresh,refresh_cpu_ms,1,264.652,264.652,65.953,65.953,4.013,4.013
+x11-berlin,large_history,year,Calendar,refresh,heartbeat_gap_ms,1,876.54,876.54,253.511,253.511,3.458,3.458
+x11-berlin,large_history,year,Calendar,refresh,refresh_dispatch_ms,1,831.039,831.039,208.367,208.367,3.988,3.988
+x11-berlin,large_history,year,Calendar,refresh,refresh_to_responsive_ms,1,876.539,876.539,253.51,253.51,3.458,3.458
+x11-berlin,large_history,year,Calendar,refresh,refresh_cpu_ms,1,829.2,829.2,207.377,207.377,3.999,3.999
+x11-berlin,sync_changed,week,Appearance,cancel,open_to_first_paint_ms,1,1864.53,1864.53,135.088,135.088,13.802,13.802
+x11-berlin,sync_changed,week,Appearance,cancel,open_to_form_ready_ms,1,1921.466,1921.466,158.736,158.736,12.105,12.105
+x11-berlin,sync_changed,week,Appearance,cancel,close_to_return_ms,1,12.498,12.498,13.214,13.214,0.946,0.946
+x11-berlin,sync_changed,week,Appearance,cancel,close_to_responsive_ms,1,122.189,122.189,51.149,51.149,2.389,2.389
+x11-berlin,sync_changed,week,Appearance,cancel,heartbeat_gap_ms,1,1824.208,1824.208,132.324,132.324,13.786,13.786
+x11-berlin,sync_changed,week,Appearance,cancel,sync_cycle_heartbeat_gap_ms,1,1860.936,1860.936,157.736,157.736,11.798,11.798
+x11-berlin,sync_changed,week,Appearance,cancel,sync_cycle_elapsed_ms,1,2751.847,2751.847,2474.931,2474.931,1.112,1.112
+x11-berlin,sync_changed,week,Appearance,cancel,sync_cycle_refresh_max_ms,1,269.893,269.893,146.908,146.908,1.837,1.837
+x11-berlin,sync_changed,week,Appearance,cancel,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,week,Appearance,cancel,open_cpu_ms,1,503.902,503.902,133.75,133.75,3.767,3.767
+x11-berlin,sync_changed,week,Appearance,cancel,close_cpu_ms,1,11.737,11.737,12.796,12.796,0.917,0.917
+x11-berlin,sync_changed,week,Appearance,cancel,delete_ms,1,1.015,1.015,0.437,0.437,2.323,2.323
+x11-berlin,sync_changed,week,Appearance,cancel,delete_cpu_ms,1,0.771,0.771,0.435,0.435,1.772,1.772
+x11-berlin,sync_changed,week,Appearance,save,open_to_first_paint_ms,1,1945.081,1945.081,133.556,133.556,14.564,14.564
+x11-berlin,sync_changed,week,Appearance,save,open_to_form_ready_ms,1,2001.957,2001.957,157.668,157.668,12.697,12.697
+x11-berlin,sync_changed,week,Appearance,save,close_to_return_ms,1,37.618,37.618,26.77,26.77,1.405,1.405
+x11-berlin,sync_changed,week,Appearance,save,close_to_responsive_ms,1,152.854,152.854,64.8,64.8,2.359,2.359
+x11-berlin,sync_changed,week,Appearance,save,heartbeat_gap_ms,1,1941.411,1941.411,130.683,130.683,14.856,14.856
+x11-berlin,sync_changed,week,Appearance,save,sync_cycle_heartbeat_gap_ms,1,1965.547,1965.547,165.538,165.538,11.874,11.874
+x11-berlin,sync_changed,week,Appearance,save,sync_cycle_elapsed_ms,1,3098.867,3098.867,2507.077,2507.077,1.236,1.236
+x11-berlin,sync_changed,week,Appearance,save,sync_cycle_refresh_max_ms,1,295.443,295.443,155.585,155.585,1.899,1.899
+x11-berlin,sync_changed,week,Appearance,save,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,week,Appearance,save,open_cpu_ms,1,505.573,505.573,132.339,132.339,3.82,3.82
+x11-berlin,sync_changed,week,Appearance,save,close_cpu_ms,1,32.691,32.691,26.229,26.229,1.246,1.246
+x11-berlin,sync_changed,week,Appearance,save,delete_ms,1,0.975,0.975,0.455,0.455,2.143,2.143
+x11-berlin,sync_changed,week,Appearance,save,delete_cpu_ms,1,0.773,0.773,0.45,0.45,1.718,1.718
+x11-berlin,sync_changed,week,Calendar,cancel,open_to_first_paint_ms,1,534.375,534.375,83.546,83.546,6.396,6.396
+x11-berlin,sync_changed,week,Calendar,cancel,open_to_form_ready_ms,1,568.44,568.44,103.585,103.585,5.488,5.488
+x11-berlin,sync_changed,week,Calendar,cancel,close_to_return_ms,1,11.147,11.147,10.21,10.21,1.092,1.092
+x11-berlin,sync_changed,week,Calendar,cancel,close_to_responsive_ms,1,122.296,122.296,44.913,44.913,2.723,2.723
+x11-berlin,sync_changed,week,Calendar,cancel,heartbeat_gap_ms,1,531.212,531.212,80.894,80.894,6.567,6.567
+x11-berlin,sync_changed,week,Calendar,cancel,sync_cycle_heartbeat_gap_ms,1,1483.585,1483.585,181.737,181.737,8.163,8.163
+x11-berlin,sync_changed,week,Calendar,cancel,sync_cycle_elapsed_ms,1,2907.038,2907.038,2561.104,2561.104,1.135,1.135
+x11-berlin,sync_changed,week,Calendar,cancel,sync_cycle_refresh_max_ms,1,277.644,277.644,145.663,145.663,1.906,1.906
+x11-berlin,sync_changed,week,Calendar,cancel,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,week,Calendar,cancel,open_cpu_ms,1,491.547,491.547,81.925,81.925,6.0,6.0
+x11-berlin,sync_changed,week,Calendar,cancel,close_cpu_ms,1,10.351,10.351,9.672,9.672,1.07,1.07
+x11-berlin,sync_changed,week,Calendar,cancel,delete_ms,1,0.607,0.607,0.277,0.277,2.191,2.191
+x11-berlin,sync_changed,week,Calendar,cancel,delete_cpu_ms,1,0.575,0.575,0.27,0.27,2.13,2.13
+x11-berlin,sync_changed,week,Calendar,save,open_to_first_paint_ms,1,1812.775,1812.775,85.891,85.891,21.106,21.106
+x11-berlin,sync_changed,week,Calendar,save,open_to_form_ready_ms,1,1843.767,1843.767,106.029,106.029,17.389,17.389
+x11-berlin,sync_changed,week,Calendar,save,close_to_return_ms,1,44.87,44.87,25.793,25.793,1.74,1.74
+x11-berlin,sync_changed,week,Calendar,save,close_to_responsive_ms,1,157.278,157.278,60.098,60.098,2.617,2.617
+x11-berlin,sync_changed,week,Calendar,save,heartbeat_gap_ms,1,1809.133,1809.133,83.277,83.277,21.724,21.724
+x11-berlin,sync_changed,week,Calendar,save,sync_cycle_heartbeat_gap_ms,1,1834.962,1834.962,184.29,184.29,9.957,9.957
+x11-berlin,sync_changed,week,Calendar,save,sync_cycle_elapsed_ms,1,2983.032,2983.032,2519.553,2519.553,1.184,1.184
+x11-berlin,sync_changed,week,Calendar,save,sync_cycle_refresh_max_ms,1,256.432,256.432,148.025,148.025,1.732,1.732
+x11-berlin,sync_changed,week,Calendar,save,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,week,Calendar,save,open_cpu_ms,1,504.803,504.803,84.536,84.536,5.971,5.971
+x11-berlin,sync_changed,week,Calendar,save,close_cpu_ms,1,32.234,32.234,25.229,25.229,1.278,1.278
+x11-berlin,sync_changed,week,Calendar,save,delete_ms,1,0.642,0.642,0.31,0.31,2.071,2.071
+x11-berlin,sync_changed,week,Calendar,save,delete_cpu_ms,1,0.615,0.615,0.304,0.304,2.023,2.023
+x11-berlin,sync_changed,year,Appearance,cancel,open_to_first_paint_ms,1,1898.692,1898.692,115.866,115.866,16.387,16.387
+x11-berlin,sync_changed,year,Appearance,cancel,open_to_form_ready_ms,1,1951.316,1951.316,139.829,139.829,13.955,13.955
+x11-berlin,sync_changed,year,Appearance,cancel,close_to_return_ms,1,13.157,13.157,13.492,13.492,0.975,0.975
+x11-berlin,sync_changed,year,Appearance,cancel,close_to_responsive_ms,1,158.688,158.688,71.137,71.137,2.231,2.231
+x11-berlin,sync_changed,year,Appearance,cancel,heartbeat_gap_ms,1,1894.604,1894.604,113.31,113.31,16.721,16.721
+x11-berlin,sync_changed,year,Appearance,cancel,sync_cycle_heartbeat_gap_ms,1,1924.109,1924.109,338.924,338.924,5.677,5.677
+x11-berlin,sync_changed,year,Appearance,cancel,sync_cycle_elapsed_ms,1,3629.273,3629.273,2747.115,2747.115,1.321,1.321
+x11-berlin,sync_changed,year,Appearance,cancel,sync_cycle_refresh_max_ms,1,857.294,857.294,288.601,288.601,2.971,2.971
+x11-berlin,sync_changed,year,Appearance,cancel,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,year,Appearance,cancel,open_cpu_ms,1,488.293,488.293,114.856,114.856,4.251,4.251
+x11-berlin,sync_changed,year,Appearance,cancel,close_cpu_ms,1,12.225,12.225,13.05,13.05,0.937,0.937
+x11-berlin,sync_changed,year,Appearance,cancel,delete_ms,1,0.792,0.792,0.44,0.44,1.8,1.8
+x11-berlin,sync_changed,year,Appearance,cancel,delete_cpu_ms,1,0.711,0.711,0.437,0.437,1.627,1.627
+x11-berlin,sync_changed,year,Appearance,save,open_to_first_paint_ms,1,1914.575,1914.575,109.812,109.812,17.435,17.435
+x11-berlin,sync_changed,year,Appearance,save,open_to_form_ready_ms,1,1965.25,1965.25,132.454,132.454,14.837,14.837
+x11-berlin,sync_changed,year,Appearance,save,close_to_return_ms,1,39.801,39.801,25.626,25.626,1.553,1.553
+x11-berlin,sync_changed,year,Appearance,save,close_to_responsive_ms,1,182.693,182.693,83.68,83.68,2.183,2.183
+x11-berlin,sync_changed,year,Appearance,save,heartbeat_gap_ms,1,1910.758,1910.758,107.123,107.123,17.837,17.837
+x11-berlin,sync_changed,year,Appearance,save,sync_cycle_heartbeat_gap_ms,1,1935.011,1935.011,341.735,341.735,5.662,5.662
+x11-berlin,sync_changed,year,Appearance,save,sync_cycle_elapsed_ms,1,3420.863,3420.863,2755.197,2755.197,1.242,1.242
+x11-berlin,sync_changed,year,Appearance,save,sync_cycle_refresh_max_ms,1,822.639,822.639,296.171,296.171,2.778,2.778
+x11-berlin,sync_changed,year,Appearance,save,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,year,Appearance,save,open_cpu_ms,1,477.089,477.089,108.156,108.156,4.411,4.411
+x11-berlin,sync_changed,year,Appearance,save,close_cpu_ms,1,34.374,34.374,24.978,24.978,1.376,1.376
+x11-berlin,sync_changed,year,Appearance,save,delete_ms,1,0.769,0.769,0.451,0.451,1.705,1.705
+x11-berlin,sync_changed,year,Appearance,save,delete_cpu_ms,1,0.689,0.689,0.449,0.449,1.535,1.535
+x11-berlin,sync_changed,year,Calendar,cancel,open_to_first_paint_ms,1,498.601,498.601,58.932,58.932,8.461,8.461
+x11-berlin,sync_changed,year,Calendar,cancel,open_to_form_ready_ms,1,527.95,527.95,78.301,78.301,6.743,6.743
+x11-berlin,sync_changed,year,Calendar,cancel,close_to_return_ms,1,11.158,11.158,10.674,10.674,1.045,1.045
+x11-berlin,sync_changed,year,Calendar,cancel,close_to_responsive_ms,1,154.786,154.786,66.946,66.946,2.312,2.312
+x11-berlin,sync_changed,year,Calendar,cancel,heartbeat_gap_ms,1,495.068,495.068,66.969,66.969,7.392,7.392
+x11-berlin,sync_changed,year,Calendar,cancel,sync_cycle_heartbeat_gap_ms,1,1542.702,1542.702,296.511,296.511,5.203,5.203
+x11-berlin,sync_changed,year,Calendar,cancel,sync_cycle_elapsed_ms,1,3439.53,3439.53,2613.229,2613.229,1.316,1.316
+x11-berlin,sync_changed,year,Calendar,cancel,sync_cycle_refresh_max_ms,1,825.31,825.31,286.939,286.939,2.876,2.876
+x11-berlin,sync_changed,year,Calendar,cancel,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,year,Calendar,cancel,open_cpu_ms,1,460.025,460.025,57.693,57.693,7.974,7.974
+x11-berlin,sync_changed,year,Calendar,cancel,close_cpu_ms,1,10.34,10.34,10.363,10.363,0.998,0.998
+x11-berlin,sync_changed,year,Calendar,cancel,delete_ms,1,0.551,0.551,0.269,0.269,2.048,2.048
+x11-berlin,sync_changed,year,Calendar,cancel,delete_cpu_ms,1,0.531,0.531,0.267,0.267,1.989,1.989
+x11-berlin,sync_changed,year,Calendar,save,open_to_first_paint_ms,1,1796.275,1796.275,61.236,61.236,29.334,29.334
+x11-berlin,sync_changed,year,Calendar,save,open_to_form_ready_ms,1,1826.56,1826.56,81.095,81.095,22.524,22.524
+x11-berlin,sync_changed,year,Calendar,save,close_to_return_ms,1,37.56,37.56,25.701,25.701,1.461,1.461
+x11-berlin,sync_changed,year,Calendar,save,close_to_responsive_ms,1,182.533,182.533,79.736,79.736,2.289,2.289
+x11-berlin,sync_changed,year,Calendar,save,heartbeat_gap_ms,1,1792.638,1792.638,79.788,79.788,22.468,22.468
+x11-berlin,sync_changed,year,Calendar,save,sync_cycle_heartbeat_gap_ms,1,1821.759,1821.759,338.954,338.954,5.375,5.375
+x11-berlin,sync_changed,year,Calendar,save,sync_cycle_elapsed_ms,1,3309.065,3309.065,2748.109,2748.109,1.204,1.204
+x11-berlin,sync_changed,year,Calendar,save,sync_cycle_refresh_max_ms,1,827.196,827.196,288.742,288.742,2.865,2.865
+x11-berlin,sync_changed,year,Calendar,save,sync_cycle_refresh_count,1,1,1,1,1,1.0,1.0
+x11-berlin,sync_changed,year,Calendar,save,open_cpu_ms,1,471.507,471.507,60.091,60.091,7.847,7.847
+x11-berlin,sync_changed,year,Calendar,save,close_cpu_ms,1,32.057,32.057,25.102,25.102,1.277,1.277
+x11-berlin,sync_changed,year,Calendar,save,delete_ms,1,0.694,0.694,0.276,0.276,2.514,2.514
+x11-berlin,sync_changed,year,Calendar,save,delete_cpu_ms,1,0.594,0.594,0.274,0.274,2.168,2.168
+x11-berlin,sync_unchanged,week,Appearance,cancel,open_to_first_paint_ms,1,1921.349,1921.349,132.975,132.975,14.449,14.449
+x11-berlin,sync_unchanged,week,Appearance,cancel,open_to_form_ready_ms,1,1980.66,1980.66,156.866,156.866,12.626,12.626
+x11-berlin,sync_unchanged,week,Appearance,cancel,close_to_return_ms,1,12.889,12.889,11.531,11.531,1.118,1.118
+x11-berlin,sync_unchanged,week,Appearance,cancel,close_to_responsive_ms,1,128.441,128.441,50.609,50.609,2.538,2.538
+x11-berlin,sync_unchanged,week,Appearance,cancel,heartbeat_gap_ms,1,1917.597,1917.597,129.957,129.957,14.756,14.756
+x11-berlin,sync_unchanged,week,Appearance,cancel,sync_cycle_heartbeat_gap_ms,1,1946.491,1946.491,136.127,136.127,14.299,14.299
+x11-berlin,sync_unchanged,week,Appearance,cancel,sync_cycle_elapsed_ms,1,2403.744,2403.744,2035.431,2035.431,1.181,1.181
+x11-berlin,sync_unchanged,week,Appearance,cancel,sync_cycle_refresh_max_ms,1,127.309,127.309,0,0,,
+x11-berlin,sync_unchanged,week,Appearance,cancel,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,week,Appearance,cancel,open_cpu_ms,1,503.058,503.058,131.113,131.113,3.837,3.837
+x11-berlin,sync_unchanged,week,Appearance,cancel,close_cpu_ms,1,11.759,11.759,11.108,11.108,1.059,1.059
+x11-berlin,sync_unchanged,week,Appearance,cancel,delete_ms,1,0.964,0.964,0.493,0.493,1.955,1.955
+x11-berlin,sync_unchanged,week,Appearance,cancel,delete_cpu_ms,1,0.777,0.777,0.492,0.492,1.579,1.579
+x11-berlin,sync_unchanged,week,Appearance,save,open_to_first_paint_ms,1,1942.98,1942.98,133.009,133.009,14.608,14.608
+x11-berlin,sync_unchanged,week,Appearance,save,open_to_form_ready_ms,1,2001.054,2001.054,158.49,158.49,12.626,12.626
+x11-berlin,sync_unchanged,week,Appearance,save,close_to_return_ms,1,37.947,37.947,26.228,26.228,1.447,1.447
+x11-berlin,sync_unchanged,week,Appearance,save,close_to_responsive_ms,1,152.815,152.815,64.611,64.611,2.365,2.365
+x11-berlin,sync_unchanged,week,Appearance,save,heartbeat_gap_ms,1,1939.314,1939.314,129.081,129.081,15.024,15.024
+x11-berlin,sync_unchanged,week,Appearance,save,sync_cycle_heartbeat_gap_ms,1,1963.102,1963.102,135.252,135.252,14.514,14.514
+x11-berlin,sync_unchanged,week,Appearance,save,sync_cycle_elapsed_ms,1,2452.399,2452.399,1963.022,1963.022,1.249,1.249
+x11-berlin,sync_unchanged,week,Appearance,save,sync_cycle_refresh_max_ms,1,128.828,128.828,0,0,,
+x11-berlin,sync_unchanged,week,Appearance,save,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,week,Appearance,save,open_cpu_ms,1,512.035,512.035,130.936,130.936,3.911,3.911
+x11-berlin,sync_unchanged,week,Appearance,save,close_cpu_ms,1,33.038,33.038,25.594,25.594,1.291,1.291
+x11-berlin,sync_unchanged,week,Appearance,save,delete_ms,1,0.784,0.784,0.48,0.48,1.633,1.633
+x11-berlin,sync_unchanged,week,Appearance,save,delete_cpu_ms,1,0.735,0.735,0.478,0.478,1.538,1.538
+x11-berlin,sync_unchanged,week,Calendar,cancel,open_to_first_paint_ms,1,538.875,538.875,79.561,79.561,6.773,6.773
+x11-berlin,sync_unchanged,week,Calendar,cancel,open_to_form_ready_ms,1,577.38,577.38,98.857,98.857,5.841,5.841
+x11-berlin,sync_unchanged,week,Calendar,cancel,close_to_return_ms,1,14.729,14.729,10.033,10.033,1.468,1.468
+x11-berlin,sync_unchanged,week,Calendar,cancel,close_to_responsive_ms,1,135.071,135.071,44.699,44.699,3.022,3.022
+x11-berlin,sync_unchanged,week,Calendar,cancel,heartbeat_gap_ms,1,535.297,535.297,76.753,76.753,6.974,6.974
+x11-berlin,sync_unchanged,week,Calendar,cancel,sync_cycle_heartbeat_gap_ms,1,1496.813,1496.813,81.923,81.923,18.271,18.271
+x11-berlin,sync_unchanged,week,Calendar,cancel,sync_cycle_elapsed_ms,1,2516.555,2516.555,1797.082,1797.082,1.4,1.4
+x11-berlin,sync_unchanged,week,Calendar,cancel,sync_cycle_refresh_max_ms,1,156.604,156.604,0,0,,
+x11-berlin,sync_unchanged,week,Calendar,cancel,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,week,Calendar,cancel,open_cpu_ms,1,490.214,490.214,77.881,77.881,6.294,6.294
+x11-berlin,sync_unchanged,week,Calendar,cancel,close_cpu_ms,1,13.512,13.512,9.675,9.675,1.397,1.397
+x11-berlin,sync_unchanged,week,Calendar,cancel,delete_ms,1,0.721,0.721,0.28,0.28,2.575,2.575
+x11-berlin,sync_unchanged,week,Calendar,cancel,delete_cpu_ms,1,0.57,0.57,0.274,0.274,2.08,2.08
+x11-berlin,sync_unchanged,week,Calendar,save,open_to_first_paint_ms,1,1908.3,1908.3,79.423,79.423,24.027,24.027
+x11-berlin,sync_unchanged,week,Calendar,save,open_to_form_ready_ms,1,1945.107,1945.107,101.288,101.288,19.204,19.204
+x11-berlin,sync_unchanged,week,Calendar,save,close_to_return_ms,1,37.015,37.015,25.979,25.979,1.425,1.425
+x11-berlin,sync_unchanged,week,Calendar,save,close_to_responsive_ms,1,156.471,156.471,60.792,60.792,2.574,2.574
+x11-berlin,sync_unchanged,week,Calendar,save,heartbeat_gap_ms,1,1905.004,1905.004,76.497,76.497,24.903,24.903
+x11-berlin,sync_unchanged,week,Calendar,save,sync_cycle_heartbeat_gap_ms,1,1931.066,1931.066,82.667,82.667,23.36,23.36
+x11-berlin,sync_unchanged,week,Calendar,save,sync_cycle_elapsed_ms,1,2403.238,2403.238,1998.661,1998.661,1.202,1.202
+x11-berlin,sync_unchanged,week,Calendar,save,sync_cycle_refresh_max_ms,1,133.677,133.677,0,0,,
+x11-berlin,sync_unchanged,week,Calendar,save,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,week,Calendar,save,open_cpu_ms,1,588.744,588.744,77.643,77.643,7.583,7.583
+x11-berlin,sync_unchanged,week,Calendar,save,close_cpu_ms,1,31.852,31.852,25.565,25.565,1.246,1.246
+x11-berlin,sync_unchanged,week,Calendar,save,delete_ms,1,0.679,0.679,0.332,0.332,2.045,2.045
+x11-berlin,sync_unchanged,week,Calendar,save,delete_cpu_ms,1,0.604,0.604,0.328,0.328,1.841,1.841
+x11-berlin,sync_unchanged,year,Appearance,cancel,open_to_first_paint_ms,1,1780.325,1780.325,111.675,111.675,15.942,15.942
+x11-berlin,sync_unchanged,year,Appearance,cancel,open_to_form_ready_ms,1,1828.732,1828.732,134.636,134.636,13.583,13.583
+x11-berlin,sync_unchanged,year,Appearance,cancel,close_to_return_ms,1,11.758,11.758,12.037,12.037,0.977,0.977
+x11-berlin,sync_unchanged,year,Appearance,cancel,close_to_responsive_ms,1,158.659,158.659,70.849,70.849,2.239,2.239
+x11-berlin,sync_unchanged,year,Appearance,cancel,heartbeat_gap_ms,1,1777.163,1777.163,109.009,109.009,16.303,16.303
+x11-berlin,sync_unchanged,year,Appearance,cancel,sync_cycle_heartbeat_gap_ms,1,1801.306,1801.306,114.183,114.183,15.776,15.776
+x11-berlin,sync_unchanged,year,Appearance,cancel,sync_cycle_elapsed_ms,1,3210.325,3210.325,1998.769,1998.769,1.606,1.606
+x11-berlin,sync_unchanged,year,Appearance,cancel,sync_cycle_refresh_max_ms,1,747.929,747.929,0,0,,
+x11-berlin,sync_unchanged,year,Appearance,cancel,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,year,Appearance,cancel,open_cpu_ms,1,481.743,481.743,110.51,110.51,4.359,4.359
+x11-berlin,sync_unchanged,year,Appearance,cancel,close_cpu_ms,1,11.249,11.249,11.735,11.735,0.959,0.959
+x11-berlin,sync_unchanged,year,Appearance,cancel,delete_ms,1,0.704,0.704,0.461,0.461,1.527,1.527
+x11-berlin,sync_unchanged,year,Appearance,cancel,delete_cpu_ms,1,0.702,0.702,0.459,0.459,1.529,1.529
+x11-berlin,sync_unchanged,year,Appearance,save,open_to_first_paint_ms,1,1787.316,1787.316,111.742,111.742,15.995,15.995
+x11-berlin,sync_unchanged,year,Appearance,save,open_to_form_ready_ms,1,1842.325,1842.325,134.779,134.779,13.669,13.669
+x11-berlin,sync_unchanged,year,Appearance,save,close_to_return_ms,1,41.385,41.385,26.191,26.191,1.58,1.58
+x11-berlin,sync_unchanged,year,Appearance,save,close_to_responsive_ms,1,194.816,194.816,85.643,85.643,2.275,2.275
+x11-berlin,sync_unchanged,year,Appearance,save,heartbeat_gap_ms,1,1783.839,1783.839,108.878,108.878,16.384,16.384
+x11-berlin,sync_unchanged,year,Appearance,save,sync_cycle_heartbeat_gap_ms,1,1808.115,1808.115,114.047,114.047,15.854,15.854
+x11-berlin,sync_unchanged,year,Appearance,save,sync_cycle_elapsed_ms,1,3188.736,3188.736,2001.255,2001.255,1.593,1.593
+x11-berlin,sync_unchanged,year,Appearance,save,sync_cycle_refresh_max_ms,1,719.971,719.971,0,0,,
+x11-berlin,sync_unchanged,year,Appearance,save,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,year,Appearance,save,open_cpu_ms,1,478.273,478.273,110.497,110.497,4.328,4.328
+x11-berlin,sync_unchanged,year,Appearance,save,close_cpu_ms,1,35.041,35.041,25.765,25.765,1.36,1.36
+x11-berlin,sync_unchanged,year,Appearance,save,delete_ms,1,0.811,0.811,0.484,0.484,1.676,1.676
+x11-berlin,sync_unchanged,year,Appearance,save,delete_cpu_ms,1,0.769,0.769,0.482,0.482,1.595,1.595
+x11-berlin,sync_unchanged,year,Calendar,cancel,open_to_first_paint_ms,1,505.544,505.544,59.114,59.114,8.552,8.552
+x11-berlin,sync_unchanged,year,Calendar,cancel,open_to_form_ready_ms,1,536.854,536.854,78.928,78.928,6.802,6.802
+x11-berlin,sync_unchanged,year,Calendar,cancel,close_to_return_ms,1,11.137,11.137,11.178,11.178,0.996,0.996
+x11-berlin,sync_unchanged,year,Calendar,cancel,close_to_responsive_ms,1,157.038,157.038,66.695,66.695,2.355,2.355
+x11-berlin,sync_unchanged,year,Calendar,cancel,heartbeat_gap_ms,1,501.628,501.628,66.718,66.718,7.519,7.519
+x11-berlin,sync_unchanged,year,Calendar,cancel,sync_cycle_heartbeat_gap_ms,1,1448.48,1448.48,66.718,66.718,21.71,21.71
+x11-berlin,sync_unchanged,year,Calendar,cancel,sync_cycle_elapsed_ms,1,2934.197,2934.197,1812.212,1812.212,1.619,1.619
+x11-berlin,sync_unchanged,year,Calendar,cancel,sync_cycle_refresh_max_ms,1,689.886,689.886,0,0,,
+x11-berlin,sync_unchanged,year,Calendar,cancel,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,year,Calendar,cancel,open_cpu_ms,1,461.829,461.829,58.03,58.03,7.958,7.958
+x11-berlin,sync_unchanged,year,Calendar,cancel,close_cpu_ms,1,10.394,10.394,10.821,10.821,0.961,0.961
+x11-berlin,sync_unchanged,year,Calendar,cancel,delete_ms,1,0.579,0.579,0.285,0.285,2.032,2.032
+x11-berlin,sync_unchanged,year,Calendar,cancel,delete_cpu_ms,1,0.55,0.55,0.281,0.281,1.957,1.957
+x11-berlin,sync_unchanged,year,Calendar,save,open_to_first_paint_ms,1,1908.002,1908.002,58.827,58.827,32.434,32.434
+x11-berlin,sync_unchanged,year,Calendar,save,open_to_form_ready_ms,1,1940.116,1940.116,78.321,78.321,24.771,24.771
+x11-berlin,sync_unchanged,year,Calendar,save,close_to_return_ms,1,36.289,36.289,25.241,25.241,1.438,1.438
+x11-berlin,sync_unchanged,year,Calendar,save,close_to_responsive_ms,1,188.806,188.806,80.672,80.672,2.34,2.34
+x11-berlin,sync_unchanged,year,Calendar,save,heartbeat_gap_ms,1,1904.81,1904.81,81.101,81.101,23.487,23.487
+x11-berlin,sync_unchanged,year,Calendar,save,sync_cycle_heartbeat_gap_ms,1,1929.162,1929.162,81.101,81.101,23.787,23.787
+x11-berlin,sync_unchanged,year,Calendar,save,sync_cycle_elapsed_ms,1,3273.758,3273.758,2004.014,2004.014,1.634,1.634
+x11-berlin,sync_unchanged,year,Calendar,save,sync_cycle_refresh_max_ms,1,731.386,731.386,0,0,,
+x11-berlin,sync_unchanged,year,Calendar,save,sync_cycle_refresh_count,1,1,1,0,0,,
+x11-berlin,sync_unchanged,year,Calendar,save,open_cpu_ms,1,472.366,472.366,57.783,57.783,8.175,8.175
+x11-berlin,sync_unchanged,year,Calendar,save,close_cpu_ms,1,31.418,31.418,24.819,24.819,1.266,1.266
+x11-berlin,sync_unchanged,year,Calendar,save,delete_ms,1,0.701,0.701,0.326,0.326,2.15,2.15
+x11-berlin,sync_unchanged,year,Calendar,save,delete_cpu_ms,1,0.632,0.632,0.325,0.325,1.945,1.945
