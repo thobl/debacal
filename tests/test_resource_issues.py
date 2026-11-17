@@ -214,7 +214,8 @@ def test_metadata_warning_survives_later_resource_warnings(workspace):
     assert len(issues) == 2
     assert any(issue.details == 'Server colors could not be refreshed' for issue in issues)
     window.engine.events.put(SyncMessage('started', 'Starting new synchronization'))
-    window.poll()
+    while not window.engine.events.empty():
+        window.poll()
     assert len(window.status_issues()) == 1
 
 

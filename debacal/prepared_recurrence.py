@@ -39,6 +39,45 @@ def _effective_arguments(rule):
     }
 
 
+def _simple_day_step(rule):
+    """Recognize a single DTSTART clock on unfiltered daily/weekly periods.
+
+    Inspect only the existing decoded engine fields, so durable preparations
+    made before this optimization need no new flags or storage version.
+    """
+    if rule._freq not in (DAILY, WEEKLY) or rule._interval < 1:
+        return None
+    if any(getattr(rule, name, None) for name in (
+            '_bymonth', '_byweekno', '_byyearday', '_bymonthday', '_bynmonthday',
+            '_bynweekday', '_byeaster', '_bysetpos')):
+        return None
+    start = rule._dtstart
+    if ((rule._freq == DAILY and rule._byweekday)
+            or (rule._freq == WEEKLY and (not rule._byweekday or len(rule._byweekday) != 1
+                                         or start.weekday() not in rule._byweekday))):
+        return None
+    if (any(not values or len(values) != 1 or value not in values for values, value in (
+            (rule._byhour, start.hour), (rule._byminute, start.minute), (rule._bysecond, start.second)))
+            or len(rule._timeset) != 1):
+        return None
+    return rule._interval * (7 if rule._freq == WEEKLY else 1)
+
+
+def _nominal_days(start, clock, step, count, until):
+    """Emit dateutil's nominal clocks without its day masks/calendar scans."""
+    ordinal, maximum = start.date().toordinal(), date.max.toordinal()
+    while ordinal <= maximum and (count is None or count > 0):
+        # Reuse dateutil's prepared clock, including its fold=0 convention.
+        # All gap resolution, ordering and identity handling remains downstream.
+        value = datetime.combine(date.fromordinal(ordinal), clock)
+        if until is not None and value > until:
+            return
+        yield value
+        if count is not None:
+            count -= 1
+        ordinal += step
+
+
 class _StaticSeek:
     """Predecoded phase and rank arithmetic for hourly/daily/weekly rules."""
     def __init__(self, fields, start):
@@ -472,15 +511,21 @@ class PreparedSeries:
             first = 0 if lower is None else bisect_left(self._finite_starts, lower.timestamp())
             return (self._finite_values[index] for index in range(first, len(self._finite_values)))
         rule = self.rule
+        start, count = rule._dtstart, rule._count
         if lower is not None and self.seek is not None:
             sought = self.seek.seek(lower)
             if sought is None:
                 return iter(())
             start, count = sought
+        step = None if self.calendar_periods else _simple_day_step(rule)
+        if step is not None:
+            nominal = _nominal_days(start, rule._timeset[0], step, count, rule._until)
+            bounded = BoundedRule(nominal, RecurrenceRangeError)
+        else:
             if start != rule._dtstart:
                 rule = rule.replace(dtstart=start, count=count, cache=False, **self.effective)
-        bounded = BoundedRule(rule, RecurrenceRangeError, calendar_periods=self.calendar_periods,
-                              window_end=window_end if self.calendar_periods else None)
+            bounded = BoundedRule(rule, RecurrenceRangeError, calendar_periods=self.calendar_periods,
+                                  window_end=window_end if self.calendar_periods else None)
         values = normalize_recurrence_stream(bounded, all_day=self.floating)
         if lower is None:
             return values

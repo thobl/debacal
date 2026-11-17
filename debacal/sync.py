@@ -53,6 +53,19 @@ class PreconditionFailed(RuntimeError):
     pass
 
 
+def refresh_ics_subscription(store, calendar):
+    """Fetch, parse and publish one subscription in the calling worker."""
+    parsed = urlparse(calendar.url)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise ValueError("A subscription needs an HTTP(S) URL.")
+    request = Request(calendar.url, headers={"User-Agent": "Debacal/0.1"})
+    with urlopen(request, timeout=20) as response:
+        data = response.read(10 * 1024 * 1024 + 1)
+    if len(data) > 10 * 1024 * 1024:
+        raise ValueError("The subscription exceeds the 10 MiB import limit.")
+    return store.refresh_subscription(parse_ics_report(data, calendar.id), calendar.id)
+
+
 class CalDAVTransport:
     def __init__(self, calendar: Calendar, password: str):
         try:
@@ -123,7 +136,7 @@ class CalDAVTransport:
 
 class SyncEngine:
     def __init__(self, store_path, *, transport_factory=None, vdir_backend=None,
-                 credential_store=None, metadata_discoverer=None):
+                 credential_store=None, metadata_discoverer=None, background_processing=False):
         self.store_path = store_path
         self.events: Queue[SyncMessage] = Queue()
         self._jobs = Queue()
@@ -137,6 +150,10 @@ class SyncEngine:
         self._worker_error = ""
         self._transport_factory = transport_factory
         self._metadata_discoverer = metadata_discoverer
+        self._processor = None
+        if background_processing and transport_factory is None and vdir_backend is None and str(store_path) != ':memory:':
+            from .sync_worker import SyncProcessor
+            self._processor = SyncProcessor(store_path)
         if vdir_backend is None:
             from .vdirsyncer_backend import VdirsyncerBackend
             vdir_backend = VdirsyncerBackend(store_path)
@@ -193,6 +210,8 @@ class SyncEngine:
     def close(self):
         self._stop.set()
         self._jobs.put(("stop", None))
+        if self._processor is not None:
+            self._processor.shutdown()
         # Never block shutdown for a network timeout. The worker is a daemon.
         self.credentials.clear_session()
 
@@ -217,7 +236,12 @@ class SyncEngine:
                 for calendar in store.list_calendars():
                     if calendar.kind == "caldav":
                         try:
-                            self._publish_vdir_conflicts(calendar, self._vdir_backend.saved_conflicts(calendar.id))
+                            if self._processor is not None:
+                                from .sync_worker import decode_bridge
+                                conflicts = decode_bridge(self._processor.run('conflicts', calendar.id)).conflicts
+                            else:
+                                conflicts = self._vdir_backend.saved_conflicts(calendar.id)
+                            self._publish_vdir_conflicts(calendar, conflicts)
                         except Exception:
                             self._emit("error", f"{calendar.name}: saved conflicts could not be read. Sync to refresh them.", calendar.id)
             while not self._stop.is_set():
@@ -275,11 +299,21 @@ class SyncEngine:
                         self._emit("finished", message)
 
     def _sync_vdir(self, store, calendar):
+        identity = account_key(calendar)
         password = self._password(calendar)
         calendar = self._refresh_metadata(store, calendar, password)
+        if account_key(calendar) != identity:
+            raise CredentialError('The calendar account changed during synchronization. Retry using its current credentials.')
         if not calendar.enabled:
             return
-        result = self._vdir_backend.sync(store, calendar, password)
+        if self._processor is not None:
+            from .sync_worker import decode_bridge
+            payload = self._processor.run('vdirsyncer', calendar.id, password, expected_calendar=calendar)
+            if payload.get('skipped'):
+                return
+            result = decode_bridge(payload)
+        else:
+            result = self._vdir_backend.sync(store, calendar, password)
         for issue in getattr(result, "issues", ()):
             self._emit("issue", f"{calendar.name}: resource {issue.resource_id}: {issue.reason}", calendar.id)
         self._publish_vdir_conflicts(calendar, result.conflicts)
@@ -310,19 +344,18 @@ class SyncEngine:
                     del self._conflicts[conflict_id]
 
     def _sync_ics(self, store: Store, calendar: Calendar):
-        parsed = urlparse(calendar.url)
-        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-            raise ValueError("A subscription needs an HTTP(S) URL.")
-        request = Request(calendar.url, headers={"User-Agent": "Debacal/0.1"})
-        with urlopen(request, timeout=20) as response:
-            data = response.read(10 * 1024 * 1024 + 1)
-        if len(data) > 10 * 1024 * 1024:
-            raise ValueError("The subscription exceeds the 10 MiB import limit.")
-        report = parse_ics_report(data, calendar.id)
-        report = store.refresh_subscription(report, calendar.id)
-        for issue in report.issues:
-            self._emit("issue", f"{calendar.name}: resource {issue.resource_id}: {issue.reason}", calendar.id)
-        self._emit("updated", f"{calendar.name}: {len(report.events)} events refreshed.", calendar.id)
+        if self._processor is not None:
+            result = self._processor.run('ics', calendar.id, expected_calendar=calendar)
+            if result.get('skipped'):
+                return
+            count, issues = result['received'], result['issues']
+        else:
+            report = refresh_ics_subscription(store, calendar)
+            count = len(report.events)
+            issues = [{'resource_id': issue.resource_id, 'reason': issue.reason} for issue in report.issues]
+        for issue in issues:
+            self._emit("issue", f"{calendar.name}: resource {issue['resource_id']}: {issue['reason']}", calendar.id)
+        self._emit("updated", f"{calendar.name}: {count} events refreshed.", calendar.id)
 
     def _password(self, calendar):
         if not calendar.username:

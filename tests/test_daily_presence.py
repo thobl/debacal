@@ -4,7 +4,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from debacal.daily_presence import daily_day_span, merged_days
+from debacal.daily_presence import daily_day_span, regular_day_starts, merged_days
 from debacal.models import Event
 from debacal.prepared_recurrence import PreparedSeries
 from debacal.store import Store
@@ -97,3 +97,64 @@ def test_large_count_union_budget_and_summary_never_allocates_events_or_ids():
 
 def test_overlapping_ordinal_spans_merge_without_duplicate_days():
     assert list(merged_days([range(1,5),range(3,9),range(10,12),range(12,15),range(30,30)]))==list(range(1,9))+list(range(10,15))
+
+
+@pytest.mark.parametrize('frequency', ['DAILY', 'WEEKLY'])
+@pytest.mark.parametrize('interval', [1, 2, 7, 31, 10000])
+@pytest.mark.parametrize('bound', ['', ';COUNT=1', ';COUNT=400', ';UNTIL=20261231T090000Z',
+                                  ';UNTIL=20261231T085959Z', ';UNTIL=20251231T090000Z'])
+def test_stepped_regular_starts_match_independent_dateutil_rule(frequency, interval, bound):
+    from dateutil.rrule import rrulestr
+    rule = f'FREQ={frequency};INTERVAL={interval}' + bound
+    value = source(recurrence_rule=rule)
+    lower, upper = datetime(2026, 2, 3, 9, 30, tzinfo=UTC), datetime(2027, 1, 1, tzinfo=UTC)
+    span = regular_day_starts(PreparedSeries(value), lower, upper, UTC)
+    assert span is not None
+    expected = {start.date().toordinal() for start in rrulestr(rule, dtstart=START).between(
+        lower - timedelta(hours=1), upper, inc=True)
+        if start < upper and start + timedelta(hours=1) > lower}
+    assert set(span) == expected
+    assert span.step == interval * (7 if frequency == 'WEEKLY' else 1)
+
+
+@pytest.mark.parametrize('frequency,interval', [('DAILY', 3), ('WEEKLY', 1), ('WEEKLY', 2)])
+@pytest.mark.parametrize('duration', [timedelta(), timedelta(hours=1), timedelta(hours=15)])
+def test_stepped_summary_gaps_details_and_navigation_remain_exact(frequency, interval, duration):
+    lower, upper = datetime(2025, 12, 30, tzinfo=UTC), datetime(2026, 4, 1, tzinfo=UTC)
+    value = source(end=START + duration, recurrence_rule=f'FREQ={frequency};INTERVAL={interval};COUNT=400')
+    with patch('debacal.timeutil.local_zone', return_value=UTC), Store(':memory:') as store:
+        store.apply_remote([value])
+        expected = store.query_occurrences(lower, upper)
+        with patch.object(PreparedSeries, 'iter_rule_ranges', side_effect=AssertionError('Expanded stepped UTC rule')):
+            actual = store.query_year_presence(lower, upper)
+        assert len(actual) == len(expected)
+        assert set(actual._start_days) == {event.start.date() for event in expected}
+        for offset, counts in enumerate(actual.summaries):
+            day = lower.date() + timedelta(days=offset)
+            assert counts == ({'local': (1, '')} if day in actual._start_days else {})
+        for index, event in enumerate(expected):
+            assert actual.adjacent_event(event.id, 1).id == expected[(index + 1) % len(expected)].id
+            assert actual.events_on_day(event.start.date())[0].id == event.id
+        assert len(actual.filtered('Synthetic daily')) == len(expected)
+        assert not actual.filtered('does not match')
+
+
+@pytest.mark.parametrize('rule', ['FREQ=DAILY;BYDAY=MO', 'FREQ=WEEKLY;BYDAY=MO,WE',
+                                 'FREQ=WEEKLY;BYDAY=MO', 'FREQ=WEEKLY;BYMONTH=1',
+                                 'FREQ=WEEKLY;BYHOUR=9,10'])
+def test_calendar_or_clock_filtered_rules_keep_general_iteration(rule):
+    assert regular_day_starts(PreparedSeries(source(recurrence_rule=rule)), START,
+                              START + timedelta(days=30), UTC) is None
+
+
+def test_noncontiguous_starts_are_never_merged_as_full_occupancy_spans():
+    with pytest.raises(ValueError, match='contiguous'):
+        list(merged_days([range(1, 10, 2)]))
+
+
+def test_last_supported_day_keeps_canonical_endpoint_overflow_handling():
+    first = datetime(9999, 12, 30, 23, tzinfo=UTC)
+    value = source(start=first, end=first + timedelta(hours=1))
+    lower = datetime(9999, 12, 31, tzinfo=UTC)
+    upper = datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)
+    assert regular_day_starts(PreparedSeries(value), lower, upper, UTC) is None

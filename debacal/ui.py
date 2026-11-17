@@ -42,6 +42,7 @@ from .shortcuts import (DEFAULT_DIALOG_BINDINGS, DIALOG_ACTIONS, migrate_workspa
 from .event_navigation import adjacent_event_day, event_day
 from .event_duration import add_elapsed
 from .ui_database import DatabaseCommands
+from .ui_history import HistoryAvailability
 
 DEFAULT_BINDINGS = {
     'new_event': 'N', 'edit_event': ['E', 'Return'], 'delete_event': 'Del',
@@ -130,7 +131,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.credentials = CredentialStore(namespace=credential_namespace)
         if enable_sync and store.path != ':memory:':
             from .sync import SyncEngine
-            self.engine = SyncEngine(store.path, credential_store=self.credentials)
+            self.engine = SyncEngine(store.path, credential_store=self.credentials,
+                                     background_processing=True)
         self.setWindowTitle('Debacal' + (' — ' + profile_label if profile_label else ''))
         screen = self.screen() or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
@@ -163,6 +165,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.install_mode_shortcuts()
         self.database_commands = DatabaseCommands(self.store, self, on_change=self.refresh,
                                                   on_error=self.report_error)
+        self.history_availability = HistoryAvailability(self.store, self, self.update_history_buttons,
+                                                        self.report_error)
         self.database_commands.pending_changed.connect(lambda _count: self.update_sync_status())
         self.refresh()
         self.poll_timer = QTimer(self)
@@ -254,6 +258,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._search_index = None
             self.results.invalidate()
         cals = self.store.list_calendars()
+        self._refreshed_calendars = tuple(cals)
         days = self.dates()
         if self.selected_day not in days:
             self.selected_day = self.anchor
@@ -316,12 +321,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.fit_calendar()
         self.fit_year()
         self.update_hints()
-        can_undo, can_redo = self.store.history_availability()
-        self.undo_button.setEnabled(can_undo)
-        self.redo_button.setEnabled(can_redo)
+        self.history_availability.update()
         if not self._revealing_search_result and not reuse_display:
             self.run_search()
         self.update_sync_status()
+
+    def update_history_buttons(self, can_undo, can_redo):
+        self.undo_button.setEnabled(can_undo)
+        self.redo_button.setEnabled(can_redo)
 
     def update_surface_data(self, days, calendars, revision):
         """Reuse indexed occurrences when only presentation preferences change."""
@@ -375,8 +382,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
         finally:
-            if dialog.source_editor is not None:
-                dialog.source_editor.finish()
+            dialog.finish_sources()
             dialog.deleteLater()
 
     def preferences_sources_changed(self):
@@ -1636,10 +1642,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                  ('Sync calendars (' + shortcut_label(self.bindings.get('sync', '')) + ')' if self.engine else
                                   ('Demo mode is offline. Open your calendars to connect a remote account.'
                                    if self.demo_mode else 'Synchronization is disabled for this workspace.')))
-        issues = self.status_issues()
-        self.warning_button.setVisible(bool(issues))
-        self.warning_button.setToolTip(f'{len(issues)} issue(s) · click for details and recovery actions' if issues else 'No outstanding issues')
-        self.warning_button.setAccessibleName(f'{len(issues)} calendar issue(s)' if issues else 'No calendar issues')
+        issue_count, resource_count = self.status_issue_counts()
+        self.warning_button.setVisible(bool(issue_count))
+        self.warning_button.setToolTip(f'{issue_count} issue(s) · click for details and recovery actions' if issue_count else 'No outstanding issues')
+        self.warning_button.setAccessibleName(f'{issue_count} calendar issue(s)' if issue_count else 'No calendar issues')
         if getattr(self, 'database_commands', None) is not None and self.database_commands.pending:
             value = 'Saving changes…'
         elif self.demo_mode:
@@ -1650,7 +1656,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = 'Sync failed · open Sync status'
         elif self.engine and self.engine.conflicts:
             value = f'{len(self.engine.conflicts)} conflict(s) need review'
-        elif self._sync_issues or any(issue.key.startswith('resource:') for issue in issues):
+        elif self._sync_issues or resource_count:
             value = 'Calendar resources need review · open details'
         elif self._view_issues:
             value = f'{len(self._view_issues)} series unavailable in this view · open details'
@@ -1665,11 +1671,33 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if pending:
             value += f' · {pending} change(s) waiting'
         self.status.setText(value)
-        details = (f'{len(issues)} issue(s). Click to review affected events and recovery actions.'
-                   if issues else 'Click for synchronization details.')
-        if issues:
-            details += '\n' + '\n'.join(' '.join(issue.details.split())[:220] for issue in issues[:2])
+        details = (f'{issue_count} issue(s). Click to review affected events and recovery actions.'
+                   if issue_count else 'Click for synchronization details.')
+        previews = [issue.details for issue in self.local_issues[:2]]
+        previews.extend(self._sync_errors.values())
+        previews.extend(self._sync_issues.values())
+        if previews:
+            details += '\n' + '\n'.join(' '.join(value[:1000].split())[:220] for value in previews[:2])
         self.status.setToolTip(value + '\n' + details)
+
+    def status_issue_counts(self):
+        """Leave diagnostic formatting and recovery closures to the open dialog."""
+        resources = self.store.quarantined_resource_keys()
+        resource_ids = {}
+        for calendar_id, resource_id in resources:
+            resource_ids.setdefault(calendar_id, set()).add(resource_id)
+        projections = {event.id for event, _error in self._view_issues}
+        if self.results.agenda_mode:
+            projections.update(event.id for event, _error in self.results.agenda_issues)
+        warnings = dict.fromkeys((*self._sync_issue_history, *self._sync_issues.items()))
+        warning_count = sum(not ('resource ' in message and any(
+                                    'resource ' + resource_id + ':' in message
+                                    for resource_id in resource_ids.get(calendar_id, ())))
+                            for calendar_id, message in warnings)
+        count = (len(self._local_issues) + len(resources) + len(projections)
+                 + len(self._sync_errors) + warning_count
+                 + bool(self.engine and self.engine.conflicts))
+        return count, len(resources)
 
     def status_issues(self):
         issues = list(self.local_issues)
@@ -1891,12 +1919,19 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if not self.engine:
             return
         updated = False
-        while True:
+        received = False
+        timestamp = None
+        # A broken source may report thousands of rejected resources at once.
+        # Drain in bounded batches so input/paint events can run between them.
+        for _ in range(128):
             try:
                 message = self.engine.events.get_nowait()
             except Empty:
                 break
-            self._sync_messages.append(self.preferences.format_time(now()) + ' · ' + message.message)
+            received = True
+            if timestamp is None:
+                timestamp = self.preferences.format_time(now())
+            self._sync_messages.append(timestamp + ' · ' + message.message)
             if message.kind == 'error':
                 self._sync_errors[message.calendar_id or 'sync'] = message.message
             elif message.kind == 'issue':
@@ -1919,9 +1954,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     self._sync_running = False
                     if not self._sync_errors and not self.engine.conflicts:
                         self._last_sync = now()
-        if updated:
+        if received and not self.engine.events.empty():
+            QTimer.singleShot(0, self, self.poll)
+        if updated and (self.store.events_revision() != self._events_revision
+                        or tuple(self.store.list_calendars()) != self._refreshed_calendars):
             self.refresh()
-        else:
+        elif received:
             self.update_sync_status()
 
     def show_conflicts(self):
@@ -2142,5 +2180,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self.tray_icon:
             self.tray_icon.hide()
         self.database_commands.shutdown()
+        self.history_availability.shutdown()
         self.executor.shutdown(wait=False, cancel_futures=True)
         event.accept()

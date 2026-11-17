@@ -45,9 +45,15 @@ previews and details. Decisions affect only the disposable demonstration data.
 ## Local edits and the file bridge
 
 SQLite remains the UI's immediate source of truth. A local operation commits
-its event changes, undo data and outbox records atomically. A worker bridges
-those records into complete, per-UID ICS files and calls the maintained CLI.
-The UI thread does not wait for network synchronization.
+its event changes, undo data and outbox records atomically. Background processing
+bridges those records into complete, per-UID ICS files and calls the maintained CLI.
+ICS fetching, parsing and calendar reconciliation run in a separate Python process,
+so CPU-heavy sync work does not contend with the desktop's Python interpreter.
+Queued user writes take priority between background database transactions.
+
+The coordinating thread handles keyring access and sends passwords to that
+process through an anonymous pipe. Closing the desktop cancels its active sync
+process group; SQLite transactions and the outbox retain interrupted local work.
 
 Private state lives beside the database in `<database>.sync/`, with one hashed
 calendar directory. It contains working ICS files, remote snapshots, vdirsyncer

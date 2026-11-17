@@ -390,16 +390,42 @@ class VdirsyncerBackend:
             return Event.from_dict(payload["event"])
         return None
 
+    @classmethod
+    def _state_uid(cls, state):
+        """Read baseline identity without normalizing its complete schedule.
+
+        Full model restoration remains necessary when comparing or restoring a
+        baseline. Inventory setup only needs the already persisted UID; retain
+        the normalization path for incomplete or inconsistent identity data.
+        """
+        payload = (state or {}).get('base_payload') or {}
+        value = payload.get('event')
+        if isinstance(value, dict):
+            identity, calendar_id = value.get('id'), value.get('calendar_id')
+            uid = value.get('ical_uid') or identity
+            if (all(isinstance(item, str) and item for item in (identity, calendar_id, uid))
+                    and identity == state.get('event_id') and calendar_id == state.get('calendar_id')):
+                return uid
+        event = cls._state_event(state)
+        return event.ical_uid if event is not None else None
+
     @staticmethod
-    def _identify(event, event_id):
+    def _identify(event, event_id, *, validated=False):
         from .recurrence import occurrence_id
+        # Inventory values have already passed the complete ICS decoder. Other
+        # callers may supply manually constructed override dictionaries, whose
+        # fields still need normalization even when their identities match.
+        if (event.id == event_id and (not event.recurrence_overrides or validated and all(
+                payload.get('id') == occurrence_id(event_id, key) and payload.get('series_id') == event_id
+                for key, payload in event.recurrence_overrides.items()))):
+            return event
         overrides = {key: replace(Event.from_dict(payload), id=occurrence_id(event_id, key), series_id=event_id).to_dict()
                      for key, payload in event.recurrence_overrides.items()}
         return replace(event, id=event_id, recurrence_overrides=overrides)
 
     @classmethod
     def _identify_inventory(cls, items, id_by_uid, existing):
-        identified = {uid: (cls._identify(event, id_by_uid.get(uid, event.id)), data)
+        identified = {uid: (cls._identify(event, id_by_uid.get(uid, event.id), validated=True), data)
                       for uid, (event, data) in items.items()}
         report = reject_duplicate_identities(ParseReport(tuple(event for event, _data in identified.values())),
                                             existing_events=existing)
@@ -412,8 +438,19 @@ class VdirsyncerBackend:
 
     @staticmethod
     def _record(store, calendar_id, event, data):
-        store.set_sync_state(calendar_id, event.id, "vdirsyncer:" + event.ical_uid, semantic(event),
-                             {"backend": "vdirsyncer", "event": event.to_dict(), "ics": data})
+        href, etag = "vdirsyncer:" + event.ical_uid, semantic(event)
+        payload = {"backend": "vdirsyncer", "event": event.to_dict(), "ics": data}
+        target = {'event_id': event.id, 'calendar_id': calendar_id,
+                  'href': href, 'etag': etag, 'base_payload': payload}
+        with store._transaction():
+            current = store.connection.execute('SELECT data FROM sync_metadata WHERE calendar_id=? AND event_id=?',
+                                               (calendar_id, event.id)).fetchone()
+            if current is not None and current[0] == store._json(target):
+                if event.calendar_id != calendar_id:
+                    raise EventOwnershipConflict('The sync state does not belong to this calendar resource.')
+                store._assert_identity_owner(event.id, calendar_id, event.ical_uid)
+                return
+            store.set_sync_state(calendar_id, event.id, href, etag, payload)
 
     def _marker(self, path, uid):
         return path / "conflicts" / (_digest(uid) + ".json")
@@ -535,9 +572,9 @@ class VdirsyncerBackend:
             for event in existing:
                 id_by_uid[event.ical_uid] = event.id
             for state in states.values():
-                event = self._state_event(state)
-                if event:
-                    id_by_uid[event.ical_uid] = state["event_id"]
+                uid = self._state_uid(state)
+                if uid:
+                    id_by_uid[uid] = state["event_id"]
             owners = existing + store.get_events(event.id for event, _data in remote.values())
             remote, identity_issues, identity_protected = self._identify_inventory(remote, id_by_uid, owners)
             protected_uids.update(identity_protected)
@@ -627,9 +664,11 @@ class VdirsyncerBackend:
             remote_ids = {event.id for event, _ in remote.values()}
             pending_ids = {c[0]["event_id"] for c in staged.values()}
             for event_id, state in states.items():
+                if event_id in remote_ids or event_id in pending_ids:
+                    continue
                 previous = self._state_event(state)
                 protected = mirror_report.unknown_uid or (previous is not None and previous.ical_uid in protected_uids)
-                if not protected and event_id not in remote_ids and event_id not in pending_ids:
+                if not protected:
                     try:
                         with store._transaction():
                             store.apply_remote(delete_ids=[event_id], calendar_id=calendar.id,

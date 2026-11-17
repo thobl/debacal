@@ -402,7 +402,7 @@ class AppearanceEditor(QWidget):
     """Compact, named settings sections with one workspace preview."""
     changed = Signal()
 
-    def __init__(self, preferences, parent=None):
+    def __init__(self, preferences, parent=None, *, defer_font_samples=False):
         super().__init__(parent)
         self._context = preferences
         self._updating = True
@@ -460,9 +460,9 @@ class AppearanceEditor(QWidget):
         self.font_family.setAccessibleName('Typeface')
         self.font_family.setToolTip(f'{DEFAULT_FONT_FAMILY} is the default for controls and calendar text. System default follows your desktop font.')
         self.font_family.addItem('System default', 'system')
-        for family in QFontDatabase.families():
+        self._font_sample_families = QFontDatabase.families()
+        for family in self._font_sample_families:
             self.font_family.addItem(family, family)
-            self.font_family.setItemData(self.font_family.count() - 1, QFont(family), Qt.ItemDataRole.FontRole)
         if self.font_family.findData(preferences.font_family) < 0:
             self.font_family.addItem(preferences.font_family, preferences.font_family)
         self.font_family.setMaxVisibleItems(15)
@@ -525,6 +525,21 @@ class AppearanceEditor(QWidget):
         for field in (self.custom_accent, self.custom_surface, self.custom_weekend):
             field.changed.connect(self._update)
         self.set_preferences(preferences)
+        if not defer_font_samples:
+            self.finish_font_samples()
+
+    def finish_font_samples(self):
+        """Install font previews after attaching the editor to its styled parent.
+
+        Parenting a combo that already contains hundreds of distinct FontRoles
+        makes Qt resolve all those fonts again. The preferences dialog attaches
+        this editor first, then completes the model before the first paint.
+        """
+        if self._font_sample_families is None:
+            return
+        for index, family in enumerate(self._font_sample_families, 1):
+            self.font_family.setItemData(index, QFont(family), Qt.ItemDataRole.FontRole)
+        self._font_sample_families = None
 
     def _section(self, outer, title):
         if self.section_widgets:

@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from heapq import nsmallest
 
 from .event_range_index import OCCURRENCE_LIMIT
-from .daily_presence import daily_day_span, merged_days
+from .daily_presence import _fixed_utc, regular_day_starts, merged_days
 from .models import copy_event
 from .recurrence import RecurrenceError, RecurrenceRangeError, overlaps, split_occurrence_id
 
@@ -89,13 +89,26 @@ class YearProjection(Sequence):
         self._rules = rules
         counts, known, start_days, instant_days = {}, [], set(), set()
         daily_spans = []
+        start_ordinals = set()
+        direct_utc_days = all(_fixed_utc(zone) for zone in (self.zone, self.start.tzinfo, self.end.tzinfo))
+        try:
+            utc_bounds = self.start.astimezone(timezone.utc), self.end.astimezone(timezone.utc)
+        except OverflowError:
+            utc_bounds = None  # Preserve the general supported-year boundary path.
+        # Identical UTC clocks can share civil-day conversion work within this
+        # fresh model. Nothing from this map survives _build or a later query.
+        viewer_geometry = {}
+        epoch_ordinal = date(1970, 1, 1).toordinal()
         for identity in grouped.keys() | rules.keys():
             if prevalidated and identity not in self._available:
                 continue
             record = self._sources[identity]
             master = record.master
             master_match = _matches(master, self._query)
-            differences = [0] * (self._day_count + 1)
+            # Keep source-local endpoints until its complete range passes the
+            # budget/decoder checks. Sparse sources must not allocate and merge
+            # a whole year's counters just to touch one or two civil days.
+            differences = {}
             native_keys = set()
             native_count = 0
             daily_span = None
@@ -106,7 +119,8 @@ class YearProjection(Sequence):
                 if record.error is not None:
                     raise record.error
                 if identity in rules and (master_match or not prevalidated):
-                    daily_span = daily_day_span(record.prepared, self.start, self.end, self.zone)
+                    daily_span = (regular_day_starts(record.prepared, *utc_bounds, timezone.utc)
+                                  if utc_bounds is not None else None)
                     if daily_span is not None:
                         native_count = len(daily_span)
                         if native_count > OCCURRENCE_LIMIT:
@@ -114,9 +128,34 @@ class YearProjection(Sequence):
                         if master.start.date().toordinal() in daily_span:
                             native_keys.update(event.recurrence_id for event in record.prepared.explicit_occurrences)
                         if master_match and daily_span:
-                            first, last = daily_span.start - self._first_ordinal, daily_span.stop - self._first_ordinal
-                            differences[first] += 1
-                            differences[last] -= 1
+                            if not direct_utc_days:
+                                clock = (master.start.hour * 60 + master.start.minute) * 60 + master.start.second
+                                duration = record.prepared.duration
+                                for ordinal in daily_span:
+                                    geometry_key = ordinal, clock, duration
+                                    geometry = viewer_geometry.get(geometry_key)
+                                    if geometry is None:
+                                        actual = datetime.combine(date.fromordinal(ordinal), time.min, timezone.utc) + timedelta(seconds=clock)
+                                        geometry = (viewer_day(actual, self.zone), day_interval(
+                                            actual, actual + duration, False, self._first_ordinal,
+                                            self._day_count, self.zone))
+                                        viewer_geometry[geometry_key] = geometry
+                                    day, interval = geometry
+                                    source_days.add(day)
+                                    source_instants.add(ordinal - epoch_ordinal)
+                                    if interval:
+                                        first, last = interval
+                                        differences[first] = differences.get(first, 0) + 1
+                                        differences[last] = differences.get(last, 0) - 1
+                            elif daily_span.step == 1:
+                                first, last = daily_span.start - self._first_ordinal, daily_span.stop - self._first_ordinal
+                                differences[first] = differences.get(first, 0) + 1
+                                differences[last] = differences.get(last, 0) - 1
+                            else:
+                                for ordinal in daily_span:
+                                    first = ordinal - self._first_ordinal
+                                    differences[first] = differences.get(first, 0) + 1
+                                    differences[first + 1] = differences.get(first + 1, 0) - 1
                             count += native_count
                     else:
                         for key, start, end, _spec in record.prepared.iter_rule_ranges(
@@ -130,8 +169,8 @@ class YearProjection(Sequence):
                                                         self._day_count, self.zone)
                                 if interval:
                                     first, last = interval
-                                    differences[first] += 1
-                                    differences[last] -= 1
+                                    differences[first] = differences.get(first, 0) + 1
+                                    differences[last] = differences.get(last, 0) - 1
                                 count += 1
                 explicit = grouped.get(identity, ())
                 if not prevalidated and master.recurring and native_count + sum(
@@ -150,8 +189,8 @@ class YearProjection(Sequence):
                                             self._day_count, self.zone)
                     if interval:
                         first, last = interval
-                        differences[first] += 1
-                        differences[last] -= 1
+                        differences[first] = differences.get(first, 0) + 1
+                        differences[last] = differences.get(last, 0) - 1
                     count += 1
             except RecurrenceRangeError as error:
                 if issues is None:
@@ -162,14 +201,19 @@ class YearProjection(Sequence):
                 self.failures.append((master, RecurrenceError('Unsupported or invalid recurrence rule.')))
                 continue
             self._available.add(identity)
-            if master_match and daily_span:
-                daily_spans.append(daily_span)
+            if master_match and daily_span and direct_utc_days:
+                if daily_span.step == 1:
+                    daily_spans.append(daily_span)
+                else:
+                    start_ordinals.update(daily_span)
             start_days.update(source_days)
             instant_days.update(source_instants)
             known.extend(source_known)
             self._count += count
-            target = counts.setdefault(master.calendar_id, [0] * (self._day_count + 1))
-            for day, value in enumerate(differences):
+            target = counts.get(master.calendar_id)
+            if target is None:
+                target = counts[master.calendar_id] = [0] * (self._day_count + 1)
+            for day, value in differences.items():
                 target[day] += value
         summaries = [{} for _ in range(self._day_count)]
         for calendar_id, differences in counts.items():
@@ -181,9 +225,10 @@ class YearProjection(Sequence):
         self.known_events = tuple(known)
         self._known = {event.id: event for event in known}
         self.summaries = summaries
-        for ordinal in merged_days(daily_spans):
+        start_ordinals.update(merged_days(daily_spans))
+        for ordinal in start_ordinals:
             start_days.add(date.fromordinal(ordinal))
-            instant_days.add(ordinal - date(1970, 1, 1).toordinal())
+            instant_days.add(ordinal - epoch_ordinal)
         self._start_days = tuple(sorted(start_days))
         self._instant_days = tuple(sorted(instant_days))
 

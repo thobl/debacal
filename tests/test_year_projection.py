@@ -268,6 +268,82 @@ def test_day_detail_limit_bounds_native_event_projection_per_source():
         assert len(values) == 5 and len(allocated) <= 5
 
 
+def test_sparse_boundaries_merge_dense_overlaps_and_separate_calendar_totals():
+    lower, upper = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 8, tzinfo=UTC)
+    start = lower + timedelta(hours=9)
+    with patch('debacal.timeutil.local_zone', return_value=UTC), Store(':memory:') as store:
+        store.save_calendar(Calendar('other', 'Synthetic other', '#123456'))
+        store.apply_remote([
+            event('dense', start=start, end=start + timedelta(days=1), recurrence_rule='FREQ=HOURLY;COUNT=400'),
+            event('additional', start=start + timedelta(days=2), end=start + timedelta(days=5)),
+            event('point', calendar_id='other', start=start + timedelta(days=3), end=start + timedelta(days=3)),
+        ])
+        projection, _expected = assert_projection_matches(store, lower, upper, UTC)
+        # The previous midnight ends exactly at this day's lower boundary.
+        # Only the other 23 prior starts and 24 current starts touch this day.
+        assert projection.summaries[3] == {'local': (48, ''), 'other': (1, '')}
+
+
+@pytest.mark.parametrize('zone_name,first,last,clock,duration', [
+    ('Europe/Berlin', (2026, 3, 28), (2026, 4, 3), (22, 30), timedelta(hours=1)),
+    ('America/Goose_Bay', (1988, 10, 28), (1988, 11, 2), (1, 30), timedelta(minutes=31)),
+    ('Pacific/Apia', (2011, 12, 28), (2012, 1, 3), (9, 30), timedelta(hours=1)),
+])
+@pytest.mark.parametrize('rule', ['FREQ=DAILY;COUNT=400', 'FREQ=WEEKLY;INTERVAL=2;COUNT=400'])
+@pytest.mark.parametrize('partial', [False, True])
+def test_utc_source_geometry_in_arbitrary_viewer_matches_general_projection(
+        zone_name, first, last, clock, duration, rule, partial):
+    from debacal import year_projection
+    zone = ZoneInfo(zone_name)
+    lower = datetime(*first, 18 if partial else 0, 20 if partial else 0, tzinfo=zone)
+    upper = datetime(*last, 6 if partial else 0, 15 if partial else 0, tzinfo=zone)
+    start = datetime(first[0], first[1], 1, *clock, tzinfo=UTC)
+    sources = [event(identifier, start=start, end=start + delta, recurrence_rule=rule)
+               for identifier, delta in [('first', duration), ('second', duration), ('point', timedelta())]]
+    with patch('debacal.timeutil.local_zone', return_value=zone), Store(':memory:') as store:
+        store.apply_remote(sources)
+        expected = store.query_occurrences(lower, upper)
+        with patch('debacal.year_projection.regular_day_starts', return_value=None):
+            baseline = store.query_year_presence(lower, upper)
+        with patch.object(PreparedSeries, 'iter_rule_ranges', side_effect=AssertionError('Expanded strict UTC source')), \
+             patch('debacal.year_projection.day_interval', wraps=year_projection.day_interval) as conversions:
+            actual = store.query_year_presence(lower, upper)
+        assert len(actual) == len(expected)
+        assert actual.summaries == baseline.summaries
+        assert [signature(value) for value in actual] == [signature(value) for value in expected]
+        assert set(actual._start_days) == {value.start.astimezone(zone).date() for value in expected}
+        assert actual._instant_days == baseline._instant_days
+        assert conversions.call_count < len(expected)
+        assert not hasattr(actual, 'viewer_geometry')
+        if zone_name == 'America/Goose_Bay' and not partial and rule.startswith('FREQ=DAILY;'):
+            # At 02:01Z the clock falls from 30 October 00:01 to 29 October
+            # 22:01. The non-midnight endpoint still touches 30 October before
+            # the exclusive end; a direct end.date() shortcut would lose it.
+            assert actual.summaries[(date(1988, 10, 30) - lower.date()).days]['local'][0] > 0
+
+
+def test_midstream_source_failure_discards_all_local_boundaries_and_navigation_days():
+    lower, upper = datetime(2026, 1, 1, tzinfo=BERLIN), datetime(2026, 2, 1, tzinfo=BERLIN)
+    source = event('failing', recurrence_rule='FREQ=WEEKLY;COUNT=400')
+    healthy = event('healthy', start=lower + timedelta(days=3, hours=12))
+    original = PreparedSeries.iter_rule_ranges
+    def partial_failure(prepared, *args, **kwargs):
+        for index, value in enumerate(original(prepared, *args, **kwargs)):
+            yield value
+            if prepared.master.id == source.id and index == 1:
+                raise RecurrenceRangeError('Synthetic late source failure')
+    with patch('debacal.timeutil.local_zone', return_value=BERLIN), Store(':memory:') as store:
+        store.apply_remote([source, healthy])
+        with patch.object(PreparedSeries, 'iter_rule_ranges', new=partial_failure):
+            issues = []
+            projection = store.query_year_presence(lower, upper, issues=issues)
+        assert len(projection) == 1
+        assert projection.known_events == (store.get_occurrence(healthy.id),)
+        assert projection._start_days == (healthy.start.date(),)
+        assert sum(day.get('local', (0, ''))[0] for day in projection.summaries) == 1
+        assert [master.id for master, _error in issues] == [source.id]
+
+
 @pytest.mark.parametrize('finite', [False, True])
 def test_floating_snapshot_keeps_its_captured_viewer_zone_for_later_identity_lookups(finite):
     source = event(floating_time=True, recurrence_rule='FREQ=DAILY;COUNT=' + ('4' if finite else '400'))

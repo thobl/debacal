@@ -28,6 +28,10 @@ _EVENT_START_WALL_SQL = "CASE WHEN json_valid(data) THEN json_extract(data,'$.st
 _EVENT_END_WALL_SQL = "CASE WHEN json_valid(data) THEN json_extract(data,'$.end') END"
 _EVENT_START_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.start'),1,10) END"
 _EVENT_END_DATE_SQL = "CASE WHEN json_valid(data) THEN substr(json_extract(data,'$.end'),1,10) END"
+# Modern SQLite obtains text byte lengths from the record header, without
+# reading a large import snapshot's overflow pages. Keep older SQLite usable.
+_HISTORY_SIZE_SQL = ("octet_length(before_data)+octet_length(after_data)" if sqlite3.sqlite_version_info >= (3, 43, 0)
+                     else "length(CAST(before_data AS BLOB))+length(CAST(after_data AS BLOB))")
 
 
 class HistoryConflict(ValueError):
@@ -517,6 +521,12 @@ class Store:
             if calendar_id is not None:
                 query, params = query + ' WHERE calendar_id=?', (calendar_id,)
             return [dict(row) for row in self.connection.execute(query + ' ORDER BY calendar_id,resource_id', params)]
+
+    def quarantined_resource_keys(self) -> list[tuple[str, str]]:
+        """Footer counts need identities, not diagnostic JSON or original files."""
+        with self._lock:
+            return [tuple(row) for row in self.connection.execute(
+                'SELECT calendar_id,resource_id FROM quarantined_resources')]
 
     def quarantined_resource_summaries(self) -> list[dict[str, Any]]:
         """Small persisted metadata for UI lists; never fetch raw calendar blobs."""
@@ -1561,9 +1571,10 @@ class Store:
         """
         if self._projection_storage is None:
             return
-        failed = self.connection.execute('SELECT 1 FROM event_query_projection WHERE event_id=? AND data IS NULL',
-                                         (event_id,)).fetchone()
-        if failed is not None:
+        projection = self.connection.execute(
+            'SELECT projection.data FROM events LEFT JOIN event_query_projection AS projection '
+            'ON projection.event_id=events.id WHERE events.id=?', (event_id,)).fetchone()
+        if projection is not None and projection[0] is None:
             self.connection.execute('UPDATE event_revisions SET version=version+1 WHERE id=1')
             self.connection.execute('INSERT INTO event_query_changes(event_id,version) '
                                     'VALUES (?,(SELECT version FROM event_revisions WHERE id=1)) '
@@ -1864,26 +1875,44 @@ class Store:
             self.connection.execute("UPDATE operations SET applied=?,toggled=? WHERE id=?", (applied, sequence, row["id"]))
             return int(row["id"])
 
+    def history_availability_probe(self):
+        """Identify the two targets and their size without loading snapshots."""
+        with self._lock:
+            undo = self.connection.execute(
+                f"SELECT id,toggled,{_HISTORY_SIZE_SQL} AS size "
+                "FROM operations WHERE applied=1 ORDER BY id DESC LIMIT 1").fetchone()
+            redo = self.connection.execute(
+                f"SELECT id,toggled,{_HISTORY_SIZE_SQL} AS size "
+                "FROM operations WHERE applied=0 ORDER BY toggled DESC,id DESC LIMIT 1").fetchone()
+            permissions = tuple(sorted((calendar.id, calendar.kind, calendar.read_only)
+                                       for calendar in self.list_calendars()))
+            signature = (self.events_revision(), (undo['id'], undo['toggled']) if undo else None,
+                         (redo['id'], redo['toggled']) if redo else None, permissions)
+            size = sum(row['size'] or 0 for row in (undo, redo) if row is not None)
+            cached = getattr(self, '_history_availability_cache', None)
+            result = cached[1] if cached is not None and cached[0] == signature else None
+            return signature, size, result
+
+    def remember_history_availability(self, signature, result):
+        """Accept a background check only while its exact toolbar state is current."""
+        with self._lock:
+            if self.history_availability_probe()[0] != signature:
+                return False
+            self._history_availability_cache = signature, tuple(result)
+            return True
+
     def history_availability(self) -> tuple[bool, bool]:
         """Check the two toolbar actions without decoding the whole history."""
         with self._lock:
-            undo = self.connection.execute(
-                "SELECT id,toggled FROM operations WHERE applied=1 ORDER BY id DESC LIMIT 1").fetchone()
-            redo = self.connection.execute(
-                "SELECT id,toggled FROM operations WHERE applied=0 ORDER BY toggled DESC,id DESC LIMIT 1").fetchone()
-            permissions = tuple(sorted((calendar.id, calendar.kind, calendar.read_only)
-                                       for calendar in self.list_calendars()))
-            signature = (self.events_revision(), tuple(undo) if undo else None,
-                         tuple(redo) if redo else None, permissions)
-            cached = getattr(self, '_history_availability_cache', None)
-            if cached is not None and cached[0] == signature:
-                return cached[1]
+            signature, _size, cached = self.history_availability_probe()
+            if cached is not None:
+                return cached
             available = []
-            for candidate, applied in ((undo, True), (redo, False)):
+            for candidate, applied in ((signature[1], True), (signature[2], False)):
                 allowed = False
                 if candidate is not None:
                     row = self.connection.execute("SELECT before_data,after_data FROM operations WHERE id=?",
-                                                  (candidate['id'],)).fetchone()
+                                                  (candidate[0],)).fetchone()
                     before, after = (self._normalized_snapshot(json.loads(row[field]))
                                      for field in ('before_data', 'after_data'))
                     if self._matches(after if applied else before):
@@ -1948,7 +1977,31 @@ class Store:
             self._assert_remote_owners(upserts, delete_ids, calendar_id, expected_uids)
             if self._pending_rows(ids):
                 raise HistoryConflict("Remote changes conflict with pending local edits.")
-            self._restore({event.id: event.to_dict() for event in upserts} | {event_id: None for event_id in delete_ids}, enqueue=False)
+            target = {event_id: None for event_id in delete_ids}
+            for event in upserts:
+                value = event.to_dict()
+                current = self.connection.execute(
+                    'SELECT data,start,end,recurring,group_id,candidate,search_text FROM events WHERE id=?',
+                    (event.id,)).fetchone()
+                matching_row = (current is not None and current['data'] == self._json(value)
+                                and current['start'] == event.start.timestamp() and current['end'] == event.end.timestamp()
+                                and current['recurring'] == event.recurring and current['group_id'] == event.group_id
+                                and current['candidate'] == event.candidate and current['search_text'] == self._search_projection(event))
+                if matching_row:
+                    # The remote source is byte-for-byte canonical-identical,
+                    # including its transport template. Ownership and pending
+                    # edit guards above still run inside this transaction.
+                    # Failed derived data must remain retryable after parser
+                    # compatibility fixes, even when the source did not change.
+                    projection = (self.connection.execute(
+                        'SELECT data FROM event_query_projection WHERE event_id=?', (event.id,)).fetchone()
+                        if self._projection_storage is not None else None)
+                    incomplete = self._projection_storage is not None and (projection is None or projection[0] is None)
+                    if not incomplete:
+                        continue
+                target[event.id] = value
+            if target:
+                self._restore(target, enqueue=False)
 
     def accept_remote(
         self, calendar_id: str, event_id: str, expected: Event | None,

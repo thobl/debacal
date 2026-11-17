@@ -105,6 +105,16 @@ class EventRangeIndex:
 
     def restore(self, identity: str, record: IndexedSource | None) -> None:
         """Restore a transaction's prepared source without decoding it again."""
+        previous = self.sources.get(identity)
+        if previous is not None and record is not None and previous.entries == record.entries:
+            # Descriptive edits and many rule changes retain all coordinates.
+            # Refresh every payload, including exceptions and the native rule,
+            # without removing nodes or rebuilding unchanged AVL ancestry.
+            for tree_key, key in record.entries:
+                value = record if tree_key[2] else record.occurrences[key[2]]
+                self.trees[tree_key].replace_value(key, value)
+            self.sources[identity] = record
+            return
         self.remove(identity)
         if record is not None:
             self.sources[identity] = record
@@ -220,6 +230,38 @@ class EventRangeIndex:
                 grouped.setdefault(event.series_id, {})[event.id] = event
             else:
                 ordinary.append(event)
+        # A bounded agenda needs the earliest K events, not K occurrences from
+        # every rule. Only validated sources may establish an upper bound: a
+        # broken rule can invalidate its separately indexed explicit dates.
+        bounded = limit is not None and limit > 0
+        order = lambda item: self.order(item, start.tzinfo)
+        winners = []
+        if bounded:
+            rule_ids = {record.master.id for record in rules}
+            candidates = list(ordinary)
+            candidates.extend(event for identity, members in grouped.items()
+                              if identity not in rule_ids for event in members.values())
+            winners = nsmallest(limit, candidates, key=order)
+        rule_end = end
+
+        def narrow_end():
+            nonlocal rule_end
+            if not bounded or len(winners) < limit:
+                return
+            last = winners[-1]
+            # The event's exclusive end is safely after its start, including
+            # ties. Points simply keep the previous bound. Normalizing to the
+            # viewer preserves DATE/floating semantics across source zones.
+            try:
+                upper = (datetime.combine(last.end.date(), time.min, start.tzinfo) if last.all_day
+                         else last.end.astimezone(start.tzinfo))
+                stamp = upper.timestamp()
+                if order(last)[0] < stamp and start.timestamp() < stamp < rule_end.timestamp():
+                    rule_end = upper
+            except (ValueError, OverflowError):
+                pass
+
+        narrow_end()
         unavailable = set()
         for record in rules:
             master = record.master
@@ -231,9 +273,12 @@ class EventRangeIndex:
                     floating_zone = local_zone()
                 else:
                     floating_zone = None
-                values = record.prepared.query_rule(start, end, limit=limit if limit is not None else OCCURRENCE_LIMIT,
+                values = record.prepared.query_rule(start, rule_end, limit=limit if limit is not None else OCCURRENCE_LIMIT,
                                                     truncate=limit is not None, floating_zone=floating_zone)
                 grouped.setdefault(master.id, {}).update((item.id, item) for item in values)
+                if bounded:
+                    winners = nsmallest(limit, (*winners, *grouped[master.id].values()), key=order)
+                    narrow_end()
             except RecurrenceRangeError as error:
                 if issues is None:
                     raise

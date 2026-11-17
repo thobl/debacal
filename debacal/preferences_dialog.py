@@ -12,7 +12,7 @@ from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .preferences import Preferences, _system_language_locale
 from .appearance_preferences import AppearanceEditor
-from .shortcuts import KeyboardShortcutsEditor
+from .shortcuts import KeyboardShortcutsEditor, normalize_bindings, validate_bindings
 from .theme import scheme_for
 from .date_time_fields import parse_duration, format_duration
 from .buttons import action_button
@@ -37,6 +37,18 @@ class PreferencesDialog(QDialog):
         self.resize(min(1040, max(760, bounds.width() - 48)), min(820, max(540, bounds.height() - 48)))
         self.result_preferences = preferences
         self._applying = False
+        self._draft_preferences = preferences
+        self._appearance_editor = self._source_editor = self._shortcut_editor = None
+        self._source_store = store or getattr(parent, 'store', None)
+        self._source_options = dict(credentials=credentials, executor=executor, allow_remote=allow_remote)
+        self._sources_finished = False
+        self._shortcut_defaults = normalize_bindings(default_bindings if default_bindings is not None else bindings)
+        self.result_bindings = self._shortcut_defaults | normalize_bindings(bindings)
+        self._draft_bindings = dict(self.result_bindings)
+        self._applied_state = preferences, dict(self.result_bindings)
+        self._lazy_pages = {}
+        self._initialized_categories = {'calendar'}
+        self.finished.connect(self.finish_sources)
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -156,55 +168,9 @@ class PreferencesDialog(QDialog):
         form.addRow('Duration buttons', self.duration_presets)
         calendar_layout.addStretch()
 
-        _, appearance_layout, _ = self.category('Appearance', scrollable=False)
-        self.appearance_editor = AppearanceEditor(preferences)
-        appearance_layout.addWidget(self.appearance_editor)
-        for name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
-                     'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'font_family',
-                     'show_sidebar_title', 'sidebar_title', 'corner_style', 'year_view_style'):
-            setattr(self, name, getattr(self.appearance_editor, name))
-
-        source_page, source_layout, _ = self.category('Calendar sources')
-        self.source_editor = None
-        store = store or getattr(parent, 'store', None)
-        if store is not None:
-            from .calendar_sources import CalendarSourcesEditor
-            self.source_editor = CalendarSourcesEditor(store, preferences, self, credentials=credentials,
-                                                       executor=executor, allow_remote=allow_remote)
-            self.source_editor.changed.connect(self.calendars_changed.emit)
-            self.source_editor.credential_requested.connect(self.credential_requested.emit)
-            self.finished.connect(self.source_editor.finish)
-            source_layout.addWidget(self.source_editor)
-        else:
-            source_page.setToolTip('Calendar sources are managed from an open calendar workspace.')
-            source_layout.addStretch()
-
-        _, sync_layout, form = self.category('Sync')
-        self.auto_sync = QCheckBox('Sync automatically while the app is open')
-        self.auto_sync.setChecked(preferences.auto_sync_enabled)
-        self.sync_interval = QSpinBox()
-        self.sync_interval.setRange(1, 1440)
-        self.sync_interval.setSuffix(' minute(s)')
-        self.sync_interval.setValue(preferences.sync_interval_minutes)
-        self.sync_interval.setEnabled(preferences.auto_sync_enabled)
-        self.auto_sync.toggled.connect(self.sync_interval.setEnabled)
-        self.conflict_notifications = QComboBox()
-        for name, value in [('In the app', 'in_app'), ('Desktop notification', 'desktop'), ('Both', 'both')]:
-            self.conflict_notifications.addItem(name, value)
-        self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData(preferences.conflict_notifications))
-        form.addRow('Automatic syncing', self.auto_sync)
-        form.addRow('Sync every', self.sync_interval)
-        form.addRow('Conflict alerts', self.conflict_notifications)
-        self.conflict_notifications.setToolTip('Conflicts are always available in the app. Desktop alerts also follow '
-                                              'your operating system’s notification settings.')
-        sync_layout.addStretch()
-
-        self.shortcut_editor = KeyboardShortcutsEditor(bindings, default_bindings)
-        self.shortcut_fields = self.shortcut_editor.fields
-        self.result_bindings = dict(self.shortcut_editor.initial_bindings)
-        self._applied_state = preferences, dict(self.result_bindings)
-        _, shortcut_layout, _ = self.category('Keyboard shortcuts', scrollable=False)
-        shortcut_layout.addWidget(self.shortcut_editor)
+        for name, scrollable in (('Appearance', False), ('Calendar sources', True),
+                                 ('Sync', True), ('Keyboard shortcuts', False)):
+            self._lazy_pages[name.casefold()] = self.category(name, scrollable=scrollable)
         footer = QWidget()
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(22, 10, 22, 14)
@@ -238,6 +204,84 @@ class PreferencesDialog(QDialog):
         self._align_calendar_labels()
         self.update_preview()
         install_dialog_keyboard(self, self.save)
+
+    def _ensure_category(self, name):
+        if name in self._initialized_categories:
+            return
+        self._initialized_categories.add(name)
+        page, layout, form = self._lazy_pages[name]
+        if name == 'appearance':
+            self._appearance_editor = AppearanceEditor(self._draft_preferences, defer_font_samples=True)
+            layout.addWidget(self._appearance_editor)
+            self._appearance_editor.finish_font_samples()
+            self.update_preview()
+        elif name == 'calendar sources':
+            if self._source_store is None:
+                page.setToolTip('Calendar sources are managed from an open calendar workspace.')
+                layout.addStretch()
+            else:
+                from .calendar_sources import CalendarSourcesEditor
+                self._source_editor = CalendarSourcesEditor(self._source_store, self._draft_preferences, self,
+                                                            **self._source_options)
+                self._source_editor.changed.connect(self.calendars_changed.emit)
+                self._source_editor.credential_requested.connect(self.credential_requested.emit)
+                layout.addWidget(self._source_editor)
+        elif name == 'keyboard shortcuts':
+            self._shortcut_editor = KeyboardShortcutsEditor(self._draft_bindings, self._shortcut_defaults)
+            layout.addWidget(self._shortcut_editor)
+        elif name == 'sync':
+            preferences = self._draft_preferences
+            self._auto_sync = QCheckBox('Sync automatically while the app is open')
+            self._auto_sync.setChecked(preferences.auto_sync_enabled)
+            self._sync_interval = QSpinBox()
+            self._sync_interval.setRange(1, 1440)
+            self._sync_interval.setSuffix(' minute(s)')
+            self._sync_interval.setValue(preferences.sync_interval_minutes)
+            self._sync_interval.setEnabled(preferences.auto_sync_enabled)
+            self._auto_sync.toggled.connect(self._sync_interval.setEnabled)
+            self._conflict_notifications = QComboBox()
+            for label, value in [('In the app', 'in_app'), ('Desktop notification', 'desktop'), ('Both', 'both')]:
+                self._conflict_notifications.addItem(label, value)
+            self._conflict_notifications.setCurrentIndex(
+                self._conflict_notifications.findData(preferences.conflict_notifications))
+            form.addRow('Automatic syncing', self._auto_sync)
+            form.addRow('Sync every', self._sync_interval)
+            form.addRow('Conflict alerts', self._conflict_notifications)
+            self._conflict_notifications.setToolTip('Conflicts are always available in the app. Desktop alerts also follow '
+                                                   'your operating system’s notification settings.')
+            layout.addStretch()
+
+    @property
+    def appearance_editor(self):
+        self._ensure_category('appearance')
+        return self._appearance_editor
+
+    @property
+    def source_editor(self):
+        self._ensure_category('calendar sources')
+        return self._source_editor
+
+    @source_editor.setter
+    def source_editor(self, editor):
+        self._source_editor = editor
+        self._initialized_categories.add('calendar sources')
+
+    @property
+    def shortcut_editor(self):
+        self._ensure_category('keyboard shortcuts')
+        return self._shortcut_editor
+
+    @property
+    def shortcut_fields(self):
+        return self.shortcut_editor.fields
+
+    def finish_sources(self, *_):
+        """Finish only an initialized source panel, once per dialog lifetime."""
+        if self._source_editor is not None and not self._sources_finished:
+            self._sources_finished = True
+            finish = getattr(self._source_editor, 'finish', None)
+            if finish is not None:
+                finish()
 
     def category(self, name, *, scrollable=True):
         page = QWidget()
@@ -300,7 +344,9 @@ class PreferencesDialog(QDialog):
         if index < 0 or index >= self.categories.count():
             return
         self.categories.setCurrentRow(index)
-        self.page_heading.setText(self.categories.item(index).text())
+        heading = self.categories.item(index).text()
+        self._ensure_category(heading.casefold())
+        self.page_heading.setText(heading)
         for row in range(self.categories.count()):
             item = self.categories.item(row)
             font = item.font()
@@ -348,14 +394,18 @@ class PreferencesDialog(QDialog):
         return Preferences(default_event_duration_minutes=minutes).default_event_duration_minutes
 
     def value(self):
-        return Preferences(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
-                           time_format=self.time_format.currentData(), conflict_notifications=self.conflict_notifications.currentData(),
-                           auto_sync_enabled=self.auto_sync.isChecked(), sync_interval_minutes=self.sync_interval.value(),
-                           locale_name=self.locale.currentData(), duration_presets_minutes=self.duration_values(),
-                           default_event_duration_minutes=self.default_duration_minutes(),
-                           show_week_numbers=self.week_numbers.isChecked(),
-                           visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value(),
-                           **self.appearance_editor.values())
+        values = dict(start_weekday=self.week_start.currentData(), date_format=self.date_format.currentData(),
+                      time_format=self.time_format.currentData(), locale_name=self.locale.currentData(),
+                      duration_presets_minutes=self.duration_values(),
+                      default_event_duration_minutes=self.default_duration_minutes(),
+                      show_week_numbers=self.week_numbers.isChecked(),
+                      visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value())
+        if self._appearance_editor is not None:
+            values.update(self._appearance_editor.values())
+        if 'sync' in self._initialized_categories:
+            values.update(conflict_notifications=self._conflict_notifications.currentData(),
+                          auto_sync_enabled=self._auto_sync.isChecked(), sync_interval_minutes=self._sync_interval.value())
+        return replace(self._draft_preferences, **values)
 
     def locale_changed(self, *_):
         preferences = Preferences(locale_name=self.locale.currentData())
@@ -378,23 +428,30 @@ class PreferencesDialog(QDialog):
                                   visible_start_hour=self.visible_start.value(), visible_end_hour=self.visible_end.value())
         except ValueError:
             pass  # Date formatting remains usable while a range is incomplete.
-        self.appearance_editor.set_context(preferences)
+        if self._appearance_editor is not None:
+            self._appearance_editor.set_context(preferences)
 
     def restore_defaults(self):
+        defaults = Preferences()
+        self._draft_preferences = defaults
         for field in (self.locale, self.week_start, self.date_format, self.time_format):
             field.setCurrentIndex(0)
-        self.conflict_notifications.setCurrentIndex(self.conflict_notifications.findData('in_app'))
-        self.auto_sync.setChecked(True)
-        self.sync_interval.setValue(Preferences().sync_interval_minutes)
+        if 'sync' in self._initialized_categories:
+            self._conflict_notifications.setCurrentIndex(self._conflict_notifications.findData('in_app'))
+            self._auto_sync.setChecked(True)
+            self._sync_interval.setValue(defaults.sync_interval_minutes)
         self.week_numbers.setChecked(Preferences().show_week_numbers)
         self.visible_start.setValue(Preferences().visible_start_hour)
         self.visible_end.setValue(Preferences().visible_end_hour)
         self.default_duration.setText(format_duration(timedelta(minutes=Preferences().default_event_duration_minutes), elapsed=True))
         self.duration_presets.setText(', '.join(format_duration(timedelta(minutes=value), elapsed=True)
                                                for value in Preferences().duration_presets_minutes))
-        self.appearance_editor.set_preferences(Preferences())
+        if self._appearance_editor is not None:
+            self._appearance_editor.set_preferences(defaults)
         self.update_preview()
-        self.shortcut_editor.restore_defaults()
+        self._draft_bindings = dict(self._shortcut_defaults)
+        if self._shortcut_editor is not None:
+            self._shortcut_editor.restore_defaults()
         self.error.clear()
 
     def apply(self, *, close_after=False):
@@ -431,7 +488,8 @@ class PreferencesDialog(QDialog):
             self.error.show()
             return False
         try:
-            bindings = self.shortcut_editor.value()
+            bindings = (self._shortcut_editor.value() if self._shortcut_editor is not None
+                        else validate_bindings(self._draft_bindings))
         except ValueError as error:
             self.set_category('Keyboard shortcuts')
             self.shortcut_editor.error.setText(str(error))
@@ -459,9 +517,9 @@ class PreferencesDialog(QDialog):
         # Guard reentrancy immediately, but only disable the large control
         # tree if a source operation remains pending after submission.
         self._applying = True
-        if self.source_editor is not None:
+        if self._source_editor is not None:
             try:
-                self.source_editor.apply(on_success=saved, on_error=failed)
+                self._source_editor.apply(on_success=saved, on_error=failed)
             except ValueError as error:
                 failed(error)
             if self._applying:
@@ -478,10 +536,12 @@ class PreferencesDialog(QDialog):
 
     def _finish_apply(self, preferences, bindings):
         self.result_preferences, self.result_bindings = preferences, bindings
+        self._draft_preferences, self._draft_bindings = preferences, dict(bindings)
         self.dialog_keyboard.refresh_tooltips()
         self.error.clear()
         self.error.hide()
-        self.shortcut_editor.error.clear()
+        if self._shortcut_editor is not None:
+            self._shortcut_editor.error.clear()
         if (preferences, bindings) != self._applied_state:
             self._applied_state = preferences, dict(bindings)
             self.applied.emit(preferences, dict(bindings))
@@ -492,8 +552,8 @@ class PreferencesDialog(QDialog):
             if palette != self.palette():
                 self.setPalette(palette)
             self.error.setStyleSheet('color: ' + scheme_for(preferences).error + ';')
-            if self.source_editor is not None:
-                self.source_editor.set_preferences(preferences)
+            if self._source_editor is not None:
+                self._source_editor.set_preferences(preferences)
 
     def save(self):
         self.apply(close_after=True)
@@ -511,3 +571,24 @@ class PreferencesDialog(QDialog):
             event.ignore()
         else:
             super().closeEvent(event)
+
+
+def _appearance_field(name):
+    return property(lambda dialog: getattr(dialog.appearance_editor, name))
+
+
+for _name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
+              'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'font_family',
+              'show_sidebar_title', 'sidebar_title', 'corner_style', 'year_view_style'):
+    setattr(PreferencesDialog, _name, _appearance_field(_name))
+
+
+def _sync_field(name):
+    def field(dialog):
+        dialog._ensure_category('sync')
+        return getattr(dialog, '_' + name)
+    return property(field)
+
+
+for _name in ('auto_sync', 'sync_interval', 'conflict_notifications'):
+    setattr(PreferencesDialog, _name, _sync_field(_name))

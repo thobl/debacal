@@ -162,6 +162,24 @@ class IntervalIndex(Generic[T]):
     def remove(self, key: tuple[float, float, str]) -> None:
         self._root = _remove(self._root, key)
 
+    def replace_value(self, key: tuple[float, float, str], value: T) -> None:
+        """Replace an existing payload in O(log n), preserving tree geometry.
+
+        The endpoints and identity are unchanged, so heights, subtree maxima
+        and balance remain valid. Missing keys raise KeyError without mutation.
+        """
+        node = self._root
+        while node is not None:
+            current = node.interval.key
+            if key < current:
+                node = node.left
+            elif key > current:
+                node = node.right
+            else:
+                node.interval = Interval(key[0], key[1], key[2], value)
+                return
+        raise KeyError(key)
+
     def overlapping(self, start: float, end: float) -> Iterator[T]:
         if end <= start:
             return
