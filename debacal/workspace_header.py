@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .theme import corner_radius, scheme_for
+from .icons import icon
 
 
 class SegmentedControl(QWidget):
@@ -183,6 +184,7 @@ class WorkspaceHeader(QWidget):
         self.separator.preferences = preferences
         self.separator.setFixedHeight(max(1, round(scale)))
         self.separator.update()
+        window.finish_occurrences_button.setIcon(icon('confirm', scheme_for(preferences).on_accent))
         window.toolbar.layout().setSpacing(round(16 * scale))
         for section in window.toolbar_sections:
             section.setFixedHeight(heading_height + gap + button_height)
@@ -190,8 +192,11 @@ class WorkspaceHeader(QWidget):
             section.layout().itemAt(1).layout().setContentsMargins(0, 0, 0, 0)
             for button in section.findChildren(QPushButton):
                 compact = bool(button.property('compactIcon'))
-                button.setFixedSize(round(20 * scale) if compact else width,
-                                    round(20 * scale) if compact else button_height)
+                if button is window.finish_occurrences_button:
+                    button.setFixedHeight(button_height)
+                else:
+                    button.setFixedSize(round(20 * scale) if compact else width,
+                                        round(20 * scale) if compact else button_height)
                 button.setIconSize(QSize(round((14 if compact else 20) * scale),
                                          round((14 if compact else 20) * scale)))
             for label in section.findChildren(QLabel):
@@ -215,8 +220,11 @@ class WorkspaceHeader(QWidget):
         for section in self.workspace.toolbar_sections:
             for button in section.findChildren(QPushButton):
                 compact = bool(button.property('compactIcon'))
-                button.setFixedSize(round(20 * scale) if compact else round(32 * scale),
-                                    round(20 * scale) if compact else self.button_height)
+                if button is self.workspace.finish_occurrences_button:
+                    button.setFixedHeight(self.button_height)
+                else:
+                    button.setFixedSize(round(20 * scale) if compact else round(32 * scale),
+                                        round(20 * scale) if compact else self.button_height)
         needed = self.title.minimumSizeHint().width() + self.controls.sizeHint().width() + round(24 * scale)
         inline = self.width() >= needed
         if inline != self.inline:

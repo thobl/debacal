@@ -406,7 +406,7 @@ separate **+** beside the schedule modes adds an occurrence with its own
 date and time. The calendar-and-pointer button beside **+** temporarily closes the
 editor to add several occurrences in the main calendar. Hover to preview, click to add,
 and drag or resize draft occurrences to adjust them. Existing events remain
-read-only. **Done adding occurrences** or **Esc** returns to the same editor;
+read-only. **Done** in the Actions toolbar or **Esc** returns to the same editor;
 you can enter this mode again. Changes are saved only when you save the editor.
 
 Choosing a regular frequency from Custom starts a clean regular pattern,

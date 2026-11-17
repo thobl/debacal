@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QPoint, QTimer, Qt
-from PySide6.QtGui import QTextCursor, QWindowStateChangeEvent
+from PySide6.QtGui import QCursor, QTextCursor, QWindowStateChangeEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QMenu
 
@@ -44,6 +44,8 @@ def workspace():
         window.show()
         window.activateWindow()
         window.canvas.setFocus()
+        # Native X11 skips a move if a prior run left the cursor at its target.
+        QCursor.setPos(window.mapToGlobal(QPoint(4, 4)))
         app.processEvents()
         yield app, window, store
         QApplication.clipboard().clear()
@@ -246,7 +248,10 @@ def test_draft_occurrence_moves_and_resizes_without_changing_prototype_or_store(
                          pos=timed_point(window, added.date(), 13))
         app.processEvents()
         rect = next(rect for rect, event in window.canvas.rects() if event.start == added)
-        start = rect.center().toPoint()
+        # A 45-minute box's center lies on a snap midpoint; pixel rounding can
+        # put it on either side as the available calendar height changes.
+        start = timed_point(window, added.date(), added.hour + .25)
+        assert rect.contains(start)
         day_width = (window.canvas.width() - window.canvas.gutter) / len(window.canvas.days)
         finish = start + QPoint(round(day_width), round(window.canvas.hour_height))
         QTest.mousePress(window.canvas, Qt.MouseButton.LeftButton, pos=start)

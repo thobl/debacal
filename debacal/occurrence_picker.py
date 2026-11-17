@@ -218,7 +218,7 @@ class CalendarOccurrencePicker(QObject):
             keys = ' / '.join(value for action in ('dialog_close', 'dialog_accept')
                               if (value := shortcut_label(window.bindings.get(action, DEFAULT_DIALOG_BINDINGS[action]))))
             window.finish_occurrences_button.setToolTip('Return to event editor' + (' · ' + keys if keys else ''))
-            window.occurrence_bar.show()
+            window.actions_stack.setCurrentIndex(1)
             # done(PICK_OCCURRENCES) has already closed the modal window and
             # ended its exec(). Keep it closed: remapping or minimizing a
             # transient dialog depends on the window manager and can restore
@@ -234,7 +234,7 @@ class CalendarOccurrencePicker(QObject):
             dialog.draft_changed.disconnect(self.changed)
             dialog.finished.disconnect(self.abort)
             window.occurrence_picker = None
-            window.occurrence_bar.hide()
+            window.actions_stack.setCurrentIndex(0)
             for control, enabled in controls:
                 control.setEnabled(enabled)
             for surface in window.day_surfaces:
