@@ -348,3 +348,36 @@ in separate staging trees using the pinned release toolchain. The recipe and
 `.SRCINFO` source checksums match the final source archive. Installation links
 and version metadata now consistently reference 0.1.6; published older assets
 remain unchanged.
+
+### Release 0.1.7 — 17 November 2026
+
+This release includes all background-sync, preferences and calendar-query
+performance changes from `78e843c`, with the matched measurements in the
+17 November report. The local correctness suite passed **4,720 tests and 169
+subtests**. Extended timing runs remain outside release CI. The release metadata
+and packaging checks passed another 29 focused tests.
+
+The privacy review covered 151 reachable commits, 2,054 historical blobs,
+author identities and the new synthetic benchmark artifacts. It found no private
+calendar exports, databases, actual credentials or secret keys. Public author
+identities and synthetic fixtures remain; no history rewrite was needed.
+
+The extracted source collected **4,671 tests** without importing excluded
+maintainer tools. The new benchmark contract test now follows the same
+source-archive skip convention as the existing benchmark tests. A clean wheel
+installation outside the checkout verified version 0.1.7, CLI help, offline
+discovery and an isolated demo screenshot. Three installed-worker checks also
+passed: installed-package origin despite a shadow directory, consistent history
+results, and real local-HTTP ingestion of 1,500 events with Qt dispatching.
+
+The standalone Arch bundle verified the source checksum and built `0.1.7-1`
+with its normal smoke checks. Its payload includes the new worker modules,
+launcher, desktop entry, icon and license under `/usr`; the launcher uses
+`/usr/bin/python`. This local build used `--nodeps` and isolated existing Python
+dependencies because the host lacks pacman's runtime packages. It does not
+establish pacman dependency resolution, and no system installation was performed.
+
+Source, wheel, Arch recipe bundle and checksum manifest reproduced byte-for-byte
+with the pinned release toolchain. The recipe and `.SRCINFO` match the source
+SHA-256. Installation links and version metadata reference 0.1.7; published
+older releases remain unchanged.

@@ -1,4 +1,11 @@
 """Small contracts for the opt-in local responsiveness benchmark."""
+from pathlib import Path
+
+import pytest
+
+if not (Path(__file__).resolve().parents[1] / 'scripts/benchmark_sync_responsiveness.py').is_file():
+    pytest.skip('Maintainer tooling is not included in the source archive', allow_module_level=True)
+
 from scripts.benchmark_sync_responsiveness import fixed_ics, statistics_for
 
 
