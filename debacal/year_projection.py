@@ -303,7 +303,7 @@ class YearProjection(Sequence):
     def for_sources(self, identifiers):
         return self._events_in_range(set(identifiers) & self._available, self.start, self.end)
 
-    def events_on_day(self, day, *, limit=100):
+    def events_on_day(self, day, *, limit=100, exclude_sources=()):
         if limit <= 0 or not self.first_day <= day or day.toordinal() >= self._first_ordinal + self._day_count:
             return []
         start = datetime.combine(day, time.min, self.zone)
@@ -311,7 +311,7 @@ class YearProjection(Sequence):
             end = datetime.combine(day + timedelta(days=1), time.min, self.zone)
         except OverflowError:
             end = datetime.max.replace(tzinfo=self.zone)
-        return self._events_in_range(self._available, start, end, limit=limit)
+        return self._events_in_range(self._available - set(exclude_sources), start, end, limit=limit)
 
     def adjacent_start_day(self, day, direction):
         """Nearest start day inside this displayed model, without expansion."""

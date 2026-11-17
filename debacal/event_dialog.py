@@ -188,7 +188,10 @@ class RegularFields(QWidget):
 
 class EventDialog(FormDialog):
     """Keep primary timing independent of preview selection and occurrence edits."""
+    PICK_OCCURRENCES = 3
+
     mode_changed = Signal(str)
+    draft_changed = Signal()
 
     def __init__(self, calendars, start, end=None, event=None, parent=None,
                  preferences=None, edit_scope='single', series=None, default_calendar_id=None,
@@ -331,6 +334,10 @@ class EventDialog(FormDialog):
         self.add_occurrence_button = icon_button('new', 'Add occurrence at another date or time', self.add_occurrence,
                                                 preferences=self.preferences)
         self.schedule_mode_row.addWidget(self.add_occurrence_button)
+        self.add_occurrences_button = icon_button(
+            'add_occurrences', 'Add occurrences in calendar…', self.begin_calendar_occurrences,
+            preferences=self.preferences)
+        self.schedule_mode_row.addWidget(self.add_occurrences_button)
         scheduling.addLayout(self.schedule_mode_row)
         self.repeat = ChoiceControl([('Daily', 'DAILY'), ('Weekly', 'WEEKLY'), ('Monthly', 'MONTHLY'),
                                      ('Yearly', 'YEARLY'), ('Custom', 'RDATE')], self.preferences,
@@ -449,7 +456,8 @@ class EventDialog(FormDialog):
         self.configure_keyboard([*self.scope_buttons.values(), self.calendar, self.title, self.location,
             self.all_day, self.start.lineEdit(), self.end.lineEdit(), self.duration, *self.schedule_mode.buttons.values(),
             *self.repeat.buttons.values(), self.interval, self.repeat_count, self.repeat_until.lineEdit(),
-            *self.overflow_policy.buttons.values(), self.pattern, self.add_occurrence_button, self.description,
+            *self.overflow_policy.buttons.values(), self.pattern, self.add_occurrence_button,
+            self.add_occurrences_button, self.description,
             self.preview.previous_button, self.preview.today_button, self.preview.next_button, self.preview.first_button,
             self.preview.previous_occurrence_button, self.preview.next_occurrence_button, self.preview.last_button],
             [self.save_button, self.cancel_button], self.save,
@@ -1303,6 +1311,8 @@ class EventDialog(FormDialog):
         self.pattern.setEnabled(editable)
         self.add_occurrence_button.setEnabled(editable)
         self.add_occurrence_button.setVisible(not self.common_fields_only)
+        self.add_occurrences_button.setEnabled(editable)
+        self.add_occurrences_button.setVisible(not self.common_fields_only)
         if not self._report(self._refresh_preview):
             self.preview.set_events([], self.preferences, self.calendars)
             self.preview.enable_date_editing(False)
@@ -1356,6 +1366,7 @@ class EventDialog(FormDialog):
         finally:
             self._loading = was_loading
         self._update_preview()
+        self.draft_changed.emit()
 
     def _preview_selected(self, event):
         self.selected_preview_event = event
@@ -1424,7 +1435,73 @@ class EventDialog(FormDialog):
             self._draft.add_occurrence(master, start, end,
                 reference_start=self.value(self.start), reference_end=self.value(self.end), duration_spec=duration_spec)
             self._after_graphical()
-        self._report(add)
+        return self._report(add)
+
+    def begin_calendar_occurrences(self):
+        """Suspend the modal form while its unsaved draft is placed in the calendar."""
+        if not self._can_edit_schedule():
+            return False
+
+        def prepare():
+            self._commit_pending_range()
+            if self.schedule_mode.currentData() != 'single' and self.pattern.text() != self._draft.expression:
+                draft = deepcopy(self._draft)
+                self._read_expression(draft)
+                self._adopt_expression_duration(draft)
+                self._draft = draft
+                self._schedule_error = None
+                self._sync_schedule_controls()
+                self._remember_custom()
+            self.calendar_occurrence_master()
+
+        if not self._report(prepare):
+            self.show_error(self.error.text())
+            return False
+        # A distinct result leaves the widgets and draft intact for the same
+        # dialog's next exec(), without accepting or saving any calendar data.
+        self.done(self.PICK_OCCURRENCES)
+        return True
+
+    def calendar_occurrence_master(self):
+        """Return the current draft projection, without writing to the calendar."""
+        return self._project_preview(self.build_events()[0])
+
+    def occurrence_range_at(self, start):
+        """Relocate the prototype with its nominal/elapsed duration semantics."""
+        return self._relocate_range(start)
+
+    def add_calendar_occurrence(self, start, end=None, *, duration_spec=None):
+        if not self._can_edit_schedule():
+            return False
+        if end is None:
+            start, end = self.occurrence_range_at(start)
+        spec = self.duration_spec if duration_spec is None else duration_spec
+        return self._add_range(start, end, duration_spec=spec)
+
+    def edit_calendar_occurrence(self, occurrence, start, end, *, duration_spec=None):
+        """Apply a calendar drag to the prototype or one unsaved occurrence."""
+        if not self._can_edit_schedule():
+            return False
+
+        def apply():
+            # Event normalizes nominal duration when a changed endpoint no
+            # longer matches it. Keep the prototype fields in that same state
+            # so the next added occurrence uses the resized duration too.
+            edited = replace(occurrence, start=start, end=end,
+                             duration_spec=occurrence.duration_spec if duration_spec is None else duration_spec)
+            if self.preview.is_primary(occurrence):
+                self._set_range(start, end, duration_spec=edited.duration_spec)
+                self._sync_ending()
+                self._update_preview()
+                self.draft_changed.emit()
+                return
+            master = self.calendar_occurrence_master()
+            self._draft.edit_occurrence(master, occurrence, start, end,
+                reference_start=self.value(self.start), reference_end=self.value(self.end),
+                duration_spec=edited.duration_spec)
+            self._after_graphical()
+
+        return self._report(apply)
 
     def edit_occurrence(self, occurrence):
         if self.schedule_mode.currentData() == 'single':

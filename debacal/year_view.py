@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QWidget, QMenu
 
 from .preferences import Preferences
 from .timeutil import local_zone, now
-from .calendar_widgets import paint_colors
+from .calendar_widgets import paint_colors, set_occurrence_picking
 from .theme import corner_radius
 from .calendar_appearance import weekend_text, weekend_fill
 from .fonts import ui_font
@@ -58,6 +58,8 @@ class YearView(QWidget):
         self.scope = 'single'
         self.preview_events = []
         self.placement_active = False
+        self.occurrence_picking_active = False
+        self.occurrence_picking_ids = frozenset()
         self.creation_calendar = None
         self._placement_consumed = False
         self._event_map = {}
@@ -82,6 +84,8 @@ class YearView(QWidget):
         self._default_tooltip = ('Click a month heading to open Month view, or a week number to open Week view. '
                                  'Double-click a day to create an all-day event.')
         self.setToolTip(self._default_tooltip)
+
+    set_occurrence_picking = set_occurrence_picking
 
     @property
     def scale(self):
@@ -520,7 +524,7 @@ class YearView(QWidget):
         if day is None:
             return
         self.setFocus()
-        if self.placement_active:
+        if self.placement_active or self.occurrence_picking_active:
             self._placement_consumed = True
             self.placement_confirmed.emit(datetime.combine(day, time.min, local_zone()))
             return
@@ -538,6 +542,8 @@ class YearView(QWidget):
             self._placement_consumed = False
             return
         start = datetime.combine(day, time.min, local_zone())
+        if self.occurrence_picking_active:
+            return
         if self.placement_active:
             self.placement_confirmed.emit(start)
             return
@@ -567,11 +573,15 @@ class YearView(QWidget):
         day = self.day_at(event.position())
         if hovered is None:
             self.setToolTip(self._day_tooltip(day) if day is not None else self._default_tooltip)
-        if self.placement_active and day is not None:
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(datetime.combine(day, time.min, local_zone()) if day is not None else None)
+        elif self.placement_active and day is not None:
             self.placement_moved.emit(datetime.combine(day, time.min, local_zone()))
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(None)
         previous, self._hover_week = self._hover_week, None
         if previous in self._week_rects:
             self.update(self._week_rects[previous][0].toAlignedRect())
@@ -581,7 +591,7 @@ class YearView(QWidget):
 
     def contextMenuEvent(self, event):
         day = self.day_at(event.pos())
-        if day is None or self.placement_active:
+        if day is None or self.placement_active or self.occurrence_picking_active:
             return
         self.set_selected_day(day)
         menu = QMenu(self)

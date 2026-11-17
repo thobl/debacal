@@ -787,29 +787,37 @@ class ScheduleDraft:
                        *, reference_start=None, reference_end=None, duration_spec=None):
         if not master.all_day and not master.floating_time:
             _checked(start)
+        key = recurrence_key(start, master.all_day, floating_time=master.floating_time)
         existing = expand_event(master, start - timedelta(seconds=1), start + timedelta(seconds=1), limit=1000)
-        if any(recurrence_key(item.start, master.all_day, floating_time=master.floating_time) == recurrence_key(start, master.all_day, floating_time=master.floating_time) for item in existing):
+        # An empty displayed slot may still be the nominal identity of an
+        # occurrence moved elsewhere. Allocate a fresh identity in that case,
+        # just as for simultaneous copies, instead of overwriting the move.
+        reserved = key in master.recurrence_overrides and key not in master.excluded_dates
+        if reserved or any(recurrence_key(item.start, master.all_day, floating_time=master.floating_time) == key for item in existing):
             counts = multiplicities(master)
-            counts[recurrence_key(start, master.all_day, floating_time=master.floating_time)] += 1
+            counts[key] += 1
             extras = [key_datetime(key, master) for key, count in counts.items() for _ in range(count)]
             changed = apply_occurrence_counts(displayed_schedule(master), master, extras)
-            new_key = next(key for key in changed.recurrence_overrides
-                           if key not in master.recurrence_overrides
-                           and recurrence_key(Event.from_dict(changed.recurrence_overrides[key]).start, master.all_day, floating_time=master.floating_time)
-                           == recurrence_key(start, master.all_day, floating_time=master.floating_time))
+            # A copy can use an ordinary slot freed by projecting the existing
+            # move, so it need not already have an override payload. Resolve
+            # its identity from the resulting occurrences instead of assuming
+            # every newly allocated occurrence is detached.
+            previous = {item.id for item in existing}
+            added = expand_event(changed, start - timedelta(seconds=1), start + timedelta(seconds=1), limit=1000)
+            new_key = next(item.recurrence_id for item in added if item.id not in previous
+                           and recurrence_key(item.start, master.all_day, floating_time=master.floating_time) == key)
             if end is not None:
                 if not master.all_day and not master.floating_time:
                     _checked(end)
                 if end.timestamp() < start.timestamp() or master.all_day and end.timestamp() == start.timestamp():
                     raise RecurrenceError('The end must not be before the start.')
                 payloads = deepcopy(changed.recurrence_overrides)
-                item = Event.from_dict(payloads[new_key])
+                item = occurrence(changed, key_datetime(new_key, changed), new_key)
                 payloads[new_key] = replace(item, start=start, end=end,
                     duration_spec=item.duration_spec if duration_spec is None else duration_spec).to_dict()
                 changed = replace(changed, recurrence_overrides=payloads)
             self._adopt_graphical(changed, reference_start=reference_start, reference_end=reference_end)
             return self._edited_master
-        key = recurrence_key(start, master.all_day, floating_time=master.floating_time)
         overrides = deepcopy(master.recurrence_overrides)
         if end is not None:
             if not master.all_day and not master.floating_time:

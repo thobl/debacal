@@ -134,6 +134,18 @@ class WorkspaceChrome:
         self.toolbar_sections = (events_section, selection_section, view_section)
         self.workspace_header = WorkspaceHeader(self, self.period, self.toolbar)
         outer.addWidget(self.workspace_header)
+        self.occurrence_bar = QWidget()
+        self.occurrence_bar.setObjectName('occurrencePickingBar')
+        occurrence_row = QHBoxLayout(self.occurrence_bar)
+        occurrence_row.setContentsMargins(0, 0, 0, 0)
+        occurrence_row.addStretch()
+        self.finish_occurrences_button = self.button('Done adding occurrences', self.finish_occurrence_picking,
+                                                     occurrence_row)
+        self.finish_occurrences_button.setObjectName('finishOccurrences')
+        self.finish_occurrences_button.setIcon(icon('confirm', scheme_for(self.preferences).accent))
+        occurrence_row.addStretch()
+        self.occurrence_bar.hide()
+        outer.addWidget(self.occurrence_bar)
         self.stack = QStackedWidget()
         week = QWidget()
         week_layout = QVBoxLayout(week)
@@ -172,7 +184,7 @@ class WorkspaceChrome:
         self.year.create_all_day_requested.connect(self.create_all_day_event)
         self.year.context_requested.connect(self.event_menu)
         self.year.placement_moved.connect(lambda target: self.move_paste_preview(target, self.year))
-        self.year.placement_confirmed.connect(lambda target: self.confirm_paste())
+        self.year.placement_confirmed.connect(lambda target: self.confirm_placement(target, self.year))
         for widget in (self.canvas, self.month, self.all_day_canvas):
             widget.create_requested.connect(self.create_event)
             widget.edit_scoped_requested.connect(self.edit_from_double_click)
@@ -193,7 +205,7 @@ class WorkspaceChrome:
             widget.create_all_day_requested.connect(self.create_all_day_event)
             if hasattr(widget, 'placement_moved'):
                 widget.placement_moved.connect(lambda target, source=widget: self.move_paste_preview(target, source))
-                widget.placement_confirmed.connect(lambda target: self.confirm_paste())
+                widget.placement_confirmed.connect(lambda target, source=widget: self.confirm_placement(target, source))
         outer.addWidget(self.stack, 1)
 
     def refresh_calendar_list(self, calendars):

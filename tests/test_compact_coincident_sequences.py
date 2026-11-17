@@ -178,6 +178,62 @@ def test_add_and_remove_an_individual_coincident_range_keep_the_other_payload():
     assert expression_matches(removed, draft.expression)
 
 
+@pytest.mark.parametrize('all_day', [False, True])
+@pytest.mark.parametrize('rule', ['', 'FREQ=WEEKLY'])
+def test_adding_at_a_moved_occurrences_nominal_slot_keeps_both_ranges_and_identity(all_day, rule):
+    start = START.replace(hour=0) if all_day else START
+    original = source(start, all_day=all_day, recurrence_rule=rule)
+    draft = ScheduleDraft.from_event(original)
+    nominal = start + timedelta(days=2)
+    original = draft.add_occurrence(original, nominal)
+    item = next(item for item in visible(original) if item.start == nominal)
+    moved_start = nominal + timedelta(days=1)
+    moved_end = moved_start + (timedelta(days=2) if all_day else timedelta(hours=3))
+    moved = draft.edit_occurrence(original, item, moved_start, moved_end)
+    payload = deepcopy(moved.recurrence_overrides[item.recurrence_id])
+    expected = counts(moved)
+    expected[nominal.date() if all_day else nominal.timestamp()] += 1
+
+    added = draft.add_occurrence(moved, nominal)
+    assert counts(added) == expected
+    assert added.recurrence_overrides[item.recurrence_id] == payload
+    restored_slot = next(value for value in visible(added) if value.start == nominal)
+    assert restored_slot.recurrence_id != item.recurrence_id
+    assert restored_slot.end - restored_slot.start == original.end - original.start
+    assert expression_matches(added, draft.expression)
+    roundtrip = parse_ics(export_ics([added]), 'local')[0]
+    assert counts(roundtrip) == expected
+    moved_item = next(value for value in visible(roundtrip) if value.recurrence_id == item.recurrence_id)
+    if all_day:
+        assert moved_item.start.date() == moved_start.date() and moved_item.end.date() == moved_end.date()
+    else:
+        assert moved_item.start == moved_start and moved_item.end == moved_end
+
+
+@pytest.mark.parametrize('all_day', [False, True])
+def test_multiple_additions_after_a_move_keep_coincident_copies_and_existing_payloads(all_day):
+    start = START.replace(hour=0) if all_day else START
+    original = source(start, all_day=all_day)
+    draft = ScheduleDraft.from_event(original)
+    nominal = start + timedelta(days=2)
+    current = draft.add_occurrence(original, nominal)
+    item = next(item for item in visible(current) if item.start == nominal)
+    moved = nominal + timedelta(days=1)
+    duration = timedelta(days=2) if all_day else timedelta(hours=3)
+    current = draft.edit_occurrence(current, item, moved, moved + duration)
+    payload = deepcopy(current.recurrence_overrides[item.recurrence_id])
+    for target in (moved, nominal, nominal, moved):
+        current = draft.add_occurrence(current, target)
+    expected = Counter({start.date() if all_day else start.timestamp(): 1,
+                        nominal.date() if all_day else nominal.timestamp(): 2,
+                        moved.date() if all_day else moved.timestamp(): 3})
+    assert counts(current) == expected
+    assert current.recurrence_overrides[item.recurrence_id] == payload
+    values = visible(current)
+    assert len({value.recurrence_id for value in values}) == len(values)
+    assert expression_matches(current, draft.expression)
+
+
 def test_old_document_for_a_small_coincident_series_now_opens_as_compact_text():
     original = authored('2*+0d +1d')
     original = replace(original, schedule_expression=document_expression(original))

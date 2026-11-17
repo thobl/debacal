@@ -40,6 +40,28 @@ WEEK_NUMBER_SIZE = 13
 TODAY_SIZE = 7
 
 
+def set_occurrence_picking(widget, ids=None):
+    """Allow editing only the unsaved occurrences supplied by the editor.
+
+    This is separate from paste placement: draft boxes keep their ordinary
+    dragging interactions, while a click elsewhere adds another occurrence.
+    """
+    active, identities = ids is not None, frozenset(ids or ())
+    if (widget.occurrence_picking_active == active
+            and widget.occurrence_picking_ids == identities):
+        return
+    widget.occurrence_picking_active = active
+    widget.occurrence_picking_ids = identities
+    widget._placement_consumed = False
+    for name in ('drag', 'ghost', '_deferred_selection', '_drag_pointer', 'hover_time', '_occurrence_resize'):
+        if hasattr(widget, name):
+            setattr(widget, name, None)
+    if hasattr(widget, 'cancel_confirmation'):
+        widget.cancel_confirmation()
+        widget._recent_confirmation = None
+    widget.update()
+
+
 @lru_cache(maxsize=64)
 def calendar_gutter(preferences):
     """One compact axis for every day column, including longer 12-hour times."""
@@ -306,6 +328,8 @@ class DayHeader(QWidget):
         self.selected_day = None
         self.creation_calendar = None
         self.placement_active = False
+        self.occurrence_picking_active = False
+        self.occurrence_picking_ids = frozenset()
         self._placement_consumed = False
         self.setFixedHeight(64)
         self.setMouseTracking(True)
@@ -326,6 +350,8 @@ class DayHeader(QWidget):
     def set_selected_day(self, day):
         self.selected_day = day
         self.update()
+
+    set_occurrence_picking = set_occurrence_picking
 
     def set_creation_calendar(self, calendar):
         self.creation_calendar = (calendar if calendar is not None and not calendar.read_only
@@ -359,7 +385,7 @@ class DayHeader(QWidget):
             day = self.day_at(event.position())
             if day is not None:
                 self.setFocus()
-                if self.placement_active:
+                if self.placement_active or self.occurrence_picking_active:
                     self._placement_consumed = True
                     self.placement_confirmed.emit(at(day))
                     return
@@ -377,7 +403,7 @@ class DayHeader(QWidget):
                 if self._placement_consumed:
                     self._placement_consumed = False
                     return
-                if self.placement_active:
+                if self.placement_active or self.occurrence_picking_active:
                     self.placement_confirmed.emit(at(day))
                     return
                 self.setFocus()
@@ -389,10 +415,18 @@ class DayHeader(QWidget):
         week = self.week_rect()
         self.setToolTip('Open week ' + str(self.preferences.week_number(self.days[0]))
                         if week is not None and week.contains(event.position()) else
+                        'Click to add an occurrence.' if self.occurrence_picking_active else
                         'Double-click to create an all-day event.')
         day = self.day_at(event.position())
-        if self.placement_active and day is not None:
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(at(day) if day is not None else None)
+        elif self.placement_active and day is not None:
             self.placement_moved.emit(at(day))
+
+    def leaveEvent(self, event):
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(None)
+        QWidget.leaveEvent(self, event)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -464,6 +498,8 @@ class CalendarCanvas(QWidget):
         self.scope = 'single'
         self.preview_events = []
         self.placement_active = False
+        self.occurrence_picking_active = False
+        self.occurrence_picking_ids = frozenset()
         self._placement_consumed = False
         self._deferred_selection = None
         self.fixed_all_day = False
@@ -526,6 +562,7 @@ class CalendarCanvas(QWidget):
 
     set_creation_calendar = DayHeader.set_creation_calendar
     creation_color = DayHeader.creation_color
+    set_occurrence_picking = set_occurrence_picking
 
     def set_preview(self, events):
         self.preview_events = list(events)
@@ -593,11 +630,11 @@ class CalendarCanvas(QWidget):
     def cancel_confirmation(self):
         self._confirm_pressed = None
         self._confirmation_release_consumed = False
-        if self.placement_active:
+        if self.placement_active or self.occurrence_picking_active:
             self._recent_confirmation = None
 
     def confirmation_event(self, event_id):
-        if self.placement_active:
+        if self.placement_active or self.occurrence_picking_active:
             return None
         visible = event_id in self.selected_ids or event_id == self.selected_id or event_id == self._hovered_event_id
         return self._confirmable_events.get(event_id) if visible else None
@@ -708,7 +745,7 @@ class CalendarCanvas(QWidget):
         self.update()
 
     def copy_badge_rect(self):
-        if (self.placement_active or not self.drag or not self.ghost or self.drag[0] == 'create'
+        if (self.placement_active or self.occurrence_picking_active or not self.drag or not self.ghost or self.drag[0] == 'create'
                 or not self.gesture_modifiers & Qt.KeyboardModifier.ControlModifier or self._drag_pointer is None):
             return None
         scale = display_scale(self)
@@ -725,7 +762,7 @@ class CalendarCanvas(QWidget):
             text(painter, rect, '+', colors.accent, 13, True, Qt.AlignmentFlag.AlignCenter)
 
     def time_feedback(self):
-        if self.placement_active:
+        if self.placement_active or (self.occurrence_picking_active and not self.drag):
             return None
         if self.drag:
             if self.drag[0] != 'create':
@@ -984,6 +1021,8 @@ class CalendarCanvas(QWidget):
         return next(((r, e) for r, e in reversed(self.hits) if r.contains(pos)), None)
 
     def edit_hit(self, point, modifiers):
+        if self.occurrence_picking_active:
+            return False
         hit = self.hit(point)
         if hit is None:
             return False
@@ -1098,6 +1137,10 @@ class CalendarCanvas(QWidget):
         self.selected_day = day
         self.gesture_modifiers = event.modifiers()
         hit = self.hit(point)
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(None)
+            if hit and hit[1].id not in self.occurrence_picking_ids:
+                hit = None
         self._deferred_selection = None
         if hit:
             rect, item = hit
@@ -1108,13 +1151,16 @@ class CalendarCanvas(QWidget):
             else:
                 self.emit_selection(item, event.modifiers())
             if not item.all_day:
-                resize = point.y() >= rect.bottom() - 7 and not event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                resize = point.y() >= rect.bottom() - 7 and (self.occurrence_picking_active or not event.modifiers() & Qt.KeyboardModifier.ControlModifier)
                 self.drag = ('resize' if resize else 'move', item, point, self.position(point))
         else:
             self.day_selected.emit(day)
             if point.y() >= self.time_top:
                 self.hover_time = self.position(point)
                 self.drag = ('create', None, point, self.hover_time)
+            elif self.occurrence_picking_active:
+                self._placement_consumed = True
+                self.placement_confirmed.emit(self.placement_target(point))
         self.update()
 
     def mouseMoveEvent(self, event):
@@ -1128,6 +1174,14 @@ class CalendarCanvas(QWidget):
             return
         self.gesture_modifiers = event.modifiers()
         if not self.drag:
+            if self.occurrence_picking_active:
+                hit = self.hit(point)
+                draft = hit and hit[1].id in self.occurrence_picking_ids
+                self.hover_time = None
+                self.placement_moved.emit(None if draft else self.placement_target(point))
+                self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)) if hit else '')
+                self.setCursor(Qt.CursorShape.SizeVerCursor if draft and point.y() > hit[0].bottom() - 7 and not hit[1].all_day else Qt.CursorShape.ArrowCursor)
+                return
             if self.confirmation_hover(point):
                 return
             hit = self.hit(point)
@@ -1176,6 +1230,8 @@ class CalendarCanvas(QWidget):
         if hasattr(self, 'hover_time'):
             self.hover_time = None
         self.setToolTip('')
+        if self.occurrence_picking_active and not self.drag:
+            self.placement_moved.emit(None)
         self.update()
         QWidget.leaveEvent(self, event)
 
@@ -1200,6 +1256,11 @@ class CalendarCanvas(QWidget):
                     else:
                         self.move_requested.emit(item.id, start, end)
                         self.move_scoped_requested.emit(item, start, end, event.modifiers())
+            elif kind == 'create' and self.occurrence_picking_active:
+                target = self.placement_target(event.position())
+                if target is not None:
+                    self._placement_consumed = True
+                    self.placement_confirmed.emit(target)
         if deferred and not ghost:
             self.emit_selection(*deferred)
         if drag and drag[0] == 'create' and not ghost and not self.placement_active and not self._placement_consumed:
@@ -1225,6 +1286,8 @@ class CalendarCanvas(QWidget):
             if target is not None:
                 self.placement_confirmed.emit(target)
             return
+        if self.occurrence_picking_active:
+            return
         if self.consume_recent_confirmation(event):
             return
         day = self.day_at(point)
@@ -1245,7 +1308,7 @@ class CalendarCanvas(QWidget):
 
     def contextMenuEvent(self, event):
         self.cancel_confirmation()
-        if self.placement_active:
+        if self.placement_active or self.occurrence_picking_active:
             return
         day = self.day_at(event.pos())
         if day is not None:
@@ -1293,6 +1356,8 @@ class MonthCanvas(QWidget):
         self.scope = 'single'
         self.preview_events = []
         self.placement_active = False
+        self.occurrence_picking_active = False
+        self.occurrence_picking_ids = frozenset()
         self._placement_consumed = False
         self._deferred_selection = None
         self.drag = self.ghost = None
@@ -1345,6 +1410,7 @@ class MonthCanvas(QWidget):
     set_scope = CalendarCanvas.set_scope
     set_creation_calendar = CalendarCanvas.set_creation_calendar
     creation_color = CalendarCanvas.creation_color
+    set_occurrence_picking = set_occurrence_picking
     emit_selection = CalendarCanvas.emit_selection
     edit_hit = CalendarCanvas.edit_hit
     set_drag_modifiers = CalendarCanvas.set_drag_modifiers
@@ -1634,6 +1700,14 @@ class MonthCanvas(QWidget):
         self.selected_day = day
         self._deferred_selection = None
         hit = self.hit(event.position())
+        if self.occurrence_picking_active:
+            self.placement_moved.emit(None)
+            if hit is None or hit[1].id not in self.occurrence_picking_ids:
+                self.drag = self.ghost = None
+                self._placement_consumed = True
+                self.placement_confirmed.emit(self.placement_target(event.position()))
+                return
+        self._occurrence_resize = bool(self.occurrence_picking_active and hit and self.draft_resize_hit(event.position(), hit))
         if hit:
             item = hit[1]
             self.gesture_started.emit(item.id)
@@ -1662,6 +1736,8 @@ class MonthCanvas(QWidget):
             if day is not None:
                 self.placement_confirmed.emit(self.placement_target(point))
             return
+        if self.occurrence_picking_active:
+            return
         if self.consume_recent_confirmation(event):
             return
         day = self.day_at(point)
@@ -1683,10 +1759,12 @@ class MonthCanvas(QWidget):
         point = event.position()
         self._drag_pointer = point
         self.gesture_modifiers = event.modifiers()
-        if not self.placement_active and not self.drag and self.confirmation_hover(point):
+        if not self.placement_active and not self.occurrence_picking_active and not self.drag and self.confirmation_hover(point):
             return
         day = self.day_at(point)
         if day is None:
+            if self.occurrence_picking_active and not self.drag:
+                self.placement_moved.emit(None)
             week = self.week_at(point)
             self.setToolTip('Open week ' + str(self.preferences.week_number(week)) if week is not None else '')
             self.setCursor(Qt.CursorShape.PointingHandCursor if week is not None else Qt.CursorShape.ArrowCursor)
@@ -1696,14 +1774,24 @@ class MonthCanvas(QWidget):
             return
         if self.drag and (point - self.drag[1]).manhattanLength() >= 5:
             item, _, origin = self.drag
-            shift = timedelta(days=(day - origin).days)
-            start = item.start if item.all_day else item.start.astimezone(local_zone())
-            target = (start.replace(tzinfo=None) + shift).replace(tzinfo=start.tzinfo, fold=start.fold)
-            self.ghost = replace(item, start=target, end=end_for(item, target))
+            if self.occurrence_picking_active and self._occurrence_resize:
+                end = max(item.start + timedelta(days=1), at(day + timedelta(days=1)))
+                self.ghost = replace(item, end=end)
+            else:
+                shift = timedelta(days=(day - origin).days)
+                start = item.start if item.all_day else item.start.astimezone(local_zone())
+                target = (start.replace(tzinfo=None) + shift).replace(tzinfo=start.tzinfo, fold=start.fold)
+                self.ghost = replace(item, start=target, end=end_for(item, target))
             self.drag_preview_requested.emit(item.id, self.ghost.start, self.ghost.end, event.modifiers())
             self.update()
             return
         hit = self.hit(point)
+        if self.occurrence_picking_active and not self.drag:
+            draft = hit and hit[1].id in self.occurrence_picking_ids
+            self.placement_moved.emit(None if draft else self.placement_target(point))
+            self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)) if hit else '')
+            self.setCursor(Qt.CursorShape.SizeHorCursor if draft and self.draft_resize_hit(point, hit) else Qt.CursorShape.ArrowCursor)
+            return
         if hit:
             self.setToolTip(event_tooltip(hit[1], self.preferences, self.calendars.get(hit[1].calendar_id)))
             self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -1731,9 +1819,12 @@ class MonthCanvas(QWidget):
             self.emit_selection(*deferred)
         self.update()
 
+    def draft_resize_hit(self, point, hit):
+        return False
+
     def contextMenuEvent(self, event):
         self.cancel_confirmation()
-        if self.placement_active:
+        if self.placement_active or self.occurrence_picking_active:
             return
         day = self.day_at(event.pos())
         if day is not None:
@@ -1828,6 +1919,11 @@ class AllDayCanvas(MonthCanvas):
         self.hits = self.rects()
         return next(((rect, item) for rect, item in reversed(self.hits) if rect.contains(point)), None)
 
+    def draft_resize_hit(self, point, hit):
+        rect, item = hit
+        return (point.x() >= rect.right() - 7 * display_scale(self)
+                and item.end.date() <= self.days[-1] + timedelta(days=1))
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1904,6 +2000,8 @@ class AllDayCanvas(MonthCanvas):
         if self.placement_active:
             self.placement_confirmed.emit(at(day))
             return
+        if self.occurrence_picking_active:
+            return
         if self.consume_recent_confirmation(event):
             return
         self.setFocus()
@@ -1914,7 +2012,7 @@ class AllDayCanvas(MonthCanvas):
         self.create_all_day_requested.emit(at(day), at(day + timedelta(days=1)))
 
     def mouseMoveEvent(self, event):
-        if self.drag or self.placement_active or self._confirm_pressed:
+        if self.drag or self.placement_active or self.occurrence_picking_active or self._confirm_pressed:
             super().mouseMoveEvent(event)
         else:
             if self.confirmation_hover(event.position()):

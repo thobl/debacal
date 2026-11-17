@@ -66,6 +66,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         install_button_focus(QApplication.instance())
         self.store = store
         self._closed = False
+        self.occurrence_picker = None
         self.demo_mode = demo_mode
         self.profile_label = profile_label
         self._import_requests = deque()
@@ -225,7 +226,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return self.database_commands.write(operation, on_success=completed, on_error=failed)
 
     def update_creation_target(self):
-        calendar = self.store.get_default_calendar()
+        calendar = (self.store.get_calendar(self.occurrence_picker.master.calendar_id)
+                    if self.occurrence_picker and self.occurrence_picker.master else self.store.get_default_calendar())
         for widget in self.day_surfaces:
             widget.set_creation_calendar(calendar)
 
@@ -327,6 +329,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.update_sync_status()
 
     def update_history_buttons(self, can_undo, can_redo):
+        if self.occurrence_picker:
+            can_undo = can_redo = False
         self.undo_button.setEnabled(can_undo)
         self.redo_button.setEnabled(can_redo)
 
@@ -337,13 +341,16 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                revision, query, local_zone(), id(self.visible_events) if self.view == 'year' else None)
         if key == self._surface_data_key:
             return False
+        events = self.visible_events
+        if self.occurrence_picker:
+            events, calendars = self.occurrence_picker.render_events(events, days, calendars)
         if self.view == 'year':
-            self.year.set_data(self.anchor.year, self.visible_events, calendars)
+            self.year.set_data(self.anchor.year, events, calendars)
         elif self.view == 'month':
-            self.month.set_data(days[0], self.anchor.month, self.visible_events, calendars)
+            self.month.set_data(days[0], self.anchor.month, events, calendars)
         else:
-            self.canvas.set_data(days[:7], self.visible_events, calendars)
-            self.all_day_canvas.set_data(days[:7], self.visible_events, calendars)
+            self.canvas.set_data(days[:7], events, calendars)
+            self.all_day_canvas.set_data(days[:7], events, calendars)
             self.all_day_scroll.setFixedHeight(min(180, self.all_day_canvas.height()))
         self._surface_data_key = key
         return True
@@ -369,6 +376,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search_header.update_preferences(self.preferences, self.bindings.get('search', ''))
 
     def show_preferences(self, category=None):
+        if self.occurrence_picker:
+            return
         dialog = PreferencesDialog(self.preferences, self,
                                    bindings=self.bindings, default_bindings=DEFAULT_BINDINGS,
                                    store=self.store, credentials=self.credentials, executor=self.executor,
@@ -444,6 +453,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.refresh_calendar_list(self.store.list_calendars())
 
     def calendar_menu(self, calendar_id, point):
+        if self.occurrence_picker:
+            return
         calendar = self.store.get_calendar(calendar_id)
         if calendar is None:
             return
@@ -595,6 +606,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.update_sync_status()
 
     def create_event(self, start=None, end=None, all_day=False):
+        if self.occurrence_picker:
+            if start is not None:
+                self.occurrence_picker.add(start, self.all_day_canvas if all_day else self.canvas, end=end)
+            return
         if start is None:
             start = at(self.selected_day, 0 if all_day else min(now().hour + 1, 23))
         if all_day:
@@ -606,7 +621,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                              default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
         try:
             dialog.all_day.setChecked(all_day)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
+            if self.exec_event_dialog(dialog) == QDialog.DialogCode.Accepted:
                 events = tuple(dialog.result_events)
                 def created(_result):
                     for event in events:
@@ -618,15 +633,41 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         finally:
             dialog.deleteLater()
 
+    def exec_event_dialog(self, dialog):
+        """A picker returns to the same form without saving or cancelling it."""
+        from .occurrence_picker import CalendarOccurrencePicker
+        while not self._closed:
+            result = dialog.exec()
+            if result != getattr(dialog, 'PICK_OCCURRENCES', 3):
+                return result
+            picker = CalendarOccurrencePicker(self, dialog)
+            if not picker.run():
+                return QDialog.DialogCode.Rejected
+        return QDialog.DialogCode.Rejected
+
+    def finish_occurrence_picking(self):
+        if self.occurrence_picker:
+            self.occurrence_picker.finish()
+
+    def confirm_placement(self, target=None, source=None):
+        if self.occurrence_picker:
+            self.occurrence_picker.add(target, source)
+        else:
+            self.confirm_paste()
+
     def create_all_day_event(self, start=None, end=None):
         self.create_event(start, end, all_day=True)
 
     def apply_events(self, label, events=(), delete_ids=(), *, on_success=None):
+        if self.occurrence_picker:
+            return
         events, delete_ids = tuple(events), tuple(delete_ids)
         return self.write_database(lambda writer: writer.apply(label, upserts=events, delete_ids=delete_ids),
                                    on_success=on_success)
 
     def event_by_id(self, event_id):
+        if self.occurrence_picker and (event := self.occurrence_picker.event_by_id(event_id)) is not None:
+            return event
         event = self.store.get_occurrence(event_id) if event_id else None
         if event and not event.series_id and event.recurring:
             cached = self.results.result_event(event_id)
@@ -646,6 +687,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return event
 
     def visible_event_by_id(self, identity):
+        if self.occurrence_picker and (event := self.occurrence_picker.event_by_id(identity)) is not None:
+            return event
         resolver = getattr(self.visible_events, 'event_by_id', None)
         return (resolver(identity) if resolver is not None else
                 next((event for event in self.visible_events if event.id == identity), None))
@@ -659,6 +702,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return 'single' if self._search_selection_active else self.selection.scope
 
     def set_selection_mode(self, scope):
+        if self.occurrence_picker:
+            return
         if scope != 'group':
             converted = [self.search_result_event(value.id) if value.recurring and not value.series_id else value
                          for value in self.selection.refs]
@@ -686,6 +731,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.mode_shortcuts.append(shortcut)
 
     def sync_selection(self):
+        if self.occurrence_picker:
+            self.occurrence_picker.apply_selection()
+            return
         try:
             self.selected_ids = affected_visible(self.store, self.selection.refs, self.operation_scope(), self.visible_events)
         except (ValueError, KeyError, OverflowError):
@@ -746,6 +794,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
 
     def edit_event(self, event_id=None, group=None, scope=None):
+        if self.occurrence_picker:
+            return
         event = self.event_by_id(event_id or self.selected_id or '')
         if event is None:
             return
@@ -774,7 +824,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             dialog.mode_changed.connect(change_editor_mode)
             if len(refs) > 1:
                 dialog.setWindowTitle(f'Edit {len(refs)} selections')
-            if dialog.exec() != QDialog.DialogCode.Accepted:
+            if self.exec_event_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if mode_changes:
                 scope = dialog.scope.currentData()
@@ -817,11 +867,16 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 dialog.deleteLater()
 
     def event_writable(self, event):
+        if self.occurrence_picker:
+            return event.id in self.occurrence_picker.events
         calendar = self.store.get_calendar(event.calendar_id)
         return bool(calendar and calendar.enabled and calendar.kind != 'ics' and not calendar.read_only and not event.read_only)
 
 
     def select_event(self, event_id, day=None, additive=False):
+        if self.occurrence_picker and self.occurrence_picker.event_by_id(event_id):
+            self.occurrence_picker.select(event_id)
+            return
         event = self.visible_event_by_id(event_id) or self.event_by_id(event_id)
         if event is None:
             return
@@ -942,6 +997,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             bar.setValue(math.ceil(rect.bottom() - height + margin))
 
     def move_event(self, event_id, start, end, scope=None, reference=None, copy=False):
+        if self.occurrence_picker:
+            self.occurrence_picker.move(self.occurrence_picker.event_by_id(event_id), start, end)
+            return
         event = reference or self.event_by_id(event_id)
         if event is None:
             return
@@ -972,6 +1030,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error(str(exc))
 
     def preview_drag(self, event_id, start, end, modifiers):
+        if self.occurrence_picker:
+            self.occurrence_picker.drag_preview(event_id, start, end)
+            return
         event = self.event_by_id(event_id)
         if event is None:
             return
@@ -988,6 +1049,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error(str(exc))
 
     def clear_drag_preview(self):
+        if self.occurrence_picker:
+            self.occurrence_picker.preview = []
         self._drag_preview_events = []
         self._drag_preview_request = None
         self.render_placement()
@@ -997,6 +1060,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.report_error(message)
 
     def delete_event(self, event_id=None, group=None, scope=None):
+        if self.occurrence_picker:
+            return
         event = self.event_by_id(event_id or self.selected_id or '')
         if event is None:
             return
@@ -1021,6 +1086,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                  view_origin=self.dates()[0], view_kind=self.view, reference=event)
 
     def copy_event(self, event_id=None, scope=None):
+        if self.occurrence_picker:
+            return
         event = self.event_by_id(event_id or self.selected_id or '')
         if event is None:
             return
@@ -1098,6 +1165,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.apply_events(label, events, on_success=copied)
 
     def paste_events(self, scope=None, target=None):
+        if self.occurrence_picker:
+            return
         try:
             selection = self.read_event_clipboard()
             calendar = self.store.get_default_calendar()
@@ -1117,7 +1186,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error(str(exc))
 
     def render_placement(self):
-        events = self._drag_preview_events
+        events = self.occurrence_picker.preview if self.occurrence_picker else self._drag_preview_events
         if self.pending_paste is not None:
             days = self.dates()
             try:
@@ -1129,6 +1198,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             widget.set_preview(events)
 
     def move_paste_preview(self, target, source=None):
+        if self.occurrence_picker:
+            self.occurrence_picker.hover(target, source)
+            return
         pending = self.pending_paste
         if pending is None or QCursor.pos() == self._paste_mouse_origin:
             return
@@ -1186,6 +1258,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.update_sync_status()
 
     def confirm_candidate(self, event_id=None):
+        if self.occurrence_picker:
+            return
         event = self.event_by_id(event_id or self.selected_id or '')
         if not event or not event.candidate:
             return
@@ -1197,6 +1271,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.write_database(lambda writer: writer.confirm_candidate(event), on_success=confirmed)
 
     def event_menu(self, event_id, point):
+        if self.occurrence_picker:
+            return
         event = self.event_by_id(event_id)
         if event is None:
             return
@@ -1222,12 +1298,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             menu.deleteLater()
 
     def undo(self):
+        if self.occurrence_picker:
+            return
         self.write_database(lambda writer: writer.undo())
 
     def redo(self):
+        if self.occurrence_picker:
+            return
         self.write_database(lambda writer: writer.redo())
 
     def show_history(self):
+        if self.occurrence_picker:
+            return
         dialog = HistoryDialog(self.store, self.refresh, self)
         try:
             dialog.exec()
@@ -1460,6 +1542,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search_header.sync_state()
 
     def add_calendar(self, calendar=None):
+        if self.occurrence_picker:
+            return
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
             credentials=self.credentials)
         try:
@@ -1516,6 +1600,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             dialog.deleteLater()
 
     def import_ics(self, calendar_id=None):
+        if self.occurrence_picker:
+            return
         self.import_files((), calendar_id=calendar_id)
 
     def import_files(self, paths, *, calendar_id=None):
@@ -1553,7 +1639,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def _process_import_request(self):
         if self._closed or self._import_dialog_active or not self._import_requests:
             return
-        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
+        if self.occurrence_picker or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             self._import_timer.start(100)
             return
         sources, calendar_id = self._import_requests.popleft()
@@ -2034,6 +2120,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.ensure_event_visible(event.id)
 
     def eventFilter(self, obj, event):
+        if (self.occurrence_picker and event.type() == QEvent.Type.KeyPress
+                and not QApplication.activeModalWidget() and not QApplication.activePopupWidget()):
+            if any(shortcut_matches(event, self.bindings.get(action, DEFAULT_DIALOG_BINDINGS[action]))
+                   for action in ('dialog_close', 'dialog_accept')):
+                self.finish_occurrence_picking()
+                return True
         if event.type() == QEvent.Type.FocusIn and isinstance(obj, (
                 QAbstractButton, QAbstractItemView, QLineEdit, QAbstractSpinBox, QComboBox, QTextEdit, QPlainTextEdit)):
             QTimer.singleShot(0, self, self.reveal_workspace_focus)
@@ -2165,6 +2257,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             event.ignore()
             return
         self._closed = True
+        if self.occurrence_picker:
+            self.occurrence_picker.abort()
         QApplication.instance().removeEventFilter(self)
         self.poll_timer.stop()
         self.sync_timer.stop()
