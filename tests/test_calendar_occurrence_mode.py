@@ -2,6 +2,7 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+from contextlib import ExitStack
 from datetime import date, datetime, timedelta
 from time import monotonic
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QPoint, QTimer, Qt
+from PySide6.QtGui import QTextCursor, QWindowStateChangeEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QMenu
 
@@ -164,7 +166,7 @@ def test_calendar_mode_suspends_modal_editor_and_save_is_one_undoable_operation(
 
     def add_dates(state):
         dialog = state['dialog']
-        assert dialog.isMinimized()
+        assert dialog.isHidden() and not dialog.isMinimized()
         assert QApplication.activeModalWidget() is None
         assert store.list_events() == [] and store.history() == []
         assert window.canvas.occurrence_picking_active
@@ -406,26 +408,75 @@ def test_finish_uses_the_configured_dialog_shortcuts(workspace, action, shortcut
     assert store.list_events() == [] and store.history() == []
 
 
-def test_restoring_the_minimized_editor_finishes_calendar_mode(workspace):
-    _, window, store = workspace
+def test_calendar_mode_keeps_editor_closed_and_preserves_geometry_across_visits(workspace):
+    app, window, store = workspace
 
-    def restore_editor(state):
+    def prepare(state):
         dialog = state['dialog']
-        assert dialog.isMinimized()
+        state['geometry'] = dialog.geometry()
+        state['size'] = dialog.size()
+        state['modality'] = dialog.windowModality()
+        state['window_state'] = dialog.windowState()
+        state['passes'] = 0
+        dialog.location.setText('Keep this location')
+        dialog.description.setPlainText('Keep these notes, too.')
+        cursor = dialog.description.textCursor()
+        cursor.setPosition(5)
+        cursor.setPosition(16, QTextCursor.MoveMode.KeepAnchor)
+        dialog.description.setTextCursor(cursor)
+        state['notes_cursor'] = cursor.position(), cursor.anchor()
+        begin(state)
+
+    def add_and_finish(state):
+        dialog = state['dialog']
+        assert dialog.isHidden() and not dialog.isMinimized()
+        assert QApplication.activeModalWidget() is None
+        assert window.isVisible() and not window.isMinimized()
+        assert dialog.windowFlags() == state['editor_flags']
+        assert dialog.geometry() == state['geometry']
+        assert dialog.size() == state['size']
+        # Late window-manager notifications must not reopen the editor or
+        # decide when calendar picking is finished.
+        picker = window.occurrence_picker
+        QCoreApplication.sendEvent(dialog, QWindowStateChangeEvent(Qt.WindowState.WindowMinimized))
+        app.processEvents()
+        assert picker.loop.isRunning()
+        assert window.occurrence_picker is picker and dialog.isHidden()
+        state['passes'] += 1
         QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton,
-                         pos=timed_point(window, date(2026, 11, 5), 13))
-        dialog.showNormal()
-        dialog.raise_()
-        dialog.activateWindow()
+                         pos=timed_point(window, date(2026, 11, 4 + state['passes']), 13))
+        assert len(instances(dialog.calendar_occurrence_master())) == state['passes'] + 1
+        assert store.list_events() == [] and store.history() == []
+        QTest.mouseClick(window.finish_occurrences_button, Qt.MouseButton.LeftButton)
 
-    def cancel(state):
-        assert window.occurrence_picker is None
-        assert not window.isMinimized()
-        assert state['dialog'].windowFlags() == state['editor_flags']
-        assert len(instances(state['dialog'].calendar_occurrence_master())) == 2
-        state['dialog'].reject()
+    def restored(state):
+        dialog = state['dialog']
+        assert window.occurrence_picker is None and dialog.isVisible()
+        assert dialog.windowFlags() == state['editor_flags']
+        assert dialog.windowModality() == state['modality']
+        assert dialog.windowState() == state['window_state']
+        assert dialog.geometry() == state['geometry']
+        assert dialog.size() == state['size']
+        assert dialog.location.text() == 'Keep this location'
+        assert dialog.description.toPlainText() == 'Keep these notes, too.'
+        cursor = dialog.description.textCursor()
+        assert (cursor.position(), cursor.anchor()) == state['notes_cursor']
+        if state['passes'] < 3:
+            QTest.mouseClick(dialog.add_occurrences_button, Qt.MouseButton.LeftButton)
+        else:
+            dialog.reject()
 
-    play_editor(window, [('dialog', begin), ('calendar', restore_editor), ('dialog', cancel)])
+    # Reopening the native window or changing its type/modality while picking
+    # invites the window manager to retile or restore it. None is necessary:
+    # done(PICK_OCCURRENCES) has already closed the modal dialog.
+    with ExitStack() as stack:
+        for method in ('show', 'showMinimized', 'showNormal', 'setWindowFlags',
+                       'setWindowModality', 'setWindowState'):
+            stack.enter_context(patch.object(EventDialog, method,
+                side_effect=AssertionError(f'Unexpected editor window operation: {method}')))
+        play_editor(window, [('dialog', prepare), ('calendar', add_and_finish), ('dialog', restored),
+                             ('calendar', add_and_finish), ('dialog', restored),
+                             ('calendar', add_and_finish), ('dialog', restored)])
     assert store.list_events() == [] and store.history() == []
 
 

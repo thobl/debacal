@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, time, timedelta
 
-from PySide6.QtCore import QEvent, QEventLoop, QObject, Qt
+from PySide6.QtCore import QEventLoop, QObject
 
 from .calendar_widgets import at
 from .date_time_fields import validate_datetime
@@ -76,7 +76,7 @@ class OccurrenceOverlay(Sequence):
 
 
 class CalendarOccurrencePicker(QObject):
-    """Suspend a modal form while its unsaved series is edited on the calendar."""
+    """Keep a closed editor's draft alive while it is edited on the calendar."""
     def __init__(self, window, dialog):
         super().__init__(window)
         self.window, self.dialog = window, dialog
@@ -202,19 +202,9 @@ class CalendarOccurrencePicker(QObject):
         self.cancelled = True
         self.finish()
 
-    def eventFilter(self, obj, event):
-        if (obj is self.dialog and event.type() == QEvent.Type.WindowStateChange
-                and not self.dialog.isMinimized()):
-            self.finish()
-        return False
-
     def run(self):
         window, dialog = self.window, self.dialog
         window.cancel_paste()
-        saved_modality, saved_state = dialog.windowModality(), dialog.windowState()
-        saved_flags = dialog.windowFlags()
-        native_window = dialog.windowHandle()
-        transient_parent = native_window.transientParent() if native_window else None
         blocked = {'new_event', 'undo', 'redo', 'history', 'preferences', 'export_selection'}
         controls = [(button, button.isEnabled()) for button, title, binding in window.command_buttons
                     if binding in blocked or title in ('Import calendar file', 'Export calendar file', 'Add calendar')]
@@ -222,7 +212,6 @@ class CalendarOccurrencePicker(QObject):
         window.occurrence_picker = self
         dialog.draft_changed.connect(self.changed)
         dialog.finished.connect(self.abort)
-        dialog.installEventFilter(self)
         try:
             for control, _enabled in controls:
                 control.setEnabled(False)
@@ -230,16 +219,11 @@ class CalendarOccurrencePicker(QObject):
                               if (value := shortcut_label(window.bindings.get(action, DEFAULT_DIALOG_BINDINGS[action]))))
             window.finish_occurrences_button.setToolTip('Return to event editor' + (' · ' + keys if keys else ''))
             window.occurrence_bar.show()
-            dialog.setWindowModality(Qt.WindowModality.NonModal)
-            # Window managers can restore minimized dialogs with their parent.
-            # Temporarily use an independently minimizable native window while
-            # preserving QObject ownership and restoring the exact dialog flags.
-            dialog.setWindowFlags((saved_flags & ~Qt.WindowType.WindowType_Mask)
-                                  | Qt.WindowType.Window | Qt.WindowType.WindowMinimizeButtonHint)
-            native_window = dialog.windowHandle()
-            if native_window is not None:
-                native_window.setTransientParent(None)
-            dialog.showMinimized()
+            # done(PICK_OCCURRENCES) has already closed the modal window and
+            # ended its exec(). Keep it closed: remapping or minimizing a
+            # transient dialog depends on the window manager and can restore
+            # or resize it immediately. The next exec() reopens these same
+            # widgets with their draft and original geometry intact.
             window._surface_data_key = None
             window.refresh(presentation_only=True)
             window.raise_()
@@ -247,16 +231,8 @@ class CalendarOccurrencePicker(QObject):
             window.active_canvas().setFocus()
             self.loop.exec()
         finally:
-            dialog.removeEventFilter(self)
             dialog.draft_changed.disconnect(self.changed)
             dialog.finished.disconnect(self.abort)
-            dialog.hide()
-            dialog.setWindowState(saved_state & ~Qt.WindowState.WindowMinimized)
-            dialog.setWindowModality(saved_modality)
-            dialog.setWindowFlags(saved_flags)
-            native_window = dialog.windowHandle()
-            if native_window is not None:
-                native_window.setTransientParent(transient_parent)
             window.occurrence_picker = None
             window.occurrence_bar.hide()
             for control, enabled in controls:
