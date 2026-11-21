@@ -165,7 +165,7 @@ def test_calendar_name_selects_creation_target_and_eye_alone_controls_visibility
     settle(app)
     assert not store.get_calendar('work').visible
     assert store.get_default_calendar().id == 'work'
-    assert row.eye.toolTip() == 'Show Work'
+    assert row.eye.toolTip() == 'Show events from Work'
     QTest.mouseClick(window.calendar_rows['local'].choice, Qt.MouseButton.LeftButton)
     assert store.get_default_calendar().id == 'local'
     assert not store.get_calendar('work').visible

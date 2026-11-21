@@ -317,7 +317,8 @@ def test_parent_death_cancels_worker_waiting_on_shared_foreground_priority(tmp_p
         def alive():
             try:
                 return Path(f'/proc/{worker_pid}/stat').read_text().split()[2] != 'Z'
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
+                # The worker can exit between opening and reading its entry.
                 return False
         while alive() and time.monotonic() < deadline:
             time.sleep(.01)
