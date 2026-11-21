@@ -1749,7 +1749,26 @@ class Store:
         return value
 
     @staticmethod
-    def _semantic_event(value, *, hydrate=True):
+    def _inherit_legacy_fields(submitted, stored, canonical, *, same_template=True):
+        """Overlay only the unknown fields of this matching family component."""
+        if submitted.get('alarms') is None:
+            submitted['alarms'] = canonical['alarms']
+        same_template = same_template and submitted.get('raw_ics', '') == stored.get('raw_ics', '')
+        if (same_template and stored.get('alarms') is None and not submitted.get('all_day')
+                and not submitted.get('floating_time') and submitted.get('timezone_id') == stored.get('timezone_id')):
+            for bound, zone in (('start', 'timezone_id'), ('end', 'end_timezone_id')):
+                recovered = canonical.get(zone, '')
+                if (recovered and recovered != stored.get(zone, '')
+                        and submitted.get(zone, '') == stored.get(zone, '')
+                        and datetime.fromisoformat(submitted[bound]) == datetime.fromisoformat(canonical[bound])):
+                    submitted[bound], submitted[zone] = canonical[bound], recovered
+        for key, child in submitted.get('recurrence_overrides', {}).items():
+            if key in stored['recurrence_overrides']:
+                Store._inherit_legacy_fields(child, stored['recurrence_overrides'][key],
+                                             canonical['recurrence_overrides'][key], same_template=same_template)
+
+    @staticmethod
+    def _semantic_event(value, *, hydrate=True, authored=False):
         if value is None:
             return None
         if hydrate:
@@ -1757,6 +1776,13 @@ class Store:
         result = {key: item for key, item in value.items() if key != "raw_ics"}
         alarms = value.get('alarms')
         result['alarms'] = None if alarms is None else alarm_semantic(tuple(Alarm.from_dict(a) for a in alarms))
+        if result.get("recurrence_overrides"):
+            result["recurrence_overrides"] = {key: Store._semantic_event(item, hydrate=False, authored=authored)
+                                              for key, item in result["recurrence_overrides"].items()}
+        if authored:
+            # Local edits retain every submitted scheduling field, including
+            # timezone choices that have the same standard UTC wire rendering.
+            return result
         if not value.get('all_day') and not value.get('floating_time'):
             explicit_dates = (value.get('recurrence_dates') and not value.get('recurrence_rule')
                               and not value.get('schedule_expression') and not value.get('duration_spec'))
@@ -1765,7 +1791,7 @@ class Store:
                 alarm_ics.normalize_alarm_context(event, result)
                 # A nominal duration derives its projected end from DTSTART;
                 # a UTC-only explicit date set can omit the named primary zone.
-                if explicit_dates:
+                if alarm_ics.repeated_rdate_primary(event):
                     result['timezone_id'] = ''
                     result['start'] = event.start.astimezone(timezone.utc).isoformat()
                 if explicit_dates or value.get('duration_spec') or value.get('end_timezone_id'):
@@ -1780,20 +1806,19 @@ class Store:
             result.pop('duration_spec', None)
         if not result.get("schedule_expression"):
             result.pop("schedule_syntax", None)
-        if result.get("recurrence_overrides"):
-            result["recurrence_overrides"] = {key: Store._semantic_event(item, hydrate=False)
-                                              for key, item in result["recurrence_overrides"].items()}
         if result.get("recurrence_rule"):
             result["recurrence_rule"] = ";".join(sorted(result["recurrence_rule"].upper().removeprefix("RRULE:").split(";")))
         return result
 
     @classmethod
-    def _same_event(cls, left, right, *, partial=False):
+    def _same_event(cls, left, right, *, partial=False, hydrate=True, authored=False):
         if left == right:
             return True
         if left is None or right is None:
             return False
-        a, b = (cls._semantic_event(value, hydrate=not partial) for value in (left, right))
+        if left.get('timezone_id') and right.get('timezone_id') and left['timezone_id'] != right['timezone_id']:
+            return False  # Two explicit named schedules are distinct even at a repeated hour.
+        a, b = (cls._semantic_event(value, hydrate=hydrate and not partial, authored=authored) for value in (left, right))
         if not partial:
             return a == b
 
@@ -1954,21 +1979,13 @@ class Store:
                     preserve_transport(event)
             # Resolve affected legacy families against their own retained
             # envelopes before history or undo can substitute another template.
-            before = {key: self._canonical_alarm_snapshot(value) for key, value in before.items()}
-            for key, value in after.items():
-                prior = before[key]
-                if value is not None and prior is not None:
-                    if value.get('alarms') is None:
-                        value['alarms'] = prior['alarms']
-                        if (prior.get('end_timezone_id') and not value.get('end_timezone_id')
-                                and datetime.fromisoformat(value['end']) == datetime.fromisoformat(prior['end'])):
-                            value['end_timezone_id'] = prior['end_timezone_id']
-                    for child_key, child in value.get('recurrence_overrides', {}).items():
-                        prior_child = prior.get('recurrence_overrides', {}).get(child_key)
-                        if child.get('alarms') is None and prior_child is not None:
-                            child['alarms'] = prior_child.get('alarms')
-                after[key] = self._canonical_alarm_snapshot(value)
-            changed = [key for key in ids if not self._same_event(before[key], after[key]) or
+            for key, submitted in after.items():
+                stored = before[key]
+                before[key] = self._canonical_alarm_snapshot(stored)
+                if submitted is not None and stored is not None:
+                    self._inherit_legacy_fields(submitted, stored, before[key])
+                after[key] = self._canonical_alarm_snapshot(submitted)
+            changed = [key for key in ids if not self._same_event(before[key], after[key], authored=True) or
                        not alarm_ics.same_transport(before[key], after[key])]
             if not changed:
                 for event in upserts:

@@ -50,7 +50,7 @@ def _reminder_description(event):
             seen = set()
             for group in semantic_properties(alarm):
                 for name, parameters, value in group:
-                    if name in seen or name not in {'ACTION', 'TRIGGER', 'DESCRIPTION', 'DURATION', 'REPEAT', 'UID', 'ACKNOWLEDGED'}:
+                    if alarm.issue or name in seen or name not in {'ACTION', 'TRIGGER', 'DESCRIPTION', 'DURATION', 'REPEAT', 'UID', 'ACKNOWLEDGED'}:
                         parts.append(f'{name} {abbreviated(str(value), 100)}')
                     seen.add(name)
                     if parameters:

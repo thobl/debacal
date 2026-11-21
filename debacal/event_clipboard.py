@@ -23,9 +23,9 @@ def _scope(value: str) -> str:
     return value
 
 
-def _semantic(event: Event) -> dict:
+def _matches_reference(event: Event, reference: Event) -> bool:
     from .store import Store
-    return Store._semantic_event(event.to_dict(), hydrate=False)
+    return Store._same_event(event.to_dict(), reference.to_dict(), hydrate=False)
 
 
 def calendar_day_delta(reference: Event, target: datetime) -> int:
@@ -122,7 +122,7 @@ class EventClipboard:
                         or override.recurrence_dates or override.recurrence_overrides):
                     raise ValueError("The clipboard contains an inconsistent detached occurrence.")
         reference = Event.from_dict(self.reference.to_dict())
-        if _semantic(_resolve(masters, reference)) != _semantic(reference):
+        if not _matches_reference(_resolve(masters, reference), reference):
             raise ValueError("The clipboard reference differs from its captured event.")
         object.__setattr__(self, "masters", masters)
         object.__setattr__(self, "reference", reference)
@@ -134,7 +134,7 @@ class EventClipboard:
         if not values or len({event.id for event in values}) != len(values) or any(event.series_id for event in values):
             raise ValueError("Copy complete, distinct event masters.")
         resolved = _resolve(values, reference)
-        if _semantic(resolved) != _semantic(reference):
+        if not _matches_reference(resolved, reference):
             raise ValueError("This event changed before it could be copied. Select it again.")
         selected, anchor = _selected(values, resolved, scope)
         return cls(selected, anchor)

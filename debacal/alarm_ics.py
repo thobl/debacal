@@ -251,11 +251,7 @@ def same_transport(left, right):
         from .ics_resources import _blocks
         def envelope(raw):
             header, blocks = _blocks(raw)
-            for block in blocks:
-                if block[0] == 'BEGIN:VEVENT':
-                    properties = (part for part in direct_parts(block) if part[0].upper() != 'BEGIN:VALARM')
-                    block[1:-1] = [line for part in properties for line in part]
-            return header, blocks
+            return header, [without_alarms(block) if block[0] == 'BEGIN:VEVENT' else block for block in blocks]
         try:
             if envelope(previous) != envelope(current):
                 return False
@@ -264,6 +260,13 @@ def same_transport(left, right):
     children = left.get('recurrence_overrides', {})
     others = right.get('recurrence_overrides', {})
     return children.keys() == others.keys() and all(same_transport(child, others[key]) for key, child in children.items())
+
+
+def repeated_rdate_primary(event):
+    """An elapsed explicit-date set whose primary needs exact UTC wire time."""
+    return (bool(event.recurrence_dates) and not event.recurrence_rule and not event.schedule_expression
+            and not event.range_policy and not event.duration_spec and not event.all_day and not event.floating_time
+            and bool(event.start.fold) and event.start.replace(fold=0).timestamp() != event.start.timestamp())
 
 
 def normalize_alarm_context(event, values):
@@ -287,8 +290,7 @@ def normalize_alarm_context(event, values):
                         'UTC' if identifier == 'Etc/UTC' else identifier)
     if result:
         values['alarm_calculation_zones'] = result
-    if (event.duration_spec or event.end_timezone_id == 'UTC' and event.recurrence_dates
-            and not event.recurrence_rule and not event.schedule_expression):
+    if event.duration_spec or event.end_timezone_id == 'UTC' and repeated_rdate_primary(event):
         # DURATION owns projected ends. In an exact-date set, a UTC end
         # can become implicit when a repeated-hour primary exports as UTC.
         values.pop('end_timezone_id', None)

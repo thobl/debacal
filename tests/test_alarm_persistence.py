@@ -127,6 +127,40 @@ def test_presentation_only_zones_compare_equal_after_roundtrip(comparison, dated
     assert comparison(restored) == comparison(event)
 
 
+def test_authored_rdate_timezone_change_survives_same_instant_save_and_history(tmp_path):
+    start = datetime(2026, 11, 21, 10, tzinfo=BERLIN)
+    source = alarm_event(start=start, end=start + timedelta(hours=1), recurrence_dates=('2026-11-22T09:00:00+00:00',))
+    ny = ZoneInfo('America/New_York')
+    edited = replace(source, timezone_id=ny.key, start=source.start.astimezone(ny), end=source.end.astimezone(ny))
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([source])
+        op = store.apply('Change timezone', [edited])
+        assert op is not None
+        saved = store.get_event(source.id)
+        assert saved.timezone_id == ny.key and saved.start.hour == 4
+        assert store.pending_changes()[0]['payload']['timezone_id'] == ny.key
+        assert store_semantic(source) != store_semantic(saved)
+        store.undo(op)
+        assert store.get_event(source.id).timezone_id == BERLIN.key
+        store.redo(op)
+        assert store.get_event(source.id).timezone_id == ny.key
+
+
+@pytest.mark.parametrize('fold', [False, True], ids=['normal', 'repeated-hour'])
+def test_changed_named_rdate_zone_invalidates_local_history(fold, tmp_path):
+    start = datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=BERLIN) if fold else BASE.astimezone(BERLIN)
+    source = alarm_event(start=start, end=(start.astimezone(UTC) + timedelta(hours=1)),
+                         recurrence_dates=('2026-11-22T09:00:00+00:00',))
+    stockholm = ZoneInfo('Europe/Stockholm')
+    edited = replace(source, timezone_id=stockholm.key, start=start.astimezone(stockholm))
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456'))
+        store.apply('Create', [source])
+        store.apply_remote([edited])
+        assert not store.history()[0]['can_undo']
+
+
 @pytest.mark.parametrize('comparison', [semantic, store_semantic])
 @pytest.mark.parametrize('role,repeat', [('START', False), ('END', False), ('END', True)])
 def test_equal_instants_with_different_nominal_calculation_zones_compare_different(comparison, role, repeat):
@@ -433,3 +467,120 @@ def test_legacy_history_availability_recognizes_same_instant_with_recovered_end_
         assert store.history_availability() == (True, False)
         store.undo(op)
         assert store.get_event(source.id) is None
+
+def phoenix_legacy_family(detached):
+    raw = WIRE.replace('DTSTART:20261121T090000Z', 'DTSTART;TZID=Europe/Berlin:20261025T020000').replace(
+        'DTEND:20261121T100000Z', 'DTEND;TZID=America/Phoenix:20261024T213000').replace(
+        'TRIGGER:-PT5M', 'TRIGGER;RELATED=END:-P1D')
+    if detached:
+        raw = raw.replace('BEGIN:VEVENT', """BEGIN:VEVENT
+UID:e
+DTSTART;TZID=Europe/Berlin:20261024T020000
+DURATION:PT1H
+RRULE:FREQ=DAILY;COUNT=2
+SUMMARY:Master
+END:VEVENT
+BEGIN:VEVENT
+RECURRENCE-ID;TZID=Europe/Berlin:20261025T020000""")
+    parsed, = parse_ics(raw, 'c')
+    return legacy(parsed)
+
+
+@pytest.mark.parametrize('detached', [False, True], ids=['master', 'child'])
+@pytest.mark.parametrize('edit', ['noop', 'description', 'move_endpoint', 'rezone_endpoint'])
+def test_legacy_apply_keeps_matching_bound_provenance_independent_of_alarm_edit(tmp_path, detached, edit):
+    family = phoenix_legacy_family(detached)
+    def owner(value):
+        return Event.from_dict(next(iter(value.recurrence_overrides.values()))) if detached else value
+    def submit(component):
+        if detached:
+            key, = family.recurrence_overrides
+            return replace(family, recurrence_overrides={key: component.to_dict()})
+        return component
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([family])
+        hydrated, = store.get_events_with_alarms([family.id])
+        alarm, = owner(hydrated).alarms
+        expected_zone = 'America/Phoenix'
+        expected_fire = datetime(2026, 10, 24, 4, 30, tzinfo=UTC)
+        submitted = family
+        if edit != 'noop':
+            component = replace(owner(family), alarms=(replace(alarm, description='Edited reminder'),))
+            if edit == 'move_endpoint':
+                component = replace(component, end=component.end + timedelta(hours=2))
+                expected_zone = ''
+                expected_fire = datetime(2026, 10, 24, 5, 30, tzinfo=UTC)
+            elif edit == 'rezone_endpoint':
+                component = replace(component, end=component.end.astimezone(UTC))
+                expected_zone = 'UTC'
+            submitted = submit(component)
+        op = store.apply('Save reminder', [submitted])
+        if edit == 'noop':
+            assert op is None
+            assert not store.history() and not store.pending_changes()
+            saved, = store.get_events_with_alarms([family.id])
+            versions = [saved]
+        else:
+            assert op is not None
+            saved = store.get_event(family.id)
+            change, = store.pending_changes()
+            versions = [saved, Event.from_dict(change['payload'])]
+        for version in versions:
+            result = owner(version)
+            assert result.end_timezone_id == expected_zone
+            assert alarm_trigger(result.alarms[0], result.start, result.end) == expected_fire
+            if edit != 'noop':
+                assert result.alarms[0].description == 'Edited reminder'
+
+
+def test_malformed_acknowledgements_have_distinct_conflict_descriptions():
+    describe = lambda event: ConflictDialog.describe(SimpleNamespace(preferences=Preferences()), event)['Reminders']
+    def malformed(text):
+        return parse_ics(WIRE.replace('END:VALARM', f'ACKNOWLEDGED:{text}\nEND:VALARM'), 'c')[0]
+    first, second = malformed('bad-a'), malformed('bad-b')
+    assert semantic(first) != semantic(second)
+    assert describe(first) != describe(second)
+    assert 'bad-a' in describe(first) and 'bad-b' in describe(second)
+
+
+@pytest.mark.parametrize('detached', [False, True], ids=['master', 'child'])
+def test_modern_same_instant_end_zone_edit_is_authoritative_with_untouched_alarms(tmp_path, detached):
+    family = hydrate_alarms(phoenix_legacy_family(detached))
+    key = next(iter(family.recurrence_overrides), None)
+    original = Event.from_dict(family.recurrence_overrides[key]) if detached else family
+    edited = replace(original, end=original.end.astimezone(BERLIN), alarms=None)
+    submitted = replace(family, recurrence_overrides={key: edited.to_dict()}) if detached else edited
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([family])
+        assert store.apply('Use the primary timezone for the end', [submitted]) is not None
+        saved = store.get_event(family.id)
+        owner = Event.from_dict(saved.recurrence_overrides[key]) if detached else saved
+        assert owner.end_timezone_id == ''
+        assert owner.end.timestamp() == original.end.timestamp()
+        assert alarm_trigger(owner.alarms[0], owner.start, owner.end) == datetime(2026, 10, 24, 3, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize('comparison', [semantic, store_semantic])
+def test_normal_rdate_with_declared_utc_end_remains_distinct(comparison):
+    start = BASE.astimezone(BERLIN)
+    event = alarm_event(start=start, end=start + timedelta(hours=1), recurrence_dates=('2026-11-22T09:00:00+00:00',))
+    explicit_end = replace(event, end=event.end.astimezone(UTC))
+    assert comparison(event) != comparison(explicit_end)
+
+
+@pytest.mark.parametrize('detached', [False, True], ids=['master', 'child'])
+def test_reimported_primary_zone_end_supersedes_same_instant_legacy_provenance(tmp_path, detached):
+    from debacal.ics import parse_ics_report
+    old = phoenix_legacy_family(detached)
+    wire = old.raw_ics.replace('DTEND;TZID=America/Phoenix:20261024T213000',
+                               'DTEND;TZID=Europe/Berlin:20261025T053000')
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456'))
+        store.apply_remote([old])
+        store.import_report(parse_ics_report(wire, 'c'), calendar_id='c')
+        saved = store.get_event(old.id)
+        owner = Event.from_dict(next(iter(saved.recurrence_overrides.values()))) if detached else saved
+        assert owner.end_timezone_id == ''
+        assert alarm_trigger(owner.alarms[0], owner.start, owner.end) == datetime(2026, 10, 24, 3, 30, tzinfo=UTC)
