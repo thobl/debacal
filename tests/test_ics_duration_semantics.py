@@ -267,6 +267,71 @@ def test_late_fold_end_varies_by_rdate_with_named_or_utc_master_start(start_zone
                 datetime(2026, 10, 24, 0, 45, tzinfo=UTC), datetime(2026, 10, 26, 1, 45, tzinfo=UTC)]
 
 
+def point_dates():
+    from debacal.alarms import Alarm
+    point = datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
+    end_alarm = Alarm('end', 'DISPLAY', '-P2W', related='END', description='End')
+    return Event('point', 'local', 'Exact points', point.astimezone(ZoneInfo('America/New_York')),
+                  point.astimezone(ZONE), recurrence_dates=('2026-11-02T12:00:00+00:00', '2026-11-16T12:00:00+00:00'),
+                  alarms=(end_alarm,))
+
+
+@pytest.mark.parametrize('parser', [parse_ics, parse_fallback])
+def test_point_rdates_use_start_for_the_end_reminder_on_standard_wire(parser):
+    from debacal.alarms import alarm_trigger
+    window = datetime(2026, 10, 24, tzinfo=UTC), datetime(2026, 11, 17, tzinfo=UTC)
+    expected = [
+        (datetime(2026, 10, 25, 1, 30, tzinfo=UTC), datetime(2026, 10, 11, 0, 30, tzinfo=UTC)),
+        (datetime(2026, 11, 2, 12, tzinfo=UTC), datetime(2026, 10, 19, 11, tzinfo=UTC)),
+        (datetime(2026, 11, 16, 12, tzinfo=UTC), datetime(2026, 11, 2, 12, tzinfo=UTC))]
+    wire = export_ics([point_dates()])
+    for data in (strip_metadata(wire), wire):
+        restored, = parser(data, 'local')
+        values = expand_event(restored, *window)
+        assert [(v.start.astimezone(UTC), v.end.astimezone(UTC), alarm_trigger(v.alarms[0], v.start, v.end))
+                for v in values] == [(instant, instant, firing) for instant, firing in expected]
+        if data == wire:
+            assert not restored.recurrence_overrides
+            assert (restored.alarms[0].related, restored.alarms[0].trigger) == ('END', '-P2W')
+        else:
+            assert restored.alarms[0].related == 'START'
+            assert all(v.alarms[0].related == 'START' for v in values)
+            assert all(not line.startswith(('DTEND', 'DURATION')) for line in unfolded(data))
+
+
+@pytest.mark.parametrize('edit,trigger', [
+    ('title', datetime(2026, 10, 19, 11, tzinfo=UTC)),
+    ('remove', datetime(2026, 10, 19, 12, tzinfo=UTC)),
+    ('duration', datetime(2026, 10, 19, 11, tzinfo=UTC)),
+    ('trigger', datetime(2026, 11, 2, 11, 55, tzinfo=UTC))])
+def test_edited_point_exception_keeps_standard_trigger_ownership_on_reexport(edit, trigger):
+    from debacal.alarms import alarm_trigger
+    from debacal.ics_resources import _blocks
+    header, blocks = _blocks(export_ics([point_dates()]))
+    child = next(block for block in blocks if 'RECURRENCE-ID:20261102T120000Z' in block)
+    if edit == 'remove':
+        blocks.remove(child)
+    elif edit == 'duration':
+        child.insert(-1, 'DURATION:PT1H')
+    else:
+        field, replacement = ('SUMMARY:', 'SUMMARY:Edited') if edit == 'title' else ('TRIGGER:', 'TRIGGER:-PT5M')
+        child[next(i for i, line in enumerate(child) if line.startswith(field))] = replacement
+    raw = folded(['BEGIN:VCALENDAR', *header, *(line for block in blocks for line in block), 'END:VCALENDAR'])
+    for parser in (parse_ics, parse_fallback):
+        changed, = parser(raw, 'local')
+        standard, = parser(strip_metadata(export_ics([changed])), 'local')
+        window = datetime(2026, 11, 2, tzinfo=UTC), datetime(2026, 11, 3, tzinfo=UTC)
+        for model in (changed, standard):
+            instance, = expand_event(model, *window)
+            alarm, = instance.alarms
+            assert alarm_trigger(alarm, instance.start, instance.end) == trigger
+            assert instance.end.astimezone(UTC) == datetime(2026, 11, 2, 13 if edit == 'duration' else 12, tzinfo=UTC)
+            if edit == 'title':
+                assert instance.title == 'Edited'
+            if model is standard or edit in ('duration', 'trigger'):
+                assert alarm.related == 'START'
+
+
 @pytest.mark.parametrize('parser', [parse_ics, parse_fallback])
 def test_rrule_same_zone_late_end_keeps_exact_duration_and_nominal_end_alarm(parser):
     from debacal.alarms import Alarm, alarm_trigger
