@@ -584,3 +584,43 @@ def test_reimported_primary_zone_end_supersedes_same_instant_legacy_provenance(t
         owner = Event.from_dict(next(iter(saved.recurrence_overrides.values()))) if detached else saved
         assert owner.end_timezone_id == ''
         assert alarm_trigger(owner.alarms[0], owner.start, owner.end) == datetime(2026, 10, 24, 3, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize('edit_description', [False, True], ids=['noop', 'alarm-edit'])
+def test_matching_legacy_late_fold_bounds_share_recovered_zone_in_history_and_outbox(tmp_path, edit_description):
+    from test_ics_duration_semantics import strip_metadata
+    start = datetime(2026, 10, 25, 2, 0, tzinfo=BERLIN, fold=1)
+    end = datetime(2026, 10, 25, 2, 45, tzinfo=BERLIN, fold=1)
+    alarms = (Alarm('start', 'DISPLAY', '-P1D'), Alarm('end', 'DISPLAY', '-P1D', related='END'))
+    wire = export_ics([alarm_event(start=start, end=end, alarms=alarms)])
+    standard, = parse_ics(strip_metadata(wire), 'c')
+    old = replace(standard, alarms=None, raw_ics=wire.decode())
+    assert old.start.isoformat() == '2026-10-25T01:00:00+00:00'
+    assert old.end.isoformat() == '2026-10-25T01:45:00+00:00'
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([old])
+        recovered, = store.get_events_with_alarms([old.id])
+        assert recovered.start.isoformat() == '2026-10-25T02:00:00+01:00'
+        assert recovered.end.isoformat() == '2026-10-25T02:45:00+01:00'
+        assert recovered.start.fold == recovered.end.fold == 1
+        assert recovered.timezone_id == BERLIN.key and not recovered.end_timezone_id
+        submitted = old
+        if edit_description:
+            submitted = replace(old, alarms=tuple(replace(a, description='Edited') for a in recovered.alarms))
+        operation = store.apply('Save', [submitted])
+        if edit_description:
+            assert operation is not None
+            change, = store.pending_changes()
+            assert [alarm['description'] for alarm in change['payload']['alarms']] == ['Edited', 'Edited']
+            assert change['payload']['end'] == '2026-10-25T02:45:00+01:00'
+            assert 'end_timezone_id' not in change['payload']
+            before, after = store.connection.execute(
+                'SELECT before_data, after_data FROM operations WHERE id=?', (operation,)).fetchone()
+            for state in (json.loads(before)[old.id], json.loads(after)[old.id]):
+                assert state['start'] == '2026-10-25T02:00:00+01:00'
+                assert state['end'] == '2026-10-25T02:45:00+01:00'
+                assert 'end_timezone_id' not in state
+        else:
+            assert operation is None
+            assert not store.history() and not store.pending_changes()

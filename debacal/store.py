@@ -1757,11 +1757,18 @@ class Store:
         if (same_template and stored.get('alarms') is None and not submitted.get('all_day')
                 and not submitted.get('floating_time') and submitted.get('timezone_id') == stored.get('timezone_id')):
             for bound, zone in (('start', 'timezone_id'), ('end', 'end_timezone_id')):
-                recovered = canonical.get(zone, '')
-                if (recovered and recovered != stored.get(zone, '')
-                        and submitted.get(zone, '') == stored.get(zone, '')
+                old_zone = stored.get(zone, '')
+                zone_recovered = canonical.get(zone, '') != old_zone
+                # Both bounds can recover the same named zone. DTEND then
+                # changes its wall-clock spelling without gaining its own TZID.
+                spelling_recovered = stored[bound] != canonical[bound] and submitted[bound] == stored[bound]
+                if ((zone_recovered or spelling_recovered) and submitted.get(zone, '') == old_zone
                         and datetime.fromisoformat(submitted[bound]) == datetime.fromisoformat(canonical[bound])):
-                    submitted[bound], submitted[zone] = canonical[bound], recovered
+                    submitted[bound] = canonical[bound]
+                    if zone in canonical:
+                        submitted[zone] = canonical[zone]
+                    else:
+                        submitted.pop(zone, None)
         for key, child in submitted.get('recurrence_overrides', {}).items():
             if key in stored['recurrence_overrides']:
                 Store._inherit_legacy_fields(child, stored['recurrence_overrides'][key],
