@@ -25,6 +25,8 @@ def relative_templates(alarms: tuple[Alarm, ...]) -> tuple[Alarm, ...]:
     for alarm in alarms:
         if not isinstance(alarm, Alarm):
             raise ValueError('Reminder templates must contain relative alarms.')
+        if alarm.issue:
+            raise ValueError(f'Reminder templates require a valid relative alarm. {alarm.issue}')
         try:
             signed_duration(alarm.trigger or '')
         except ValueError as error:

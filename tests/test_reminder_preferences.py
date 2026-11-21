@@ -128,6 +128,45 @@ def test_reusable_reminders_require_valid_relative_triggers(alarm):
         transform_import_reminders(ParseReport((alarm_event(),)), 'replace', (alarm,))
 
 
+@pytest.fixture
+def malformed_alarm_report():
+    return parse_ics_report(
+        b'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:malformed-template\r\n'
+        b'DTSTART:20261121T090000Z\r\nDTEND:20261121T100000Z\r\nSUMMARY:Example\r\n'
+        b'BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:-PT5M\r\n'
+        b'DESCRIPTION:Earlier\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n',
+        'preview',
+    )
+
+
+@pytest.mark.parametrize('configure', [
+    pytest.param(lambda alarms: CalendarReminderPolicy('replace', alarms), id='calendar-replace'),
+    pytest.param(lambda alarms: ReminderPreferences(new_timed=alarms), id='new-timed'),
+    pytest.param(lambda alarms: ReminderPreferences(new_all_day=alarms), id='new-all-day'),
+    pytest.param(lambda alarms: ReminderPreferences(import_alarms=alarms), id='import-default'),
+    pytest.param(lambda alarms: transform_import_reminders(ParseReport((alarm_event(),)), 'add_missing', alarms),
+                 id='import-add-missing'),
+    pytest.param(lambda alarms: transform_import_reminders(ParseReport((alarm_event(),)), 'replace', alarms),
+                 id='import-replace'),
+])
+def test_reusable_templates_reject_parsed_malformed_relative_looking_alarm(malformed_alarm_report, configure):
+    alarms = malformed_alarm_report.events[0].alarms
+    assert alarms[0].trigger == '-PT5M' and alarms[0].issue
+    with pytest.raises(ValueError, match='relative'):
+        configure(alarms)
+
+
+@pytest.mark.parametrize('mode', ['keep', 'add_missing'])
+def test_existing_malformed_alarm_is_preserved_on_import(malformed_alarm_report, mode):
+    original = malformed_alarm_report.events[0]
+    transformed = transform_import_reminders(malformed_alarm_report, mode, (TIMED,))
+    assert transformed.events[0].alarms == original.alarms
+    assert count_reminder_sources(transformed) == (1, 1)
+    wire = export_ics(transformed.events)
+    assert b'TRIGGER;VALUE=DATE-TIME:-PT5M\r\n' in wire
+    assert parse_ics_report(wire, 'preview').events[0].alarms == original.alarms
+
+
 def mixed_report():
     unsupported = Alarm('email', 'EMAIL', '-PT15M', raw_ics=(
         'BEGIN:VALARM\r\nACTION:EMAIL\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Legacy\r\nEND:VALARM\r\n'))
