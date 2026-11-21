@@ -175,7 +175,9 @@ class Store:
             self.connection.execute("CREATE TABLE IF NOT EXISTS event_revisions (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)")
             self.connection.execute("INSERT OR IGNORE INTO event_revisions(id,version) VALUES (1,0)")
             self.connection.execute("CREATE TABLE IF NOT EXISTS event_query_changes (event_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
-            self.connection.execute("CREATE INDEX IF NOT EXISTS event_query_changes_version ON event_query_changes(version)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS event_query_changes_cursor ON event_query_changes(version,event_id)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_calendar_id ON events(calendar_id,id)")
+            self._initialize_reminder_sources()
             # These counters live in the same transaction as each event write.
             # Unlike data_version/total_changes they ignore settings, visibility,
             # outbox acknowledgments and unrelated ingestion metadata.
@@ -216,6 +218,33 @@ class Store:
             from .event_range_index import EventRangeIndex
             self._query_index = EventRangeIndex()
             self._synchronize_query_index()
+
+    def _initialize_reminder_sources(self) -> None:
+        """Install source identity and enabled-state tracking in the schema transaction."""
+        db = self.connection
+        db.execute("CREATE TABLE IF NOT EXISTS database_incarnation "
+                   "(id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL)")
+        installed = db.execute("INSERT OR IGNORE INTO database_incarnation VALUES (1,lower(hex(randomblob(16))))")
+        db.execute("CREATE TABLE IF NOT EXISTS calendar_enable_transitions "
+                   "(calendar_id TEXT PRIMARY KEY, enabled INTEGER, generation INTEGER NOT NULL, changed_at TEXT NOT NULL)")
+        now = "strftime('%Y-%m-%dT%H:%M:%f+00:00','now')"
+        # An absent enabled field in a legacy calendar means enabled.
+        enabled = "COALESCE(json_extract(new.data,'$.enabled'),1)"
+        if installed.rowcount:
+            db.execute("INSERT INTO calendar_enable_transitions "
+                       f"SELECT id,COALESCE(json_extract(data,'$.enabled'),1),1,{now} FROM calendars")
+        # A NULL enabled value is a tombstone. Reusing a deleted calendar ID
+        # continues its generation even if the worker missed the deletion.
+        retire = (f"UPDATE calendar_enable_transitions SET enabled=NULL,generation=generation+1,changed_at={now} "
+                  "WHERE calendar_id=old.id")
+        publish = (f"INSERT INTO calendar_enable_transitions VALUES (new.id,{enabled},1,{now}) "
+                   "ON CONFLICT(calendar_id) DO UPDATE SET enabled=excluded.enabled,"
+                   "generation=generation+1,changed_at=excluded.changed_at WHERE enabled IS NOT excluded.enabled")
+        db.execute(f"CREATE TRIGGER IF NOT EXISTS calendar_enable_insert AFTER INSERT ON calendars BEGIN {publish}; END")
+        db.execute(f"CREATE TRIGGER IF NOT EXISTS calendar_enable_delete AFTER DELETE ON calendars BEGIN {retire}; END")
+        db.execute("CREATE TRIGGER IF NOT EXISTS calendar_enable_update AFTER UPDATE OF data,id ON calendars "
+                   f"WHEN old.id IS NOT new.id OR COALESCE(json_extract(old.data,'$.enabled'),1) IS NOT {enabled} "
+                   f"BEGIN {retire} AND old.id IS NOT new.id; {publish}; END")
 
     def _enable_wal(self) -> None:
         # SQLite can return SQLITE_BUSY immediately for journal-mode changes,

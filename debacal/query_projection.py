@@ -243,6 +243,25 @@ class ProjectionStorage:
             self.connection.execute('UPDATE event_query_state SET version=? WHERE id=1', (revision,))
         return rejected
 
+    def source_reader(self) -> StateReader:
+        """Point-load shared values, interning only those used by this read batch."""
+        return StateReader(self._load_zone, self._load_definition)
+
+    def load_source(self, reader: StateReader, event_id: str, calendar_id: str, version: int) -> IndexedSource | None:
+        """Read one current preparation inside the caller's canonical snapshot."""
+        row = self.connection.execute(
+            'SELECT p.data FROM event_query_projection AS p JOIN event_query_state AS s ON s.id=1 '
+            'WHERE p.event_id=? AND s.signature=? AND s.version>=?', (event_id, self.signature, version)).fetchone()
+        if row is None or row[0] is None:
+            return None
+        try:
+            record = load_record(unpack_state(row[0]), reader)
+            if record.master.id == event_id and record.master.calendar_id == calendar_id:
+                return record
+        except (ValueError, TypeError, LookupError, OverflowError, AttributeError, RecursionError):
+            pass  # Damaged derived data can be prepared again from the canonical row.
+        return None
+
     def load_catalog(self):
         # Keep only the small live-reference catalog. Large packed timezone
         # tables are read once on reconstruction, not copied on every unrelated
@@ -250,7 +269,7 @@ class ProjectionStorage:
         self.shared = {row['reference']: row['kind'] for row
                        in self.connection.execute('SELECT reference,kind FROM event_query_shared')}
         if self.reader is None:
-            self.reader = StateReader(self._load_zone, self._load_definition)
+            self.reader = self.source_reader()
         # Prune no-longer-referenced interned data without duplicating objects
         # still used by unchanged sources on incremental reloads.
         self.reader.retain_references(
