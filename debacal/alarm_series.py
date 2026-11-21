@@ -30,12 +30,14 @@ def relative_child_alarms(alarms, component_key):
     return copied_alarms(relative_alarms(alarms), component_key)
 
 
-def copied_alarms(alarms, component_key):
-    """Reidentify owned alarms and links within their component."""
+def copied_alarms(alarms, component_key, *, retained=()):
+    """Reidentify alarms and internal links; keep identities already owned by this destination."""
     if not alarms:
         return alarms
+    retained_uids = {a.uid for a in retained if a.uid}
+    retained_keys = {a.key for a in retained if not a.uid}
     uids = {a.uid: 'urn:uuid:' + str(uuid5(NAMESPACE_URL, f'{component_key}/alarm/{a.uid}'))
-            for a in alarms if a.uid}
+            for a in alarms if a.uid and a.uid not in retained_uids}
     result, ordinals = [], Counter()
     for alarm in alarms:
         if not alarm.raw_ics:
@@ -54,6 +56,9 @@ def copied_alarms(alarms, component_key):
                         part = [part[0].removesuffix(value) + ics.escaped(uids[ics.text(value)])]
                 lines.extend(part)
             alarm = replace(alarm, raw_ics=ics.folded([*lines, 'END:VALARM']).decode())
+        if alarm.uid in retained_uids or not alarm.uid and alarm.key in retained_keys:
+            result.append(alarm)
+            continue
         if alarm.uid:
             uid = uids[alarm.uid]
         else:
@@ -73,9 +78,12 @@ def materialize_alarms(master: Event, child: Event) -> Event:
     return replace(child, alarms=alarms)
 
 
-def edit_child_alarms(master: Event, child: Event, edit: AlarmEdit) -> Event:
+def edit_child_alarms(master: Event, child: Event, edit: AlarmEdit, *, distributed=False) -> Event:
     """Materialize a new Single exception. Existing exceptions own their list."""
     old = master.recurrence_overrides.get(child.recurrence_id)
+    if distributed and edit is not None:
+        retained = (Event.from_dict(old).alarms or ()) if old is not None else ()
+        return replace(child, alarms=copied_alarms(edit, child.id, retained=retained))
     if old is not None:
         alarms = Event.from_dict(old).alarms if edit is None else edit
         return replace(child, alarms=alarms)
@@ -84,9 +92,11 @@ def edit_child_alarms(master: Event, child: Event, edit: AlarmEdit) -> Event:
     return replace(child, alarms=copied_alarms(edit, master.ical_uid + '/' + child.recurrence_id))
 
 
-def apply_alarm_edit(master: Event, edit: AlarmEdit) -> Event:
+def apply_alarm_edit(master: Event, edit: AlarmEdit, *, distributed=False) -> Event:
     if edit is None:
         return master
+    if distributed:
+        edit = copied_alarms(edit, master.id, retained=master.alarms or ())
     edited = replace(master, alarms=edit)
     if not master.recurrence_overrides:
         return edited

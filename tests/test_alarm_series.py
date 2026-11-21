@@ -494,3 +494,93 @@ def test_detached_nominal_duration_with_start_alarm_keeps_dst_firing(full):
         assert restored.start.timestamp() == child.start.timestamp()
         assert restored.end.timestamp() == child.end.timestamp()
         assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == datetime(2026, 10, 24, 7, tzinfo=UTC)
+
+
+@pytest.mark.parametrize('kind', ['detached', 'masters', 'all'])
+def test_distributed_alarm_uids_and_links_belong_to_each_selected_component(kind):
+    # The first existing component owns the target of the new snooze relation.
+    target, linked = exact_date_family().alarms[:2]
+    if kind == 'detached':
+        master = family()
+        first = replace(occurrence(master, BASE), alarms=(target,))
+        second = replace(occurrence(master, BASE+timedelta(days=1)), alarms=(linked,))
+        resources = [replace(master, recurrence_overrides={e.recurrence_id: e.to_dict() for e in (first, second)})]
+    else:
+        rule = 'FREQ=DAILY;COUNT=2' if kind == 'all' else ''
+        first = alarm_event(calendar_id='local', alarms=(target,), recurrence_rule=rule)
+        second = replace(first, id='independent', ical_uid='independent', alarms=(linked,))
+        resources = [first, second]
+    with Store(':memory:') as store:
+        store.apply_remote(resources)
+        refs = [first, second] if kind != 'all' else [occurrence(r, BASE) for r in resources]
+        store.edit_selection(refs, 'group' if kind == 'all' else 'single', refs[0], first, alarm_edit=(target, linked, NEW))
+        saved = store.list_events()
+        exported = parse_ics(export_ics(saved), 'local')
+        if kind == 'detached':
+            family_copy, = exported
+            both = [Event.from_dict(family_copy.recurrence_overrides[e.recurrence_id]) for e in refs]
+        else:
+            both = [next(e for e in exported if e.ical_uid == ref.ical_uid) for ref in refs]
+        assert both[0].alarms[0].uid == target.uid
+        assert both[1].alarms[1].uid == linked.uid
+        assert len({a.uid for event in both for a in event.alarms}) == 6
+        for event in both:
+            base, snooze, added = event.alarms
+            assert added.trigger == NEW.trigger
+            assert f'RELATED-TO;RELTYPE=SNOOZE:{base.uid}' in unfolded(snooze.raw_ics)
+
+
+@pytest.mark.parametrize('full', [False, True])
+def test_detached_tzid_definitions_cover_named_overrides_of_utc_rdate_master(full):
+    from icalendar import Calendar
+    from test_ics_duration_semantics import strip_metadata
+    zone = ZoneInfo('Europe/Berlin')
+    primary = datetime(2026, 10, 24, 9, tzinfo=zone)
+    near = datetime(2026, 10, 25, 9, tzinfo=zone)
+    distant = datetime(2110, 7, 2, 9, tzinfo=zone)
+    master = alarm_event(start=primary, end=primary+timedelta(hours=1), timezone_id=zone.key,
+                         recurrence_dates=tuple(recurrence_key(v) for v in (near, distant)))
+    children = [replace(occurrence(master, v), alarms=(replace(REL, trigger='-P1D'),)) for v in (near, distant)]
+    master = replace(master, recurrence_overrides={c.recurrence_id: c.to_dict() for c in children})
+    raw = export_ics([master])
+    for data in (raw, strip_metadata(raw)):
+        calendar = Calendar.from_ical(data)
+        assert str(calendar.walk('VEVENT')[0]['DTSTART'].params.get('TZID', '')) == ''
+        definition, = calendar.walk('VTIMEZONE')
+        assert str(definition['TZID']) == zone.key
+        supplied = definition.to_tz(lookup_tzid=False)
+        assert distant.replace(tzinfo=supplied).utcoffset() == distant.utcoffset()
+        wire_start = near.replace(tzinfo=supplied)
+        assert (wire_start-timedelta(days=1)).astimezone(UTC) == datetime(2026, 10, 24, 7, tzinfo=UTC)
+        report = parse_report(data, 'local', use_full=full)
+        restored, = report.events
+        for v in (near, distant):
+            child = Event.from_dict(restored.recurrence_overrides[recurrence_key(v)])
+            assert alarm_trigger(child.alarms[0], child.start, child.end) == (v-timedelta(days=1)).astimezone(UTC)
+
+
+def test_ui_future_snapshot_defers_legacy_alarm_parse_until_paste(monkeypatch):
+    from debacal import alarm_ics
+    from debacal.event_clipboard import EventClipboard
+    modern, = parse_ics(export_ics([family()]), 'local')
+    old = replace(modern, alarms=None)
+    with Store(':memory:') as store:
+        store.apply_remote([old])
+        store.configure_ui_access(lambda *args: None)
+        ref = store.get_occurrence(occurrence(old, BASE+timedelta(days=1)).id)
+        with monkeypatch.context() as guard:
+            def unexpected(*args, **kwargs):
+                pytest.fail('Following capture parsed a legacy alarm list on the UI reader')
+            guard.setattr(alarm_ics, 'hydrate_alarms', unexpected)
+            guard.setattr(alarm_ics, 'read_alarms', unexpected)
+            tail = store.future_snapshot(ref)
+            assert tail.alarms is None and tail.raw_ics == old.raw_ics
+        portable_tail, = parse_ics(export_ics([tail]), 'local')
+        assert triggers(portable_tail.alarms) == [REL.trigger, ABS.trigger]
+        captured = EventClipboard.capture([tail], occurrence(tail, tail.start), 'group')
+        copy, = captured.instantiate('group', ref.start, 'local')
+        restored, = parse_ics(export_ics([copy]), 'local')
+        assert triggers(restored.alarms) == [REL.trigger, ABS.trigger]
+        assert [a.trigger for p in restored.recurrence_overrides.values()
+                for a in Event.from_dict(p).alarms] == [OWN.trigger]
+        assert store.get_event(old.id).alarms is None and not store.history()

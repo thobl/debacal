@@ -1443,7 +1443,7 @@ class Store:
             if root_scope == "single":
                 value = replace(root, start=start, end=end, duration_spec=duration_spec, **common_changes)
                 if root.series_id:
-                    value = edit_child_alarms(master, value, alarm_edit)
+                    value = edit_child_alarms(master, value, alarm_edit, distributed=len(roots) > 1)
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                                     schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
                     previous = changed.get(master.id, master)
@@ -1457,7 +1457,7 @@ class Store:
                     else:
                         changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
                 else:
-                    value = apply_alarm_edit(replace(value, **schedule_changes), alarm_edit)
+                    value = apply_alarm_edit(replace(value, **schedule_changes), alarm_edit, distributed=len(roots) > 1)
                     if calendar_id is not None and calendar_id != master.calendar_id:
                         deleted.add(master.id)
                         value = transferred(value)
@@ -1500,7 +1500,7 @@ class Store:
                 if before is None:
                     deleted.add(master.id)
                 projected = transferred(projected, keep_id=before is not None)
-            changed[projected.id] = apply_alarm_edit(projected, alarm_edit)
+            changed[projected.id] = apply_alarm_edit(projected, alarm_edit, distributed=len(roots) > 1)
         return list(changed.values())
 
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
@@ -1600,7 +1600,9 @@ class Store:
         """
         from .series_operations import following_snapshot
         with self.read_snapshot():
-            master = alarm_ics.hydrate_alarms(self._reviewed_future_master(reference, expected_master))
+            master = self._reviewed_future_master(reference, expected_master)
+            if not self._ui_access:
+                master = alarm_ics.hydrate_alarms(master)
             tail = following_snapshot(master, reference)
             if tail is None:
                 raise ValueError("There are no events at or after this occurrence.")

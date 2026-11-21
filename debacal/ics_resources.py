@@ -1269,6 +1269,17 @@ def normalize_caldav_resource(data: str | bytes) -> bytes:
                             *(line for block in blocks for line in block), "END:VCALENDAR"])
 
 
+def _named_detached(override):
+    # Fixed detached DURATION ranges traditionally use UTC endpoints. A
+    # nominal reminder additionally owns its endpoint's calculation zone.
+    return not override.duration_spec or any(
+        alarm_fold_ics.needs_projection(alarm, {'START', 'END'}) for alarm in override.alarms or ())
+
+
+def _union_span(first, second):
+    return min(first[0], second[0]), max(first[1], second[1])
+
+
 def _required_timezone_spans(event):
     if _named_start(event) and event.timezone_id not in event.timezone_definitions:
         yield event.timezone_id, _timezone_span(event)
@@ -1276,9 +1287,10 @@ def _required_timezone_spans(event):
     if end_id and end_id != 'UTC' and end_id not in event.timezone_definitions:
         yield end_id, _timezone_span(event)
     for payload in event.recurrence_overrides.values():
-        if payload.get('end_timezone_id') or (payload.get('timezone_id') and not payload.get('all_day')
-                                              and payload['timezone_id'] != event.timezone_id):
-            override = Event.from_dict(payload)
+        if not (payload.get('end_timezone_id') or payload.get('timezone_id') and not payload.get('all_day')):
+            continue
+        override = Event.from_dict(payload)
+        if override.end_timezone_id or _named_detached(override):
             for identifier in (override.timezone_id, override.end_timezone_id):
                 if identifier and identifier != 'UTC' and identifier not in event.timezone_definitions:
                     yield identifier, _timezone_span(override)
@@ -1308,13 +1320,17 @@ def serialize_resource(event, *, timezone_spans=None):
         if identifier not in existing_ids:
             result.append(fallback.unfolded(definition))
             existing_ids.add(identifier)
+    required = {}
+    for identifier, span in _required_timezone_spans(event):
+        required[identifier] = _union_span(required.get(identifier, span), span)
     for index, block in enumerate(result):
         if block[0] == 'BEGIN:VTIMEZONE':
             coverage = _generated_timezone_coverage(tuple(block))
             if coverage is not None:
                 identifier = fallback.text(_property_of(block, 'TZID') or '')
+                coverage = _union_span(required.get(identifier, coverage), coverage)
                 result[index] = _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, coverage))
-    for identifier, span in _required_timezone_spans(event):
+    for identifier, span in required.items():
         if identifier not in existing_ids:
             result.insert(0, _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, span)))
             existing_ids.add(identifier)
@@ -1332,12 +1348,8 @@ def serialize_resource(event, *, timezone_spans=None):
         result.append(_patch_block(master_template, event, uid))
     for key, payload in sorted(event.recurrence_overrides.items()):
         override = Event.from_dict(payload)
-        # Fixed detached DURATION ranges traditionally use UTC endpoints.
-        # A nominal reminder additionally owns its endpoint's calculation zone.
-        named = not override.duration_spec or any(
-            alarm_fold_ics.needs_projection(alarm, {'START', 'END'}) for alarm in override.alarms or ())
         result.append(_patch_block(detached.get(key, ["BEGIN:VEVENT", "END:VEVENT"]), override, uid, key,
-                                   recurrence_floating=event.floating_time, named_detached=named))
+                                   recurrence_floating=event.floating_time, named_detached=_named_detached(override)))
     if event.range_policy == 'cut':
         marker = range_codec.generated_marker(event, range_codec.signature(event))
         for key, start, end in range_codec.generated_ranges(event):
@@ -1361,9 +1373,8 @@ def export(events):
     # equality alone cannot consolidate the same zone generated for two eras.
     spans = {}
     for event in events:
-        for identifier, (first, last) in _required_timezone_spans(event):
-            previous = spans.get(identifier, (first, last))
-            spans[identifier] = min(first, previous[0]), max(last, previous[1])
+        for identifier, span in _required_timezone_spans(event):
+            spans[identifier] = _union_span(spans.get(identifier, span), span)
         if event.raw_ics:
             for block in _blocks(event.raw_ics)[1]:
                 if block[0] != 'BEGIN:VTIMEZONE':
@@ -1371,8 +1382,7 @@ def export(events):
                 coverage = _generated_timezone_coverage(tuple(block))
                 if coverage is not None:
                     identifier = fallback.text(_property_of(block, 'TZID') or '')
-                    previous = spans.get(identifier, coverage)
-                    spans[identifier] = min(coverage[0], previous[0]), max(coverage[1], previous[1])
+                    spans[identifier] = _union_span(spans.get(identifier, coverage), coverage)
     components = []
     for event in events:
         _, blocks = _blocks(serialize_resource(event, timezone_spans=spans))
