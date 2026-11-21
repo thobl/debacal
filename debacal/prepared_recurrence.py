@@ -14,6 +14,7 @@ from math import gcd
 from dateutil.rrule import DAILY, HOURLY, MINUTELY, MONTHLY, WEEKLY, YEARLY, _iterinfo, weekday
 
 from .event_duration import add_elapsed, elapsed_duration, occurrence_end_zone, parse_duration_spec
+from .alarm_series import relative_alarms
 from .models import Event, copy_event
 from .recurrence import (
     RecurrenceRangeError, _floating_master, _recurrence_set,
@@ -661,7 +662,7 @@ class PreparedSeries:
         fields = {'id': occurrence_id(self.master.id, key), 'start': start, 'end': end,
                   'series_id': self.master.id, 'recurrence_id': key, 'recurrence_rule': '',
                   'recurrence_dates': (), 'excluded_dates': (), 'recurrence_overrides': {}, 'raw_ics': '',
-                  'range_policy': '', 'duration_spec': duration_spec}
+                  'range_policy': '', 'duration_spec': duration_spec, 'alarms': relative_alarms(self.master.alarms)}
         return copy_event(self.master, fields)
 
     def finite_rule_occurrences(self, maximum):

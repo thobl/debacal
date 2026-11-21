@@ -49,7 +49,7 @@ def selection_events(store, refs: Iterable[Event], scope: str = 'single') -> tup
                 source_id = snapshot.id
         if source_id:
             identity = _partial_identity(snapshot, source_id, scope, boundary)
-            snapshot = reidentify_series(snapshot, identity, identity)
+            snapshot = reidentify_series(snapshot, identity, identity, copy_alarms=True)
         result.append(snapshot)
     if len({event.ical_uid for event in result}) != len(result):
         raise ValueError('These selected resources share an iCalendar UID. Export them separately to keep both events.')

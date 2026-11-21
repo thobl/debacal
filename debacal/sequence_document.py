@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime, time
 import json
 
+from .alarm_series import materialize_alarms
 from .models import Event
 from .event_duration import normalized_spec
 from .recurrence import RecurrenceError, event_zone, key_datetime, occurrence, recurrence_key
@@ -166,7 +167,7 @@ def document_event(source: Event, text: str) -> Event:
             raise RecurrenceError('Two moved occurrence keys name the same nominal date.')
         original = source.recurrence_overrides.get(canonical)
         item = (Event.from_dict(original) if original is not None
-                else occurrence(bare, key_datetime(canonical, bare), canonical))
+                else materialize_alarms(bare, occurrence(bare, key_datetime(canonical, bare), canonical)))
         try:
             zone = resolve_timezone(values['zone'], item.timezone_definitions) if values.get('zone') else event_zone(item)
         except (ValueError, KeyError) as error:

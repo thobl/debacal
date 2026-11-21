@@ -15,7 +15,8 @@ from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 from . import alarm_ics
-from .alarms import Alarm, alarm_semantic
+from .alarms import Alarm, AlarmEdit, alarm_semantic
+from .alarm_series import apply_alarm_edit, edit_child_alarms, is_relative, materialize_alarms, relative_alarms
 from .models import Calendar, Event
 from .event_duration import add_duration, end_for, same_duration
 from .schedule_replacement import ScheduleReplacement
@@ -1176,7 +1177,7 @@ class Store:
         end = item.end
         if source.end_timezone_id and (child is not None or not master.duration_spec):
             end = end.astimezone(source.end.tzinfo)
-        return replace(item, alarms=source.alarms, end=end)
+        return replace(item, alarms=source.alarms if child is not None else relative_alarms(source.alarms), end=end)
 
     def _reviewed_master(self, reference: Event) -> Event:
         master = self.get_event(reference.series_id or reference.id)
@@ -1199,13 +1200,15 @@ class Store:
             raise HistoryConflict("This event changed while it was being edited. Open it again before saving.")
         return master
 
-    def edit_occurrence(self, instance: Event, edited: Event, label: str = "Edit occurrence") -> int | None:
+    def edit_occurrence(self, instance: Event, edited: Event, label: str = "Edit occurrence", *,
+                        alarm_edit: AlarmEdit = None) -> int | None:
         from .recurrence import occurrence_id
         if edited.calendar_id != instance.calendar_id:
-            return self.edit_selection([instance], "single", instance, edited, label=label)
+            return self.edit_selection([instance], "single", instance, edited, label=label, alarm_edit=alarm_edit)
         with self._transaction():
-            master = self._reviewed_master(instance)
+            master = alarm_ics.hydrate_alarms(self._reviewed_master(instance))
             if not instance.series_id:
+                edited = apply_alarm_edit(replace(edited, alarms=master.alarms), alarm_edit)
                 if instance._query_projection and not edited.raw_ics:
                     edited = replace(edited, raw_ics=master.raw_ics, _query_projection=False)
                 return self.apply(label, [replace(edited, id=master.id, calendar_id=master.calendar_id)])
@@ -1215,6 +1218,7 @@ class Store:
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 schedule_expression="", expression_anchor="", schedule_syntax=1,
             )
+            override = edit_child_alarms(master, override, alarm_edit)
             overrides = master.recurrence_overrides | {instance.recurrence_id: override.to_dict()}
             return self.apply(label, [replace(master, recurrence_overrides=overrides)])
 
@@ -1236,6 +1240,8 @@ class Store:
         """
         with self._transaction():
             master = self._reviewed_master(instance)
+            master = alarm_ics.hydrate_alarms(master)
+            instance = self._family_alarm_fields(instance, master)
             if not instance.candidate:
                 raise ValueError("Select an alternative time slot to confirm.")
             if master.recurring and not instance.series_id:
@@ -1243,6 +1249,8 @@ class Store:
             if master.recurring and not master.candidate:
                 # A lone tentative exception in a confirmed series must not
                 # destroy its other, already confirmed occurrences.
+                if instance.recurrence_id not in master.recurrence_overrides:
+                    instance = materialize_alarms(master, instance)
                 confirmed = replace(instance, candidate=False, schedule_expression="", expression_anchor="", schedule_syntax=1)
                 overrides = master.recurrence_overrides | {instance.recurrence_id: confirmed.to_dict()}
                 chosen = replace(master, recurrence_overrides=overrides)
@@ -1255,6 +1263,10 @@ class Store:
                     read_only=master.read_only,
                     schedule_expression="", expression_anchor="", schedule_syntax=1,
                 )
+                if instance.series_id:
+                    # The chosen occurrence becomes the sole original-UID owner.
+                    component_alarms = tuple(a for a in master.alarms if not is_relative(a))
+                    chosen = replace(chosen, alarms=(*instance.alarms, *component_alarms))
             alternatives = []
             if master.group_id:
                 alternatives = [row[0] for row in self.connection.execute(
@@ -1369,7 +1381,7 @@ class Store:
 
     def _transform_selection(self, roots, scope, reference, edited, *, common_changes=None,
                              schedule_changes=None, replace_schedule=False, calendar_id=None,
-                             delete_ids=None):
+                             delete_ids=None, alarm_edit: AlarmEdit = None):
         """Compile projections in memory; no write occurs until every root passes."""
         from datetime import timedelta
         from .event_clipboard import _moved_times, calendar_day_delta
@@ -1388,17 +1400,16 @@ class Store:
             uid = value.ical_uid if value.ical_uid not in used_uids else str(uuid4())
             used_uids.add(uid)
             return clone_event(value, new_id=identifier, new_uid=uid,
-                               calendar_id=calendar_id, group_id=value.group_id)
+                               calendar_id=calendar_id, group_id=value.group_id, copy_alarms=False)
 
         resized = not same_duration(reference, edited)
         changed = {}
         for root in roots:
             root_scope = "group" if is_whole_root(root) else scope
             master = self.get_event(root.series_id or root.id)
-            if calendar_id is not None or common_changes.get('alarms') is not None:
-                master = alarm_ics.hydrate_alarms(master)
-                if root.alarms is None:
-                    root = self._family_alarm_fields(root, master)
+            master = alarm_ics.hydrate_alarms(master)
+            if root.alarms is None:
+                root = self._family_alarm_fields(root, master)
             if root._query_projection and not root.series_id:
                 root = replace(root, raw_ics=master.raw_ics, _query_projection=False)
             source = root if root_scope == "single" or root_scope == "future" else master
@@ -1411,6 +1422,8 @@ class Store:
             exact_target = (edited.start if source.id == reference.id
                             and not common_changes.get('all_day', source.all_day) else None)
             start, end = _moved_times(source, shift, zone, target=exact_target)
+            if root_scope == 'single' and not source.all_day and not source.floating_time:
+                start = start.astimezone(source.start.tzinfo)
             # A timed duration cannot describe the range of an unchanged
             # all-day companion (or vice versa). An explicit type conversion
             # does apply the new duration to every selected event.
@@ -1430,6 +1443,7 @@ class Store:
             if root_scope == "single":
                 value = replace(root, start=start, end=end, duration_spec=duration_spec, **common_changes)
                 if root.series_id:
+                    value = edit_child_alarms(master, value, alarm_edit)
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                                     schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
                     previous = changed.get(master.id, master)
@@ -1438,12 +1452,12 @@ class Store:
                             excluded_dates=tuple(sorted(set(previous.excluded_dates) | {root.recurrence_id})),
                             recurrence_overrides={key: payload for key, payload in previous.recurrence_overrides.items()
                                                   if key != root.recurrence_id})
-                        value = transferred(detach_event(master, value))
+                        value = transferred(replace(detach_event(master, value), alarms=value.alarms))
                         changed[value.id] = value
                     else:
                         changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
                 else:
-                    value = replace(value, **schedule_changes)
+                    value = apply_alarm_edit(replace(value, **schedule_changes), alarm_edit)
                     if calendar_id is not None and calendar_id != master.calendar_id:
                         deleted.add(master.id)
                         value = transferred(value)
@@ -1475,11 +1489,8 @@ class Store:
                                  duration_spec=edited.duration_spec).to_dict()
                     for key, payload in projected.recurrence_overrides.items()})
             if common_changes:
-                # Detached components own their reminder sets. In particular,
-                # an absolute master alarm must not be cloned onto each child.
-                child_changes = {name: value for name, value in common_changes.items() if name != 'alarms'}
                 projected = replace(projected, **common_changes, recurrence_overrides={
-                    key: replace(Event.from_dict(payload), **child_changes).to_dict()
+                    key: replace(Event.from_dict(payload), **common_changes).to_dict()
                     for key, payload in projected.recurrence_overrides.items()})
             if before is not None:
                 changed[master.id] = before
@@ -1489,7 +1500,7 @@ class Store:
                 if before is None:
                     deleted.add(master.id)
                 projected = transferred(projected, keep_id=before is not None)
-            changed[projected.id] = projected
+            changed[projected.id] = apply_alarm_edit(projected, alarm_edit)
         return list(changed.values())
 
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
@@ -1509,7 +1520,7 @@ class Store:
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
     def edit_selection(self, refs, scope, reference, edited, *, replace_schedule: bool | ScheduleReplacement = False,
-                       label="Edit selected events", expected_masters=(), calendar_id=None) -> int | None:
+                       label="Edit selected events", expected_masters=(), calendar_id=None, alarm_edit: AlarmEdit = None) -> int | None:
         """Edit an exact selected union, including an optional calendar transfer.
 
         An unchanged editor calendar retains each selected event's source.
@@ -1517,7 +1528,7 @@ class Store:
         reference, allowing a mixed-calendar selection to be gathered together.
         """
         from .series_operations import partition_series
-        from .recurrence import rules_equivalent
+        from .recurrence import complete_occurrence_schedule, rules_equivalent
         from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, reference, expected_masters)
@@ -1530,11 +1541,10 @@ class Store:
             base = master if reference_scope != "single" else reference
             if reference_scope == "future" and master.recurring:
                 _, base = partition_series(master, reference)
+            if reference_scope != 'single':
+                edited = complete_occurrence_schedule(base, reference, edited, replace_schedule, alarm_edit)
             common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
                       if getattr(edited, name) != getattr(reference, name)}
-            if edited.alarms is not None and (reference.alarms is None
-                    or alarm_semantic(edited.alarms) != alarm_semantic(reference.alarms)):
-                common['alarms'] = edited.alarms
             names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "recurrence_overrides",
                      "schedule_expression", "expression_anchor", "schedule_syntax", "range_policy")
             schedule = {name: getattr(edited, name) for name in names if getattr(edited, name) != getattr(base, name)}
@@ -1551,23 +1561,25 @@ class Store:
             projections = self._transform_selection(roots, scope, reference, edited,
                                                     common_changes=common, schedule_changes=schedule,
                                                     replace_schedule=replace_schedule,
-                                                    calendar_id=calendar_id, delete_ids=deleted)
+                                                    calendar_id=calendar_id, delete_ids=deleted, alarm_edit=alarm_edit)
             return self.apply(label, projections, deleted)
 
     def edit_series(
         self, reference: Event, edited: Event, label: str = "Edit series", *,
         replace_schedule: bool | ScheduleReplacement = False, preserve_exceptions: bool = False,
+        alarm_edit: AlarmEdit = None,
     ) -> int | None:
         """Persist the same pure series projection used by editor previews."""
         from .recurrence import updated_series
         if edited.calendar_id != reference.calendar_id:
             return self.edit_selection([reference], "group", reference, edited, label=label,
-                                       replace_schedule=replace_schedule)
+                                       replace_schedule=replace_schedule, alarm_edit=alarm_edit)
         with self._transaction():
-            master = self._reviewed_master(reference)
-            updated = updated_series(master, reference, edited, replace_schedule)
+            master = alarm_ics.hydrate_alarms(self._reviewed_master(reference))
+            updated = updated_series(master, reference, edited, replace_schedule, alarm_edit=alarm_edit)
             if preserve_exceptions and replace_schedule is not ScheduleReplacement.RESET:
                 updated = self._preserve_mouse_exceptions(master, reference, edited, updated)
+                updated = apply_alarm_edit(updated, alarm_edit)
             return self.apply(label, [updated])
 
     def _reviewed_future_master(self, reference: Event, expected_master: Event | None) -> Event:
@@ -1586,10 +1598,10 @@ class Store:
         The snapshot retains its source identity. Copy/paste must assign a new
         event ID and UID before storing it as another resource.
         """
-        from .series_operations import partition_series
+        from .series_operations import following_snapshot
         with self.read_snapshot():
-            master = self._reviewed_future_master(reference, expected_master)
-            _, tail = partition_series(master, reference)
+            master = alarm_ics.hydrate_alarms(self._reviewed_future_master(reference, expected_master))
+            tail = following_snapshot(master, reference)
             if tail is None:
                 raise ValueError("There are no events at or after this occurrence.")
             return tail
@@ -1597,7 +1609,7 @@ class Store:
     def edit_future(
         self, reference: Event, edited: Event, label: str = "Edit this and following events", *,
         replace_schedule: bool | ScheduleReplacement = False, expected_master: Event | None = None,
-        preserve_exceptions: bool = False,
+        preserve_exceptions: bool = False, alarm_edit: AlarmEdit = None,
     ) -> int | None:
         """Split and edit a series in one undoable, synchronizable operation.
 
@@ -1605,13 +1617,15 @@ class Store:
         becomes a new resource, while a split before the first occurrence
         updates the original resource without creating an empty past.
         """
+        from .recurrence import complete_occurrence_schedule
         from .series_operations import reidentify_series, updated_future
         if edited.calendar_id != reference.calendar_id:
             return self.edit_selection([reference], "future", reference, edited, label=label,
-                                       replace_schedule=replace_schedule,
+                                       replace_schedule=replace_schedule, alarm_edit=alarm_edit,
                                        expected_masters=[expected_master] if expected_master is not None else ())
         with self._transaction():
-            master = self._reviewed_future_master(reference, expected_master)
+            master = alarm_ics.hydrate_alarms(self._reviewed_future_master(reference, expected_master))
+            edited = complete_occurrence_schedule(master, reference, edited, replace_schedule, alarm_edit)
             before, after = updated_future(master, reference, edited, replace_schedule)
             if after is None:
                 raise ValueError("There are no events at or after this occurrence.")
@@ -1620,10 +1634,10 @@ class Store:
             if before is None:
                 after = replace(after, id=master.id, calendar_id=master.calendar_id,
                                 ical_uid=master.ical_uid)
-                return self.apply(label, [after])
+                return self.apply(label, [apply_alarm_edit(after, alarm_edit)])
             after_id = str(uuid4())
             after = reidentify_series(after, after_id, after_id)
-            return self.apply(label, [before, after])
+            return self.apply(label, [before, apply_alarm_edit(after, alarm_edit)])
 
     def delete_future(
         self, reference: Event, label: str = "Delete this and following events", *,

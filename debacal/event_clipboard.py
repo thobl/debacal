@@ -83,8 +83,8 @@ def _selected(masters: tuple[Event, ...], reference: Event, scope: str) -> tuple
         return masters, reference
     master = next(event for event in masters if event.id == (reference.series_id or reference.id))
     if master.recurring:
-        from .series_operations import partition_series
-        _, tail = partition_series(master, reference)
+        from .series_operations import following_snapshot
+        tail = following_snapshot(master, reference)
         if tail is None:
             raise ValueError("There are no events at or after this occurrence.")
         captured = (tail,)
@@ -198,7 +198,7 @@ class EventClipboard:
                     _, selected_end = _moved_times(self.reference, shift, zone, target=target)
                     moved = canonicalize_authored_primary(moved, primary_range=(target, selected_end))
             new_id = str(uuid4())
-            cloned = reidentify_series(moved, new_id, new_id)
+            cloned = reidentify_series(moved, new_id, new_id, copy_alarms=True)
             group_id = group_ids.get(event.group_id)
             overrides = {key: replace(Event.from_dict(payload), calendar_id=destination,
                                       read_only=False, group_id=group_id).to_dict()

@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 
+from .alarm_series import materialize_alarms
 from .models import Event
 from .event_duration import end_for
 from .recurrence import (RecurrenceError, event_zone, key_datetime, occurrence,
@@ -175,7 +176,7 @@ def apply_occurrence_counts(candidate, source, extra_starts=(), *, shift=None, o
             start = key_datetime(actual, candidate)
             item = occurrence(candidate, key_datetime(nominal, candidate), nominal)
             item = replace(item, start=start, end=_end_at(candidate, start), recurrence_id=nominal)
-            overrides[nominal] = item.to_dict()
+            overrides[nominal] = materialize_alarms(candidate, item).to_dict()
             additions.add(nominal)
             exclusions.discard(nominal)
     return replace(candidate, recurrence_dates=tuple(additions), excluded_dates=tuple(exclusions),
@@ -212,8 +213,8 @@ def reanchor_compiled_multiset(source, old_compiled, new_compiled, start, end, k
             raise RecurrenceError('Moving this series would merge two nominal identities.')
         actual = actual.replace(tzinfo=zone) if source.floating_time else actual.astimezone(zone)
         if payload is not None or recurrence_key(actual, source.all_day, floating_time=source.floating_time) != nominal:
-            overrides[nominal] = replace(item, start=actual, end=_end_at(item, actual),
-                                          recurrence_id=nominal).to_dict()
+            moved = replace(item, start=actual, end=_end_at(item, actual), recurrence_id=nominal)
+            overrides[nominal] = (materialize_alarms(candidate, moved) if payload is None else moved).to_dict()
         assigned.add(key)
     for old, new in zip(old_starts, new_starts):
         queue = queues[recurrence_key(old, source.all_day, floating_time=source.floating_time)]

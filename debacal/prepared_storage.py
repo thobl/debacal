@@ -386,6 +386,11 @@ class StateReader:
             else:
                 value = self.value(value)
             object.__setattr__(result, name, value)
+        if (base is not None and result.series_id and 'alarms' not in state['f'] and base.alarms
+                and result.recurrence_id not in base.recurrence_overrides):
+            # Older regular occurrence deltas inherited the entire master.
+            from .alarm_series import relative_alarms
+            object.__setattr__(result, 'alarms', relative_alarms(base.alarms))
         if result.floating_time:
             # Floating values carry civil clocks, not the writer's timezone or
             # fold. Decode them just like canonical floating JSON on this host.

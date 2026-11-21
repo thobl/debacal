@@ -55,6 +55,14 @@ def signature(event):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def generated_marker(event, fingerprint):
+    if not event.alarms:
+        return fingerprint
+    from .alarms import alarm_semantic
+    stamp = hashlib.sha256(repr(alarm_semantic(event.alarms)).encode()).hexdigest()
+    return f'2.{fingerprint}.{stamp}'
+
+
 def expected_ranges(event):
     """Bounded cache of scheduling triples, with no detached Event payloads."""
     from .range_policies import iter_cut_ranges

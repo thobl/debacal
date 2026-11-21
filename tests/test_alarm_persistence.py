@@ -67,7 +67,7 @@ def test_remove_survives_remote_template_history_and_conflict(tmp_path):
         assert store.apply('Load reminders', [hydrated]) is None
         assert not store.history() and not store.pending_changes()
         removed = replace(hydrated, alarms=())
-        operation = store.edit_selection([hydrated], 'single', hydrated, removed)
+        operation = store.edit_selection([hydrated], 'single', hydrated, removed, alarm_edit=())
         change, = store.pending_changes()
         assert change['payload']['alarms'] == []
         assert parse_ics(patch_ics(WIRE, store.get_event(old.id)), calendar.id)[0].alarms == ()
@@ -360,7 +360,7 @@ def test_reminder_only_selection_edit_retains_independent_end_calculation_zone(t
     with Store(tmp_path / 'db') as store:
         store.save_calendar(Calendar('c', 'C', '#123456'))
         store.apply_remote([original])
-        store.edit_selection([original], 'single', original, replace(original, alarms=(alarm,)))
+        store.edit_selection([original], 'single', original, original, alarm_edit=(alarm,))
         saved = store.get_event(original.id)
         assert saved.end_timezone_id == 'America/Phoenix'
         assert alarm_trigger(saved.alarms[0], saved.start, saved.end) == datetime(2026, 10, 24, 4, 30, tzinfo=UTC)
@@ -374,7 +374,7 @@ def test_stale_legacy_source_rejects_structured_reminder_edit(tmp_path):
         store.save_calendar(Calendar('c', 'C', '#123456'))
         store.apply_remote([legacy(updated)])
         with pytest.raises(HistoryConflict):
-            store.edit_selection([original], 'single', original, replace(original, alarms=()))
+            store.edit_selection([original], 'single', original, original, alarm_edit=())
 
 
 def test_import_retains_changed_event_metadata_and_does_not_queue_alarm_rekey(tmp_path):
@@ -428,12 +428,12 @@ def test_whole_resource_alarm_edit_keeps_absolute_alarm_off_detached_children(tm
         store.apply_remote([item])
         first, second = store.query_occurrences(BASE, BASE + timedelta(days=2))
         child_alarm = Alarm('child', 'DISPLAY', '-PT10M')
-        store.edit_occurrence(second, replace(second, title='Detached', alarms=(child_alarm,)))
+        store.edit_occurrence(second, replace(second, title='Detached'), alarm_edit=(child_alarm,))
         absolute = Alarm('once', 'DISPLAY', '20261120T110000Z')
-        store.edit_selection([first], 'group', first, replace(store.get_event(item.id), alarms=(absolute,)))
+        store.edit_selection([first], 'group', first, store.get_event(item.id), alarm_edit=(absolute,))
         saved = store.get_event(item.id)
         assert saved.alarms == (absolute,)
-        assert Event.from_dict(saved.recurrence_overrides[second.recurrence_id]).alarms == (child_alarm,)
+        assert Event.from_dict(saved.recurrence_overrides[second.recurrence_id]).alarms == ()
 
 
 def test_conflict_reminder_summary_distinguishes_metadata_after_large_attachment_prefix():
@@ -784,7 +784,8 @@ def test_legacy_detached_end_uses_complementary_master_and_child_evidence(tmp_pa
     (True, ('', ''), '-P1D', 'Europe/Berlin', 0),
     (False, ('', 'America/New_York'), '-P1D', 'America/New_York', 1),
     (False, ('Europe/Berlin', 'Europe/Berlin'), '-P1D', '', 0),
-], ids=['child-only', 'with-utc-master', 'declared-end', 'matching-shared-end'])
+    (False, ('America/New_York', 'America/New_York'), '-P1D', '', 1),
+], ids=['child-only', 'with-utc-master', 'declared-end', 'matching-shared-end', 'declared-shared-end'])
 def test_legacy_detached_private_alarm_restores_only_with_primary_evidence(
         tmp_path, retain_master, stored_zones, trigger, end_zone, hour):
     from test_ics_duration_semantics import strip_metadata

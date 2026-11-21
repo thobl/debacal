@@ -7,16 +7,14 @@ finite set and checking the actual standard components.
 """
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-import json
-from uuid import NAMESPACE_URL, uuid5
 
 from . import ics_fallback as ics
 from .alarm_fold_ics import needs_projection, _segments, _utc_bounds
-from .alarm_ics import _alarm_lines, _trigger_identity, direct_parts, read_alarms
+from .alarm_ics import direct_parts, read_alarms
+from .alarm_series import relative_child_alarms
 from .alarms import alarm_semantic, signed_duration
 from .event_duration import end_for, occurrence_end_zone
 from .ics_range_policy import MAX_GENERATED_RANGES
@@ -90,40 +88,6 @@ def candidate(master, component):
     start, identifier = bounds['START']
     event = replace(master, start=start, end=bounds['END'][0], timezone_id=identifier)
     return event if applies(event) else None
-
-
-def relative_child_alarms(alarms, component_key):
-    """Keep relative alarm data and remap intra-child UID references."""
-    relative = [a for a in alarms if (a.trigger or '').upper().startswith(('P', '+P', '-P'))]
-    uids = {a.uid: 'urn:uuid:' + str(uuid5(NAMESPACE_URL, f'{component_key}/alarm/{a.uid}'))
-            for a in relative if a.uid}
-    result, ordinals = [], Counter()
-    for alarm in relative:
-        if not alarm.raw_ics:
-            # UID insertion must have the same wire spelling before and after
-            # an authored alarm acquires its retained template on first read.
-            alarm = replace(alarm, raw_ics=ics.folded(_alarm_lines(alarm)).decode())
-        if uids:
-            lines = ['BEGIN:VALARM']
-            for part in direct_parts(_alarm_lines(alarm)):
-                if len(part) == 1 and part[0].split(':', 1)[0].split(';', 1)[0].upper() == 'RELATED-TO':
-                    try:
-                        _, _, value = ics.content_line(part[0])
-                    except ValueError:
-                        value = ''  # Preserve an unrecognized producer property verbatim.
-                    if value and ics.text(value) in uids:
-                        part = [part[0].removesuffix(value) + ics.escaped(uids[ics.text(value)])]
-                lines.extend(part)
-            alarm = replace(alarm, raw_ics=ics.folded([*lines, 'END:VALARM']).decode())
-        if alarm.uid:
-            uid = uids[alarm.uid]
-        else:
-            identity = (alarm.action, alarm.related, _trigger_identity(alarm.trigger))
-            seed = json.dumps((component_key, identity, ordinals[identity]))
-            uid = 'urn:uuid:' + str(uuid5(NAMESPACE_URL, seed))
-            ordinals[identity] += 1
-        result.append(replace(alarm, key=uid, uid=uid))
-    return tuple(result)
 
 
 def _utc_seconds(spec):

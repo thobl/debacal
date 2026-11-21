@@ -11,10 +11,12 @@ from datetime import datetime, timedelta, timezone
 from itertools import islice
 from uuid import uuid4
 
+from .alarm_series import copied_alarms, materialize_alarms, relative_trigger, split_alarms
+from .alarms import AlarmEdit
 from .models import Event
 from .event_duration import end_for
 from .recurrence import (
-    RecurrenceError, ScheduleReplacement, canonical_rule, event_zone,
+    RecurrenceError, ScheduleReplacement, canonical_rule, complete_occurrence_schedule, event_zone,
     key_datetime, occurrence_id, recurrence_key, recurrence_set,
     rules_equivalent, updated_series, _valid_wall_time,
 )
@@ -77,6 +79,14 @@ def _refresh_authoring(part, *, preferred_expression=None):
 
 
 def partition_series(master: Event, reference: Event) -> tuple[Event | None, Event | None]:
+    """Partition an actual resource, resolving any legacy alarm ownership once."""
+    if master.alarms is None and master.raw_ics and not master._query_projection:
+        from .alarm_ics import hydrate_alarms
+        master = hydrate_alarms(master)
+    return split_alarms(master, *_partition_ranges(master, reference))
+
+
+def _partition_ranges(master: Event, reference: Event) -> tuple[Event | None, Event | None]:
     """Return the visible head and tail around an occurrence's nominal start.
 
     Both results temporarily retain the source ID/UID. COUNT is split using rule
@@ -209,9 +219,16 @@ def partition_series(master: Event, reference: Event) -> tuple[Event | None, Eve
     return build(False), build(True)
 
 
+def following_snapshot(master: Event, reference: Event) -> Event | None:
+    """A read-only copy owns one independent copy of the master alarms."""
+    _, tail = _partition_ranges(master, reference)
+    return tail
+
+
 def updated_future(master: Event, reference: Event, edited: Event,
-                   replace_schedule: bool | ScheduleReplacement = False) -> tuple[Event | None, Event | None]:
+                   replace_schedule: bool | ScheduleReplacement = False, *, alarm_edit: AlarmEdit = None) -> tuple[Event | None, Event | None]:
     """Project the same following-occurrence edit for storage and editor preview."""
+    edited = complete_occurrence_schedule(master, reference, edited, replace_schedule, alarm_edit)
     before, after = partition_series(master, reference)
     if after is None:
         return before, None
@@ -226,7 +243,7 @@ def updated_future(master: Event, reference: Event, edited: Event,
             changes.update(schedule_expression=after.schedule_expression,
                            expression_anchor=after.expression_anchor, schedule_syntax=after.schedule_syntax)
     rebased = replace(edited, **changes)
-    return before, updated_series(after, reference, rebased, replace_schedule)
+    return before, updated_series(after, reference, rebased, replace_schedule, alarm_edit=alarm_edit)
 
 
 def _event_template_groups(block):
@@ -266,7 +283,7 @@ def _single_occurrence_raw(master: Event, reference: Event) -> str:
         return ''
     if not isinstance(master.raw_ics, (str, bytes)):
         raise RecurrenceError('The source calendar metadata is malformed and cannot be copied safely. Repair or re-import this event first.')
-    from .ics_resources import _blocks, _decoded, _key, _uid_of
+    from .ics_resources import _blocks, _decoded, _key, _property_of, _uid_of
     from .ics_fallback import components, folded, prop
     try:
         header, blocks = _blocks(master.raw_ics)
@@ -290,6 +307,16 @@ def _single_occurrence_raw(master: Event, reference: Event) -> str:
     specific_order, specific = _event_template_groups(detached[0]) if detached else ([], {})
     order += [key for key in specific_order if key not in inherited]
     merged = inherited | specific
+    if reference.alarms is None and 'COMPONENT:VALARM' in merged:
+        # A legacy snapshot may keep its alarm list opaque until paste. During
+        # the existing raw-template merge, retain only the owned wire blocks.
+        from .alarm_ics import direct_parts
+        if detached:
+            merged['COMPONENT:VALARM'] = specific.get('COMPONENT:VALARM', [])
+        else:
+            parent = ['BEGIN:VEVENT', *inherited['COMPONENT:VALARM'], 'END:VEVENT']
+            merged['COMPONENT:VALARM'] = [line for part in direct_parts(parent)
+                                          if relative_trigger(_property_of(part, 'TRIGGER')) for line in part]
     removed = {'PROPERTY:' + name for name in (
         'RECURRENCE-ID', 'RRULE', 'RDATE', 'EXDATE',
         'X-DEBACAL-PATTERN', 'X-DEBACAL-PATTERN-ANCHOR', 'X-DEBACAL-PATTERN-VERSION',
@@ -305,7 +332,7 @@ def detach_event(master: Event, reference: Event) -> Event:
 
     Identity remains that of the reference until the paste assigns a new ID/UID.
     A detached exception replaces whole property/component groups it supplies;
-    absent groups, including alarms, are inherited from the parent master.
+    its own alarms are authoritative even when absent from the source template.
     """
     if reference.calendar_id != master.calendar_id or (
         reference.series_id and reference.series_id != master.id
@@ -313,13 +340,15 @@ def detach_event(master: Event, reference: Event) -> Event:
         raise RecurrenceError('This occurrence belongs to another event.')
     if reference.recurrence_id in master.excluded_dates:
         raise RecurrenceError('This occurrence is excluded from the series. Refresh before copying it.')
+    if reference.series_id and reference.recurrence_id not in master.recurrence_overrides:
+        reference = materialize_alarms(master, reference)
     raw = _single_occurrence_raw(master, reference) if master.recurring else master.raw_ics
     return replace(reference, ical_uid=master.ical_uid, series_id='', recurrence_id='',
                    recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                    schedule_expression='', expression_anchor='', schedule_syntax=1, raw_ics=raw)
 
 
-def _reidentified_raw(event: Event, new_uid: str) -> str:
+def _reidentified_raw(event: Event, new_uid: str, *, copy_alarms=False) -> str:
     """Retain source metadata while giving every owned VEVENT its new UID.
 
     Cancelled exceptions may be emitted verbatim by the serializer, so their
@@ -330,8 +359,8 @@ def _reidentified_raw(event: Event, new_uid: str) -> str:
         return ''
     if not isinstance(event.raw_ics, (str, bytes)):
         raise RecurrenceError('The source calendar metadata is malformed and cannot be copied safely. Repair or re-import this event first.')
-    from .ics_resources import _blocks, _uid_of
-    from .ics_fallback import escaped, folded
+    from .ics_resources import _blocks, _property_of, _uid_of
+    from .ics_fallback import escaped, folded, unfolded
     try:
         header, blocks = _blocks(event.raw_ics)
     except (ValueError, TypeError) as exc:
@@ -355,28 +384,40 @@ def _reidentified_raw(event: Event, new_uid: str) -> str:
             rewritten.append(line)
             if marker == 'END':
                 depth -= 1
+        if copy_alarms and (_property_of(block, 'STATUS') or '').upper() == 'CANCELLED' and 'BEGIN:VALARM' in block:
+            from .alarm_ics import read_alarms, write_alarms
+            key = next(line for line in block if line.split(':')[0].split(';')[0].upper() == 'RECURRENCE-ID')
+            raw = '\n'.join(rewritten)
+            alarms = read_alarms(raw, component_key=event.ical_uid + '/cancelled/' + key)
+            rewritten = unfolded(write_alarms(raw, copied_alarms(alarms, new_uid + '/cancelled/' + key)))
         result.append(rewritten)
     if not matched:
         raise RecurrenceError('The source calendar metadata belongs to another event and cannot be copied safely. Re-import this event first.')
     return folded(['BEGIN:VCALENDAR', *header, *(line for block in result for line in block), 'END:VCALENDAR']).decode()
 
 
-def reidentify_series(event: Event, new_id: str, new_uid: str) -> Event:
+def reidentify_series(event: Event, new_id: str, new_uid: str, *, copy_alarms=False) -> Event:
     """Give a resource and every detached exception one consistent new identity."""
     if not new_id or not new_uid:
         raise ValueError('A copied series needs a new resource ID and UID.')
+    if copy_alarms:
+        from .alarm_ics import hydrate_alarms
+        event = hydrate_alarms(event)
     overrides = {}
     for key, payload in event.recurrence_overrides.items():
         item = Event.from_dict(payload)
+        if copy_alarms:
+            item = replace(item, alarms=copied_alarms(item.alarms, new_uid + '/' + key))
         overrides[key] = replace(item, id=occurrence_id(new_id, key), series_id=new_id,
                                  recurrence_id=key, ical_uid=new_uid, calendar_id=event.calendar_id,
                                  raw_ics='', schedule_expression='', expression_anchor='', schedule_syntax=1).to_dict()
     return replace(event, id=new_id, ical_uid=new_uid, series_id='', recurrence_id='',
-                   raw_ics=_reidentified_raw(event, new_uid), recurrence_overrides=overrides)
+                   raw_ics=_reidentified_raw(event, new_uid, copy_alarms=copy_alarms), recurrence_overrides=overrides,
+                   alarms=copied_alarms(event.alarms, new_uid + '/') if copy_alarms else event.alarms)
 
 
 def clone_event(event: Event, *, new_id: str | None = None, new_uid: str | None = None,
-                calendar_id: str | None = None, group_id: str | None = None) -> Event:
+                calendar_id: str | None = None, group_id: str | None = None, copy_alarms=True) -> Event:
     """Copy an ordinary event/instance or a complete master without source links."""
     source = replace(event, calendar_id=calendar_id or event.calendar_id,
                      group_id=group_id, read_only=False)
@@ -384,7 +425,7 @@ def clone_event(event: Event, *, new_id: str | None = None, new_uid: str | None 
         source = replace(source, series_id='', recurrence_id='', recurrence_rule='', recurrence_dates=(),
                          excluded_dates=(), recurrence_overrides={}, schedule_expression='', expression_anchor='', schedule_syntax=1)
     identifier = new_id or str(uuid4())
-    copied = reidentify_series(source, identifier, new_uid or identifier)
+    copied = reidentify_series(source, identifier, new_uid or identifier, copy_alarms=copy_alarms)
     overrides = {key: replace(Event.from_dict(payload), read_only=False, group_id=group_id).to_dict()
                  for key, payload in copied.recurrence_overrides.items()}
     return replace(copied, recurrence_overrides=overrides)

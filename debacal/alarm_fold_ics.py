@@ -101,7 +101,10 @@ def _point_end(alarm):
     return alarm.related == 'END' and not alarm.issue and (alarm.trigger or '').upper().startswith(('P', '+P', '-P'))
 
 
-def _wire_parts(alarm, token, start, end, *, point_end=False):
+def _wire_parts(alarm, token, start, end, *, point_end=False, nominal_point=False):
+    if nominal_point:
+        uid = alarm.uid or 'urn:uuid:' + str(uuid5(NAMESPACE_URL, f'{token}/0'))
+        return [replace(alarm, related='START', uid=uid)]
     bound = (end if alarm.related == 'END' else start).astimezone(timezone.utc)
     parts = []
     for index, (first, repeat, interval) in enumerate(_segments(alarm, start, end)):
@@ -121,7 +124,13 @@ def project_alarms(event, lines, component_key):
     # any date that requires a different offset in the original end zone.
     zoned = bool(event.timezone_id or event.end_timezone_id)
     point_anchor = ''
-    if (not event.recurrence_rule and (not event.recurring or not zoned)
+    # A shared named point has the same calendar arithmetic at both bounds,
+    # across every occurrence. Relate END to its explicit DTSTART on the wire.
+    nominal_point = bool(event.recurring and not event.end_timezone_id
+                         and ((event.timezone_id and any(part[0].upper().startswith('DTSTART;TZID=')
+                                                         for part in direct_parts(lines)))
+                              or not zoned and 'START' in _utc_bounds(lines)))
+    if ((nominal_point or not event.recurrence_rule and (not event.recurring or not zoned))
             and event.start.timestamp() == event.end.timestamp() and any(_point_end(a) for a in alarms)):
         point_anchor = _implicit_anchor(lines, point=True)
     if not (point_anchor or zoned):
@@ -161,6 +170,8 @@ def project_alarms(event, lines, component_key):
             source = f';X-DURATION={duration_anchor}' if implicit else ''
             if point_end:
                 source = ';X-POINT=' + point_anchor
+                if nominal_point:
+                    source += ';X-POINT-MODE=NOMINAL'
             local_time = f';TZID={ics.parameter(identifier)}:{bound:%Y%m%dT%H%M%S}' if identifier else ':' + stamp
             annotations.append(f'{ANCHOR};RELATED={alarm.related};X-UTC={stamp}{source};VALUE=DATE-TIME{local_time}')
             anchored.add(alarm.related)
@@ -170,7 +181,7 @@ def project_alarms(event, lines, component_key):
         token = sha256(json.dumps((component_key, identity, ordinal)).encode()).hexdigest()
         budget = _remaining_budget(alarm, budget)
         try:
-            parts = _wire_parts(alarm, token, start, end, point_end=point_end)
+            parts = _wire_parts(alarm, token, start, end, point_end=point_end, nominal_point=point_end and nominal_point)
         except OverflowError as exc:
             raise ValueError('The zoned reminder exceeds the supported calendar range. Shorten its offset or repeats.') from exc
         original = b64encode(ics.folded(_alarm_lines(alarm))).decode('ascii')
@@ -187,16 +198,23 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
         return start, end, timezone_id, alarms
     utc_bounds = _utc_bounds(component['_alarm_source'])
     contexts = {}
-    point_end = False
+    point_end = nominal_point = False
     counts = Counter(params.get('RELATED', 'START') for params, _wall in anchors)
     for params, wall in anchors:
         role = params.get('RELATED', 'START')
         point = 'X-POINT' in params
         if point:
             # Only a bare DTSTART justifies restoring END from a START alarm.
-            if (role != 'END' or not params['X-POINT'] or 'X-DURATION' in params or 'RRULE' in component
+            nominal = params.get('X-POINT-MODE') == 'NOMINAL'
+            if nominal:
+                start_zone = component.get('DTSTART', [({}, '')])[0][0].get('TZID')
+                if (start_zone != params.get('TZID') or not start_zone and 'START' not in utc_bounds
+                        or not ('RRULE' in component or 'RDATE' in component)):
+                    continue
+            if (role != 'END' or not params['X-POINT'] or 'X-DURATION' in params
                     or params['X-POINT'] != _implicit_anchor(component['_alarm_source'], point=True)
-                    or 'RDATE' in component and (params.get('TZID') or 'START' not in utc_bounds)
+                    or not nominal and ('RRULE' in component or
+                        'RDATE' in component and (params.get('TZID') or 'START' not in utc_bounds))
                     or any('/' in raw for _, raw in component.get('RDATE', ()))):
                 continue
         elif 'X-DURATION' in params:
@@ -226,7 +244,7 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
             continue
         contexts[role] = (local, identifier)
         if point:
-            point_end = True
+            point_end, nominal_point = True, nominal
     by_uid = defaultdict(list)
     for index, alarm in enumerate(alarms):
         by_uid[alarm.uid].append(index)
@@ -245,7 +263,7 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
                 continue
             budget = _remaining_budget(original, budget)
             local, _identifier = contexts[original.related]
-            expected = _wire_parts(original, token, local, local, point_end=use_start)
+            expected = _wire_parts(original, token, local, local, point_end=use_start, nominal_point=use_start and nominal_point)
         except (ValueError, TypeError, OverflowError):
             continue  # Unrecognized or stale extensions leave the standard properties authoritative.
         members = []

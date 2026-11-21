@@ -116,7 +116,10 @@ def test_single_occurrence_transfer_inherits_alarm_and_unknown_source_properties
     store.edit_selection([selected], "single", selected, replace(selected, calendar_id="target"))
     moved = target_event(store)
     serialized = export_ics([moved]).decode()
-    assert "X-SOURCE-MARKER:Retained" in serialized and "UID:alarm-identity" in serialized
+    assert "X-SOURCE-MARKER:Retained" in serialized
+    alarm, = moved.alarms
+    assert alarm.trigger == "-PT15M" and alarm.uid and alarm.uid != "alarm-identity"
+    assert store.get_event(source.id).alarms[0].uid == "alarm-identity"
     assert serialized.count("BEGIN:VEVENT") == 1 and serialized.count("BEGIN:VALARM") == 1
     assert "RRULE:" not in serialized and "RECURRENCE-ID" not in serialized
     assert parse_ics(serialized, "target")[0].start == selected.start

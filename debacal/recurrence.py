@@ -16,6 +16,8 @@ import re
 
 from dateutil.rrule import rruleset, rrulestr
 
+from .alarm_series import apply_alarm_edit, materialize_alarms, relative_alarms
+from .alarms import AlarmEdit
 from .models import Event
 from .event_duration import add_elapsed, elapsed_duration, end_for, occurrence_end_zone, parse_duration_spec, same_duration
 from .schedule_replacement import ScheduleReplacement
@@ -817,7 +819,7 @@ def canonicalize_authored_primary(event: Event, *, primary_range=None) -> Event:
                 if (actual.year, actual.month) != (end.astimezone(zone).year, end.astimezone(zone).month):
                     from .range_policies import occurrence_end
                     end = occurrence_end(event, actual)
-            primary = replace(event, start=actual, end=end)
+            primary = materialize_alarms(event, replace(event, start=actual, end=end, recurrence_id=nominal_key))
         if primary_range is not None:
             primary = replace(primary, start=primary_range[0], end=primary_range[1])
         overrides[nominal_key] = replace(primary, id=occurrence_id(event.id, nominal_key),
@@ -832,8 +834,18 @@ def canonicalize_authored_primary(event: Event, *, primary_range=None) -> Event:
     return _annotate_schedule(normalized)
 
 
+def complete_occurrence_schedule(master, reference, edited, replace_schedule, alarm_edit):
+    """Fill an unchanged occurrence form's omitted family schedule for a scoped edit."""
+    fields = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides',
+              'schedule_expression', 'expression_anchor', 'schedule_syntax', 'range_policy')
+    if (alarm_edit is not None and not replace_schedule and reference.series_id and edited.series_id
+            and all(getattr(edited, field) == getattr(reference, field) for field in fields)):
+        return replace(edited, **{field: getattr(master, field) for field in fields})
+    return edited
+
+
 def updated_series(master: Event, reference: Event, edited: Event,
-                   replace_schedule: bool | ScheduleReplacement = False) -> Event:
+                   replace_schedule: bool | ScheduleReplacement = False, *, alarm_edit: AlarmEdit = None) -> Event:
     """Project a whole-series edit without accessing storage or mutating inputs.
 
     Relative edits reanchor an authored relative program; standard rules and
@@ -841,6 +853,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
     absolute schedule replacement instead takes the editor's DTSTART/date set.
     Both previews and persisted edits use this same rule/exception projection.
     """
+    edited = complete_occurrence_schedule(master, reference, edited, replace_schedule, alarm_edit)
+
     def checked_wall(value):
         if not edited.all_day and not edited.floating_time and not _valid_wall_time(value):
             raise RecurrenceError(
@@ -855,11 +869,11 @@ def updated_series(master: Event, reference: Event, edited: Event,
                       if getattr(edited, name) != getattr(reference, name)}
 
     def authored(event, preferred=None):
-        annotated = _annotate_schedule(event, preferred)
+        annotated = _annotate_schedule(replace(event, alarms=master.alarms), preferred)
         if (replace_schedule or edited.start.timestamp() != reference.start.timestamp()
                 or edited.end.timestamp() != reference.end.timestamp()):
-            return canonicalize_authored_primary(annotated)
-        return annotated
+            annotated = canonicalize_authored_primary(annotated)
+        return apply_alarm_edit(annotated, alarm_edit)
 
     if replace_schedule:
         updated = replace(edited, id=master.id, calendar_id=master.calendar_id,
@@ -882,7 +896,9 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 if previous is None or recurrence_key(previous, updated.all_day, floating_time=updated.floating_time) != key:
                     continue
                 value = Event.from_dict(payload)
-                override_start = value.start.astimezone(zone)
+                same_context = (updated.timezone_id == master.timezone_id and updated.all_day == value.all_day
+                                and updated.floating_time == value.floating_time)
+                override_start = value.start if same_context else value.start.astimezone(zone)
                 duration_source = value if same_duration(edited, master) else updated
                 override_end = end_for(duration_source, override_start)
                 checked_wall(override_start)
@@ -890,7 +906,8 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                                          start=override_start, end=override_end,
                                          duration_spec=duration_source.duration_spec,
-                                         timezone_id=updated.timezone_id, timezone_definitions=updated.timezone_definitions,
+                                         timezone_id=value.timezone_id if same_context else updated.timezone_id,
+                                         timezone_definitions=updated.timezone_definitions,
                                          floating_time=updated.floating_time,
                                          **shared_changes,
                                          all_day=updated.all_day, candidate=updated.candidate,
@@ -910,7 +927,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                 checked_wall(value.end)
                 overrides[key] = replace(value, id=occurrence_id(master.id, key),
                     calendar_id=master.calendar_id, ical_uid=master.ical_uid,
-                    series_id=master.id, recurrence_id=key, timezone_id=updated.timezone_id,
+                    series_id=master.id, recurrence_id=key, timezone_id=value.timezone_id,
                     timezone_definitions=updated.timezone_definitions,
                     floating_time=updated.floating_time,
                     read_only=master.read_only, group_id=master.group_id,
@@ -939,7 +956,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
     end = end_for(duration_source, start)
     if (not edited.all_day and reference.start.timestamp() == master.start.timestamp()
             and reference.end.timestamp() == master.end.timestamp()):
-        end = edited.end.astimezone(zone)
+        end = occurrence_end_zone(duration_source, edited.end.astimezone(zone))
     checked_wall(end)
 
     if (shift and edited.all_day == master.all_day and edited.schedule_syntax == 2
@@ -1057,13 +1074,15 @@ def updated_series(master: Event, reference: Event, edited: Event,
         else:
             override_start = checked_wall((wall(value.start) + shift).replace(tzinfo=zone,
                                                                             fold=value.start.astimezone(zone).fold))
+        if not value.all_day and not value.floating_time:
+            override_start = override_start.astimezone(value.start.tzinfo)
         override_source = edited if duration_changed else value
         override_end = end_for(override_source, override_start)
         checked_wall(override_end)
         overrides[moved_key] = replace(value, id=occurrence_id(master.id, moved_key),
                                        start=override_start, end=override_end,
                                        duration_spec=override_source.duration_spec,
-                                       recurrence_id=moved_key, timezone_id=master.timezone_id,
+                                       recurrence_id=moved_key, timezone_id=value.timezone_id,
                                        timezone_definitions=master.timezone_definitions,
                                        floating_time=master.floating_time,
                                        **shared_changes, all_day=edited.all_day,
@@ -1115,7 +1134,7 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
     # occurrences inherit the symbolic calendar-boundary Cut policy.
     end = (uncut_occurrence_end(master, start) if key in master.recurrence_dates
            else occurrence_end(master, start))
-    return replace(master, end=occurrence_end_zone(master, end), **values)
+    return replace(master, end=occurrence_end_zone(master, end), alarms=relative_alarms(master.alarms), **values)
 
 
 def range_overlaps(event_start: datetime, event_end: datetime, start: datetime, end: datetime,

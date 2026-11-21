@@ -225,7 +225,7 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
                       reference: Event | None = None):
     """Capture an exact union, never references to mutable source events."""
     from .event_clipboard import EventClipboard, _resolve
-    from .series_operations import detach_event, partition_series
+    from .series_operations import detach_event, following_snapshot
     refs = list(refs)
     if not refs:
         raise ValueError("Select an event before copying.")
@@ -236,12 +236,14 @@ def capture_selection(store, refs: Iterable[Event], scope: str, *,
         snapshots = []
         for root in roots:
             master = store.get_event(_master_id(root))
+            if root.alarms is None:
+                root = store._family_alarm_fields(root, master)
             if is_whole_root(root):
                 snapshots.append(master)
             elif scope == "single":
                 snapshots.append(detach_event(master, root))
             elif scope == "future" and master.recurring:
-                _, tail = partition_series(master, root)
+                tail = following_snapshot(master, root)
                 if tail is not None:
                     snapshots.append(tail)
             else:

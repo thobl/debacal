@@ -327,7 +327,7 @@ def _wire_alarm_context(props, component_key, canonical, inherited_zone=None):
         # END. Keep the elapsed wire alarm if its nominal group needs a zone
         # absent from the snapshot and no retained master can attest it.
         if (start_key == 'RECURRENCE-ID' and inherited_zone is None and not canonical.end_timezone_id
-                and end.tzinfo != canonical.end.tzinfo):
+                and not canonical.timezone_id and end.tzinfo != canonical.end.tzinfo):
             return alarms, None, None, None
         alarms = restored
     primary = inherited_zone
@@ -336,7 +336,7 @@ def _wire_alarm_context(props, component_key, canonical, inherited_zone=None):
         # UTC DTSTART. A TZID or a verified private START supplies its own.
         if _floating(props):
             primary = None
-        elif inherited_zone is None or props['DTSTART'][0][0].get('TZID') or start is not wire_start:
+        elif not canonical.timezone_id or inherited_zone is None or props['DTSTART'][0][0].get('TZID') or start is not wire_start:
             primary = start.tzinfo
     explicit_end = 'DTEND' in props and not _floating(props, 'DTEND')
     verified_start = start if start is not wire_start else None
@@ -415,7 +415,12 @@ def hydrate_alarms(event: Event) -> Event:
                                            inherited_zone=inherited_zone)
             family.update(detached)
         # Old locally created exceptions may have no detached wire template.
-        alarms_for_child, child_fields = family.get(key, (alarms, {}))
+        if key in family:
+            alarms_for_child, child_fields = family[key]
+        else:
+            from .alarm_series import relative_child_alarms
+            alarms_for_child = relative_child_alarms(alarms, event.ical_uid + '/' + key)
+            child_fields = {}
         if child_fields:
             overrides[key] = replace(Event.from_dict(payload), alarms=alarms_for_child, **child_fields).to_dict()
         else:
