@@ -13,6 +13,7 @@ dist/
 
 # Git metadata and environment-managed directories in this workspace.
 /.git-local/
+/.worktrees/
 /.agents/
 /.aws/
 /.codex/
