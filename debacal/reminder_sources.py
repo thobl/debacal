@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import chain
 import json
 from pathlib import Path
 import sqlite3
@@ -22,38 +23,62 @@ class SourceChange:
     indexed: IndexedSource | None
 
 
+def _file_id(path):
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino
+
+
 class ReminderSources:
     def __init__(self, database: str):
         if database == ':memory:':
             raise ValueError('A reminder reader requires a file-backed canonical database.')
         self._path = Path(database).absolute()
         self._connection = None
-        self._file_id = None
-        self._connect()
+        self._main_id = self._wal_id = None
+        self._closed = False
+        with self._snapshot():
+            pass
 
-    def _connect(self):
-        stat = self._path.stat()
-        identity = stat.st_dev, stat.st_ino
-        if identity != self._file_id:
-            # SQLite can continue reading an unlinked file. Open the replacement
-            # before serving the next read, even when its revision is higher.
-            connection = sqlite3.connect(self._path.resolve().as_uri() + '?mode=ro', uri=True)
-            connection.row_factory = sqlite3.Row
-            if self._connection is not None:
-                self._connection.close()
-            self._connection = connection
-            self._storage = ProjectionStorage(connection)
-            self._file_id = identity
-        return self._connection
+    def _checked_wal(self, target, main_id):
+        try:
+            wal_id = _file_id(Path(str(target) + '-wal'))
+        except FileNotFoundError:
+            wal_id = None
+        if _file_id(target) != main_id or _file_id(self._path) != main_id:
+            raise sqlite3.OperationalError('The calendar database path changed during a read. Retry the profile.')
+        if self._main_id != main_id and wal_id is not None and wal_id == self._wal_id:
+            raise sqlite3.OperationalError('The calendar database was replaced with its previous WAL still present. '
+                                           'Suspend reminders until a consistent database and WAL are available.')
+        return wal_id
 
     @contextmanager
     def _snapshot(self):
-        db = self._connect()
-        db.execute('BEGIN')
+        if self._closed:
+            raise sqlite3.ProgrammingError('The reminder source reader is closed.')
+        target = self._path.resolve(strict=True)
+        main_id = _file_id(target)
+        self._checked_wal(target, main_id)
+        # Open the resolved target for this batch. A racing rename cannot leave
+        # subsequent polls indefinitely attached to an incorrectly cached handle.
+        db = sqlite3.connect(target.as_uri() + '?mode=ro', uri=True)
         try:
+            db.row_factory = sqlite3.Row
+            db.execute('BEGIN')
+            db.execute('PRAGMA schema_version').fetchone()  # Pin the snapshot, including its WAL.
+            wal_id = self._checked_wal(target, main_id)
             yield db
-        finally:
+            if self._checked_wal(target, main_id) != wal_id:
+                raise sqlite3.OperationalError('The calendar WAL changed during a read. Retry the profile.')
             db.rollback()
+        except BaseException:
+            db.close()
+            raise
+        # Keep the last observed SQLite file set open between snapshots. Its live
+        # inode numbers cannot be recycled and mistaken for a retained old WAL.
+        if self._connection is not None:
+            self._connection.close()
+        self._connection = db
+        self._main_id, self._wal_id = main_id, wal_id
 
     def incarnation(self) -> str:
         with self._snapshot() as db:
@@ -88,17 +113,22 @@ class ReminderSources:
         if limit < 0:
             raise ValueError('A reminder source batch limit must be nonnegative.')
         with self._snapshot() as db:
-            reader = self._storage.source_reader()
-            return tuple(self._change(row, reader) for row in db.execute(sql, (*params, limit)))
+            rows = db.execute(sql, (*params, limit))
+            first = rows.fetchone()
+            if first is None:
+                return ()
+            storage = ProjectionStorage(db)
+            reader = storage.source_reader()
+            return tuple(self._change(row, storage, reader) for row in chain((first,), rows))
 
-    def _change(self, row, reader):
+    def _change(self, row, storage, reader):
         stamp, identity = row['version'], row['id']
         if row['data'] is not None:
             try:
                 event = Event.from_dict(json.loads(row['data']))
                 if event.id == identity and event.calendar_id == row['calendar_id']:
                     event = alarm_ics.hydrate_alarms(event)
-                    indexed = self._storage.load_source(reader, identity, event.calendar_id, stamp)
+                    indexed = storage.load_source(reader, identity, event.calendar_id, stamp)
                     if indexed is None:
                         indexed = EventRangeIndex.prepare(event)
                     return SourceChange(stamp, identity, event, indexed)
@@ -121,4 +151,5 @@ class ReminderSources:
                         'WHERE enabled IS NOT NULL')}
 
     def close(self) -> None:
+        self._closed = True
         self._connection.close()

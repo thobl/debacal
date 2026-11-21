@@ -2,6 +2,7 @@
 from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 import sqlite3
 from unittest.mock import patch
 
@@ -246,3 +247,71 @@ def test_reader_follows_a_replaced_profile_symlink(tmp_path):
         replacement.replace(alias)
         assert reader.incarnation() != identity
         assert [item.event_id for item in reader.scan()] == ['second']
+
+
+def test_symlink_switch_between_stat_and_resolve_cannot_bind_wrong_source(tmp_path):
+    alias = tmp_path / 'active'
+    markers = {}
+    for name in ('one', 'two', 'three'):
+        with Store(tmp_path / name, query_index=False) as store:
+            store.apply_remote([event(name)])
+            markers[name] = store.connection.execute('SELECT token FROM database_incarnation').fetchone()[0]
+
+    def point(name):
+        link = tmp_path / 'new-link'
+        link.symlink_to(tmp_path / name)
+        link.replace(alias)
+
+    point('one')
+    resolve = Path.resolve
+
+    def unstable_resolve(path, *args, **kwargs):
+        if path != alias:
+            return resolve(path, *args, **kwargs)
+        point('three')
+        resolved = resolve(path, *args, **kwargs)
+        point('two')
+        return resolved
+
+    with closing(ReminderSources(str(alias))) as reader:
+        assert reader.incarnation() == markers['one']
+        point('two')
+        with patch.object(Path, 'resolve', unstable_resolve):
+            try:
+                observed = reader.incarnation()
+            except sqlite3.OperationalError:
+                pass  # An unstable profile can be temporarily unavailable.
+            else:
+                assert observed == markers['two']
+        assert reader.incarnation() == markers['two']
+        assert [row.event_id for row in reader.scan()] == ['two']
+
+
+def test_replaced_main_with_retained_wal_suspends_all_reads_until_coherent(tmp_path):
+    profile = tmp_path / 'active'
+    path = profile / 'main'
+    with Store(path, query_index=False) as original:
+        original.apply_remote([event('old')])
+        reader = ReminderSources(str(path))
+        old_marker = reader.incarnation()
+    with closing(reader):
+        new_path = tmp_path / 'replacement'
+        with Store(new_path, query_index=False) as new:
+            new.apply_remote([event('new')])
+            new_marker = new.connection.execute('SELECT token FROM database_incarnation').fetchone()[0]
+        assert new_marker != old_marker
+        wal = profile / 'main-wal'
+        old_wal = wal.stat()
+        new_path.replace(path)
+        for read in (reader.incarnation, reader.revision, reader.scan, reader.calendar_states,
+                     lambda: reader.changes((0, '')), lambda: reader.source_stamp('old')):
+            with pytest.raises(sqlite3.OperationalError, match='WAL'):
+                read()
+            assert wal.stat().st_ino == old_wal.st_ino
+        # A complete independent file set at the canonical path allows a retry.
+        profile.rename(tmp_path / 'retired')
+        with Store(path, query_index=False) as restored:
+            restored.apply_remote([event('restored')])
+            restored_marker = restored.connection.execute('SELECT token FROM database_incarnation').fetchone()[0]
+        assert reader.incarnation() == restored_marker
+        assert [source.event_id for source in reader.scan()] == ['restored']
