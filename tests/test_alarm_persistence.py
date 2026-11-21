@@ -729,3 +729,81 @@ def test_legacy_private_alarm_hydration_obeys_declared_primary_zone():
     assert recovered.timezone_id == ny.key
     assert start_alarm.trigger == '-P1D'
     assert alarm_trigger(start_alarm, recovered.start, recovered.end) == datetime(2026, 10, 24, 1, tzinfo=UTC)
+
+
+def assert_detached_end_reminder_survives_title_edit(tmp_path, family, key, expected):
+    original = Event.from_dict(family.recurrence_overrides[key])
+
+    def assert_reminder(payload):
+        child = Event.from_dict(payload['recurrence_overrides'][key])
+        alarm, = (a for a in child.alarms if a.related == 'END')
+        assert (alarm_trigger(alarm, child.start, child.end), alarm.trigger, child.end_timezone_id) == expected
+        assert child.timezone_id == original.timezone_id
+        assert child.start.timestamp() == original.start.timestamp()
+        assert child.end.timestamp() == original.end.timestamp()
+
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([family])
+        hydrated, = store.get_events_with_alarms([family.id])
+        assert_reminder(hydrated.to_dict())
+        assert store.apply('Save', [family]) is None
+        assert not store.history() and not store.pending_changes()
+        op = store.apply('Edit title', [replace(family, title='Edited title')])
+        change, = store.pending_changes()
+        before, after = store.connection.execute(
+            'SELECT before_data, after_data FROM operations WHERE id=?', (op,)).fetchone()
+        for payload in (json.loads(before)[family.id], json.loads(after)[family.id],
+                        store.get_event(family.id).to_dict(), change['payload']):
+            assert_reminder(payload)
+
+
+@pytest.mark.parametrize('split', [False, True], ids=['inline-utc-start', 'separate-omitted-start'])
+def test_legacy_detached_end_uses_complementary_master_and_child_evidence(tmp_path, split):
+    raw = phoenix_legacy_family(True).raw_ics.replace(
+        'RECURRENCE-ID;TZID=Europe/Berlin:20261025T020000', 'RECURRENCE-ID:20261025T000000Z').replace(
+        'DTSTART;TZID=Europe/Berlin:20261025T020000\r\n', '' if split else 'DTSTART:20261025T000000Z\r\n')
+    family, = parse_ics(raw, 'c')
+    key, = family.recurrence_overrides
+    child = Event.from_dict(family.recurrence_overrides[key])
+    alarm, = child.alarms
+    expected_fire = datetime(2026, 10, 24, 4, 30, tzinfo=UTC)
+    assert alarm_trigger(alarm, child.start, child.end) == expected_fire
+    payload = child.to_dict()
+    del payload['alarms'], payload['end_timezone_id']
+    if split:
+        master, child_block = raw.split('END:VEVENT\r\nBEGIN:VEVENT', 1)
+        family = replace(family, raw_ics=master + 'END:VEVENT\r\nEND:VCALENDAR\r\n')
+        payload['raw_ics'] = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT' + child_block
+    family = replace(family, recurrence_overrides={key: payload})
+    assert_detached_end_reminder_survives_title_edit(tmp_path, family, key, (expected_fire, '-P1D', 'America/Phoenix'))
+
+
+@pytest.mark.parametrize('retain_master, stored_zones, trigger, end_zone, hour', [
+    (False, ('', ''), '-PT90000S', '', 0),
+    (True, ('', ''), '-P1D', 'Europe/Berlin', 0),
+    (False, ('', 'America/New_York'), '-P1D', 'America/New_York', 1),
+    (False, ('Europe/Berlin', 'Europe/Berlin'), '-P1D', '', 0),
+], ids=['child-only', 'with-utc-master', 'declared-end', 'matching-shared-end'])
+def test_legacy_detached_private_alarm_restores_only_with_primary_evidence(
+        tmp_path, retain_master, stored_zones, trigger, end_zone, hour):
+    from test_ics_duration_semantics import strip_metadata
+    child_raw = legacy_late_fold_alarm_master().raw_ics.replace(
+        'DTSTART:20261025T010000Z', 'RECURRENCE-ID:20261025T010000Z')
+    master_block = ('BEGIN:VEVENT\r\nUID:e\r\nDTSTART:20261024T010000Z\r\nDURATION:PT1H\r\n'
+                    'RRULE:FREQ=DAILY;COUNT=2\r\nEND:VEVENT\r\n')
+    raw = child_raw.replace('BEGIN:VEVENT\r\n', master_block + 'BEGIN:VEVENT\r\n')
+    family, = parse_ics(strip_metadata(raw), 'c')
+    key, = family.recurrence_overrides
+    child = Event.from_dict(family.recurrence_overrides[key])
+    observed, = (a for a in child.alarms if a.related == 'END')
+    expected_fire = datetime(2026, 10, 24, 0, 45, tzinfo=UTC)
+    assert observed.trigger == '-PT90000S' and alarm_trigger(observed, child.start, child.end) == expected_fire
+    primary, endpoint = stored_zones
+    child = replace(child, timezone_id=primary, start=child.start.astimezone(ZoneInfo(primary) if primary else UTC),
+                    end=child.end.astimezone(ZoneInfo(endpoint) if endpoint else UTC))
+    payload = replace(child, alarms=None, raw_ics=child_raw).to_dict()
+    master_raw = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n' + master_block + 'END:VCALENDAR\r\n'
+    family = replace(family, recurrence_overrides={key: payload}, raw_ics=master_raw if retain_master else '')
+    expected = datetime(2026, 10, 24, hour, 45, tzinfo=UTC), trigger, end_zone
+    assert_detached_end_reminder_survives_title_edit(tmp_path, family, key, expected)

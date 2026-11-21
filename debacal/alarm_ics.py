@@ -296,7 +296,7 @@ def normalize_alarm_context(event, values):
         values.pop('end_timezone_id', None)
 
 
-def _wire_alarm_context(props, component_key, inherited_zone=None):
+def _wire_alarm_context(props, component_key, canonical, inherited_zone=None):
     """Read this VEVENT's alarm definitions and the bounds its wire can attest."""
     from . import alarm_fold_ics
     from .ics_resources import _component_end, _decoded, _floating
@@ -321,11 +321,23 @@ def _wire_alarm_context(props, component_key, inherited_zone=None):
 
     start, end = wire_start, wire_end
     if alarm_fold_ics.ORIGINAL in props and alarms:
-        start, end, _, alarms = alarm_fold_ics.restore_alarms(
+        start, end, _, restored = alarm_fold_ics.restore_alarms(
             props, component_key, wire_start, wire_end, timezone_identifier(wire_start.tzinfo), alarms)
+        # A recurrence identifier alone cannot justify rebinding a shared
+        # END. Keep the elapsed wire alarm if its nominal group needs a zone
+        # absent from the snapshot and no retained master can attest it.
+        if (start_key == 'RECURRENCE-ID' and inherited_zone is None and not canonical.end_timezone_id
+                and end.tzinfo != canonical.end.tzinfo):
+            return alarms, None, None, None
+        alarms = restored
     primary = inherited_zone
     if start_key == 'DTSTART':
-        primary = None if _floating(props) else start.tzinfo
+        # The parser inherits the master's scheduling zone for a detached
+        # UTC DTSTART. A TZID or a verified private START supplies its own.
+        if _floating(props):
+            primary = None
+        elif inherited_zone is None or props['DTSTART'][0][0].get('TZID') or start is not wire_start:
+            primary = start.tzinfo
     explicit_end = 'DTEND' in props and not _floating(props, 'DTEND')
     verified_start = start if start is not wire_start else None
     verified_end = end if explicit_end or end is not wire_end else None
@@ -357,7 +369,7 @@ def _recover_bound_fields(canonical, primary, start, end):
     return fields
 
 
-def _retained_alarms(event, raw, wanted, *, standalone_key=''):
+def _retained_alarms(event, raw, wanted, *, standalone_key='', inherited_zone=None):
     from .ics_resources import _blocks, _decoded, _key, _uid_of
     from .timezones import event_timezone
 
@@ -376,16 +388,15 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
 
     family = {}
     master = components.pop('', None)
-    inherited_zone = None
-    if master is not None and ('' in wanted or any('DTSTART' not in props for props in components.values())):
-        alarms, inherited_zone, start, end = _wire_alarm_context(master, event.ical_uid + '/')
+    if master is not None:
+        alarms, inherited_zone, start, end = _wire_alarm_context(master, event.ical_uid + '/', event)
         if '' in wanted:
             family[''] = alarms, _recover_bound_fields(event, inherited_zone, start, end)
     for key, props in components.items():
         canonical = Event.from_dict(event.recurrence_overrides[key])
-        alarms, primary, start, end = _wire_alarm_context(props, event.ical_uid + '/' + key, inherited_zone)
+        alarms, primary, start, end = _wire_alarm_context(props, event.ical_uid + '/' + key, canonical, inherited_zone)
         family[key] = alarms, _recover_bound_fields(canonical, primary, start, end)
-    return family
+    return family, inherited_zone
 
 
 def hydrate_alarms(event: Event) -> Event:
@@ -394,13 +405,15 @@ def hydrate_alarms(event: Event) -> Event:
     if (event.alarms is not None and not missing) or event._query_projection:
         return event
     wanted = missing | {''} if event.alarms is None else missing
-    family = _retained_alarms(event, event.raw_ics, wanted) if event.raw_ics else {}
+    family, inherited_zone = _retained_alarms(event, event.raw_ics, wanted) if event.raw_ics else ({}, None)
     alarms, restored_fields = family.get('', ((), {})) if event.alarms is None else (event.alarms, {})
     overrides = event.recurrence_overrides.copy()
     for key in missing:
         payload = overrides[key]
         if key not in family and payload.get('raw_ics'):
-            family.update(_retained_alarms(event, payload['raw_ics'], {key}, standalone_key=key))
+            detached, _ = _retained_alarms(event, payload['raw_ics'], {key}, standalone_key=key,
+                                           inherited_zone=inherited_zone)
+            family.update(detached)
         # Old locally created exceptions may have no detached wire template.
         alarms_for_child, child_fields = family.get(key, (alarms, {}))
         if child_fields:
