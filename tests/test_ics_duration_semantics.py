@@ -166,3 +166,34 @@ def test_bad_duration_resource_does_not_block_healthy_peers():
     report = parse_ics_report(combined, 'local')
     assert [item.ical_uid for item in report.events] == ['healthy']
     assert len(report.rejected) == 1
+
+
+@pytest.mark.parametrize('parser', [parse_ics, parse_fallback])
+def test_recurring_nominal_duration_with_utc_endpoint_keeps_all_four_ranges(parser):
+    start = datetime(2026, 10, 23, 9, tzinfo=ZONE)
+    event = Event('nominal', 'local', 'Daily', start, datetime(2026, 10, 24, 7, tzinfo=UTC),
+                  duration_spec='P1D', recurrence_rule='FREQ=DAILY;COUNT=4')
+    window = (datetime(2026, 10, 22, tzinfo=UTC), datetime(2026, 10, 29, tzinfo=UTC))
+    expected = [(datetime(2026, 10, day, begin, tzinfo=UTC), datetime(2026, 10, day + 1, finish, tzinfo=UTC))
+                for day, begin, finish in [(23, 7, 7), (24, 7, 8), (25, 8, 8), (26, 8, 8)]]
+    def ranges(item):
+        return [(v.start.astimezone(UTC), v.end.astimezone(UTC)) for v in expand_event(item, *window)]
+    assert ranges(event) == expected
+    raw = export_ics([event])
+    assert b'DURATION:P1D' in raw and b'DTEND:' not in raw and b'DTEND;' not in raw
+    restored, = parser(strip_metadata(raw), 'local')
+    assert ranges(restored) == expected
+
+
+@pytest.mark.parametrize('parser', [parse_ics, parse_fallback])
+def test_late_fold_rdate_master_with_separate_utc_end_keeps_exact_primary_and_rdate_range(parser):
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=ZONE, fold=1)
+    event = Event('exact', 'local', 'Exact dates', start, datetime(2026, 10, 25, 3, 30, tzinfo=UTC),
+                  recurrence_dates=('2026-10-27T01:30:00+00:00',))
+    raw = export_ics([event])
+    assert b'DTSTART:20261025T013000Z' in raw
+    restored, = parser(strip_metadata(raw), 'local')
+    values = expand_event(restored, datetime(2026, 10, 24, tzinfo=UTC), datetime(2026, 10, 28, tzinfo=UTC))
+    assert [(v.start.astimezone(UTC), v.end.astimezone(UTC)) for v in values] == [
+        (datetime(2026, 10, day, 1, 30, tzinfo=UTC), datetime(2026, 10, day, 3, 30, tzinfo=UTC))
+        for day in (25, 27)]

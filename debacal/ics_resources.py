@@ -951,20 +951,25 @@ def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
     end_zone = event.end_timezone_id
-    nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id and not end_zone)
+    nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id)
+    named_start = _named_start(event)
     if event.floating_time:
         lines = [line for line in lines if not line.startswith(('DTSTART:', 'DTEND:'))]
         lines.append(f'DTSTART:{event.start:%Y%m%dT%H%M%S}')
         if event.end.replace(tzinfo=None) > event.start.replace(tzinfo=None):
             lines.append(f'DTEND:{event.end:%Y%m%dT%H%M%S}')
     fixed_late_start = False
-    if (nominal_duration or _named_start(event)) and not event.recurring and not event.floating_time:
-        from .recurrence import event_zone
-        local_start = event.start.astimezone(event_zone(event))
+    # An explicit set of instants with an elapsed duration has no wall-clock
+    # recurrence to anchor. Its primary can use UTC just like a standalone
+    # event; writing a TZID wall time here would select the earlier fold.
+    wall_schedule = event.recurring and (event.recurrence_rule or event.range_policy or nominal_duration
+                                         or event.schedule_expression and event.schedule_syntax == 2)
+    if (nominal_duration or named_start) and not wall_schedule and not event.floating_time:
+        local_start = event.start.astimezone(event_timezone(event))
         fixed_late_start = bool(local_start.fold and local_start.replace(fold=0).timestamp() != local_start.timestamp())
         if fixed_late_start:
             nominal_duration = False  # One fixed range can use exact UTC endpoints.
-    if (not recurrence_id or end_zone) and not fixed_late_start and _named_start(event):
+    if (not recurrence_id or end_zone) and not fixed_late_start and named_start:
         zone = event_timezone(event)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
         lines.append(f"DTSTART;TZID={fallback.parameter(event.timezone_id)}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
@@ -977,16 +982,16 @@ def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
                 lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
             else:
                 lines.append(f"DTEND;TZID={fallback.parameter(event.timezone_id)}:{local_end:%Y%m%dT%H%M%S}")
-    if end_zone and event.end.timestamp() > event.start.timestamp():
+    if nominal_duration:
+        lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
+        lines.append('DURATION:' + event.duration_spec)
+    elif end_zone and event.end.timestamp() > event.start.timestamp():
         lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
         if ((end_zone in {'UTC', 'Etc/UTC'} and end_zone not in event.timezone_definitions)
                 or event.end.fold and event.end.replace(fold=0).timestamp() != event.end.timestamp()):
             lines.append(f'DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}')
         else:
             lines.append(f'DTEND;TZID={fallback.parameter(end_zone)}:{event.end:%Y%m%dT%H%M%S}')
-    if nominal_duration:
-        lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
-        lines.append('DURATION:' + event.duration_spec)
     lines.insert(0, "UID:" + fallback.escaped(uid))
     if event.schedule_expression and not recurrence_id:
         lines.append("X-DEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))
