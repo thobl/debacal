@@ -332,13 +332,13 @@ class SeriesCopyTests(unittest.TestCase):
         self.assertIn('X-SERVER-HEADER:retained header', serialized)
         self.assertEqual(source.to_dict(), original)
 
-    def test_detach_override_without_alarms_inherits_parent_alarm_group(self):
+    def test_detach_foreign_override_without_alarms_stays_empty(self):
         source = master()
         exception = detached(source, 1, shift=timedelta(hours=3))
         source = metadata_source(replace(source, recurrence_overrides={exception.recurrence_id: exception.to_dict()}))
         selected = next(value for value in instances(source) if value.recurrence_id == exception.recurrence_id)
         serialized = self.assert_ordinary_copy(source, selected, detach_event(source, selected))
-        self.assertEqual(serialized.count('BEGIN:VALARM'), 2)
+        self.assertNotIn('BEGIN:VALARM', serialized)
         self.assertIn('X-SERVER-DETACHED:retained override', serialized)
 
     def test_detach_restored_occurrence_does_not_reuse_cancelled_template(self):

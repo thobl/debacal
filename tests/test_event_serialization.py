@@ -24,6 +24,7 @@ def expected_snapshot(event):
     result['end'] = (event.end.replace(tzinfo=None) if event.floating_time else event.end).isoformat()
     result['recurrence_dates'] = list(event.recurrence_dates)
     result['excluded_dates'] = list(event.excluded_dates)
+    result['alarms'] = None if event.alarms is None else [alarm.to_dict() for alarm in event.alarms]
     return result
 
 

@@ -110,7 +110,7 @@ def test_single_occurrence_transfer_inherits_alarm_and_unknown_source_properties
     raw = export_ics([source]).decode().replace("END:VEVENT", "\r\n".join([
         "X-SOURCE-MARKER:Retained", "BEGIN:VALARM", "UID:alarm-identity", "ACTION:DISPLAY",
         "TRIGGER:-PT15M", "DESCRIPTION:Reminder", "END:VALARM", "END:VEVENT"]))
-    source = replace(source, raw_ics=raw)
+    source, = parse_ics(raw, source.calendar_id)
     store.apply_remote([source])
     selected = dated(store, source)[2]
     store.edit_selection([selected], "single", selected, replace(selected, calendar_id="target"))

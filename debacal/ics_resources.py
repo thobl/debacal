@@ -13,6 +13,7 @@ import hashlib
 from uuid import NAMESPACE_URL, uuid5
 import re
 
+from .alarm_ics import read_alarms, without_alarms, write_alarms
 from .models import Event
 from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
 from .timezones import TimezoneError, event_timezone, resolve_timezone
@@ -310,8 +311,11 @@ def _read(data, use_full=True):
                   for params, value in component.get(key, [])
                   if _references_timezone(params, value)}
     definitions = _timezone_definitions(blocks, referenced)
-    for component in lexical:
+    events = (block for block in blocks if block[0] == 'BEGIN:VEVENT')
+    for component, block in zip(lexical, events, strict=True):
         component['_timezone_definitions'] = definitions
+        if 'BEGIN:VALARM' in block:
+            component['_alarm_source'] = block
     if not use_full or ICalendar is None:
         return lexical
     # The library's global TZID cache can substitute another resource's rules.
@@ -322,7 +326,7 @@ def _read(data, use_full=True):
     for block in blocks:
         if block[0] != 'BEGIN:VEVENT':
             continue
-        for line in block:
+        for line in without_alarms(block):
             if not line:
                 continue
             key, params, value = fallback.content_line(line)
@@ -344,6 +348,8 @@ def _read(data, use_full=True):
     result = []
     for index, original in enumerate(originals):
         component = {"_decoded": {}, '_timezone_definitions': definitions}
+        if '_alarm_source' in lexical[index]:
+            component['_alarm_source'] = lexical[index]['_alarm_source']
         for key, values in original.items():
             if key in {'SUMMARY', 'DESCRIPTION', 'LOCATION'} and any(
                     str(params.get('ENCODING', '')).upper() == 'QUOTED-PRINTABLE'
@@ -656,8 +662,16 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), defin
     selected_events = [b for b in blocks if b[0] == 'BEGIN:VEVENT'
                        and (_uid_of(b) == uid or (synthetic and not _uid_of(b)))]
     selected_ids = {id(block) for block in selected_events}
-    referenced = {params['TZID'] for block in selected_events for line in block if line
-                  for _, params, _ in [fallback.content_line(line)] if params.get('TZID')}
+    referenced = set()
+    for block in selected_events:
+        for line in block:
+            if ';TZID=' in line.upper():
+                try:
+                    _, params, _ = fallback.content_line(line)
+                except ValueError:
+                    continue  # Malformed retained alarm properties have their own diagnostic.
+                if params.get('TZID'):
+                    referenced.add(params['TZID'])
     selected = [b for b in blocks if (b[0] == 'BEGIN:VTIMEZONE'
                 and fallback.text(_property_of(b, 'TZID') or '') in referenced) or id(b) in selected_ids]
     if discard_generated:
@@ -673,6 +687,11 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), defin
             retained.append(block)
         selected = retained
     return fallback.folded(["BEGIN:VCALENDAR", *header, *(line for block in selected for line in block), "END:VCALENDAR"]).decode()
+
+
+def _component_alarms(component, uid, recurrence_id=''):
+    lines = component.get('_alarm_source')
+    return read_alarms('\n'.join(lines), component_key=uid + '/' + recurrence_id) if lines else ()
 
 
 def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
@@ -759,7 +778,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
             timezone_definitions=definitions, floating_time=floating,
-            duration_spec=duration_spec,
+            duration_spec=duration_spec, alarms=_component_alarms(master_component, uid),
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "EXDATE", tz)),
@@ -827,7 +846,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,
                 floating_time=override_floating,
-                duration_spec=override_spec, timezone_id=override_timezone_id,
+                duration_spec=override_spec, timezone_id=override_timezone_id, alarms=_component_alarms(component, uid, key),
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
                 schedule_expression="", expression_anchor="",
@@ -910,7 +929,10 @@ def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
     authored_v2 = bool(event.schedule_expression and event.schedule_syntax == 2)
-    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions) and not event.all_day and not event.floating_time
+    zoned_alarms = event.alarms is not None and any(
+        'D' in (duration or '').upper() or 'W' in (duration or '').upper()
+        for alarm in event.alarms for duration in (alarm.trigger, alarm.repeat_interval))
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions or zoned_alarms) and not event.all_day and not event.floating_time
                 and event.timezone_id and (event.timezone_id not in {'UTC', 'Etc/UTC'}
                                           or event.timezone_id in event.timezone_definitions))
 
@@ -1007,7 +1029,11 @@ def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=Fal
             result.append(line)
         if line.startswith("END:"):
             nested -= 1
-    return [*result, *_known_lines(event, uid, recurrence_id, recurrence_floating=recurrence_floating), "END:VEVENT"]
+    result.extend(_known_lines(event, uid, recurrence_id, recurrence_floating=recurrence_floating))
+    result.append('END:VEVENT')
+    if event.alarms is not None and (len(event.alarms) or 'BEGIN:VALARM' in result):
+        result = fallback.unfolded(write_alarms('\n'.join(result), event.alarms))
+    return result
 
 
 def _timezone_span(event):

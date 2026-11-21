@@ -148,7 +148,7 @@ def test_one_selected_override_is_detached_with_effective_fields_alarms_and_new_
     assert effect(result.events) == effect((moved,))
     assert effect(instances(serialized(result))) == effect((moved,))
     raw = export_ics(result.events).decode()
-    assert 'BEGIN:VALARM' in raw and 'X-TEST-OVERRIDE' in raw
+    assert 'BEGIN:VALARM' not in raw and 'X-TEST-OVERRIDE' in raw
     assert 'RECURRENCE-ID' not in raw and 'RRULE' not in raw and 'RDATE' not in raw
 
 

@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
+from .alarms import Alarm
 from .timezones import event_timezone, resolve_timezone, timezone_identifier, validate_definitions
 
 
@@ -136,6 +137,9 @@ class Event:
     # this marker so edits can recover the canonical ICS before saving.
     _query_projection: bool = field(default=False, compare=False, repr=False)
 
+    # None identifies older snapshots whose retained component still needs decoding.
+    alarms: tuple[Alarm, ...] | None = ()
+
     def __post_init__(self) -> None:
         if not self.id or not self.calendar_id:
             raise ValueError("An event needs an ID and a calendar.")
@@ -248,6 +252,8 @@ class Event:
             item = getattr(self, name)
             if type(item) in _SNAPSHOT_ATOMIC_TYPES:
                 value[name] = item
+            elif name == 'alarms':
+                value[name] = [alarm.to_dict() for alarm in item]
             elif name in ('recurrence_dates', 'excluded_dates'):
                 value[name] = list(item)
             else:
@@ -259,6 +265,8 @@ class Event:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Event:
         value = dict(value)
+        alarms = value.get('alarms')
+        value['alarms'] = None if alarms is None else tuple(Alarm.from_dict(item) for item in alarms)
         if 'duration_spec' not in value:
             from .event_duration import retained_duration_spec
             value['duration_spec'] = retained_duration_spec(value.get('raw_ics', ''))
