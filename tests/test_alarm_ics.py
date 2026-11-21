@@ -336,3 +336,69 @@ def test_late_fold_end_alarm_uses_exact_wire_end_and_local_nominal_offset():
     restored, = parse_ics(raw, 'c')
     assert restored.end.fold == 1 and restored.alarms[0].trigger == '-P1D'
     assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == expected
+
+
+@pytest.mark.parametrize('phoenix_clock,hour', [('20261024T213000', 4), ('20261024T193000', 2)])
+def test_foreign_end_zone_and_nominal_alarm_survive_intact_start_group(phoenix_clock, hour):
+    from debacal.ics_fallback import unfolded
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    end = datetime(2026, 10, 25, 3, 30, tzinfo=zone)
+    event = alarm_event(start=start, end=end, timezone_id=zone.key,
+                        alarms=(Alarm('start', 'DISPLAY', '-P1D', description='Before start'),))
+    lines = unfolded(export_ics([event]))
+    index = next(i for i, line in enumerate(lines) if line.startswith('DTEND:'))
+    lines[index] = 'DTEND;TZID=America/Phoenix:' + phoenix_clock
+    lines.insert(lines.index('END:VEVENT'), block('ACTION:DISPLAY', 'DESCRIPTION:Phone',
+                                                 'TRIGGER;RELATED=END:-P1D'))
+    edited, = parse_ics('\n'.join(lines), 'c')
+    def verify(actual):
+        assert actual.start.timestamp() == start.timestamp()
+        assert actual.end.astimezone(timezone.utc) == datetime(2026, 10, 25, hour, 30, tzinfo=timezone.utc)
+        assert actual.end.tzinfo.key == 'America/Phoenix'
+        assert [alarm.trigger for alarm in actual.alarms] == ['-P1D', '-P1D']
+        assert alarm_trigger(actual.alarms[0], actual.start, actual.end) == datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
+        assert alarm_trigger(actual.alarms[1], actual.start, actual.end) == datetime(2026, 10, 24, hour, 30, tzinfo=timezone.utc)
+    verify(edited)
+    verify(Event.from_dict(edited.to_dict()))
+    exported = export_ics([edited])
+    assert ('DTEND;TZID=America/Phoenix:' + phoenix_clock).encode() in exported
+    assert b'TZID:America/Phoenix' in exported
+    verify(parse_ics(exported, 'c')[0])
+    before_end_alarm = replace(edited, alarms=(edited.alarms[0],))
+    ordinary_end, = parse_ics(export_ics([before_end_alarm]), 'c')
+    assert ordinary_end.end_timezone_id == 'America/Phoenix'
+
+
+
+def test_changed_utc_end_with_same_elapsed_alarm_offset_restores_only_start_group():
+    from debacal.ics_fallback import unfolded
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    end = datetime(2026, 10, 25, 2, 45, tzinfo=zone, fold=1)
+    alarms = (Alarm('start', 'DISPLAY', '-P1D'), Alarm('end', 'AUDIO', '-P1D', related='END'))
+    raw = unfolded(export_ics([alarm_event(start=start, end=end, timezone_id=zone.key, alarms=alarms)]))
+    raw[raw.index('DTEND:20261025T014500Z')] = 'DTEND:20261025T014600Z'
+    updated, = parse_ics('\n'.join(raw), 'c')
+    assert updated.alarms[0].trigger == '-P1D' and updated.alarms[1].trigger != '-P1D'
+    assert updated.end_timezone_id == 'UTC'
+    assert alarm_trigger(updated.alarms[1], updated.start, updated.end) == datetime(2026, 10, 24, 0, 46, tzinfo=timezone.utc)
+
+
+def test_changed_named_start_zone_leaves_verified_end_group_intact():
+    from debacal.ics_fallback import unfolded
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026, 10, 25, 1, 30, tzinfo=zone)
+    end = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    source = alarm_event(start=start, end=end, timezone_id=zone.key,
+                         alarms=(Alarm('end', 'DISPLAY', '-P1D', related='END'),))
+    raw = unfolded(export_ics([source]))
+    raw[raw.index('DTSTART;TZID=Europe/Berlin:20261025T013000')] = 'DTSTART;TZID=America/Phoenix:20261024T163000'
+    raw.insert(raw.index('END:VEVENT'), block('ACTION:AUDIO', 'TRIGGER:-P1D'))
+    edited, = parse_ics('\n'.join(raw), 'c')
+    restored, = parse_ics(export_ics([Event.from_dict(edited.to_dict())]), 'c')
+    assert restored.start.timestamp() == start.timestamp() and restored.end.timestamp() == end.timestamp()
+    assert restored.timezone_id == 'America/Phoenix' and restored.end_timezone_id == 'Europe/Berlin'
+    assert [alarm.trigger for alarm in restored.alarms] == ['-P1D', '-P1D']
+    assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
+    assert alarm_trigger(restored.alarms[1], restored.start, restored.end) == datetime(2026, 10, 23, 23, 30, tzinfo=timezone.utc)

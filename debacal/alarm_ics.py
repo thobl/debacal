@@ -285,8 +285,8 @@ def hydrate_alarms(event: Event) -> Event:
             family.update(_retained_alarms(event, payload['raw_ics'], {key}, standalone_key=key))
         # Old locally created exceptions may have no detached wire template.
         alarms_for_child, child_fields = family.get(key, (alarms, {}))
-        overrides[key] = dict(payload, alarms=[alarm.to_dict() for alarm in alarms_for_child])
         if child_fields:
-            overrides[key].update(start=child_fields['start'].isoformat(), end=child_fields['end'].isoformat(),
-                                  timezone_id=child_fields['timezone_id'])
+            overrides[key] = replace(Event.from_dict(payload), alarms=alarms_for_child, **child_fields).to_dict()
+        else:
+            overrides[key] = dict(payload, alarms=[alarm.to_dict() for alarm in alarms_for_child])
     return replace(event, alarms=alarms, recurrence_overrides=overrides, **restored_fields)

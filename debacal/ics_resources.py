@@ -942,7 +942,7 @@ def _named_start(event):
     zoned_alarms = event.alarms is not None and any(
         'D' in (duration or '').upper() or 'W' in (duration or '').upper()
         for alarm in event.alarms for duration in (alarm.trigger, alarm.repeat_interval))
-    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions or zoned_alarms) and not event.all_day and not event.floating_time
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions or zoned_alarms or event.end_timezone_id) and not event.all_day and not event.floating_time
                 and event.timezone_id and (event.timezone_id not in {'UTC', 'Etc/UTC'}
                                           or event.timezone_id in event.timezone_definitions))
 
@@ -950,7 +950,8 @@ def _named_start(event):
 def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
-    nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id)
+    end_zone = event.end_timezone_id
+    nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id and not end_zone)
     if event.floating_time:
         lines = [line for line in lines if not line.startswith(('DTSTART:', 'DTEND:'))]
         lines.append(f'DTSTART:{event.start:%Y%m%dT%H%M%S}')
@@ -963,7 +964,7 @@ def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
         fixed_late_start = bool(local_start.fold and local_start.replace(fold=0).timestamp() != local_start.timestamp())
         if fixed_late_start:
             nominal_duration = False  # One fixed range can use exact UTC endpoints.
-    if not recurrence_id and not fixed_late_start and _named_start(event):
+    if (not recurrence_id or end_zone) and not fixed_late_start and _named_start(event):
         zone = event_timezone(event)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
         lines.append(f"DTSTART;TZID={fallback.parameter(event.timezone_id)}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
@@ -976,6 +977,13 @@ def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
                 lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
             else:
                 lines.append(f"DTEND;TZID={fallback.parameter(event.timezone_id)}:{local_end:%Y%m%dT%H%M%S}")
+    if end_zone and event.end.timestamp() > event.start.timestamp():
+        lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
+        if ((end_zone in {'UTC', 'Etc/UTC'} and end_zone not in event.timezone_definitions)
+                or event.end.fold and event.end.replace(fold=0).timestamp() != event.end.timestamp()):
+            lines.append(f'DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}')
+        else:
+            lines.append(f'DTEND;TZID={fallback.parameter(end_zone)}:{event.end:%Y%m%dT%H%M%S}')
     if nominal_duration:
         lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
         lines.append('DURATION:' + event.duration_spec)
@@ -1195,6 +1203,20 @@ def normalize_caldav_resource(data: str | bytes) -> bytes:
                             *(line for block in blocks for line in block), "END:VCALENDAR"])
 
 
+def _required_timezone_spans(event):
+    if _named_start(event) and event.timezone_id not in event.timezone_definitions:
+        yield event.timezone_id, _timezone_span(event)
+    end_id = event.end_timezone_id
+    if end_id and end_id != 'UTC' and end_id not in event.timezone_definitions:
+        yield end_id, _timezone_span(event)
+    for payload in event.recurrence_overrides.values():
+        if payload.get('end_timezone_id'):
+            override = Event.from_dict(payload)
+            for identifier in (override.timezone_id, override.end_timezone_id):
+                if identifier and identifier != 'UTC' and identifier not in event.timezone_definitions:
+                    yield identifier, _timezone_span(override)
+
+
 def serialize_resource(event, *, timezone_spans=None):
     raw = event.raw_ics
     header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
@@ -1225,14 +1247,10 @@ def serialize_resource(event, *, timezone_spans=None):
             if coverage is not None:
                 identifier = fallback.text(_property_of(block, 'TZID') or '')
                 result[index] = _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, coverage))
-    if _named_start(event):
-        existing_ids = {fallback.text(_property_of(block, 'TZID') or '')
-                        for block in result if block[0] == 'BEGIN:VTIMEZONE'}
-        if event.timezone_id not in existing_ids:
-            # Maintained timezone generation is cached. Its documented range
-            # covers 1970–2100 and extends to encompass historical event starts.
-            first_date, last_date = (timezone_spans or {}).get(event.timezone_id, _timezone_span(event))
-            result.insert(0, _timezone_definition(event.timezone_id, first_date, last_date))
+    for identifier, span in _required_timezone_spans(event):
+        if identifier not in existing_ids:
+            result.insert(0, _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, span)))
+            existing_ids.add(identifier)
     result.append(_patch_block(masters[0] if masters else ["BEGIN:VEVENT", "END:VEVENT"], event, uid))
     for key, payload in sorted(event.recurrence_overrides.items()):
         override = Event.from_dict(payload)
@@ -1270,10 +1288,9 @@ def export(events):
     # equality alone cannot consolidate the same zone generated for two eras.
     spans = {}
     for event in events:
-        if _named_start(event) and event.timezone_id not in event.timezone_definitions:
-            first, last = _timezone_span(event)
-            previous = spans.get(event.timezone_id, (first, last))
-            spans[event.timezone_id] = min(first, previous[0]), max(last, previous[1])
+        for identifier, (first, last) in _required_timezone_spans(event):
+            previous = spans.get(identifier, (first, last))
+            spans[identifier] = min(first, previous[0]), max(last, previous[1])
         if event.raw_ics:
             for block in _blocks(event.raw_ics)[1]:
                 if block[0] != 'BEGIN:VTIMEZONE':

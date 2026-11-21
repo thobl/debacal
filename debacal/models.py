@@ -190,8 +190,10 @@ class Event:
                     object.__setattr__(self, 'start', self.start.replace(tzinfo=resolved))
                     object.__setattr__(self, 'end', self.end.replace(tzinfo=resolved))
                 else:
+                    distinct_end_zone = self.end_timezone_id
                     object.__setattr__(self, 'start', self.start.astimezone(resolved))
-                    object.__setattr__(self, 'end', self.end.astimezone(resolved))
+                    if not distinct_end_zone:
+                        object.__setattr__(self, 'end', self.end.astimezone(resolved))
         def canonical_date(value):
             if len(value) == 10:
                 return datetime.fromisoformat(value).date().isoformat()
@@ -232,6 +234,21 @@ class Event:
             object.__setattr__(self, 'duration_spec', spec)
 
     @property
+    def end_timezone_id(self) -> str:
+        """Return a distinct named/UTC end zone when an endpoint owns one."""
+        if self.all_day or self.floating_time or self.end.tzinfo is self.start.tzinfo:
+            return ''
+        identifier = timezone_identifier(self.end.tzinfo)
+        if not identifier and self.end.tzinfo == timezone.utc:
+            identifier = 'UTC'
+        if identifier == 'Etc/UTC' and identifier not in self.timezone_definitions:
+            identifier = 'UTC'
+        primary = self.timezone_id or timezone_identifier(self.start.tzinfo)
+        if not primary and self.start.tzinfo == timezone.utc:
+            primary = 'UTC'
+        return identifier if identifier != primary else ''
+
+    @property
     def recurring(self) -> bool:
         # Exclusions alone can describe an empty schedule or an omitted anchor.
         # Projected occurrences already have their own identity and must never
@@ -258,6 +275,8 @@ class Event:
                 value[name] = list(item)
             else:
                 value[name] = _copy_event_payload(item)
+        if end_zone := self.end_timezone_id:
+            value['end_timezone_id'] = end_zone
         value["start"] = (self.start.replace(tzinfo=None) if self.floating_time else self.start).isoformat()
         value["end"] = (self.end.replace(tzinfo=None) if self.floating_time else self.end).isoformat()
         return value
@@ -265,6 +284,7 @@ class Event:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Event:
         value = dict(value)
+        end_zone = value.pop('end_timezone_id', '')
         alarms = value.get('alarms')
         value['alarms'] = None if alarms is None else tuple(Alarm.from_dict(item) for item in alarms)
         if 'duration_spec' not in value:
@@ -287,7 +307,10 @@ class Event:
                 value["end"] = value["end"].replace(tzinfo=zone)
             else:
                 value["start"] = value["start"].astimezone(zone)
-                value["end"] = value["end"].astimezone(zone)
+                if not end_zone:
+                    value["end"] = value["end"].astimezone(zone)
+        if end_zone and not value.get('floating_time') and not value.get('all_day'):
+            value['end'] = value['end'].astimezone(resolve_timezone(end_zone, value.get('timezone_definitions', {})))
         return cls(**value)
 
 

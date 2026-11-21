@@ -30,8 +30,10 @@ ORIGINAL = 'X-DEBACAL-ORIGINAL-ALARM'
 def _utc_bounds(lines):
     result = set()
     for part in direct_parts(lines):
-        if len(part) == 1 and part[0].upper().endswith('Z'):
-            name = part[0].split(':', 1)[0].split(';', 1)[0].upper()
+        if len(part) == 1 and part[0].upper().startswith(('DTSTART', 'DTEND')):
+            name, params, value = ics.content_line(part[0])
+            if not value.upper().endswith('Z') or 'TZID' in params or params.get('VALUE', 'DATE-TIME') != 'DATE-TIME':
+                continue
             if name == 'DTSTART':
                 result.add('START')
             elif name == 'DTEND':
@@ -93,20 +95,31 @@ def _wire_parts(alarm, token, start, end):
 
 def project_alarms(event, lines, component_key):
     alarms = event.alarms
-    if not event.timezone_id or event.floating_time or event.all_day or alarms is None or not len(alarms):
+    if not (event.timezone_id or event.end_timezone_id) or event.floating_time or event.all_day or alarms is None or not len(alarms):
         return alarms, []
     bounds = _utc_bounds(lines)
     if not any(_needs_projection(alarm, bounds) for alarm in alarms):
         return alarms, []
     zone = event_timezone(event)
-    start, end = event.start.astimezone(zone), event.end.astimezone(zone)
-    annotations = [f'{ANCHOR};VALUE=DATE-TIME;TZID={ics.parameter(event.timezone_id)}:{start:%Y%m%dT%H%M%S}']
+    start = event.start.astimezone(zone)
+    end = event.end if event.end_timezone_id else event.end.astimezone(zone)
+    annotations, anchored = [], set()
     wire, budget = [], MAX_GENERATED_RANGES
     ordinals = Counter()
     for alarm in alarms:
-        if not _needs_projection(alarm, bounds):
+        identifier = event.timezone_id
+        if alarm.related == 'END' and event.end_timezone_id:
+            identifier = event.end_timezone_id
+        is_utc = identifier in {'UTC', 'Etc/UTC'} and identifier not in event.timezone_definitions
+        if not identifier or is_utc or not _needs_projection(alarm, bounds):
             wire.append(alarm)
             continue
+        if alarm.related not in anchored:
+            bound = end if alarm.related == 'END' else start
+            stamp = bound.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+            annotations.append(f'{ANCHOR};RELATED={alarm.related};X-UTC={stamp};VALUE=DATE-TIME;'
+                               f'TZID={ics.parameter(identifier)}:{bound:%Y%m%dT%H%M%S}')
+            anchored.add(alarm.related)
         identity = (alarm.uid,) if alarm.uid else (alarm.action, alarm.related, _trigger_identity(alarm.trigger))
         ordinal = ordinals[identity]
         ordinals[identity] += 1
@@ -126,22 +139,34 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
     """Restore groups only when replaying the original explains all wire parts."""
     anchors = component.get(ANCHOR, ())
     originals = component.get(ORIGINAL, ())
-    if len(anchors) != 1 or not originals or not alarms:
+    if not anchors or not originals or not alarms:
         return start, end, timezone_id, alarms
-    params, wall = anchors[0]
-    identifier = params.get('TZID')
-    try:
-        zone = resolve_timezone(identifier, component.get('_timezone_definitions', {}))
-        local_start, local_end = start.astimezone(zone), end.astimezone(zone)
-    except (ValueError, TypeError, OverflowError):
-        return start, end, timezone_id, alarms
-    if local_start.strftime('%Y%m%dT%H%M%S') != wall:
-        return start, end, timezone_id, alarms
-    bounds = _utc_bounds(component['_alarm_source'])
+    utc_bounds = _utc_bounds(component['_alarm_source'])
+    contexts = {}
+    counts = Counter(params.get('RELATED', 'START') for params, _wall in anchors)
+    for params, wall in anchors:
+        role = params.get('RELATED', 'START')
+        if role not in utc_bounds or counts[role] != 1 or params.get('VALUE', 'DATE-TIME') != 'DATE-TIME':
+            continue
+        bound = end if role == 'END' else start
+        try:
+            identifier = params.get('TZID')
+            local = bound.astimezone(resolve_timezone(identifier, component.get('_timezone_definitions', {})))
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if local.strftime('%Y%m%dT%H%M%S') != wall:
+            continue
+        if 'X-UTC' in params:
+            if bound.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ') != params['X-UTC']:
+                continue
+        elif 'RELATED' in params or not local.fold:
+            # The first format attested only the late-fold start wall clock.
+            continue
+        contexts[role] = (local, identifier)
     by_uid = defaultdict(list)
     for index, alarm in enumerate(alarms):
         by_uid[alarm.uid].append(index)
-    replacements, budget = {}, MAX_GENERATED_RANGES
+    restored_groups, claimed, budget = [], set(), MAX_GENERATED_RANGES
     for params, payload in originals:
         token = params.get('GROUP', '')
         if not re.fullmatch('[0-9a-f]{64}', token):
@@ -151,29 +176,42 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
             if not lines or lines[0] != 'BEGIN:VALARM' or lines[-1] != 'END:VALARM':
                 continue
             original, = read_alarms('\n'.join(['BEGIN:VEVENT', *lines, 'END:VEVENT']), component_key=component_key)
-            if not _needs_projection(original, bounds):
+            if not _needs_projection(original, contexts):
                 continue
             budget = _remaining_budget(original, budget)
-            expected = _wire_parts(original, token, local_start, local_end)
+            local, _identifier = contexts[original.related]
+            expected = _wire_parts(original, token, local, local)
         except (ValueError, TypeError, OverflowError):
             continue  # Unrecognized or stale extensions leave the standard properties authoritative.
         members = []
         for part in expected:
             indices = by_uid.get(part.uid, ())
-            if len(indices) != 1 or indices[0] in replacements:
+            if len(indices) != 1 or indices[0] in claimed:
                 break
             index = indices[0]
             if semantic_properties(part) != semantic_properties(alarms[index]):
                 break
             members.append(index)
         if len(members) == len(expected):
+            restored_groups.append((original, members))
+            claimed.update(members)
+    # Rebinding an endpoint is justified only by an intact group on that
+    # endpoint. A new nominal alarm using the same UTC bound needs UTC.
+    blocked = {alarm.related for index, alarm in enumerate(alarms)
+               if index not in claimed and _needs_projection(alarm, contexts)}
+    replacements, owned = {}, set()
+    for original, members in restored_groups:
+        if original.related not in blocked:
             replacements.update(dict.fromkeys(members))
             replacements[members[0]] = original
-    if not replacements or any(_needs_projection(alarm, bounds) for index, alarm in enumerate(alarms)
-                               if index not in replacements):
-        # A newly supplied nominal alarm on this UTC bound needs UTC semantics.
+            owned.add(original.related)
+    if not replacements:
         return start, end, timezone_id, alarms
+    if 'START' in owned:
+        start, timezone_id = contexts['START']
+    if 'END' in owned:
+        end, _identifier = contexts['END']
     result = [replacements.get(index, alarm) for index, alarm in enumerate(alarms)]
     # Re-key recovered UID-less duplicates in their original component context.
     lines = ['BEGIN:VEVENT', *(line for alarm in result if alarm is not None for line in _alarm_lines(alarm)), 'END:VEVENT']
-    return local_start, local_end, identifier, read_alarms('\n'.join(lines), component_key=component_key)
+    return start, end, timezone_id, read_alarms('\n'.join(lines), component_key=component_key)
