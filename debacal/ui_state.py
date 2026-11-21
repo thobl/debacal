@@ -6,7 +6,7 @@ history unchanged. The file is named <profile-database>.ui.sqlite3.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -14,10 +14,13 @@ from threading import RLock
 import time
 
 
+REMINDER_SETTINGS_KEY = 'reminder_policy'
+
 UI_SETTINGS = frozenset({
     'display_preferences', 'week_numbers_default_version',
     'keybindings', 'keybindings_version', 'calendar_order', 'calendar_main_list', 'default_calendar_id',
     'selection_mode', 'show_full_day', 'filter_calendar_by_search',
+    REMINDER_SETTINGS_KEY,
 })
 
 
@@ -25,6 +28,20 @@ def ui_state_path(database: str) -> str:
     # Retain the complete database filename so alternative files with the same
     # stem (for example example.db and example.sqlite3) cannot share choices.
     return ':memory:' if database == ':memory:' else str(Path(database).with_name(Path(database).name + '.ui.sqlite3'))
+
+
+def _read_setting(connection, key):
+    row = connection.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+    return (False, None) if row is None else (True, json.loads(row[0]))
+
+
+def read_ui_setting(database: str | Path, key: str):
+    """Read one persisted choice without initializing either profile database."""
+    path = Path(ui_state_path(str(database)))
+    if str(database) == ':memory:' or not path.is_file():
+        return False, None
+    with closing(sqlite3.connect(path.absolute().as_uri() + '?mode=ro', uri=True, timeout=0)) as connection:
+        return _read_setting(connection, key)
 
 
 class UiState:
@@ -93,8 +110,7 @@ class UiState:
     def get(self, key):
         """Return (present,value), distinguishing an explicit JSON null."""
         with self._lock:
-            row = self.connection.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
-            return (False, None) if row is None else (True, json.loads(row[0]))
+            return _read_setting(self.connection, key)
 
     def set(self, key, value):
         payload = json.dumps(value, sort_keys=True, separators=(',', ':'))

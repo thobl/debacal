@@ -8,8 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 import hashlib
+from typing import get_args
 from uuid import NAMESPACE_URL, uuid5
 
+from .alarm_ics import hydrate_alarms
+from .alarms import Alarm
 from .ics import parse_ics_report
 from .ics_resources import ParseReport, RejectedResource, ResourceIssue, reject_duplicate_identities
 from .import_sources import ImportSource, MAX_IMPORT_BYTES, MAX_PENDING_IMPORT_BYTES
@@ -19,11 +22,59 @@ from .recurrence import (
     RecurrenceRangeError, event_zone, expand_series, key_datetime, occurrence,
     occurrence_id, recurrence_key, recurrence_set,
 )
+from .reminder_preferences import ImportReminderMode, instantiate_reminder_templates, relative_templates
 from .timeutil import local_zone, now
 
 
 PREVIEW_CALENDAR_ID = '__debacal_import_preview__'
 MAX_IMPORT_EVENTS = 50_000
+
+
+def _selected_overrides(event: Event):
+    excluded = set(event.excluded_dates)
+    return ((key, payload) for key, payload in event.recurrence_overrides.items() if key not in excluded)
+
+
+def count_reminder_sources(report: ParseReport) -> tuple[int, int]:
+    """Count alarm-bearing and total selected components without expanding a rule."""
+    with_alarms = total = 0
+    for source in report.events:
+        event = hydrate_alarms(source)
+        with_alarms += bool(event.alarms)
+        total += 1
+        for _, payload in _selected_overrides(event):
+            with_alarms += bool(payload.get('alarms'))
+            total += 1
+    return with_alarms, total
+
+
+def transform_import_reminders(report: ParseReport, mode: str, alarms: tuple[Alarm, ...]) -> ParseReport:
+    """Apply a manual policy to the filtered and destination-remapped report."""
+    if mode not in get_args(ImportReminderMode):
+        raise ValueError('Unknown import reminder mode.')
+    templates = relative_templates(alarms)
+    if mode == 'keep' or (mode == 'add_missing' and not templates):
+        return report
+    if mode == 'remove':
+        templates = ()
+
+    events = []
+    for source in report.events:
+        event = hydrate_alarms(source)
+        master_alarms = event.alarms
+        if mode != 'add_missing' or master_alarms == ():
+            master_alarms = instantiate_reminder_templates(templates, calendar_id=event.calendar_id,
+                                                          event_uid=event.ical_uid)
+        overrides = dict(event.recurrence_overrides)
+        for key, payload in _selected_overrides(event):
+            existing = payload.get('alarms')
+            if mode == 'add_missing' and (existing is None or existing):
+                continue
+            child_alarms = instantiate_reminder_templates(templates, calendar_id=event.calendar_id,
+                                                         event_uid=event.ical_uid, recurrence_id=key)
+            overrides[key] = dict(payload, alarms=[alarm.to_dict() for alarm in child_alarms])
+        events.append(replace(event, alarms=master_alarms, recurrence_overrides=overrides))
+    return replace(report, events=tuple(events))
 
 
 def _display_date(event: Event, value: datetime | None = None) -> date:
