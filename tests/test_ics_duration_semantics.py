@@ -363,3 +363,15 @@ def test_independent_late_end_rule_reports_unrepresentable_nominal_alarm_without
     for trigger in ('-PT24H', '-P0DT24H'):
         saved = export_ics([replace(event, alarms=(replace(alarm, trigger=trigger),))])
         assert parse_ics(saved, 'local')[0].alarms[0].trigger == trigger
+
+
+@pytest.mark.parametrize('parser', [parse_ics, parse_fallback])
+@pytest.mark.parametrize('private', [False, True])
+def test_edited_rdate_period_uses_standard_start_reminder(parser, private):
+    from debacal.alarms import alarm_trigger
+    wire = export_ics([point_dates()]).replace(b'RDATE:20261116T120000Z',
+                                             b'RDATE;VALUE=PERIOD:20261116T120000Z/PT1H')
+    model, = parser(wire if private else strip_metadata(wire), 'local')
+    instance, = expand_event(model, datetime(2026, 11, 16, tzinfo=UTC), datetime(2026, 11, 17, tzinfo=UTC))
+    assert instance.end.astimezone(UTC) == datetime(2026, 11, 16, 13, tzinfo=UTC)
+    assert alarm_trigger(instance.alarms[0], instance.start, instance.end) == datetime(2026, 11, 2, 12, tzinfo=UTC)

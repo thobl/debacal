@@ -20,6 +20,53 @@ from .dialog_base import install_dialog_keyboard
 from .date_time_fields import format_event_duration
 
 
+def _reminder_description(event):
+    from hashlib import sha256
+    from .alarm_ics import semantic_properties
+    from .models import Event
+
+    def abbreviated(text, limit):
+        if len(text) <= limit:
+            return text
+        fingerprint = sha256(text.encode()).hexdigest()[:10]
+        return f'{text[:limit]}… [{fingerprint}]'
+
+    def describe(alarms):
+        if alarms is None:
+            return 'Unknown'
+        lines = []
+        for alarm in alarms:
+            parts = [alarm.action or 'Unknown action', alarm.trigger or 'Missing trigger', alarm.related]
+            if alarm.issue or alarm.action not in {'DISPLAY', 'AUDIO'}:
+                parts.append('Unsupported' + (' — ' + alarm.issue if alarm.issue else ''))
+            if alarm.description:
+                parts.append(alarm.description)
+            if alarm.repeat or alarm.repeat_interval:
+                parts.append(f'{alarm.repeat} repeats at {alarm.repeat_interval}')
+            if alarm.acknowledged:
+                parts.append('Acknowledged ' + alarm.acknowledged.isoformat())
+            if alarm.uid:
+                parts.append(alarm.uid)
+            seen = set()
+            for group in semantic_properties(alarm):
+                for name, parameters, value in group:
+                    if name in seen or name not in {'ACTION', 'TRIGGER', 'DESCRIPTION', 'DURATION', 'REPEAT', 'UID', 'ACKNOWLEDGED'}:
+                        parts.append(f'{name} {abbreviated(str(value), 100)}')
+                    seen.add(name)
+                    if parameters:
+                        parts.extend(f'{name} {k}={v}' for k, v in parameters)
+            lines.append(' · '.join(parts))
+        return abbreviated('\n'.join(sorted(lines)), 600) or 'None'
+
+    lines = [describe(event.alarms)]
+    for key, payload in sorted(event.recurrence_overrides.items()):
+        child = Event.from_dict(payload)
+        description = describe(child.alarms)
+        if description != lines[0]:
+            lines.append(key + ' — ' + description)
+    return abbreviated('\n'.join(lines), 900)
+
+
 class ConflictDialog(QDialog):
     def __init__(self, conflict, preferences: Preferences, parent=None):
         super().__init__(parent)
@@ -162,7 +209,7 @@ class ConflictDialog(QDialog):
                   'Duration': format_event_duration(event.start, event.end, all_day=event.all_day,
                                                     duration_spec=event.duration_spec) + (
                       '' if event.all_day else ' (calendar)' if event.duration_spec else ' (elapsed)'),
-                  'All day': 'Yes' if event.all_day else 'No', 'Location': event.location,
+                  'All day': 'Yes' if event.all_day else 'No', 'Reminders': _reminder_description(event), 'Location': event.location,
                   'Notes': event.description, 'Alternative slot': 'Yes' if event.candidate else 'No'}
         if not event.all_day:
             values['Timezone'] = event.timezone_id or str(event.start.tzinfo)

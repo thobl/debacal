@@ -24,11 +24,8 @@ def _scope(value: str) -> str:
 
 
 def _semantic(event: Event) -> dict:
-    value = event.to_dict()
-    value.pop("raw_ics", None)
-    if not value.get("schedule_expression"):
-        value.pop("schedule_syntax", None)
-    return value
+    from .store import Store
+    return Store._semantic_event(event.to_dict(), hydrate=False)
 
 
 def calendar_day_delta(reference: Event, target: datetime) -> int:

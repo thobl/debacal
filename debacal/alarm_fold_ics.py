@@ -152,7 +152,7 @@ def project_alarms(event, lines, component_key):
             # A rule with a separately zoned, repeated-hour end needs exact UTC
             # instants, but a single elapsed offset cannot describe its local
             # day arithmetic across the series. Preserve the canonical event.
-            raise ValueError(f'Cannot export event {event.ical_uid!r}: its recurring END reminder uses an '
+            raise ics.CalendarValueError(f'Cannot export event {event.ical_uid!r}: its recurring END reminder uses an '
                              'independently zoned repeated-hour end. Use an elapsed-hour reminder '
                              '(such as -PT24H) or adjust the endpoint.')
         if alarm.related not in anchored:
@@ -196,7 +196,8 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
             # Only a bare DTSTART justifies restoring END from a START alarm.
             if (role != 'END' or not params['X-POINT'] or 'X-DURATION' in params or 'RRULE' in component
                     or params['X-POINT'] != _implicit_anchor(component['_alarm_source'], point=True)
-                    or 'RDATE' in component and (params.get('TZID') or 'START' not in utc_bounds)):
+                    or 'RDATE' in component and (params.get('TZID') or 'START' not in utc_bounds)
+                    or any('/' in raw for _, raw in component.get('RDATE', ()))):
                 continue
         elif 'X-DURATION' in params:
             if (role != 'END' or not params['X-DURATION']

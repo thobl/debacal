@@ -1374,5 +1374,9 @@ def patch(data, event):
     if len(parsed) != 1:
         raise ValueError("A CalDAV resource must contain exactly one event UID.")
     original = parsed[0]
+    # Resolve legacy local intent against its own family before replacing the
+    # transport envelope. The block patcher reconciles it on the chosen template.
+    from .alarm_ics import hydrate_alarms
+    event = hydrate_alarms(event)
     return serialize_resource(replace(event, raw_ics=data.decode() if isinstance(data, bytes) else data,
                                       ical_uid=original.ical_uid))

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
-from datetime import timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import re
@@ -240,6 +240,60 @@ def semantic_properties(alarm):
     return tuple(sorted(tuple(normalized(line) for line in part) for part in direct_parts(_alarm_lines(alarm))))
 
 
+def same_transport(left, right):
+    """Preserve imported envelope changes outside separately compared VALARMs."""
+    if left is None or right is None:
+        return left is right
+    previous, current = left.get('raw_ics', ''), right.get('raw_ics', '')
+    if previous != current:
+        if not previous or not current:
+            return False
+        from .ics_resources import _blocks
+        def envelope(raw):
+            header, blocks = _blocks(raw)
+            for block in blocks:
+                if block[0] == 'BEGIN:VEVENT':
+                    properties = (part for part in direct_parts(block) if part[0].upper() != 'BEGIN:VALARM')
+                    block[1:-1] = [line for part in properties for line in part]
+            return header, blocks
+        try:
+            if envelope(previous) != envelope(current):
+                return False
+        except ValueError:
+            return False
+    children = left.get('recurrence_overrides', {})
+    others = right.get('recurrence_overrides', {})
+    return children.keys() == others.keys() and all(same_transport(child, others[key]) for key, child in children.items())
+
+
+def normalize_alarm_context(event, values):
+    """Compare the effective calculation rules independently of bound presentation."""
+    from .alarm_fold_ics import needs_projection
+    from .ics_resources import _timezone_signature
+    from .timezones import event_timezone, timezone_identifier
+    result = {}
+    for alarm in event.alarms or ():
+        if event.all_day or event.floating_time or not needs_projection(alarm, {'START', 'END'}):
+            continue
+        role = alarm.related
+        if role in result:
+            continue
+        # Generated DURATION ends derive from their occurrence's DTSTART.
+        separate_end = role == 'END' and event.end_timezone_id and not (event.recurring and event.duration_spec)
+        zone = event.end.tzinfo if separate_end else event_timezone(event)
+        identifier = timezone_identifier(zone) or str(zone)
+        definition = event.timezone_definitions.get(identifier)
+        result[role] = (_timezone_signature(ics.unfolded(definition)) if definition else
+                        'UTC' if identifier == 'Etc/UTC' else identifier)
+    if result:
+        values['alarm_calculation_zones'] = result
+    if (event.duration_spec or event.end_timezone_id == 'UTC' and event.recurrence_dates
+            and not event.recurrence_rule and not event.schedule_expression):
+        # DURATION owns projected ends. In an exact-date set, a UTC end
+        # can become implicit when a repeated-hour primary exports as UTC.
+        values.pop('end_timezone_id', None)
+
+
 def _retained_alarms(event, raw, wanted, *, standalone_key=''):
     from . import alarm_fold_ics
     from .ics_resources import _blocks, _decoded, _key, _uid_of
@@ -258,8 +312,21 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
             component_key = event.ical_uid + '/' + key
             alarms = read_alarms('\n'.join(lines), component_key=component_key)
             restored_fields = {}
+            bounds = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
+            # Pre-alarm snapshots retained only the primary TZID. Recover an
+            # independently zoned DTEND only while it still describes this end.
+            if (not bounds.all_day and not bounds.floating_time and not bounds.end_timezone_id
+                    and len(props.get('DTEND', ())) == 1):
+                params, value = props['DTEND'][0]
+                if 'TZID' in params or value.upper().endswith('Z'):
+                    try:
+                        retained_end, = _decoded(props, 'DTEND', zone)
+                    except (ValueError, KeyError, OverflowError):
+                        retained_end = None
+                    if isinstance(retained_end, datetime) and retained_end.timestamp() == bounds.end.timestamp():
+                        bounds = replace(bounds, end=retained_end)
+                        restored_fields['end'] = bounds.end
             if alarm_fold_ics.ORIGINAL in props and alarms:
-                bounds = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
                 props['_alarm_source'] = lines
                 start, end, identifier, restored = alarm_fold_ics.restore_alarms(
                     props, component_key, bounds.start, bounds.end, bounds.timezone_id, alarms)
