@@ -143,12 +143,14 @@ the list; its order is saved per profile without changing the creation calendar.
 Calendars start in the main list. Uncheck **Keep in main list** when adding one,
 or in Preferences → Calendar sources, to place it in **More calendars**.
 Open this list with **…** beside the Calendars heading. It scrolls separately
-from the main list. The current creation calendar always stays in the main
+from the main list and stays anchored beneath the heading while open.
+The current creation calendar always stays in the main
 list, even when it belongs to More calendars; selecting another calendar
 returns it to the popup. This placement leaves events and syncing unchanged;
 the eye buttons control whether events are shown.
 
-Drag a calendar from the popup to the main list to keep it there. To move one
+Starting a drag from the popup exposes the main list beneath it. Drop the
+calendar into that list to keep it there. To move one
 to More calendars, drag it onto **…** or into the popup. The button is highlighted
 while dragging, and hovering over it opens the popup. Empty lists also accept
 drops. Escape or clicking outside closes the popup.

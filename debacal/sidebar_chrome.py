@@ -1,5 +1,5 @@
 """Source controls and agenda/search grouped independently of the calendar grid."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLayout, QLineEdit, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
@@ -22,10 +22,15 @@ def _section(name, margins, parent_layout, stretch=0):
     return widget, layout
 
 
+class _SectionHeading(ElidedLabel):
+    def minimumSizeHint(self):
+        return QSize(0, super().minimumSizeHint().height())
+
+
 def _section_heading(title):
-    label = ElidedLabel(title)
+    label = _SectionHeading(title)
     label.setObjectName('sidebarSectionHeading')
-    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
     return label
 
 
@@ -76,13 +81,15 @@ def build_sidebar(window, root):
     heading = QHBoxLayout()
     heading.setSpacing(4)
     label = _section_heading('Calendars')
-    heading.addWidget(label, 1)
+    window.calendar_heading = label
+    body = window.calendar_list = CalendarList()
+    heading.addWidget(label)
+    heading.addWidget(body.more_button)
+    heading.addStretch(1)
     window.icon_button('import', 'Import calendar file', window.import_ics, heading)
     window.icon_button('export', 'Export calendar file', window.export_ics, heading)
     window.icon_button('new', 'Add calendar', window.add_calendar, heading)
     calendars.addLayout(heading)
-    body = window.calendar_list = CalendarList()
-    heading.addWidget(body.more_button)
     window.calendar_box = body.box
     body.grouped_layout_changed.connect(window.reorder_calendar_groups)
     body.height_changed.connect(window.update_calendar_scroll)

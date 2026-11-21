@@ -178,14 +178,18 @@ def test_external_drag_never_reveals_empty_targets_or_changes_groups(desktop):
 
 
 def test_refresh_preserves_open_group_and_row_identity_without_repolishing_controls(desktop):
-    _, make = desktop
+    app, make = desktop
     listing = make([calendar('main'), calendar('rare', main=False)])
     listing.set_expanded(True)
+    app.processEvents()
     rows = listing.rows()
+    geometry = listing.popup.geometry()
     with patch.object(listing.box, 'insertWidget', wraps=listing.box.insertWidget) as insert, \
             patch.object(listing.more_button, 'setStyleSheet', wraps=listing.more_button.setStyleSheet) as polish:
         for _ in range(20):
             listing.set_rows(rows)
+            app.processEvents()
+            assert listing.popup.geometry() == geometry
         assert insert.call_count == polish.call_count == 0
     assert listing.more_expanded and listing.rows() == rows and listing.visible_row_count() == 1
     listing.set_rows([rows[0]])
@@ -193,10 +197,13 @@ def test_refresh_preserves_open_group_and_row_identity_without_repolishing_contr
     assert not listing.more_expanded and not listing.popup.isVisible()
 
 
-def test_popup_drag_keeps_original_pointer_offset_when_empty_main_target_appears(desktop, monkeypatch):
-    _, make = desktop
+@pytest.mark.parametrize('reopen_during_drag', [False, True])
+def test_popup_drag_keeps_original_pointer_offset_when_empty_main_target_appears(desktop, monkeypatch, reopen_during_drag):
+    app, make = desktop
     listing = make([calendar('one', main=False), calendar('two', main=False)])
     listing.set_expanded(True)
+    app.processEvents()
+    geometry = listing.popup.geometry()
     row = listing.rows()[0]
     hotspot = QPoint(12, 10)
     anchor = row.mapToGlobal(hotspot)
@@ -204,12 +211,49 @@ def test_popup_drag_keeps_original_pointer_offset_when_empty_main_target_appears
     observed = []
     def execute(drag, _allowed, _default):
         assert listing.main_drop_target.isVisible()
+        assert not listing.more_expanded and not listing.popup.isVisible()
+        assert row in listing.rows() and row.calendar.id == 'one'
+        assert drag.source() is row
         assert drag.hotSpot() == hotspot and drag.pixmap().size() == original_image
+        if reopen_during_drag:
+            request = Enter(row, listing.more_button.rect().center())
+            assert listing._accept_more_drag(request) and request.isAccepted()
+            listing._expand_during_drag()
+            app.processEvents()
+            assert listing.more_expanded and listing.popup.geometry() == geometry
+            assert row in listing.rows() and row.isVisible()
         observed.append(True)
         return Qt.DropAction.IgnoreAction
     monkeypatch.setattr(QDrag, 'exec', execute)
     listing.start_drag(row, anchor)
     assert observed == [True] and listing.main_drop_target.isHidden()
+    assert not listing.popup.isVisible() and not listing._dragging
+    listing.set_expanded(True)
+    assert listing.more_expanded and listing.popup.isVisible()
+    assert row in listing.rows() and row.isVisible()
+
+
+def test_open_popup_geometry_and_scroll_stay_fixed_through_membership_refreshes(desktop):
+    app, make = desktop
+    listing = make([calendar('main')] + [calendar(str(index), main=False) for index in range(30)])
+    listing.set_expanded(True)
+    app.processEvents()
+    scrollbar = listing.popup_scroll.verticalScrollBar()
+    assert scrollbar.maximum() > 0
+    scrollbar.setValue(min(100, scrollbar.maximum()))
+    geometry, position = listing.popup.geometry(), scrollbar.value()
+    for _ in range(12):
+        listing.set_rows(listing.rows())
+        app.processEvents()
+        assert listing.popup.geometry() == geometry and scrollbar.value() == position
+    assert listing.move_calendar('main', 0, in_main_list=False)
+    app.processEvents()
+    assert listing.popup.isVisible() and listing.popup.geometry() == geometry
+    assert scrollbar.value() == position
+    assert listing.move_calendar('29', 0, in_main_list=True)
+    app.processEvents()
+    assert listing.popup.isVisible() and listing.popup.geometry() == geometry
+    assert scrollbar.value() == position
 
 
 def test_current_occasional_calendar_stays_in_main_without_changing_saved_group(desktop):

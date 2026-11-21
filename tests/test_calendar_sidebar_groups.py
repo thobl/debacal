@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from debacal.calendar_widgets import at
 from debacal.calendar_sources import CalendarSourcesEditor
@@ -78,13 +78,28 @@ def test_many_popup_sources_never_resize_or_scroll_main_and_their_events_still_s
     assert window.calendar_section.height() == height
     assert window.calendar_list.content_height() == list_height
     assert all(row.isVisible() for row in rows.values())
-    screen = window.calendar_list.popup.screen().availableGeometry()
-    assert screen.contains(window.calendar_list.popup.frameGeometry())
-    QTest.mouseClick(rows['rare-0'].eye, Qt.MouseButton.LeftButton)
+    popup = window.calendar_list.popup
+    assert not popup.isWindow() and popup.window() is window
+    popup_bounds = QRect(popup.mapToGlobal(QPoint()), popup.size())
+    sidebar = window.sidebar_scroll.parentWidget()
+    assert QRect(sidebar.mapToGlobal(QPoint()), sidebar.size()).contains(popup_bounds)
+    scrollbar = window.calendar_list.popup_scroll.verticalScrollBar()
+    scrollbar.setValue(min(200, scrollbar.maximum()))
     settle(app)
-    assert not store.get_calendar('rare-0').visible
-    assert not store.get_calendar('rare-0').in_main_list
+    geometry, position = popup.geometry(), scrollbar.value()
+    for _ in range(6):
+        window.refresh_calendar_list(store.list_calendars())
+        settle(app)
+        assert popup.geometry() == geometry and scrollbar.value() == position
+    viewport = window.calendar_list.popup_scroll.viewport()
+    target = min(window.calendar_list.display_rows(False), key=lambda row:
+                 abs(row.mapTo(viewport, row.rect().center()).y() - viewport.height() / 2))
+    QTest.mouseClick(target.eye, Qt.MouseButton.LeftButton)
+    settle(app)
+    assert not store.get_calendar(target.calendar.id).visible
+    assert not store.get_calendar(target.calendar.id).in_main_list
     assert window.calendar_list.more_expanded
+    assert popup.geometry() == geometry and scrollbar.value() == position
     assert window.calendar_rows == rows
     QTest.mouseClick(window.calendar_list.more_button, Qt.MouseButton.LeftButton)
     settle(app)
@@ -133,6 +148,10 @@ def test_overflow_button_fits_sidebar_heading_at_supported_text_sizes(desktop, s
     assert button.isVisible() and not button.size().isEmpty()
     assert bounds(window.calendar_section).contains(bounds(button))
     assert bounds(window.sidebar_scroll.viewport()).contains(bounds(button))
+    heading = next(label for label in window.calendar_section.findChildren(QLabel)
+                   if label.objectName() == 'sidebarSectionHeading' and label.text() == 'Calendars')
+    gap = bounds(button).left() - bounds(heading).right() - 1
+    assert 0 <= gap <= round(8 * scale / 100)
 
 
 def test_moves_between_groups_persist_and_empty_main_list_can_be_refilled(desktop, tmp_path):
