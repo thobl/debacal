@@ -296,12 +296,72 @@ def normalize_alarm_context(event, values):
         values.pop('end_timezone_id', None)
 
 
-def _retained_alarms(event, raw, wanted, *, standalone_key=''):
+def _wire_alarm_context(props, component_key, inherited_zone=None):
+    """Read this VEVENT's alarm definitions and the bounds its wire can attest."""
     from . import alarm_fold_ics
+    from .ics_resources import _component_end, _decoded, _floating
+    from .timezones import timezone_identifier
+
+    alarms = read_alarms('\n'.join(props['_alarm_source']), component_key=component_key)
+    # Replay private groups using the wire's own instants and scheduling zone.
+    # A subsequent local edit may have changed either.
+    zone = inherited_zone or timezone.utc
+    start_key = 'DTSTART' if 'DTSTART' in props else 'RECURRENCE-ID'
+    try:
+        wire_start, = _decoded(props, start_key, zone)
+        if not isinstance(wire_start, datetime):
+            return alarms, None, None, None
+        if start_key == 'RECURRENCE-ID':
+            wire_start = wire_start.astimezone(zone)
+        if any(',' in value for _, value in props.get('DTEND', ())):
+            return alarms, None, None, None
+        wire_end, _ = _component_end(props, wire_start, False, zone)
+    except (ValueError, KeyError, OverflowError):
+        return alarms, None, None, None
+
+    start, end = wire_start, wire_end
+    if alarm_fold_ics.ORIGINAL in props and alarms:
+        start, end, _, alarms = alarm_fold_ics.restore_alarms(
+            props, component_key, wire_start, wire_end, timezone_identifier(wire_start.tzinfo), alarms)
+    primary = inherited_zone
+    if start_key == 'DTSTART':
+        primary = None if _floating(props) else start.tzinfo
+    explicit_end = 'DTEND' in props and not _floating(props, 'DTEND')
+    verified_start = start if start is not wire_start else None
+    verified_end = end if explicit_end or end is not wire_end else None
+    return alarms, primary, verified_start, verified_end
+
+
+def _recover_bound_fields(canonical, primary, start, end):
+    from .timezones import timezone_identifier
+    fields = {}
+    if canonical.all_day or canonical.floating_time:
+        return fields
+
+    def zone_key(zone):
+        identifier = timezone_identifier(zone)
+        if identifier in {'UTC', 'Etc/UTC'} and identifier not in canonical.timezone_definitions:
+            return timezone.utc
+        return identifier or zone
+
+    effective_primary = canonical.timezone_id or zone_key(canonical.start.tzinfo)
+    if effective_primary == timezone.utc and start is not None and start.timestamp() == canonical.start.timestamp():
+        fields.update(start=start, timezone_id=timezone_identifier(start.tzinfo))
+        effective_primary = zone_key(start.tzinfo)
+    # Without an independent END declaration the canonical primary owns both
+    # bounds. Only its original context can supply omitted END provenance.
+    compatible_primary = primary is not None and effective_primary == zone_key(primary)
+    if (not canonical.end_timezone_id and compatible_primary and end is not None
+            and end.timestamp() == canonical.end.timestamp()):
+        fields['end'] = end
+    return fields
+
+
+def _retained_alarms(event, raw, wanted, *, standalone_key=''):
     from .ics_resources import _blocks, _decoded, _key, _uid_of
     from .timezones import event_timezone
 
-    family = {}
+    components = {}
     zone = event_timezone(event)
     events = [lines for lines in _blocks(raw)[1] if lines[0] == 'BEGIN:VEVENT' and _uid_of(lines) == event.ical_uid]
     for lines in events:
@@ -310,39 +370,21 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
         key = standalone_key if len(events) == 1 else ''
         if 'RECURRENCE-ID' in props:
             key = _key(_decoded(props, 'RECURRENCE-ID', zone)[0], zone, event.floating_time)
-        if key in wanted:
-            component_key = event.ical_uid + '/' + key
-            alarms = read_alarms('\n'.join(lines), component_key=component_key)
-            restored_fields = {}
-            canonical = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
-            bounds = canonical
-            # Pre-alarm snapshots retained only the primary TZID. Recover an
-            # independently zoned DTEND only while it still describes this end.
-            if (not bounds.all_day and not bounds.floating_time and not bounds.end_timezone_id
-                    and len(props.get('DTEND', ())) == 1):
-                params, value = props['DTEND'][0]
-                if 'TZID' in params or value.upper().endswith('Z'):
-                    try:
-                        retained_end, = _decoded(props, 'DTEND', zone)
-                    except (ValueError, KeyError, OverflowError):
-                        retained_end = None
-                    if isinstance(retained_end, datetime) and retained_end.timestamp() == bounds.end.timestamp():
-                        bounds = replace(bounds, end=retained_end)
-                        restored_fields['end'] = bounds.end
-            if alarm_fold_ics.ORIGINAL in props and alarms:
-                props['_alarm_source'] = lines
-                start, end, identifier, restored = alarm_fold_ics.restore_alarms(
-                    props, component_key, bounds.start, bounds.end, bounds.timezone_id, alarms)
-                if restored is not alarms:
-                    alarms = restored
-                    # Verified private groups recover the nominal alarm.
-                    # Their original zones fill gaps in the stored bounds.
-                    if canonical.timezone_id:
-                        start, identifier = canonical.start, canonical.timezone_id
-                    if canonical.end_timezone_id:
-                        end = canonical.end
-                    restored_fields = dict(start=start, end=end, timezone_id=identifier)
-            family[key] = alarms, restored_fields
+        if key in wanted or not key:
+            props['_alarm_source'] = lines
+            components[key] = props
+
+    family = {}
+    master = components.pop('', None)
+    inherited_zone = None
+    if master is not None and ('' in wanted or any('DTSTART' not in props for props in components.values())):
+        alarms, inherited_zone, start, end = _wire_alarm_context(master, event.ical_uid + '/')
+        if '' in wanted:
+            family[''] = alarms, _recover_bound_fields(event, inherited_zone, start, end)
+    for key, props in components.items():
+        canonical = Event.from_dict(event.recurrence_overrides[key])
+        alarms, primary, start, end = _wire_alarm_context(props, event.ical_uid + '/' + key, inherited_zone)
+        family[key] = alarms, _recover_bound_fields(canonical, primary, start, end)
     return family
 
 

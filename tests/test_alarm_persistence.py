@@ -189,6 +189,8 @@ def test_legacy_end_zone_recovered_only_for_matching_canonical_endpoint():
     edited = replace(old, end=old.end + timedelta(hours=2))
     hydrated = hydrate_alarms(edited)
     assert hydrated.end == edited.end and not hydrated.end_timezone_id
+    ambiguous = replace(old, raw_ics=raw.replace('20261024T213000', '20261024T213000,20261024T223000'))
+    assert not hydrate_alarms(ambiguous).end_timezone_id
 
 
 def test_clipboard_allows_rekey_but_rejects_changed_alarm_metadata():
@@ -629,14 +631,21 @@ def test_matching_legacy_late_fold_bounds_share_recovered_zone_in_history_and_ou
             assert operation is None
             assert not store.history() and not store.pending_changes()
 
-def test_legacy_title_edit_preserves_declared_new_york_end_and_nominal_alarm(tmp_path):
+
+@pytest.mark.parametrize('shared', [False, True], ids=['independent', 'shared'])
+def test_legacy_title_edit_preserves_declared_new_york_end_and_nominal_alarm(tmp_path, shared):
     placeholder = legacy_late_fold_alarm_master()
-    original = replace(placeholder, end=placeholder.end.astimezone(ZoneInfo('America/New_York')))
+    ny = ZoneInfo('America/New_York')
+    original = replace(placeholder, end=placeholder.end.astimezone(ny))
+    if shared:
+        original = replace(original, start=original.start.astimezone(ny), timezone_id=ny.key)
+    expected_key = None if shared else ny.key
     with Store(tmp_path / 'db') as store:
         store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
         store.apply_remote([original])
-        assert store.get_event(original.id).end_timezone_id == 'America/New_York'
+        assert store.get_event(original.id).to_dict().get('end_timezone_id') == expected_key
         hydrated, = store.get_events_with_alarms([original.id])
+        assert store.apply('Save', [original]) is None
         op = store.apply('Edit title', [replace(original, title='Edited title')])
         change, = store.pending_changes()
         before, after = store.connection.execute(
@@ -652,9 +661,49 @@ def test_legacy_title_edit_preserves_declared_new_york_end_and_nominal_alarm(tmp
             return (payload.get('end_timezone_id'), payload['end'], alarm.trigger,
                     alarm_trigger(alarm, event.start, event.end))
 
-        expected = ('America/New_York', '2026-10-24T21:45:00-04:00', '-P1D',
+        expected = (expected_key, '2026-10-24T21:45:00-04:00', '-P1D',
                     datetime(2026, 10, 24, 1, 45, tzinfo=UTC))
         assert {stage: end_reminder(payload) for stage, payload in snapshots.items()} == dict.fromkeys(snapshots, expected)
+
+
+@pytest.mark.parametrize('identifier, fire_hour', [('Europe/Vienna', 3), ('UTC', 4)])
+def test_legacy_shared_primary_edit_supersedes_formerly_independent_wire_end(identifier, fire_hour):
+    original = phoenix_legacy_family(detached=False)
+    zone = ZoneInfo(identifier)
+    edited = replace(original, timezone_id=identifier, start=original.start.astimezone(zone),
+                     end=original.end.astimezone(zone))
+    recovered = hydrate_alarms(edited)
+    alarm, = recovered.alarms
+    assert (recovered.end_timezone_id, alarm.trigger, alarm_trigger(alarm, recovered.start, recovered.end)) == (
+        '', '-P1D', datetime(2026, 10, 24, fire_hour, 30, tzinfo=UTC))
+
+
+@pytest.mark.parametrize('primary, expected_end', [('Europe/Berlin', 'America/Phoenix'), ('Europe/Vienna', '')])
+def test_detached_legacy_end_uses_the_retained_masters_inherited_primary(primary, expected_end):
+    raw = phoenix_legacy_family(True).raw_ics.replace('DTSTART;TZID=Europe/Berlin:20261025T020000\r\n', '')
+    raw = raw.replace('RECURRENCE-ID;TZID=Europe/Berlin:20261025T020000', 'RECURRENCE-ID:20261025T000000Z')
+    family = legacy(parse_ics(raw, 'c')[0])
+    zone = ZoneInfo(primary)
+    key, = family.recurrence_overrides
+    child = Event.from_dict(family.recurrence_overrides[key])
+    child = replace(child, start=child.start.astimezone(zone), end=child.end.astimezone(zone), timezone_id=primary)
+    family = replace(family, start=family.start.astimezone(zone), end=family.end.astimezone(zone),
+                     timezone_id=primary, recurrence_overrides={key: child.to_dict()})
+    recovered = Event.from_dict(hydrate_alarms(family).recurrence_overrides[key])
+    assert recovered.end_timezone_id == expected_end
+
+
+def test_legacy_alarm_definition_is_verified_against_its_own_wire_end():
+    original = legacy_late_fold_alarm_master()
+    later = original.end + timedelta(minutes=10)
+    for event, expected_trigger, expected_end in (
+        (replace(original, end=later), '-P1D', later),
+        (replace(original, raw_ics=original.raw_ics.replace('DTEND:20261025T014500Z', 'DTEND:20261025T015500Z')),
+         '-PT90000S', original.end),
+    ):
+        hydrated = hydrate_alarms(event)
+        alarm, = (a for a in hydrated.alarms if a.related == 'END')
+        assert (alarm.trigger, hydrated.end.isoformat()) == (expected_trigger, expected_end.isoformat())
 
 
 @pytest.mark.parametrize('identifier, independent', [('Europe/Berlin', ''), ('Europe/Vienna', 'Europe/Vienna')])
