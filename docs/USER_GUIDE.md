@@ -142,7 +142,7 @@ Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
 Calendars start in the main list. Uncheck **Keep in main list** when adding one,
 or in Preferences → Calendar sources, to place it under **More calendars**.
-This section starts collapsed; click it to expand or collapse its calendars.
+This section starts collapsed, with a compact **N more** control to expand it.
 Folding the list leaves events and syncing unchanged; the eye buttons still
 control whether events are shown. Drag calendars between the two sections to
 change their placement. Empty sections offer a drop target while dragging, and

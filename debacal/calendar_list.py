@@ -211,18 +211,28 @@ class CalendarList(QWidget):
         preferences = first.preferences if first is not None else None
         scale = getattr(preferences, 'font_scale', 100) / 100
         scheme = scheme_for(preferences)
-        key = len(more), self.more_expanded, scale, scheme
+        compact = not self.more_expanded and not self._dragging
+        key = len(more), self.more_expanded, compact, bool(main), scale, scheme
         if key != self._group_key:
             self._group_key = key
-            self.more_button.setText(('▾ ' if self.more_expanded else '▸ ') + f'More calendars ({len(more)})')
+            noun = 'calendar' if len(more) == 1 else 'calendars'
+            description = f'{len(more)} additional {noun}'
+            if compact:
+                label = f'{len(more)} more' if main else f'{len(more)} {noun}'
+            else:
+                label = f'More calendars ({len(more)})'
+            self.more_button.setText(('▾ ' if self.more_expanded else '▸ ') + label)
             self.more_button.setChecked(self.more_expanded)
             self.more_button.setAccessibleName('More calendars')
-            self.more_button.setToolTip('Collapse More calendars' if self.more_expanded else 'Expand More calendars')
-            self.more_button.setMinimumHeight(round(28 * scale))
+            self.more_button.setAccessibleDescription(description)
+            self.more_button.setToolTip('Collapse More calendars' if self.more_expanded else 'Show ' + description)
+            self.more_button.setMinimumHeight(round((18 if compact else 28) * scale))
+            hover = f'color: {scheme.ink};' if compact else f'background: {scheme.hover};'
             self.more_button.setStyleSheet(
                 f'QPushButton#calendarMore {{ text-align: left; background: transparent; border: 0; '
-                f'padding: 4px 0; color: {scheme.muted}; }} '
-                f'QPushButton#calendarMore:hover {{ background: {scheme.hover}; }} '
+                f'padding: {0 if compact else 4}px 0; color: {scheme.muted}; '
+                f'font-size: {round((11 if compact else 13) * scale)}px; }} '
+                f'QPushButton#calendarMore:hover {{ {hover} }} '
                 f'QPushButton#calendarMore[keyboardFocus="true"]:focus {{ border: 1px solid {scheme.focus}; }}')
             self.main_drop_target.setMinimumHeight(round(28 * scale))
             self.main_drop_target.setStyleSheet(
