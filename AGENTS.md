@@ -7,6 +7,9 @@
   push. No remote is configured for this workspace.
 - Do not commit credentials, local planning notes, personal calendar exports,
   SQLite databases, sync mirrors, virtual environments, or editor backups.
+- Keep user-facing examples, mockups, and previews in the working directory,
+  preferably under `design/`, rather than `/tmp`. Render scripts should write
+  beside their source files so the examples remain available for review.
 
 ## Git commands in this environment
 
