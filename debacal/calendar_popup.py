@@ -94,7 +94,7 @@ class CalendarPopup(QFrame):
         self.body = CalendarDropSurface(controller, in_main_list=False)
         self.scroll.setWidget(self.body)
         self.outer.addWidget(self.scroll)
-        self.empty = QLabel('No additional calendars', self.body)
+        self.empty = QLabel('No other calendars', self.body)
         self.empty.setObjectName('calendarPopupEmpty')
         self.empty.setWordWrap(True)
         self.empty.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

@@ -137,7 +137,7 @@ def test_presentation_changes_update_colors_scale_corners_and_readonly_state(des
     assert not widget.choice.font().underline()
     assert not widget.lock.isHidden()
     assert widget.eye.isEnabled() and not widget.eye.isChecked()
-    assert widget.eye.toolTip() == 'Show Changed source'
+    assert widget.eye.toolTip() == 'Show events from Changed source'
     assert 'read only' in widget.choice.accessibleName()
 
 

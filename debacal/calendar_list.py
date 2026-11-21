@@ -115,7 +115,7 @@ class CalendarRow(QWidget):
         self.eye.setChecked(calendar.visible)
         self.eye.setIcon(icon('eye' if calendar.visible else 'eye_off', scheme.muted))
         self.eye.setIconSize(QSize(round(18 * factor), round(18 * factor)))
-        title = ('Hide ' if calendar.visible else 'Show ') + calendar.name
+        title = ('Hide events from ' if calendar.visible else 'Show events from ') + calendar.name
         self.eye.setToolTip(title)
         self.eye.setAccessibleName(title)
         self.eye.setFixedSize(round(28 * scale / 100), round(28 * scale / 100))
@@ -146,6 +146,7 @@ class CalendarList(QWidget):
         self.box.setSpacing(4)
         self._rows = []
         self._dragging = False
+        self._drag_selected = False
         self._height = None
         self._presentation_key = None
         self.more_button = MoreButton(self)
@@ -161,7 +162,7 @@ class CalendarList(QWidget):
         self.popup_scroll = self.popup.scroll
         self._popup_session = False
         self._outside_popup_since = None
-        self.main_drop_target = QLabel('Keep in main list', self)
+        self.main_drop_target = QLabel('Drop to keep in the main list', self)
         self.main_drop_target.setObjectName('calendarMainDropTarget')
         self.main_drop_target.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.main_drop_target.hide()
@@ -234,8 +235,10 @@ class CalendarList(QWidget):
                     box.removeWidget(widget)
         self.main_drop_target.setVisible(empty_main)
         self.popup.empty.setVisible(not more)
-        self.popup.empty.setText('Drop here for More calendars' if self._dragging else
-                                'The selected calendar is shown in the main list.')
+        drop_hint = ('Drop to hide from the main list when not selected' if self._drag_selected else
+                     'Drop to hide from the main list')
+        self.popup.empty.setText(drop_hint if self._dragging else
+                                'The selected calendar stays in the main list.')
         self._place(self.box, desired_main)
         self._place(self.popup_list.box, desired_more)
         has_more = bool(self.group_rows(False))
@@ -264,10 +267,14 @@ class CalendarList(QWidget):
                 f'QLabel#calendarMainDropTarget {{ color: {scheme.muted}; border: 1px dashed {scheme.control_edge}; padding: 4px; }}')
             for indicator in (self._indicator, self._popup_indicator):
                 indicator.setStyleSheet('QWidget#calendarDropIndicator { background: ' + scheme.accent + '; border: 0; }')
-        count = len(self.group_rows(False))
+        count = len(more)
+        noun = 'calendar' if count == 1 else 'calendars'
+        placement_hint = (drop_hint if self._dragging else
+                          'Drag a calendar here to hide it from the main list.\n'
+                          'The selected calendar stays in the main list until you choose another.')
         self.more_button.setToolTip('More calendars' + (f' ({count})' if count else '') +
-                                    '. Drag calendars here to keep them outside the main list.')
-        self.more_button.setAccessibleDescription(f'{count} additional calendars. Also accepts dragged calendars.')
+                                    '\n' + placement_hint)
+        self.more_button.setAccessibleDescription(f'{count} {noun} in this menu. ' + placement_hint.replace('\n', ' '))
         self.box.activate()
         self.popup_list.box.activate()
         self.updateGeometry()
@@ -341,9 +348,11 @@ class CalendarList(QWidget):
         return max(1, sum(max(widget.minimumHeight(), widget.sizeHint().height()) for widget in widgets)
                    + max(0, len(widgets) - 1) * self.box.spacing())
 
-    def _begin_drag(self):
-        if not self._dragging:
+    def _begin_drag(self, source=None):
+        selected = bool(source and source.choice.isChecked())
+        if not self._dragging or selected != self._drag_selected:
             self._dragging = True
+            self._drag_selected = selected
             self.set_rows(self.rows())
             parent = self.more_button.parentWidget()
             if parent is not None and parent.layout() is not None:
@@ -380,7 +389,7 @@ class CalendarList(QWidget):
             return
         pixmap, hotspot = row.grab(), row.mapFromGlobal(anchor)
         popup_origin = self.popup.isAncestorOf(row)
-        self._begin_drag()
+        self._begin_drag(row)
         drag = QDrag(row)
         mime = QMimeData()
         mime.setData(CALENDAR_ORDER_MIME, row.calendar.id.encode('utf-8'))
@@ -457,6 +466,7 @@ class CalendarList(QWidget):
         QToolTip.hideText()
         if self._dragging:
             self._dragging = False
+            self._drag_selected = False
             self.set_rows(self.rows())
         self.set_expanded(False)
 
@@ -464,7 +474,7 @@ class CalendarList(QWidget):
         if not self._valid_drag(event):
             return False
         surface = surface or self
-        self._begin_drag()
+        self._begin_drag(event.source())
         if surface is self:
             self._hide_popup_for_drag()
         self._expand_timer.stop()
@@ -479,7 +489,7 @@ class CalendarList(QWidget):
     def _accept_more_drag(self, event):
         if not self._valid_drag(event):
             return False
-        self._begin_drag()
+        self._begin_drag(event.source())
         self._drop_group, self._drop_slot = False, len(self.group_rows(True))
         self._indicator.hide()
         self._popup_indicator.hide()
