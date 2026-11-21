@@ -104,6 +104,13 @@ def end_for(event, start: datetime) -> datetime:
     return add_elapsed(start, elapsed_duration(event.start, event.end))
 
 
+def occurrence_end_zone(master, end: datetime) -> datetime:
+    """An explicit timed DTEND owns its zone; DURATION derives its end from DTSTART."""
+    if not master.duration_spec and master.end_timezone_id:
+        return end.astimezone(master.end.tzinfo)
+    return end
+
+
 def same_duration(first, second) -> bool:
     if first.all_day != second.all_day:
         return False

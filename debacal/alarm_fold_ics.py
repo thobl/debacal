@@ -41,12 +41,25 @@ def _utc_bounds(lines):
     return result
 
 
-def _needs_projection(alarm, utc_bounds):
+def _duration_anchor(lines):
+    """Stamp the actual DTSTART/DURATION pair that supplies an implicit end."""
+    props = [part[0] for part in direct_parts(lines) if len(part) == 1
+             and part[0].split(':', 1)[0].split(';', 1)[0].upper() in {'DTSTART', 'DTEND', 'DURATION'}]
+    if len(props) == 2 and any(line.upper().startswith('DURATION:') for line in props):
+        return sha256('\n'.join(sorted(props)).encode()).hexdigest()
+    return ''
+
+
+def needs_projection(alarm, utc_bounds):
     if alarm.issue or alarm.related not in utc_bounds or not alarm.trigger:
         return False
     if not alarm.trigger.upper().startswith(('P', '+P', '-P')):
         return False
-    return any('D' in spec.upper() or 'W' in spec.upper() for spec in (alarm.trigger, alarm.repeat_interval or ''))
+    specs = (alarm.trigger, alarm.repeat_interval if alarm.repeat else None)
+    try:
+        return any(signed_duration(spec)[0] for spec in specs if spec and ('D' in spec.upper() or 'W' in spec.upper()))
+    except ValueError:
+        return False  # Raw malformed alarm data remains authoritative.
 
 
 def _elapsed(seconds):
@@ -98,7 +111,10 @@ def project_alarms(event, lines, component_key):
     if not (event.timezone_id or event.end_timezone_id) or event.floating_time or event.all_day or alarms is None or not len(alarms):
         return alarms, []
     bounds = _utc_bounds(lines)
-    if not any(_needs_projection(alarm, bounds) for alarm in alarms):
+    duration_anchor = _duration_anchor(lines) if not event.recurring and event.end_timezone_id else ''
+    if duration_anchor:
+        bounds.add('END')
+    if not any(needs_projection(alarm, bounds) for alarm in alarms):
         return alarms, []
     zone = event_timezone(event)
     start = event.start.astimezone(zone)
@@ -111,13 +127,22 @@ def project_alarms(event, lines, component_key):
         if alarm.related == 'END' and event.end_timezone_id:
             identifier = event.end_timezone_id
         is_utc = identifier in {'UTC', 'Etc/UTC'} and identifier not in event.timezone_definitions
-        if not identifier or is_utc or not _needs_projection(alarm, bounds):
+        implicit = alarm.related == 'END' and duration_anchor
+        if not identifier or is_utc and not implicit or not needs_projection(alarm, bounds):
             wire.append(alarm)
             continue
+        if alarm.related == 'END' and event.recurrence_rule and event.end_timezone_id:
+            # A rule with a separately zoned, repeated-hour end needs exact UTC
+            # instants, but a single elapsed offset cannot describe its local
+            # day arithmetic across the series. Preserve the canonical event.
+            raise ValueError(f'Cannot export event {event.ical_uid!r}: its recurring END reminder uses an '
+                             'independently zoned repeated-hour end. Use an elapsed-hour reminder '
+                             '(such as -PT24H) or adjust the endpoint.')
         if alarm.related not in anchored:
             bound = end if alarm.related == 'END' else start
             stamp = bound.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            annotations.append(f'{ANCHOR};RELATED={alarm.related};X-UTC={stamp};VALUE=DATE-TIME;'
+            source = f';X-DURATION={duration_anchor}' if implicit else ''
+            annotations.append(f'{ANCHOR};RELATED={alarm.related};X-UTC={stamp}{source};VALUE=DATE-TIME;'
                                f'TZID={ics.parameter(identifier)}:{bound:%Y%m%dT%H%M%S}')
             anchored.add(alarm.related)
         identity = (alarm.uid,) if alarm.uid else (alarm.action, alarm.related, _trigger_identity(alarm.trigger))
@@ -146,7 +171,14 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
     counts = Counter(params.get('RELATED', 'START') for params, _wall in anchors)
     for params, wall in anchors:
         role = params.get('RELATED', 'START')
-        if role not in utc_bounds or counts[role] != 1 or params.get('VALUE', 'DATE-TIME') != 'DATE-TIME':
+        if 'X-DURATION' in params:
+            if (role != 'END' or not params['X-DURATION']
+                    or params['X-DURATION'] != _duration_anchor(component['_alarm_source'])
+                    or any(name in component for name in ('RRULE', 'RDATE', 'EXDATE'))):
+                continue
+        elif role not in utc_bounds:
+            continue
+        if counts[role] != 1 or params.get('VALUE', 'DATE-TIME') != 'DATE-TIME':
             continue
         bound = end if role == 'END' else start
         try:
@@ -176,7 +208,7 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
             if not lines or lines[0] != 'BEGIN:VALARM' or lines[-1] != 'END:VALARM':
                 continue
             original, = read_alarms('\n'.join(['BEGIN:VEVENT', *lines, 'END:VEVENT']), component_key=component_key)
-            if not _needs_projection(original, contexts):
+            if not needs_projection(original, contexts):
                 continue
             budget = _remaining_budget(original, budget)
             local, _identifier = contexts[original.related]
@@ -198,7 +230,7 @@ def restore_alarms(component, component_key, start, end, timezone_id, alarms):
     # Rebinding an endpoint is justified only by an intact group on that
     # endpoint. A new nominal alarm using the same UTC bound needs UTC.
     blocked = {alarm.related for index, alarm in enumerate(alarms)
-               if index not in claimed and _needs_projection(alarm, contexts)}
+               if index not in claimed and needs_projection(alarm, contexts)}
     replacements, owned = {}, set()
     for original, members in restored_groups:
         if original.related not in blocked:

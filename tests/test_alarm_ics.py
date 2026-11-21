@@ -402,3 +402,123 @@ def test_changed_named_start_zone_leaves_verified_end_group_intact():
     assert [alarm.trigger for alarm in restored.alarms] == ['-P1D', '-P1D']
     assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
     assert alarm_trigger(restored.alarms[1], restored.start, restored.end) == datetime(2026, 10, 23, 23, 30, tzinfo=timezone.utc)
+
+
+def exact_date_family():
+    zone = ZoneInfo('Europe/Berlin')
+    alarms = read_alarms(component(
+        block('ACTION:DISPLAY', 'UID:nominal', 'TRIGGER:-P1D', 'DESCRIPTION:Nominal'),
+        block('ACTION:DISPLAY', 'UID:linked', 'TRIGGER:-PT5M', 'DESCRIPTION:Linked',
+              'RELATED-TO;RELTYPE=SNOOZE:nominal', 'X-COLOR:BLUE'),
+        block('ACTION:DISPLAY', 'UID:absolute', 'TRIGGER;VALUE=DATE-TIME:20261020T090000Z', 'DESCRIPTION:Once')
+    ), component_key='e/')
+    return alarm_event(start=datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1),
+                       end=datetime(2026, 10, 25, 3, 30, tzinfo=timezone.utc), timezone_id=zone.key,
+                       recurrence_dates=('2026-10-25T00:30:00+00:00', '2026-10-27T01:30:00+00:00'), alarms=alarms)
+
+
+@pytest.mark.parametrize('full', [True, False])
+def test_exact_date_alarm_exception_preserves_uid_ownership_and_external_edits(full):
+    from debacal.ics_fallback import folded, unfolded
+    from debacal.ics_resources import _blocks
+    from debacal.recurrence import expand_event, recurrence_key
+
+    event = exact_date_family()
+    wire = export_ics([event])
+    header, blocks = _blocks(wire)
+    master, child = [b for b in blocks if b[0] == 'BEGIN:VEVENT']
+    assert 'DTSTART:20261025T013000Z' in master
+    original = read_alarms('\n'.join(master), component_key='e/')
+    relative = read_alarms('\n'.join(child), component_key='e/child')
+    assert [a.uid for a in original] == ['nominal', 'linked', 'absolute']
+    assert [a.description for a in relative] == ['Nominal', 'Linked']
+    assert not {a.uid for a in relative} & {a.uid for a in original}
+    assert f'RELATED-TO;RELTYPE=SNOOZE:{relative[0].uid}' in unfolded(relative[1].raw_ics)
+    assert 'X-COLOR:BLUE' in relative[1].raw_ics
+
+    def decode(parts):
+        data = folded(['BEGIN:VCALENDAR', *header, *(line for b in parts for line in b), 'END:VCALENDAR'])
+        result = parse_report(data, 'c', use_full=full)
+        assert not result.rejected
+        return result.events[0]
+
+    intact = decode(blocks)
+    assert intact.start.fold == 1 and intact.timezone_id == event.timezone_id
+    assert not intact.recurrence_overrides
+    assert alarm_semantic(intact.alarms) == alarm_semantic(event.alarms)
+    _, again = _blocks(export_ics([intact]))
+    repeated = next(b for b in again if 'RECURRENCE-ID:20261025T013000Z' in b)
+    assert [a.uid for a in read_alarms('\n'.join(repeated), component_key='ignored')] == [a.uid for a in relative]
+
+    key = recurrence_key(event.start)
+    for change in (unfolded(write_alarms('\n'.join(child), ())), [*child[:-1], 'X-PHONE:keep', child[-1]]):
+        edited = decode([change if b is child else b for b in blocks])
+        assert key in edited.recurrence_overrides
+        if 'X-PHONE:keep' in change:
+            assert b'X-PHONE:keep' in export_ics([edited])
+        else:
+            assert Event.from_dict(edited.recurrence_overrides[key]).alarms == ()
+
+    removed = decode([b for b in blocks if b is not child])
+    assert not removed.recurrence_overrides
+    values = expand_event(removed, datetime(2026, 10, 24, tzinfo=timezone.utc),
+                          datetime(2026, 10, 28, tzinfo=timezone.utc))
+    assert [alarm_trigger(v.alarms[0], v.start, v.end) for v in values] == [
+        datetime(2026, 10, day, hour, 30, tzinfo=timezone.utc) for day, hour in [(24, 0), (24, 1), (26, 1)]]
+
+
+def test_finite_exact_dates_share_one_nominal_evaluation_budget(monkeypatch):
+    from debacal import alarm_rdate_ics
+    event = exact_date_family()
+    monkeypatch.setattr(alarm_rdate_ics, 'MAX_GENERATED_RANGES', 2)
+    with pytest.raises(ValueError, match='2 nominal evaluations'):
+        export_ics([event])
+
+
+@pytest.mark.parametrize('full', [True, False])
+def test_standalone_duration_end_annotation_requires_unchanged_standard_wire(full):
+    from debacal.ics_fallback import folded, unfolded
+    zone = ZoneInfo('Europe/Berlin')
+    mixed = alarm_event(start=datetime(2026, 10, 24, 9, tzinfo=zone), timezone_id=zone.key,
+                        end=datetime(2026, 10, 25, 8, tzinfo=timezone.utc), duration_spec='P1D',
+                        alarms=(Alarm('end', 'DISPLAY', '-P1D', related='END', description='End'),))
+    raw = export_ics([mixed])
+    assert b'DURATION:P1D' in raw
+    restored, = parse_report(raw, 'c', use_full=full).events
+    assert (restored.duration_spec, restored.end_timezone_id, restored.alarms[0].trigger) == ('P1D', 'UTC', '-P1D')
+    # Replacing DURATION with the exact same instant in a named zone changes the
+    # owner of END arithmetic. Only the elapsed standard alarm remains valid.
+    edited = folded('DTEND;TZID=Europe/Berlin:20261025T090000' if line == 'DURATION:P1D' else line
+                    for line in unfolded(raw))
+    changed, = parse_report(edited, 'c', use_full=full).events
+    assert changed.duration_spec == '' and changed.end_timezone_id == ''
+    assert changed.alarms[0].trigger == '-PT86400S'
+
+
+def test_duplicate_detached_identity_cannot_discard_phone_edit_as_generated():
+    from debacal.ics_fallback import folded, unfolded
+    from debacal.ics_resources import _blocks
+    from debacal.recurrence import recurrence_key
+    event = exact_date_family()
+    header, blocks = _blocks(export_ics([event]))
+    child = next(b for b in blocks if 'RECURRENCE-ID:20261025T013000Z' in b)
+    edited = unfolded(write_alarms('\n'.join(child), ()))
+    data = folded(['BEGIN:VCALENDAR', *header, *(line for b in blocks for line in b), *edited, 'END:VCALENDAR'])
+    stored, = parse_ics(data, 'c')
+    assert Event.from_dict(stored.recurrence_overrides[recurrence_key(event.start)]).alarms == ()
+
+
+def test_exact_date_generated_child_gives_uidless_relative_siblings_stable_distinct_uids():
+    from debacal.ics_resources import _blocks
+    event = exact_date_family()
+    relative = Alarm('editor', 'DISPLAY', '-PT5M', description='Check')
+    event = replace(event, alarms=(event.alarms[0], relative, replace(relative, key='another')))
+    def child_ids(data):
+        child = next(b for b in _blocks(data)[1] if 'RECURRENCE-ID:20261025T013000Z' in b)
+        return [a.uid for a in read_alarms('\n'.join(child), component_key='e/child')]
+    wire = export_ics([event])
+    uids = child_ids(wire)
+    assert all(uids) and len(set(uids)) == 3
+    restored, = parse_ics(wire, 'c')
+    assert not restored.recurrence_overrides
+    assert child_ids(export_ics([restored])) == uids

@@ -13,7 +13,7 @@ from math import gcd
 
 from dateutil.rrule import DAILY, HOURLY, MINUTELY, MONTHLY, WEEKLY, YEARLY, _iterinfo, weekday
 
-from .event_duration import add_elapsed, elapsed_duration, parse_duration_spec
+from .event_duration import add_elapsed, elapsed_duration, occurrence_end_zone, parse_duration_spec
 from .models import Event, copy_event
 from .recurrence import (
     RecurrenceRangeError, _floating_master, _recurrence_set,
@@ -653,7 +653,7 @@ class PreparedSeries:
                 if end.timestamp() > boundary.timestamp():
                     end = boundary
                     duration_spec = ''
-        return end, duration_spec
+        return occurrence_end_zone(self.master, end), duration_spec
 
     def _project_values(self, start, key, end, duration_spec):
         # The master and projected range have already been validated/prepared.

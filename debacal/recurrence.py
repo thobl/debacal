@@ -17,7 +17,7 @@ import re
 from dateutil.rrule import rruleset, rrulestr
 
 from .models import Event
-from .event_duration import add_elapsed, elapsed_duration, end_for, parse_duration_spec, same_duration
+from .event_duration import add_elapsed, elapsed_duration, end_for, occurrence_end_zone, parse_duration_spec, same_duration
 from .schedule_replacement import ScheduleReplacement
 from .recurrence_budget import BoundedRule
 from .timezones import event_timezone
@@ -1115,7 +1115,7 @@ def occurrence(master: Event, start: datetime, key: str | None = None) -> Event:
     # occurrences inherit the symbolic calendar-boundary Cut policy.
     end = (uncut_occurrence_end(master, start) if key in master.recurrence_dates
            else occurrence_end(master, start))
-    return replace(master, end=end, **values)
+    return replace(master, end=occurrence_end_zone(master, end), **values)
 
 
 def range_overlaps(event_start: datetime, event_end: datetime, start: datetime, end: datetime,
