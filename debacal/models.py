@@ -66,6 +66,7 @@ class Calendar:
     enabled: bool = True
     server_name: str = ""
     name_alias: str = ""
+    in_main_list: bool = True
 
     def __post_init__(self) -> None:
         if not self.id or not self.name.strip():
@@ -74,6 +75,8 @@ class Calendar:
             raise ValueError(f"Unknown calendar type: {self.kind}")
         if type(self.enabled) is not bool:
             raise ValueError("A calendar's enabled state must be true or false.")
+        if type(self.in_main_list) is not bool:
+            raise ValueError("A calendar's main-list setting must be true or false.")
         if not isinstance(self.server_name, str) or not isinstance(self.name_alias, str):
             raise ValueError("Calendar source names and aliases must be text.")
         if self.server_color and self.use_server_color:

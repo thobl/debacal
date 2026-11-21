@@ -7,6 +7,7 @@ from queue import SimpleQueue, Empty
 from collections import deque, OrderedDict
 import calendar as monthlib
 import math
+import sqlite3
 
 from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QCursor, QShortcut
@@ -450,6 +451,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def reorder_calendars(self, calendar_ids):
         self.store.set_calendar_order(calendar_ids)
+        self.refresh_calendar_list(self.store.list_calendars())
+
+    def reorder_calendar_groups(self, calendar_ids, main_ids):
+        try:
+            self.store.set_calendar_layout(calendar_ids, main_ids)
+        except (ValueError, sqlite3.Error) as error:
+            self.report_error(str(error), title='Calendar list could not be saved')
         self.refresh_calendar_list(self.store.list_calendars())
 
     def calendar_menu(self, calendar_id, point):
@@ -1546,6 +1554,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         dialog = CalendarDialog(calendar, self, allow_remote=not self.demo_mode,
             credentials=self.credentials)
+        original_calendar = calendar
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 calendars = tuple(dialog.result_calendars)
@@ -1563,9 +1572,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                             calendar = replace(calendar, id=existing.id, visible=existing.visible,
                                 enabled=True, name_alias=existing.name_alias,
                                 name=existing.name if existing.name_alias else calendar.name,
-                                use_server_color=existing.use_server_color, color=existing.color)
+                                use_server_color=existing.use_server_color, color=existing.color,
+                                in_main_list=existing.in_main_list)
                         writer.save_calendar(calendar)
-                        saved.append(calendar)
+                        if (original_calendar is not None and original_calendar.id == calendar.id
+                                and original_calendar.in_main_list != calendar.in_main_list):
+                            writer.set_calendar_in_main_list(calendar.id, calendar.in_main_list)
+                        saved.append(writer.get_calendar(calendar.id))
                     return tuple(saved)
                 def saved(calendars):
                     credential_save = None

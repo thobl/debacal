@@ -216,7 +216,7 @@ class WorkspaceChrome:
             row = self.calendar_rows.pop(calendar_id)
             self.calendar_box.removeWidget(row)
             row.deleteLater()
-        for index, calendar in enumerate(calendars):
+        for calendar in calendars:
             row = self.calendar_rows.get(calendar.id)
             if row is None:
                 row = CalendarRow(calendar)
@@ -226,18 +226,19 @@ class WorkspaceChrome:
                 self.creation_button_group.addButton(row.choice)
                 self.calendar_rows[calendar.id] = row
                 self.calendar_list.attach_row(row)
-            # Borrowing QWidgetItem wrappers before Qt moves/removes their
-            # widgets can leave stale binding entries on affected PySide builds.
-            if self.calendar_box.indexOf(row) != index:
-                self.calendar_box.insertWidget(index, row)
             if row.preferences != self.preferences:
                 row.set_preferences(self.preferences)
             row.set_calendar(calendar, current=bool(default and default.id == calendar.id),
                               scale=self.preferences.font_scale)
+        self.calendar_list.set_rows([self.calendar_rows[calendar.id] for calendar in calendars])
+        WorkspaceChrome.update_calendar_scroll(self)
+
+    def update_calendar_scroll(self):
+        """Size the source list from its expanded rows, retaining scroll fallback."""
         row_height = max((row.sizeHint().height() for row in self.calendar_rows.values()), default=28)
         gap = self.calendar_box.spacing()
-        full_height = max(1, len(calendars)) * row_height + max(0, len(calendars) - 1) * gap
-        self.calendar_scroll.setMinimumHeight(full_height if len(calendars) <= 6 else 3 * (row_height + gap))
+        full_height = max(1, self.calendar_list.content_height())
+        self.calendar_scroll.setMinimumHeight(full_height if self.calendar_list.visible_row_count() <= 6 else 3 * (row_height + gap))
         self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + gap)))
 
     def update_command_tooltips(self):

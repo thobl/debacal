@@ -152,6 +152,11 @@ class CalendarSourcesEditor(QWidget):
         colors.addWidget(self.server_color_button)
         colors.addStretch()
         form.addRow('Color', colors)
+        self.in_main_list = QCheckBox('Keep in main list')
+        self.in_main_list.setToolTip('When unchecked, this calendar appears under More calendars in the sidebar. '
+                                    'Event display and syncing are unchanged.')
+        self.in_main_list.toggled.connect(self._main_list_changed)
+        form.addRow('', self.in_main_list)
         self.address_label = QLabel('Address')
         form.addRow(self.address_label, self.source_url)
         form.addRow('Access', self.calendar_access)
@@ -274,6 +279,7 @@ class CalendarSourcesEditor(QWidget):
             self.alias.setAccessibleName('Calendar name in Debacal' if calendar and calendar.kind == 'caldav' else 'Calendar name')
             self.alias.setText(calendar.name_alias if calendar and calendar.kind == 'caldav' else calendar.name if calendar else '')
             self.alias.setPlaceholderText((calendar.server_name or calendar.name) if calendar else '')
+            self.in_main_list.setChecked(calendar.in_main_list if calendar else True)
             self.server_name.setText((calendar.server_name or calendar.name) if calendar and calendar.kind == 'caldav' else '')
             self.source_url.setText(calendar.url if calendar else '')
             self.address_label.setText('Subscription' if calendar and calendar.kind == 'ics' else 'Calendar address')
@@ -341,6 +347,10 @@ class CalendarSourcesEditor(QWidget):
             updated = replace(calendar, name=alias)
         self._drafts[calendar.id] = updated
         self._items[calendar.id].setText(0, updated.name)
+
+    def _main_list_changed(self, checked):
+        if not self._loading and self._selected in self._drafts:
+            self._drafts[self._selected] = replace(self._drafts[self._selected], in_main_list=checked)
 
     def choose_color(self):
         calendar = self._drafts.get(self._selected)

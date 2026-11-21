@@ -82,7 +82,8 @@ def build_sidebar(window, root):
     calendars.addLayout(heading)
     body = window.calendar_list = CalendarList()
     window.calendar_box = body.box
-    body.order_changed.connect(window.reorder_calendars)
+    body.grouped_layout_changed.connect(window.reorder_calendar_groups)
+    body.height_changed.connect(window.update_calendar_scroll)
     window.calendar_rows = {}
     window.creation_button_group = QButtonGroup(window)
     window.calendar_scroll = QScrollArea()

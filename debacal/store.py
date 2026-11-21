@@ -368,32 +368,50 @@ class Store:
             if not include_disabled:
                 calendars = [calendar for calendar in calendars if calendar.enabled]
             saved = self.get_setting('calendar_order')
-            if not isinstance(saved, list):
-                return calendars
-            by_id = {calendar.id: calendar for calendar in calendars}
-            ordered = []
-            for identity in saved:
-                if isinstance(identity, str) and identity in by_id:
-                    ordered.append(by_id.pop(identity))
-            # Newly discovered calendars append in their established order;
-            # deleted IDs and duplicates never leave holes or duplicate rows.
-            return ordered + [calendar for calendar in calendars if calendar.id in by_id]
+            if isinstance(saved, list):
+                by_id = {calendar.id: calendar for calendar in calendars}
+                ordered = []
+                for identity in saved:
+                    if isinstance(identity, str) and identity in by_id:
+                        ordered.append(by_id.pop(identity))
+                # Newly discovered calendars append in their established order;
+                # deleted IDs and duplicates never leave holes or duplicate rows.
+                calendars = ordered + [calendar for calendar in calendars if calendar.id in by_id]
+            return [calendar for calendar in calendars if calendar.in_main_list] + [
+                calendar for calendar in calendars if not calendar.in_main_list]
+
+    def _main_list_overrides(self) -> dict[str, bool]:
+        values = self.get_setting('calendar_main_list', {})
+        return ({identity: value for identity, value in values.items()
+                 if isinstance(identity, str) and type(value) is bool} if isinstance(values, dict) else {})
 
     def _calendars_by_creation_order(self) -> list[Calendar]:
         calendars = [Calendar.from_dict(json.loads(row[0])) for row in self.connection.execute(
             "SELECT data FROM calendars ORDER BY rowid"
         )]
         overrides = self._ui_state.visibility_overrides() if self._ui_state is not None else {}
-        return [replace(calendar, visible=overrides[calendar.id]) if calendar.id in overrides
-                and calendar.visible != overrides[calendar.id] else calendar for calendar in calendars]
+        main_list = self._main_list_overrides()
+        return [replace(calendar, visible=overrides.get(calendar.id, calendar.visible),
+                        in_main_list=main_list.get(calendar.id, calendar.in_main_list))
+                if (overrides.get(calendar.id, calendar.visible) != calendar.visible
+                    or main_list.get(calendar.id, calendar.in_main_list) != calendar.in_main_list)
+                else calendar for calendar in calendars]
+
+    @staticmethod
+    def _calendar_ids(identifiers: Iterable[str]) -> list[str]:
+        if isinstance(identifiers, (str, bytes)):
+            raise ValueError('Calendar order must be a sequence of calendar IDs.')
+        try:
+            requested = list(identifiers)
+        except TypeError as error:
+            raise ValueError('Calendar order must be a sequence of calendar IDs.') from error
+        if any(not isinstance(identity, str) for identity in requested) or len(set(requested)) != len(requested):
+            raise ValueError('Calendar order must contain unique calendar IDs.')
+        return requested
 
     def set_calendar_order(self, identifiers: Iterable[str]) -> None:
         """Save this profile's display order without touching calendar sources."""
-        if isinstance(identifiers, (str, bytes)):
-            raise ValueError('Calendar order must be a sequence of calendar IDs.')
-        requested = list(identifiers)
-        if any(not isinstance(identity, str) for identity in requested) or len(set(requested)) != len(requested):
-            raise ValueError('Calendar order must contain unique calendar IDs.')
+        requested = self._calendar_ids(identifiers)
         with self.ui_transaction():
             calendars = self.list_calendars(include_disabled=True)
             available = {calendar.id for calendar in calendars}
@@ -403,6 +421,38 @@ class Store:
             remaining = [calendar.id for calendar in calendars if calendar.id not in requested_ids]
             self.set_setting('calendar_order', requested + remaining)
 
+    def set_calendar_in_main_list(self, calendar_id: str, in_main_list: bool) -> None:
+        """Change sidebar placement without waiting for the calendar writer."""
+        if type(in_main_list) is not bool:
+            raise ValueError("A calendar's main-list setting must be true or false.")
+        with self.ui_transaction():
+            if self.get_calendar(calendar_id) is None:
+                raise ValueError('Calendar not found.')
+            values = self._main_list_overrides()
+            values[calendar_id] = in_main_list
+            self.set_setting('calendar_main_list', values)
+
+    def set_calendar_layout(self, identifiers: Iterable[str], main_ids: Iterable[str]) -> None:
+        """Atomically reorder and group the supplied sources in this profile.
+
+        Omitted sources, including disconnected calendars, keep their membership
+        and relative order. This writes only the small UI-state database.
+        """
+        requested = self._calendar_ids(identifiers)
+        main = set(self._calendar_ids(main_ids))
+        requested_ids = set(requested)
+        if not main.issubset(requested_ids):
+            raise ValueError('Main-list calendars must be included in the calendar order.')
+        with self.ui_transaction():
+            calendars = self.list_calendars(include_disabled=True)
+            if not requested_ids.issubset({calendar.id for calendar in calendars}):
+                raise ValueError('Calendar not found.')
+            remaining = [calendar.id for calendar in calendars if calendar.id not in requested_ids]
+            values = self._main_list_overrides()
+            values.update((identity, identity in main) for identity in requested)
+            self.set_setting('calendar_order', requested + remaining)
+            self.set_setting('calendar_main_list', values)
+
     def get_calendar(self, calendar_id: str) -> Calendar | None:
         with self._lock:
             row = self.connection.execute("SELECT data FROM calendars WHERE id=?", (calendar_id,)).fetchone()
@@ -410,7 +460,11 @@ class Store:
                 return None
             calendar = Calendar.from_dict(json.loads(row[0]))
             visible = self._ui_state.visibility(calendar_id) if self._ui_state is not None else None
-            return replace(calendar, visible=visible) if visible is not None and visible != calendar.visible else calendar
+            in_main_list = self._main_list_overrides().get(calendar_id, calendar.in_main_list)
+            return (replace(calendar, visible=calendar.visible if visible is None else visible,
+                            in_main_list=in_main_list)
+                    if (visible is not None and visible != calendar.visible) or in_main_list != calendar.in_main_list
+                    else calendar)
 
     def save_calendar(self, calendar: Calendar) -> None:
         with self._transaction():
@@ -439,6 +493,7 @@ class Store:
         if len({calendar.id for calendar in drafts}) != len(drafts):
             raise ValueError('Calendar source settings contain duplicate calendars.')
         changed = False
+        main_list_changes = {}
         with self._transaction():
             for draft in drafts:
                 current = self.get_calendar(draft.id)
@@ -454,6 +509,8 @@ class Store:
                 if (current.kind, current.url, current.username) != (draft.kind, draft.url, draft.username):
                     raise ValueError('Create a new source to change an existing calendar account.')
                 values = {}
+                if draft.in_main_list != original.in_main_list:
+                    main_list_changes[draft.id] = draft.in_main_list
                 for name in ('enabled', 'use_server_color', 'name_alias'):
                     if getattr(draft, name) != getattr(original, name):
                         values[name] = getattr(draft, name)
@@ -471,6 +528,12 @@ class Store:
                 if updated != current:
                     self.save_calendar(updated)
                     changed = True
+        if main_list_changes:
+            with self.ui_transaction():
+                values = self._main_list_overrides()
+                values.update(main_list_changes)
+                self.set_setting('calendar_main_list', values)
+            changed = True
         return changed
 
     def get_default_calendar(self) -> Calendar | None:

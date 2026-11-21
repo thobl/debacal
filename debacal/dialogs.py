@@ -58,9 +58,14 @@ class CalendarDialog(FormDialog):
         self.password.setPlaceholderText('Leave blank to reuse the saved account password')
         self.remember_password = QCheckBox('Remember in system &keyring')
         self.remember_password.setChecked(True)
+        self.in_main_list = QCheckBox('Keep in main list')
+        self.in_main_list.setChecked(calendar.in_main_list if calendar else True)
+        self.in_main_list.setToolTip('When unchecked, this calendar appears under More calendars in the sidebar. '
+                                    'Event display and syncing are unchanged.')
         for label, widget in [('&Name', self.name), ('&Type', self.kind), ('U&RL', self.url),
                               ('&Username', self.username), ('&Password', self.password),
-                              ('', self.remember_password), ('', self.use_server_color), ('&Color', color_row)]:
+                              ('', self.remember_password), ('', self.use_server_color), ('&Color', color_row),
+                              ('', self.in_main_list)]:
             form.addRow(label, widget)
         form.labelForField(color_row).setBuddy(self.color)
         outer.addLayout(form)
@@ -105,7 +110,7 @@ class CalendarDialog(FormDialog):
             field.textChanged.connect(self.update_primary_action)
         self.configure_keyboard([self.name, self.kind, self.url, self.username, self.password,
             self.remember_password, self.use_server_color, self.color, self.choose_color_button,
-            self.discover_button, self.discovered_list],
+            self.in_main_list, self.discover_button, self.discovered_list],
             [self.save_button, self.cancel_button], self.save)
         self.update_source_fields()
         self.name.setFocus()
@@ -237,7 +242,8 @@ class CalendarDialog(FormDialog):
             self.result_calendars = [Calendar(id=str(uuid4()), name=source.name,
                 color=source.color if self.use_server_color.isChecked() else self.color.currentData(),
                 server_color=source.color, use_server_color=self.use_server_color.isChecked(), kind='caldav', url=source.url,
-                username=self.username.text().strip(), read_only=source.read_only, server_name=source.name)
+                username=self.username.text().strip(), read_only=source.read_only, server_name=source.name,
+                in_main_list=self.in_main_list.isChecked())
                 for index, source in enumerate(self.discovered)
                 if self.discovered_list.item(index).checkState() == Qt.CheckState.Checked]
             if not self.result_calendars:
@@ -256,6 +262,7 @@ class CalendarDialog(FormDialog):
             server_color=(self.original.server_color or self.original.color) if self.original and self.original.kind == 'caldav' else '',
             use_server_color=self.use_server_color.isChecked() if self.kind.currentData() == 'caldav' else False,
             enabled=self.original.enabled if self.original else True,
+            in_main_list=self.in_main_list.isChecked(),
             server_name=self.original.server_name if self.original else '',
             name_alias=(self.name.text().strip() if self.original and self.original.kind == 'caldav'
                         and self.name.text().strip() != (self.original.server_name or self.original.name)

@@ -140,6 +140,13 @@ source-colored event cards keep their selection and keyboard focus cues. Choose
 a calendar by name to create in it; its eye button controls visibility separately.
 Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
+Calendars start in the main list. Uncheck **Keep in main list** when adding one,
+or in Preferences → Calendar sources, to place it under **More calendars**.
+This section starts collapsed; click it to expand or collapse its calendars.
+Folding the list leaves events and syncing unchanged; the eye buttons still
+control whether events are shown. Drag calendars between the two sections to
+change their placement. Empty sections offer a drop target while dragging, and
+hovering over the collapsed More calendars heading opens it.
 Appearance → Sidebar → Upcoming events offers event cards, cards grouped by
 day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their

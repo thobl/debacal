@@ -16,7 +16,7 @@ import time
 
 UI_SETTINGS = frozenset({
     'display_preferences', 'week_numbers_default_version',
-    'keybindings', 'keybindings_version', 'calendar_order', 'default_calendar_id',
+    'keybindings', 'keybindings_version', 'calendar_order', 'calendar_main_list', 'default_calendar_id',
     'selection_mode', 'show_full_day', 'filter_calendar_by_search',
 })
 

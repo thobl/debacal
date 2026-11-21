@@ -45,6 +45,7 @@ def test_type_switches_show_only_relevant_name_and_connection_fields(dialogs):
     assert not dialog.discover_button.isVisible() and not dialog.source_hint.isVisible()
     assert not hasattr(dialog, "make_default")
     assert not any("Default for" in field.text() for field in dialog.findChildren(QCheckBox))
+    assert dialog.in_main_list.isVisible() and dialog.in_main_list.isChecked()
 
     dialog.kind.setCurrentIndex(dialog.kind.findData("ics"))
     assert dialog.name.isVisible() and dialog.url.isVisible()
@@ -52,6 +53,7 @@ def test_type_switches_show_only_relevant_name_and_connection_fields(dialogs):
     assert not dialog.username.isVisible() and not dialog.password.isVisible()
     assert not dialog.remember_password.isVisible() and not dialog.use_server_color.isVisible()
     assert dialog.color.isEnabled() and not dialog.discover_button.isVisible()
+    assert dialog.in_main_list.isVisible()
 
     dialog.kind.setCurrentIndex(dialog.kind.findData("caldav"))
     assert not dialog.name.isVisible() and not dialog.form.labelForField(dialog.name).isVisible()
@@ -59,6 +61,7 @@ def test_type_switches_show_only_relevant_name_and_connection_fields(dialogs):
     assert all(field.isVisible() for field in (dialog.url, dialog.username, dialog.password,
                                                dialog.remember_password, dialog.use_server_color, dialog.discover_button))
     assert dialog.remember_password.isChecked() and not dialog.color.isEnabled()
+    assert dialog.in_main_list.isVisible()
     dialog.use_server_color.setChecked(False)
     assert dialog.color.isEnabled() and dialog.choose_color_button.isEnabled()
 
@@ -73,7 +76,8 @@ def test_remote_account_keyboard_chain_skips_hidden_name_and_inactive_color(dial
     QTest.keyClick(dialog, Qt.Key.Key_T, Qt.KeyboardModifier.AltModifier)
     assert dialog.kind.hasFocus()
     for field in (dialog.url, dialog.username, dialog.password, dialog.remember_password,
-                  dialog.use_server_color, dialog.discover_button, dialog.save_button, dialog.cancel_button):
+                  dialog.use_server_color, dialog.in_main_list, dialog.discover_button,
+                  dialog.save_button, dialog.cancel_button):
         QTest.keyClick(dialog.focusWidget(), Qt.Key.Key_Tab)
         assert field.hasFocus(), type(field).__name__
     QTest.keyClick(dialog.cancel_button, Qt.Key.Key_Tab)
@@ -126,6 +130,54 @@ def test_existing_remote_edit_keeps_name_locked_identity_and_read_only_metadata(
     assert (result.kind, result.url, result.username, result.read_only, result.server_color) == (
         original.kind, original.url, original.username, original.read_only, original.server_color,
     )
+
+
+@pytest.mark.parametrize('kind', ['local', 'ics'])
+def test_new_calendar_main_list_choice_is_independent_of_event_display(dialogs, kind):
+    dialog = dialogs()
+    dialog.kind.setCurrentIndex(dialog.kind.findData(kind))
+    dialog.name.setText('A less-used calendar')
+    if kind == 'ics':
+        dialog.url.setText('https://calendar.example.test/events.ics')
+    assert dialog.in_main_list.isChecked()
+    dialog.in_main_list.setChecked(False)
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert not dialog.result_calendar.in_main_list
+    assert dialog.result_calendar.visible and dialog.result_calendar.enabled
+
+
+def test_existing_read_only_calendar_can_change_main_list_choice(dialogs):
+    original = Calendar('remote', 'Rarely used', '#123456', kind='caldav',
+        url='https://calendar.example.test/rare/', read_only=True, visible=False,
+        enabled=False, in_main_list=False)
+    dialog = dialogs(original)
+    assert dialog.in_main_list.isEnabled() and not dialog.in_main_list.isChecked()
+    dialog.in_main_list.setChecked(True)
+    dialog.save()
+    result = dialog.result_calendar
+    assert result.in_main_list
+    assert result.read_only and not result.visible and not result.enabled
+
+
+def test_new_account_main_list_choice_applies_to_all_discovered_calendars(dialogs):
+    dialog = dialogs()
+    dialog.kind.setCurrentIndex(dialog.kind.findData('caldav'))
+    dialog.url.setText('https://calendar.example.test/')
+    dialog.username.setText('synthetic-user')
+    dialog.in_main_list.setChecked(False)
+    future = Future()
+    with patch.object(dialog.discovery_executor, 'submit', return_value=future):
+        dialog.discover()
+    future.set_result([
+        DiscoveredCalendar('Work', 'https://calendar.example.test/work/'),
+        DiscoveredCalendar('Holidays', 'https://calendar.example.test/holidays/', read_only=True),
+    ])
+    dialog.poll_discovery()
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert len(dialog.result_calendars) == 2
+    assert all(not calendar.in_main_list and calendar.visible for calendar in dialog.result_calendars)
 
 
 @pytest.mark.parametrize("failed", [False, True])

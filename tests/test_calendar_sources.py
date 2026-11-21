@@ -127,6 +127,34 @@ def test_alias_manual_color_and_server_reset_are_applied_together(desktop):
     assert saved.color == saved.server_color == '#446677'
 
 
+def test_main_list_choice_is_editable_for_read_only_calendars_and_staged_until_apply(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote(read_only=True, in_main_list=False))
+    editor = create()
+    editor.sources.setCurrentItem(editor._items['work'])
+    assert editor.in_main_list.isVisible() and editor.in_main_list.isEnabled()
+    assert not editor.in_main_list.isChecked()
+    editor.in_main_list.setChecked(True)
+    assert editor._drafts['work'].in_main_list
+    assert not store.get_calendar('work').in_main_list
+    assert editor.apply()
+    saved = store.get_calendar('work')
+    assert saved.in_main_list and saved.visible and saved.enabled and saved.read_only
+    editor.in_main_list.setChecked(False)
+    editor.finish()
+    assert store.get_calendar('work').in_main_list
+
+
+def test_main_list_choice_is_not_an_account_level_setting(desktop):
+    _, store, create, _ = desktop
+    store.save_calendar(remote())
+    editor = create()
+    editor.sources.setCurrentItem(editor._items['work'])
+    assert editor.in_main_list.isVisible()
+    editor.select_account()
+    assert editor.group_details.isVisible() and not editor.in_main_list.isVisible()
+
+
 def test_apply_rebases_local_edits_onto_concurrent_sync_metadata(desktop):
     _, store, create, _ = desktop
     store.save_calendar(remote())
@@ -144,7 +172,8 @@ def test_apply_rebases_local_edits_onto_concurrent_sync_metadata(desktop):
 
 def test_discovery_uses_worker_credentials_and_adds_unconnected_calendars(desktop, monkeypatch):
     app, store, create, _ = desktop
-    store.save_calendar(remote(name='Alias', name_alias='Alias', color='#abcdef', use_server_color=False))
+    store.save_calendar(remote(name='Alias', name_alias='Alias', color='#abcdef', use_server_color=False,
+                               in_main_list=False))
     threads = []
     class Credentials:
         def get(self, calendar):
@@ -164,8 +193,10 @@ def test_discovery_uses_worker_credentials_and_adds_unconnected_calendars(deskto
     work = editor._drafts['work']
     assert work.name == 'Alias' and work.server_name == 'Server name'
     assert work.color == '#abcdef' and work.server_color == '#998877'
+    assert not work.in_main_list
     new = next(value for value in editor._drafts.values() if value.server_name == 'New calendar')
     assert not new.enabled and new.read_only
+    assert new.in_main_list
     assert store.get_calendar(new.id) is None
     editor._items[new.id].setCheckState(0, Qt.CheckState.Checked)
     assert editor.apply()
