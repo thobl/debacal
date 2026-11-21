@@ -13,6 +13,7 @@ import hashlib
 from uuid import NAMESPACE_URL, uuid5
 import re
 
+from . import alarm_fold_ics
 from .alarm_ics import read_alarms, without_alarms, write_alarms
 from .models import Event
 from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
@@ -263,7 +264,7 @@ def _parse_calendar_stream(lines, calendar_id, *, limit, use_full, repair_missin
         tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
 
 
-_DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID'}
+_DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID', alarm_fold_ics.ANCHOR}
 
 
 def _references_timezone(parameters, raw):
@@ -330,6 +331,8 @@ def _read(data, use_full=True):
             if not line:
                 continue
             key, params, value = fallback.content_line(line)
+            if key == alarm_fold_ics.ORIGINAL:
+                continue  # Decode this optional private payload independently of the event.
             if key == 'RDATE' and (params.get('VALUE') == 'PERIOD' or '/' in value):
                 # Periods are decoded from their lexical form below. Letting
                 # the library discard an invalid value would hide the issue.
@@ -350,6 +353,8 @@ def _read(data, use_full=True):
         component = {"_decoded": {}, '_timezone_definitions': definitions}
         if '_alarm_source' in lexical[index]:
             component['_alarm_source'] = lexical[index]['_alarm_source']
+        if alarm_fold_ics.ORIGINAL in lexical[index]:
+            component[alarm_fold_ics.ORIGINAL] = lexical[index][alarm_fold_ics.ORIGINAL]
         for key, values in original.items():
             if key in {'SUMMARY', 'DESCRIPTION', 'LOCATION'} and any(
                     str(params.get('ENCODING', '')).upper() == 'QUOTED-PRINTABLE'
@@ -770,6 +775,8 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         timezone_id = ('' if all_day or floating else
                        'UTC' if master_component['DTSTART'][0][1].upper().endswith('Z') else str(params.get('TZID', '')))
         definitions = _used_definitions(components)
+        event_start, event_end, timezone_id, alarms = alarm_fold_ics.restore_alarms(
+            master_component, uid + '/', event_start, event_end, timezone_id, _component_alarms(master_component, uid))
         master = Event(
             id=event_id, calendar_id=calendar_id,
             title=_event_title(master_component), start=event_start, end=event_end,
@@ -778,7 +785,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
             timezone_definitions=definitions, floating_time=floating,
-            duration_spec=duration_spec, alarms=_component_alarms(master_component, uid),
+            duration_spec=duration_spec, alarms=alarms,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "EXDATE", tz)),
@@ -839,6 +846,9 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 override_floating = inherited.floating_time
             override_end, override_spec = _component_end(component, override_start, override_all_day, tz,
                 inherited=inherited if 'DTSTART' not in component else None, duration_zone=override_zone)
+            override_start, override_end, override_timezone_id, alarms = alarm_fold_ics.restore_alarms(
+                component, uid + '/' + key, override_start, override_end, override_timezone_id,
+                _component_alarms(component, uid, key))
             override = replace(
                 master, id=occurrence_id(master.id, key), start=override_start, end=override_end,
                 title=_event_title(component, master.title),
@@ -846,7 +856,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,
                 floating_time=override_floating,
-                duration_spec=override_spec, timezone_id=override_timezone_id, alarms=_component_alarms(component, uid, key),
+                duration_spec=override_spec, timezone_id=override_timezone_id, alarms=alarms,
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
                 schedule_expression="", expression_anchor="",
@@ -1020,6 +1030,8 @@ def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=Fal
              "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"}
     known.update({"X-DEBACAL-PATTERN", "X-DEBACAL-PATTERN-ANCHOR", "X-DEBACAL-PATTERN-VERSION"})
     known.update(range_codec.PROPERTIES)
+    if event.alarms is not None:
+        known.update({alarm_fold_ics.ANCHOR, alarm_fold_ics.ORIGINAL})
     result, nested = ["BEGIN:VEVENT"], 0
     for line in block[1:-1]:
         key = line.split(":", 1)[0].split(";")[0].upper()
@@ -1032,7 +1044,9 @@ def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=Fal
     result.extend(_known_lines(event, uid, recurrence_id, recurrence_floating=recurrence_floating))
     result.append('END:VEVENT')
     if event.alarms is not None and (len(event.alarms) or 'BEGIN:VALARM' in result):
-        result = fallback.unfolded(write_alarms('\n'.join(result), event.alarms))
+        alarms, annotations = alarm_fold_ics.project_alarms(event, result, uid + '/' + recurrence_id)
+        result[-1:-1] = annotations
+        result = fallback.unfolded(write_alarms('\n'.join(result), alarms))
     return result
 
 

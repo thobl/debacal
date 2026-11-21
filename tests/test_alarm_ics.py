@@ -168,3 +168,171 @@ def test_explicit_zero_repeat_count_keeps_initial_trigger():
     assert alarm_trigger(alarm, BASE, BASE) == BASE - timedelta(minutes=5)
     with pytest.raises(ValueError):
         alarm_trigger(alarm, BASE, BASE, repeat_index=1)
+
+
+@pytest.mark.parametrize('full', [True, False])
+def test_relative_trigger_with_tzid_retains_issue_and_healthy_sibling(full):
+    malformed = block('ACTION:AUDIO', 'TRIGGER;TZID=Europe/Berlin:-PT5M')
+    report = parse_report(resource(component(malformed, DISPLAY)), 'c', use_full=full)
+    event, = report.events
+    bad, healthy = event.alarms
+    assert bad.issue
+    with pytest.raises(ValueError):
+        alarm_trigger(bad, event.start, event.end)
+    assert healthy.issue is None
+    assert b'TRIGGER;TZID=Europe/Berlin:-PT5M' in export_ics([event])
+
+
+def test_repeat_semantics_ignore_valid_integer_spelling_and_preserve_malformed_values():
+    def read_count(count):
+        source = component(block('ACTION:AUDIO', 'TRIGGER:-PT5M', 'REPEAT:' + count, 'DURATION:PT1M'))
+        return read_alarms(source, component_key='e')
+    decorated, = read_count('+02')
+    assert alarm_semantic((decorated,)) == alarm_semantic(read_count('2'))
+    assert 'REPEAT:+02' in write_alarms(component(), (decorated,))
+    assert alarm_semantic(read_count('invalid')) != alarm_semantic(read_count('other'))
+
+
+def test_late_fold_alarm_preserves_event_instant_and_nominal_trigger_in_standard_calendar():
+    from icalendar import Calendar
+
+    zone = ZoneInfo('Europe/Berlin')
+    late = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    event = alarm_event(start=late, end=datetime(2026, 10, 25, 3, 30, tzinfo=zone), timezone_id=zone.key,
+                        alarms=(Alarm('nominal', 'DISPLAY', '-P1D', description='Example'),))
+    raw = export_ics([event])
+    wire, = Calendar.from_ical(raw).walk('VEVENT')
+    wire_alarm, = wire.walk('VALARM')
+    assert wire.decoded('DTSTART').astimezone(timezone.utc) == datetime(2026, 10, 25, 1, 30, tzinfo=timezone.utc)
+    assert wire.decoded('DTSTART') + wire_alarm.decoded('TRIGGER') == datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
+    restored, = parse_ics(raw, 'c')
+    assert restored.start.timestamp() == late.timestamp()
+    assert restored.alarms[0].trigger == '-P1D'
+    assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
+
+
+def repeated_fold_event(**changes):
+    zone = ZoneInfo('Europe/Berlin')
+    late = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    source = component(block('ACTION:AUDIO', 'UID:fold-alarm', 'TRIGGER:-P3D', 'REPEAT:4', 'DURATION:P1D',
+                             'ACKNOWLEDGED:20261020T050000Z', 'RELATED-TO;RELTYPE=SNOOZE:other',
+                             'X-RETAIN:metadata'))
+    alarms = read_alarms(source, component_key='e/')
+    return replace(alarm_event(start=late, end=datetime(2026, 10, 25, 3, 30, tzinfo=zone), timezone_id=zone.key,
+                               alarms=alarms), **changes)
+
+
+def test_late_fold_wire_repeats_cover_every_actual_instant_and_restore_only_intact_group():
+    from icalendar import Calendar
+    from debacal.ics_fallback import unfolded
+
+    event = repeated_fold_event()
+    raw = export_ics([event])
+    calendar = Calendar.from_ical(raw)
+    wire, = calendar.walk('VEVENT')
+    bounds = wire.decoded('DTSTART')
+    alarms = wire.walk('VALARM')
+    assert len(alarms) == 2
+    assert str(alarms[0]['UID']) == 'fold-alarm' and alarms[0]['UID'] != alarms[1]['UID']
+    actual = []
+    for part in alarms:
+        assert str(part['RELATED-TO']) == 'other' and part['RELATED-TO'].params['RELTYPE'] == 'SNOOZE'
+        assert str(part['X-RETAIN']) == 'metadata'
+        assert part.decoded('ACKNOWLEDGED') == datetime(2026, 10, 20, 5, tzinfo=timezone.utc)
+        initial = bounds + part.decoded('TRIGGER')
+        actual.append(initial)
+        for index in range(1, int(part.get('REPEAT', 0)) + 1):
+            actual.append(initial + part.decoded('DURATION') * index)
+    assert actual == [datetime(2026, 10, day, utc_hour, 30, tzinfo=timezone.utc)
+                      for day, utc_hour in [(22, 0), (23, 0), (24, 0), (25, 0), (26, 1)]]
+    restored, = parse_ics(raw, 'c')
+    assert alarm_semantic(restored.alarms) == alarm_semantic(event.alarms)
+
+    # A phone changing a part, or removing it altogether, owns that edit.
+    lines = unfolded(raw)
+    second = [i for i, line in enumerate(lines) if line == 'BEGIN:VALARM'][1]
+    changed = list(lines)
+    changed.insert(second + 1, 'X-PHONE:Edited')
+    edited, = parse_ics('\n'.join(changed), 'c')
+    assert len(edited.alarms) == 2 and 'X-PHONE:Edited' in edited.alarms[1].raw_ics
+    assert edited.alarms[0].trigger != '-P3D'
+    del lines[second:lines.index('END:VALARM', second) + 1]
+    removed, = parse_ics('\n'.join(lines), 'c')
+    assert len(removed.alarms) == 1 and removed.alarms[0].trigger != '-P3D'
+
+
+def test_nominal_fold_projection_limits_work_and_keeps_large_elapsed_repeat_compact():
+    event = repeated_fold_event()
+    alarm, = event.alarms
+    with pytest.raises(ValueError, match='100,000'):
+        export_ics([replace(event, alarms=(replace(alarm, repeat=100001),))])
+    elapsed = replace(alarm, repeat=2**31 - 1, repeat_interval='PT1S')
+    raw = export_ics([replace(event, alarms=(elapsed,))])
+    assert raw.count(b'BEGIN:VALARM') == 1
+    assert parse_ics(raw, 'c')[0].alarms[0].repeat == 2**31 - 1
+
+
+def test_fold_generated_uids_stable_through_no_uid_roundtrip_and_legacy_hydration():
+    event = repeated_fold_event()
+    original, = event.alarms
+    event = replace(event, alarms=(replace(original, uid=None, key='local-editor-key'),))
+    raw = export_ics([event])
+    restored, = parse_ics(raw, 'c')
+    def wire_uids(data):
+        from icalendar import Calendar
+        return [str(alarm['UID']) for alarm in Calendar.from_ical(data).walk('VALARM')]
+    assert wire_uids(export_ics([restored])) == wire_uids(raw)
+    assert restored.alarms[0].uid is None
+    assert hydrate_alarms(replace(restored, alarms=None)).alarms == restored.alarms
+
+
+@pytest.mark.parametrize('full', [True, False])
+def test_damaged_fold_extension_keeps_standard_firings(full):
+    from debacal.ics_fallback import unfolded
+
+    lines = unfolded(export_ics([repeated_fold_event()]))
+    for index, line in enumerate(lines):
+        if line.startswith('X-DEBACAL-ORIGINAL-ALARM;'):
+            lines[index] = line.split(':', 1)[0] + ':%%%'
+    report = parse_report('\n'.join(lines), 'c', use_full=full)
+    event, = report.events
+    assert len(event.alarms) == 2
+    assert event.alarms[0].trigger != '-P3D'
+
+
+def test_legacy_untouched_export_retains_fold_alarm_intent_for_later_hydration():
+    source = repeated_fold_event()
+    imported, = parse_ics(export_ics([source]), 'c')
+    legacy = replace(imported, alarms=None)
+    read_back, = parse_ics(export_ics([legacy]), 'c')
+    assert alarm_semantic(read_back.alarms) == alarm_semantic(source.alarms)
+
+
+def test_negative_zero_repeat_is_equivalent_to_zero_but_negative_count_is_invalid():
+    def read_count(number):
+        raw = component(block('ACTION:AUDIO', 'TRIGGER:PT0S', 'REPEAT:' + number, 'DURATION:PT1M'))
+        return read_alarms(raw, component_key='e')
+    negative_zero = read_count('-00')
+    assert negative_zero[0].issue is None
+    assert alarm_semantic(negative_zero) == alarm_semantic(read_count('0'))
+    assert read_count('-1')[0].issue
+
+
+def test_late_fold_end_alarm_uses_exact_wire_end_and_local_nominal_offset():
+    from icalendar import Calendar
+
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026, 10, 25, 1, 30, tzinfo=zone)
+    end = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    source = alarm_event(start=start, end=end, timezone_id=zone.key,
+                         alarms=(Alarm('k', 'DISPLAY', '-P1D', related='END'),))
+    raw = export_ics([source])
+    wire, = Calendar.from_ical(raw).walk('VEVENT')
+    part, = wire.walk('VALARM')
+    assert part['TRIGGER'].params['RELATED'] == 'END'
+    assert wire.decoded('DTEND').timestamp() == end.timestamp()
+    expected = datetime(2026, 10, 24, 0, 30, tzinfo=timezone.utc)
+    assert wire.decoded('DTEND') + part.decoded('TRIGGER') == expected
+    restored, = parse_ics(raw, 'c')
+    assert restored.end.fold == 1 and restored.alarms[0].trigger == '-P1D'
+    assert alarm_trigger(restored.alarms[0], restored.start, restored.end) == expected

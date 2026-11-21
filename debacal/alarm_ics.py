@@ -45,6 +45,15 @@ def without_alarms(lines):
                         for line in part), lines[-1]]
 
 
+def _repeat_count(value):
+    if not re.fullmatch(r'[+-]?[0-9]+', value):
+        raise ValueError('Invalid alarm repeat count.')
+    count = int(value)
+    if not 0 <= count <= 2**31 - 1:
+        raise ValueError('Invalid alarm repeat count.')
+    return count
+
+
 def _parse_alarm(lines):
     props, issue = {}, None
     for part in direct_parts(lines):
@@ -81,7 +90,7 @@ def _parse_alarm(lines):
             if 'RELATED' in params or 'TZID' in params:
                 raise ValueError('An absolute alarm trigger must be UTC with no RELATED parameter.')
             utc_stamp(trigger)
-        elif kind == 'DURATION' and related in {'START', 'END'}:
+        elif kind == 'DURATION' and related in {'START', 'END'} and 'TZID' not in params:
             signed_duration(trigger)
         else:
             raise ValueError('Unsupported alarm trigger parameters.')
@@ -89,10 +98,7 @@ def _parse_alarm(lines):
         issue = 'Invalid or missing alarm trigger.'
     if 'REPEAT' in props or interval is not None:
         try:
-            count = raw('REPEAT', '')
-            if not re.fullmatch(r'\+?[0-9]+', count) or int(count) > 2**31 - 1:
-                raise ValueError
-            repeat = int(count)
+            repeat = _repeat_count(raw('REPEAT', ''))
             days, seconds = signed_duration(interval or '')
             if days < 0 or seconds < 0 or not (days or seconds):
                 raise ValueError
@@ -222,6 +228,11 @@ def semantic_properties(alarm):
             value = value.upper()
         elif name in {'UID', 'DESCRIPTION'}:
             value = ics.text(value)
+        elif name == 'REPEAT':
+            try:
+                value = str(_repeat_count(value))
+            except ValueError:
+                pass  # Invalid spellings remain distinct on the wire.
         elif name in {'TRIGGER', 'DURATION'}:
             value = _trigger_identity(value)
         return name, tuple(sorted(params.items())), value
@@ -230,6 +241,7 @@ def semantic_properties(alarm):
 
 
 def _retained_alarms(event, raw, wanted, *, standalone_key=''):
+    from . import alarm_fold_ics
     from .ics_resources import _blocks, _decoded, _key, _uid_of
     from .timezones import event_timezone
 
@@ -243,7 +255,18 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
         if 'RECURRENCE-ID' in props:
             key = _key(_decoded(props, 'RECURRENCE-ID', zone)[0], zone, event.floating_time)
         if key in wanted:
-            family[key] = read_alarms('\n'.join(lines), component_key=event.ical_uid + '/' + key)
+            component_key = event.ical_uid + '/' + key
+            alarms = read_alarms('\n'.join(lines), component_key=component_key)
+            restored_fields = {}
+            if alarm_fold_ics.ORIGINAL in props and alarms:
+                bounds = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
+                props['_alarm_source'] = lines
+                start, end, identifier, restored = alarm_fold_ics.restore_alarms(
+                    props, component_key, bounds.start, bounds.end, bounds.timezone_id, alarms)
+                if restored is not alarms:
+                    alarms = restored
+                    restored_fields = dict(start=start, end=end, timezone_id=identifier)
+            family[key] = alarms, restored_fields
     return family
 
 
@@ -254,13 +277,16 @@ def hydrate_alarms(event: Event) -> Event:
         return event
     wanted = missing | {''} if event.alarms is None else missing
     family = _retained_alarms(event, event.raw_ics, wanted) if event.raw_ics else {}
-    alarms = event.alarms if event.alarms is not None else family.get('', ())
+    alarms, restored_fields = family.get('', ((), {})) if event.alarms is None else (event.alarms, {})
     overrides = event.recurrence_overrides.copy()
     for key in missing:
         payload = overrides[key]
         if key not in family and payload.get('raw_ics'):
             family.update(_retained_alarms(event, payload['raw_ics'], {key}, standalone_key=key))
         # Old locally created exceptions may have no detached wire template.
-        alarms_for_child = family.get(key, alarms)
+        alarms_for_child, child_fields = family.get(key, (alarms, {}))
         overrides[key] = dict(payload, alarms=[alarm.to_dict() for alarm in alarms_for_child])
-    return replace(event, alarms=alarms, recurrence_overrides=overrides)
+        if child_fields:
+            overrides[key].update(start=child_fields['start'].isoformat(), end=child_fields['end'].isoformat(),
+                                  timezone_id=child_fields['timezone_id'])
+    return replace(event, alarms=alarms, recurrence_overrides=overrides, **restored_fields)
