@@ -1,4 +1,4 @@
-"""Sidebar folding is independent of event visibility and persisted source order."""
+"""Overflow calendars use an independent popup without changing source selection."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -51,7 +51,7 @@ def desktop():
         assert not errors
 
 
-def test_many_folded_sources_do_not_need_scroll_and_their_events_still_show(desktop):
+def test_many_popup_sources_never_resize_or_scroll_main_and_their_events_still_show(desktop):
     app, make = desktop
     calendars = [Calendar(f'rare-{i}', f'Occasional {i}', '#587c67', in_main_list=False)
                  for i in range(30)]
@@ -67,11 +67,19 @@ def test_many_folded_sources_do_not_need_scroll_and_their_events_still_show(desk
     assert all(not rows[c.id].isVisible() for c in calendars)
     assert not window.calendar_scroll.verticalScrollBar().isVisible()
     assert any(event.id == 'rare-event' for event in window.visible_events)
+    height = window.calendar_section.height()
+    list_height = window.calendar_list.content_height()
     QTest.mouseClick(window.calendar_list.more_button, Qt.MouseButton.LeftButton)
     settle(app)
     assert window.calendar_list.more_expanded
-    assert window.calendar_scroll.verticalScrollBar().isVisible()
+    assert window.calendar_list.popup.isVisible()
+    assert not window.calendar_scroll.verticalScrollBar().isVisible()
+    assert window.calendar_list.popup_scroll.verticalScrollBar().isVisible()
+    assert window.calendar_section.height() == height
+    assert window.calendar_list.content_height() == list_height
     assert all(row.isVisible() for row in rows.values())
+    screen = window.calendar_list.popup.screen().availableGeometry()
+    assert screen.contains(window.calendar_list.popup.frameGeometry())
     QTest.mouseClick(rows['rare-0'].eye, Qt.MouseButton.LeftButton)
     settle(app)
     assert not store.get_calendar('rare-0').visible
@@ -82,6 +90,49 @@ def test_many_folded_sources_do_not_need_scroll_and_their_events_still_show(desk
     settle(app)
     assert not window.calendar_scroll.verticalScrollBar().isVisible()
     assert store.get_calendar('rare-1').visible
+
+
+def test_selecting_popup_calendar_keeps_only_current_occasional_source_in_main(desktop):
+    app, make = desktop
+    window, store = make([Calendar('first', 'First', '#587c67', in_main_list=False),
+                          Calendar('second', 'Second', '#7f79a5', in_main_list=False)])
+    listing = window.calendar_list
+    original_rows = dict(window.calendar_rows)
+    listing.set_expanded(True)
+    settle(app)
+    QTest.mouseClick(original_rows['first'].choice, Qt.MouseButton.LeftButton)
+    settle(app)
+    assert not listing.popup.isVisible()
+    assert store.get_default_calendar().id == 'first'
+    assert original_rows['first'].isVisible() and not original_rows['second'].isVisible()
+    assert not store.get_calendar('first').in_main_list
+    listing.set_expanded(True)
+    settle(app)
+    assert original_rows['first'] in listing.display_rows(True)
+    assert original_rows['first'] not in listing.display_rows(False)
+    QTest.mouseClick(original_rows['second'].choice, Qt.MouseButton.LeftButton)
+    settle(app)
+    assert not listing.more_expanded and not original_rows['first'].isVisible()
+    assert original_rows['second'].isVisible()
+    assert window.calendar_rows == original_rows
+    assert all(not store.get_calendar(identity).in_main_list for identity in ('first', 'second'))
+    assert store.history() == []
+
+
+@pytest.mark.parametrize('scale', [80, 100, 140])
+def test_overflow_button_fits_sidebar_heading_at_supported_text_sizes(desktop, scale):
+    app, make = desktop
+    window, _store = make([Calendar('rare', 'Occasional', '#587c67', in_main_list=False)])
+    window.apply_preferences(replace(window.preferences, font_scale=scale), window.bindings)
+    settle(app)
+    button = window.calendar_list.more_button
+
+    def bounds(widget):
+        return QRect(widget.mapToGlobal(QPoint()), widget.size())
+
+    assert button.isVisible() and not button.size().isEmpty()
+    assert bounds(window.calendar_section).contains(bounds(button))
+    assert bounds(window.sidebar_scroll.viewport()).contains(bounds(button))
 
 
 def test_moves_between_groups_persist_and_empty_main_list_can_be_refilled(desktop, tmp_path):
@@ -104,7 +155,8 @@ def test_moves_between_groups_persist_and_empty_main_list_can_be_refilled(deskto
     other, _other_store = make(path=path)
     assert not other.calendar_list.more_expanded
     assert other.calendar_rows['rare'].isVisible()
-    assert not other.calendar_rows['local'].isVisible()
+    assert other.calendar_rows['local'].isVisible()
+    assert other.calendar_rows['local'].choice.isChecked()
 
 
 def accepted_calendar_dialog(calendar):
@@ -163,8 +215,8 @@ def test_source_preferences_apply_updates_sidebar_and_unapplied_changes_are_disc
         editor.apply()
         settle(app)
         assert not store.get_calendar('local').in_main_list
-        assert not window.calendar_rows['local'].isVisible()
-        assert window.calendar_list.more_button.isVisible()
+        assert window.calendar_rows['local'].isVisible()
+        assert window.calendar_rows['local'].choice.isChecked()
         editor.in_main_list.setChecked(True)
     finally:
         editor.finish()

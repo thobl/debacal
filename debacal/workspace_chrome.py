@@ -234,20 +234,12 @@ class WorkspaceChrome:
         WorkspaceChrome.update_calendar_scroll(self)
 
     def update_calendar_scroll(self):
-        """Size the source list from its expanded rows, retaining scroll fallback."""
+        """Size the main source list; the popup has its own scroll viewport."""
         row_height = max((row.sizeHint().height() for row in self.calendar_rows.values()), default=28)
         gap = self.calendar_box.spacing()
         full_height = max(1, self.calendar_list.content_height())
         self.calendar_scroll.setMinimumHeight(full_height if self.calendar_list.visible_row_count() <= 6 else 3 * (row_height + gap))
         self.calendar_scroll.setMaximumHeight(min(full_height, 8 * (row_height + gap)))
-        divider = getattr(self, 'calendar_agenda_divider', None)
-        if divider is not None:
-            # When the collapsed disclosure ends a fully visible list, its
-            # rule already separates calendars from the agenda below.
-            disclosure_is_separator = (not self.calendar_list.more_button.isHidden()
-                                       and not self.calendar_list.more_expanded
-                                       and self.calendar_list.visible_row_count() <= 6)
-            divider.setVisible(not disclosure_is_separator)
 
     def update_command_tooltips(self):
         scheme = scheme_for(self.preferences)

@@ -1,4 +1,4 @@
-"""Sidebar grouping is separate from showing events and supports empty targets."""
+"""Source popup grouping is separate from event visibility and selected sources."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QPoint, QPointF, Qt
-from PySide6.QtGui import QDrag, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QDrag, QDragEnterEvent, QDropEvent, QWheelEvent
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QMenu
 
 from debacal.calendar_list import CALENDAR_ORDER_MIME, CalendarList, CalendarRow
 from debacal.models import Calendar
@@ -62,6 +62,7 @@ def desktop():
             return listing
         yield app, make
         for widget in reversed(owned):
+            widget.set_expanded(False)
             widget.close()
             widget.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -69,26 +70,28 @@ def desktop():
         assert not errors
 
 
-def test_main_list_stays_above_collapsed_more_independent_of_event_visibility(desktop):
+def test_popup_is_independent_of_main_list_geometry_and_event_visibility(desktop):
     app, make = desktop
     listing = make([calendar('rare', main=False), calendar('main', visible=False), calendar('other', main=False)])
     main, rare, other = listing.rows()
     assert listing.ordered_ids() == ['main', 'rare', 'other']
     assert listing.visible_row_count() == 1
     assert not listing.more_expanded and listing.more_button.isVisible()
-    assert main.isVisible() and rare.isHidden() and other.isHidden()
+    assert main.isVisible() and not rare.isVisible() and not other.isVisible()
     assert rare.calendar.visible and not main.calendar.visible
     height = listing.content_height()
     QTest.mouseClick(listing.more_button, Qt.MouseButton.LeftButton)
     app.processEvents()
-    assert listing.more_expanded and listing.visible_row_count() == 3
-    assert rare.isVisible() and other.isVisible() and listing.content_height() > height
+    assert listing.more_expanded and listing.popup.isVisible()
+    assert listing.visible_row_count() == 1
+    assert rare.isVisible() and other.isVisible() and listing.content_height() == height
+    assert listing.display_rows(True) == [main] and listing.display_rows(False) == [rare, other]
     visible = QSignalSpy(rare.visibility_requested)
     QTest.mouseClick(rare.eye, Qt.MouseButton.LeftButton)
     assert visible.at(0) == ['rare', False]
     assert not rare.calendar.in_main_list
     QTest.mouseClick(listing.more_button, Qt.MouseButton.LeftButton)
-    assert rare.isHidden() and other.isHidden() and listing.content_height() == height
+    assert not rare.isVisible() and not other.isVisible() and listing.content_height() == height
     listing.more_button.setFocus()
     QTest.keyClick(listing.more_button, Qt.Key.Key_Space)
     assert listing.more_expanded and rare.isVisible()
@@ -108,7 +111,9 @@ def test_status_change_emits_even_when_order_is_unchanged_and_preserves_source_m
     assert changed.at(0) == [['selected', 'rare'], []] and order.count() == 0
     assert row.calendar == replace(source, in_main_list=False)
     assert row.choice.isChecked() and row.choice.font().underline()
-    assert listing.visible_row_count() == 0
+    assert listing.visible_row_count() == 1
+    assert row.isVisible() and listing.display_rows(True) == [row]
+    assert listing.display_rows(False) == [listing.rows()[1]]
     assert not listing.move_calendar('selected', 0, in_main_list=False)
     assert changed.count() == 1
 
@@ -120,35 +125,42 @@ def test_authenticated_drag_can_drop_into_either_empty_group(desktop, initial_ma
     if not initial_main:
         listing.set_expanded(True)
     row = listing.rows()[0]
-    height = listing.more_button.height()
-    assert listing.more_button.text() == ''
-    listing.dragEnterEvent(Enter(row, QPoint(10, 0)))
-    app.processEvents()
-    assert listing.more_button.text() == 'More calendars'
-    assert listing.more_button.height() == height
-    target = listing.more_button if initial_main else listing.main_drop_target
-    assert target.isVisible()
-    request = Drop(row, target.geometry().center())
-    listing.dropEvent(request)
+    if initial_main:
+        listing._accept_more_drag(Enter(row, listing.more_button.rect().center()))
+        listing._expand_during_drag()
+        app.processEvents()
+        destination = listing.popup_list
+        point = QPoint(10, 0)
+    else:
+        listing.dragEnterEvent(Enter(row, QPoint(10, 0)))
+        app.processEvents()
+        assert listing.main_drop_target.isVisible()
+        destination = listing
+        point = listing.main_drop_target.geometry().center()
+    destination.dragEnterEvent(Enter(row, point))
+    request = Drop(row, point)
+    destination.dropEvent(request)
     assert request.isAccepted() and row.calendar.in_main_list != initial_main
     assert set(listing.ordered_ids()) == {'one', 'two'}
     assert [value.calendar.id for value in listing.group_rows(True)] == (['two'] if initial_main else ['one'])
     assert [value.calendar.id for value in listing.group_rows(False)] == (['one'] if initial_main else ['two'])
     assert listing.main_drop_target.isHidden()
-    assert listing.more_button.text() == ''
-    assert listing.more_button.height() == height
+    assert listing.more_button.property('iconName') == 'more'
+    assert not listing.more_button.icon().isNull()
+    assert not listing._dragging
 
 
-def test_closed_more_header_accepts_drop_and_hover_opens_it(desktop):
-    _, make = desktop
+def test_ellipsis_accepts_main_drag_and_hover_opens_popup(desktop):
+    app, make = desktop
     listing = make([calendar('main'), calendar('first', main=False), calendar('last', main=False)])
     main = listing.rows()[0]
-    point = listing.more_button.geometry().center()
-    listing.dragEnterEvent(Enter(main, point))
+    point = listing.more_button.rect().center()
+    listing._accept_more_drag(Enter(main, point))
     assert listing._drop_group is False and listing._expand_timer.isActive()
     listing._expand_during_drag()
-    assert listing.more_expanded and listing.visible_row_count() == 3
-    listing.dropEvent(Drop(main, listing.more_button.geometry().center()))
+    app.processEvents()
+    assert listing.more_expanded and listing.visible_row_count() == 1
+    listing.popup_list.dropEvent(Drop(main, QPoint(10, 0)))
     assert listing.ordered_ids() == ['main', 'first', 'last']
     assert listing.group_rows(True) == []
     assert not listing._scroll_timer.isActive() and not listing._expand_timer.isActive()
@@ -175,12 +187,13 @@ def test_refresh_preserves_open_group_and_row_identity_without_repolishing_contr
         for _ in range(20):
             listing.set_rows(rows)
         assert insert.call_count == polish.call_count == 0
-    assert listing.more_expanded and listing.rows() == rows and listing.visible_row_count() == 2
+    assert listing.more_expanded and listing.rows() == rows and listing.visible_row_count() == 1
     listing.set_rows([rows[0]])
-    assert listing.more_button.isHidden() and listing.rows() == [rows[0]] and rows[1].isHidden()
+    assert listing.more_button.isHidden() and listing.rows() == [rows[0]] and not rows[1].isVisible()
+    assert not listing.more_expanded and not listing.popup.isVisible()
 
 
-def test_drag_keeps_original_pointer_offset_when_empty_main_target_moves_source(desktop, monkeypatch):
+def test_popup_drag_keeps_original_pointer_offset_when_empty_main_target_appears(desktop, monkeypatch):
     _, make = desktop
     listing = make([calendar('one', main=False), calendar('two', main=False)])
     listing.set_expanded(True)
@@ -191,10 +204,101 @@ def test_drag_keeps_original_pointer_offset_when_empty_main_target_moves_source(
     observed = []
     def execute(drag, _allowed, _default):
         assert listing.main_drop_target.isVisible()
-        assert row.mapFromGlobal(anchor) != hotspot
         assert drag.hotSpot() == hotspot and drag.pixmap().size() == original_image
         observed.append(True)
         return Qt.DropAction.IgnoreAction
     monkeypatch.setattr(QDrag, 'exec', execute)
     listing.start_drag(row, anchor)
     assert observed == [True] and listing.main_drop_target.isHidden()
+
+
+def test_current_occasional_calendar_stays_in_main_without_changing_saved_group(desktop):
+    _, make = desktop
+    listing = make([calendar('main'), calendar('first', main=False), calendar('second', main=False)])
+    main, first, second = listing.rows()
+    first.set_calendar(first.calendar, current=True)
+    listing.set_rows(listing.rows())
+    assert first.isVisible() and listing.display_rows(True) == [main, first]
+    assert listing.display_rows(False) == [second]
+    assert not first.calendar.in_main_list
+    first.set_calendar(first.calendar, current=False)
+    second.set_calendar(second.calendar, current=True)
+    listing.set_rows(listing.rows())
+    assert not first.isVisible() and second.isVisible()
+    assert listing.display_rows(True) == [main, second]
+    assert listing.group_rows(False) == [first, second]
+
+
+def test_drag_exposes_empty_overflow_target_without_resizing_main_list(desktop):
+    _, make = desktop
+    listing = make([calendar('first'), calendar('second')])
+    height = listing.content_height()
+    assert listing.more_button.isHidden()
+    listing._begin_drag()
+    assert listing.more_button.isVisible()
+    assert listing.content_height() == height
+    listing._clear_drop()
+    assert not listing._dragging and listing.more_button.isHidden()
+    assert not listing._scroll_timer.isActive() and not listing._expand_timer.isActive()
+
+
+@pytest.mark.parametrize('parent_in_popup', [False, True])
+def test_escape_dismisses_foreground_menu_or_dialog_before_calendar_popup(desktop, parent_in_popup):
+    app, make = desktop
+    listing = make([calendar('main'), calendar('rare', main=False)])
+    listing.set_expanded(True)
+    app.processEvents()
+    foreground_parent = listing.popup if parent_in_popup else listing
+    menu = QMenu(foreground_parent)
+    menu.addAction('Calendar action')
+    menu.popup(listing.popup.mapToGlobal(QPoint(8, 8)))
+    app.processEvents()
+    assert menu.isVisible()
+    QTest.keyClick(menu, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert not menu.isVisible() and listing.popup.isVisible()
+    dialog = QDialog(foreground_parent)
+    dialog.setModal(True)
+    dialog.show()
+    app.processEvents()
+    assert dialog.isVisible()
+    QTest.keyClick(dialog, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert not dialog.isVisible() and listing.popup.isVisible()
+    QTest.keyClick(listing.popup, Qt.Key.Key_Escape)
+    assert not listing.popup.isVisible() and not listing.more_expanded
+    assert not listing.more_button.isChecked()
+    menu.deleteLater()
+    dialog.deleteLater()
+
+
+def test_outside_click_and_wheel_dismiss_popup_but_inside_scroll_does_not(desktop):
+    app, make = desktop
+    listing = make([calendar('main'), calendar('rare', main=False)])
+    listing.set_expanded(True)
+    QTest.mouseClick(listing, Qt.MouseButton.LeftButton, pos=QPoint(280, 380))
+    assert not listing.popup.isVisible()
+    listing.set_expanded(True)
+    app.processEvents()
+
+    def wheel(widget):
+        point = QPoint(5, 5)
+        event = QWheelEvent(QPointF(point), QPointF(widget.mapToGlobal(point)), QPoint(), QPoint(0, -120),
+                            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(widget, event)
+
+    wheel(listing.popup_scroll.viewport())
+    assert listing.popup.isVisible()
+    wheel(listing)
+    assert not listing.popup.isVisible()
+
+
+def test_owner_resize_dismisses_popup_instead_of_leaving_it_detached(desktop):
+    app, make = desktop
+    listing = make([calendar('main'), calendar('rare', main=False)])
+    listing.set_expanded(True)
+    app.processEvents()
+    listing.resize(listing.width() + 20, listing.height() + 20)
+    app.processEvents()
+    assert not listing.popup.isVisible()

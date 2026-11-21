@@ -153,7 +153,7 @@ class CalendarSourcesEditor(QWidget):
         colors.addStretch()
         form.addRow('Color', colors)
         self.in_main_list = QCheckBox('Keep in main list')
-        self.in_main_list.setToolTip('When unchecked, this calendar appears under More calendars in the sidebar. '
+        self.in_main_list.setToolTip('When unchecked, this calendar appears in the More calendars popup, except while selected. '
                                     'Event display and syncing are unchanged.')
         self.in_main_list.toggled.connect(self._main_list_changed)
         form.addRow('', self.in_main_list)

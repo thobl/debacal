@@ -1,7 +1,7 @@
 """Source controls and agenda/search grouped independently of the calendar grid."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QScrollArea,
+    QButtonGroup, QFrame, QHBoxLayout, QLayout, QLineEdit, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -23,8 +23,9 @@ def _section(name, margins, parent_layout, stretch=0):
 
 
 def _section_heading(title):
-    label = QLabel(title)
+    label = ElidedLabel(title)
     label.setObjectName('sidebarSectionHeading')
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     return label
 
 
@@ -81,6 +82,7 @@ def build_sidebar(window, root):
     window.icon_button('new', 'Add calendar', window.add_calendar, heading)
     calendars.addLayout(heading)
     body = window.calendar_list = CalendarList()
+    heading.addWidget(body.more_button)
     window.calendar_box = body.box
     body.grouped_layout_changed.connect(window.reorder_calendar_groups)
     body.height_changed.connect(window.update_calendar_scroll)
@@ -95,7 +97,6 @@ def build_sidebar(window, root):
     calendars.addWidget(window.calendar_scroll)
 
     divider = QFrame()
-    window.calendar_agenda_divider = divider
     divider.setObjectName('sourceDivider')
     divider.setFixedHeight(1)
     sections.addWidget(divider)

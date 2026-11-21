@@ -7,6 +7,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 
 _SHAPES = {
+    'more': '<circle cx="4" cy="10" r=".7"/><circle cx="10" cy="10" r=".7"/><circle cx="16" cy="10" r=".7"/>',
     'new': '<path d="M10 4v12M4 10h12"/>',
     'add_occurrences': '<rect x="2" y="3" width="13" height="14" rx="2"/><path d="M2 7h13M6 1v4M11 1v4M14 12h5m-2.5-2.5v5"/><path d="m6 10 1 4 1.2-1.8L10 12Z"/>',
     'previous': '<path d="m12 5-5 5 5 5"/>',

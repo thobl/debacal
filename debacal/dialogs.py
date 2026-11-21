@@ -60,7 +60,7 @@ class CalendarDialog(FormDialog):
         self.remember_password.setChecked(True)
         self.in_main_list = QCheckBox('Keep in main list')
         self.in_main_list.setChecked(calendar.in_main_list if calendar else True)
-        self.in_main_list.setToolTip('When unchecked, this calendar appears under More calendars in the sidebar. '
+        self.in_main_list.setToolTip('When unchecked, this calendar appears in the More calendars popup, except while selected. '
                                     'Event display and syncing are unchanged.')
         for label, widget in [('&Name', self.name), ('&Type', self.kind), ('U&RL', self.url),
                               ('&Username', self.username), ('&Password', self.password),

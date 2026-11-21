@@ -141,13 +141,17 @@ a calendar by name to create in it; its eye button controls visibility separatel
 Read-only sources show a lock. Drag a calendar's name or color square to reorder
 the list; its order is saved per profile without changing the creation calendar.
 Calendars start in the main list. Uncheck **Keep in main list** when adding one,
-or in Preferences → Calendar sources, to place it under **More calendars**.
-This section starts collapsed. Click the chevron divider to expand or collapse
-it. The divider shows **More calendars** while dragging to identify the target.
-Folding the list leaves events and syncing unchanged; the eye buttons still
-control whether events are shown. Drag calendars between the two sections to
-change their placement. Empty sections offer a drop target while dragging, and
-hovering over the collapsed More calendars heading opens it.
+or in Preferences → Calendar sources, to place it in **More calendars**.
+Open this list with **…** beside the Calendars heading. It scrolls separately
+from the main list. The current creation calendar always stays in the main
+list, even when it belongs to More calendars; selecting another calendar
+returns it to the popup. This placement leaves events and syncing unchanged;
+the eye buttons control whether events are shown.
+
+Drag a calendar from the popup to the main list to keep it there. To move one
+to More calendars, drag it onto **…** or into the popup. The button is highlighted
+while dragging, and hovering over it opens the popup. Empty lists also accept
+drops. Escape or clicking outside closes the popup.
 Appearance → Sidebar → Upcoming events offers event cards, cards grouped by
 day, and a per-day timeline (the default). Search always uses event cards.
 All-day events use full-width cards in the timeline; timed events keep their
