@@ -1,6 +1,6 @@
 # Event reminders and notification delivery
 
-Status: draft for user review; implementation is not approved.
+Status: design approved by the user on 21 November 2026; implementation planning.
 
 ## Intent and agreed requirements
 
@@ -23,8 +23,7 @@ The user confirmed:
 - The existing UI style and interaction patterns should be retained. Sharing the
   event editor's Notes space with reminder controls is the preferred starting point.
 
-The defaults and detailed behaviors below are proposals for approval, rather than
-additional requirements already agreed by the user.
+The defaults and detailed behaviors below were included in that approval.
 
 ## Approaches
 
