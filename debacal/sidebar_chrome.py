@@ -95,6 +95,7 @@ def build_sidebar(window, root):
     calendars.addWidget(window.calendar_scroll)
 
     divider = QFrame()
+    window.calendar_agenda_divider = divider
     divider.setObjectName('sourceDivider')
     divider.setFixedHeight(1)
     sections.addWidget(divider)

@@ -1,7 +1,7 @@
 """Calendar creation targets, local list groups, and event visibility controls."""
 from dataclasses import replace
-from PySide6.QtCore import QEvent, QMimeData, QPointF, Qt, Signal, QSize, QTimer
-from PySide6.QtGui import QColor, QDrag, QFont
+from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, Qt, Signal, QSize, QTimer
+from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSizePolicy, QPushButton, QScrollArea
 
 from .compact_controls import ElidedButton
@@ -125,6 +125,58 @@ class CalendarRow(QWidget):
 CALENDAR_ORDER_MIME = 'application/x-debacal-calendar-order'
 
 
+class _CalendarDisclosure(QPushButton):
+    """A quiet divider with a native button's full-width interaction area."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.preferences = None
+        self.setObjectName('calendarMore')
+        self.setCheckable(True)
+        self.setAutoDefault(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet('QPushButton#calendarMore { background: transparent; border: 0; padding: 0; }')
+
+    def sizeHint(self):
+        scale = getattr(self.preferences, 'font_scale', 100) / 100
+        return QSize(round(80 * scale), round(24 * scale))
+
+    def minimumSizeHint(self):
+        return QSize(0, self.sizeHint().height())
+
+    def paintEvent(self, _event):
+        scale = getattr(self.preferences, 'font_scale', 100) / 100
+        scheme = scheme_for(self.preferences)
+        active = self.underMouse() or self.isDown()
+        color = QColor(scheme.accent if active else scheme.muted)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(self.font())
+        center = self.height() / 2
+        arrow_width, gap = 10 * scale, 8 * scale
+        caption = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                               max(0, round(self.width() - arrow_width - 3 * gap)))
+        text_width = self.fontMetrics().horizontalAdvance(caption)
+        width = arrow_width + (gap + text_width if caption else 0)
+        left = (self.width() - width) / 2
+        painter.setPen(QPen(QColor(scheme.line), max(1, scale)))
+        painter.drawLine(QPointF(0, center), QPointF(max(0, left - gap), center))
+        painter.drawLine(QPointF(min(self.width(), left + width + gap), center), QPointF(self.width(), center))
+        painter.setPen(QPen(color, 1.5 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        direction = -1 if self.isChecked() else 1
+        edge, point = center - direction * 2.5 * scale, center + direction * 2.5 * scale
+        painter.drawLine(QPointF(left, edge), QPointF(left + arrow_width / 2, point))
+        painter.drawLine(QPointF(left + arrow_width / 2, point), QPointF(left + arrow_width, edge))
+        if caption:
+            painter.drawText(QRectF(left + arrow_width + gap, 0, text_width, self.height()),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, caption)
+        if self.hasFocus() and self.property('keyboardFocus'):
+            painter.setPen(QPen(QColor(scheme.focus), max(1, scale), Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1),
+                                    corner_radius(self.preferences, 2) * scale,
+                                    corner_radius(self.preferences, 2) * scale)
+
+
 class CalendarList(QWidget):
     """A source-only drag target; calendar/event data never enters the payload."""
     order_changed = Signal(list)
@@ -142,10 +194,7 @@ class CalendarList(QWidget):
         self._dragging = False
         self._height = None
         self._group_key = None
-        self.more_button = QPushButton(self)
-        self.more_button.setObjectName('calendarMore')
-        self.more_button.setCheckable(True)
-        self.more_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_button = _CalendarDisclosure(self)
         self.more_button.clicked.connect(self.set_expanded)
         self.more_button.hide()
         self.main_drop_target = QLabel('Main list', self)
@@ -211,29 +260,20 @@ class CalendarList(QWidget):
         preferences = first.preferences if first is not None else None
         scale = getattr(preferences, 'font_scale', 100) / 100
         scheme = scheme_for(preferences)
-        compact = not self.more_expanded and not self._dragging
-        key = len(more), self.more_expanded, compact, bool(main), scale, scheme
+        key = len(more), self.more_expanded, self._dragging, preferences
         if key != self._group_key:
             self._group_key = key
             noun = 'calendar' if len(more) == 1 else 'calendars'
             description = f'{len(more)} additional {noun}'
-            if compact:
-                label = f'{len(more)} more' if main else f'{len(more)} {noun}'
-            else:
-                label = f'More calendars ({len(more)})'
-            self.more_button.setText(('▾ ' if self.more_expanded else '▸ ') + label)
+            self.more_button.preferences = preferences
+            self.more_button.setText('More calendars' if self._dragging else '')
             self.more_button.setChecked(self.more_expanded)
             self.more_button.setAccessibleName('More calendars')
             self.more_button.setAccessibleDescription(description)
             self.more_button.setToolTip('Collapse More calendars' if self.more_expanded else 'Show ' + description)
-            self.more_button.setMinimumHeight(round((18 if compact else 28) * scale))
-            hover = f'color: {scheme.ink};' if compact else f'background: {scheme.hover};'
-            self.more_button.setStyleSheet(
-                f'QPushButton#calendarMore {{ text-align: left; background: transparent; border: 0; '
-                f'padding: {0 if compact else 4}px 0; color: {scheme.muted}; '
-                f'font-size: {round((11 if compact else 13) * scale)}px; }} '
-                f'QPushButton#calendarMore:hover {{ {hover} }} '
-                f'QPushButton#calendarMore[keyboardFocus="true"]:focus {{ border: 1px solid {scheme.focus}; }}')
+            # A transient drag caption never changes the target's geometry.
+            self.more_button.setFixedHeight(self.more_button.sizeHint().height())
+            self.more_button.update()
             self.main_drop_target.setMinimumHeight(round(28 * scale))
             self.main_drop_target.setStyleSheet(
                 f'QLabel#calendarMainDropTarget {{ color: {scheme.muted}; border: 1px dashed {scheme.control_edge}; '

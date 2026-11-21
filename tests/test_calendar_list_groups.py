@@ -89,6 +89,9 @@ def test_main_list_stays_above_collapsed_more_independent_of_event_visibility(de
     assert not rare.calendar.in_main_list
     QTest.mouseClick(listing.more_button, Qt.MouseButton.LeftButton)
     assert rare.isHidden() and other.isHidden() and listing.content_height() == height
+    listing.more_button.setFocus()
+    QTest.keyClick(listing.more_button, Qt.Key.Key_Space)
+    assert listing.more_expanded and rare.isVisible()
 
 
 def test_status_change_emits_even_when_order_is_unchanged_and_preserves_source_metadata(desktop):
@@ -117,8 +120,12 @@ def test_authenticated_drag_can_drop_into_either_empty_group(desktop, initial_ma
     if not initial_main:
         listing.set_expanded(True)
     row = listing.rows()[0]
+    height = listing.more_button.height()
+    assert listing.more_button.text() == ''
     listing.dragEnterEvent(Enter(row, QPoint(10, 0)))
     app.processEvents()
+    assert listing.more_button.text() == 'More calendars'
+    assert listing.more_button.height() == height
     target = listing.more_button if initial_main else listing.main_drop_target
     assert target.isVisible()
     request = Drop(row, target.geometry().center())
@@ -128,6 +135,8 @@ def test_authenticated_drag_can_drop_into_either_empty_group(desktop, initial_ma
     assert [value.calendar.id for value in listing.group_rows(True)] == (['two'] if initial_main else ['one'])
     assert [value.calendar.id for value in listing.group_rows(False)] == (['one'] if initial_main else ['two'])
     assert listing.main_drop_target.isHidden()
+    assert listing.more_button.text() == ''
+    assert listing.more_button.height() == height
 
 
 def test_closed_more_header_accepts_drop_and_hover_opens_it(desktop):
