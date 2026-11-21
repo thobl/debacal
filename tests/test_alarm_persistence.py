@@ -586,15 +586,19 @@ def test_reimported_primary_zone_end_supersedes_same_instant_legacy_provenance(t
         assert alarm_trigger(owner.alarms[0], owner.start, owner.end) == datetime(2026, 10, 24, 3, 30, tzinfo=UTC)
 
 
-@pytest.mark.parametrize('edit_description', [False, True], ids=['noop', 'alarm-edit'])
-def test_matching_legacy_late_fold_bounds_share_recovered_zone_in_history_and_outbox(tmp_path, edit_description):
+def legacy_late_fold_alarm_master():
     from test_ics_duration_semantics import strip_metadata
     start = datetime(2026, 10, 25, 2, 0, tzinfo=BERLIN, fold=1)
     end = datetime(2026, 10, 25, 2, 45, tzinfo=BERLIN, fold=1)
     alarms = (Alarm('start', 'DISPLAY', '-P1D'), Alarm('end', 'DISPLAY', '-P1D', related='END'))
     wire = export_ics([alarm_event(start=start, end=end, alarms=alarms)])
     standard, = parse_ics(strip_metadata(wire), 'c')
-    old = replace(standard, alarms=None, raw_ics=wire.decode())
+    return replace(standard, alarms=None, raw_ics=wire.decode())
+
+
+@pytest.mark.parametrize('edit_description', [False, True], ids=['noop', 'alarm-edit'])
+def test_matching_legacy_late_fold_bounds_share_recovered_zone_in_history_and_outbox(tmp_path, edit_description):
+    old = legacy_late_fold_alarm_master()
     assert old.start.isoformat() == '2026-10-25T01:00:00+00:00'
     assert old.end.isoformat() == '2026-10-25T01:45:00+00:00'
     with Store(tmp_path / 'db') as store:
@@ -624,3 +628,55 @@ def test_matching_legacy_late_fold_bounds_share_recovered_zone_in_history_and_ou
         else:
             assert operation is None
             assert not store.history() and not store.pending_changes()
+
+def test_legacy_title_edit_preserves_declared_new_york_end_and_nominal_alarm(tmp_path):
+    placeholder = legacy_late_fold_alarm_master()
+    original = replace(placeholder, end=placeholder.end.astimezone(ZoneInfo('America/New_York')))
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([original])
+        assert store.get_event(original.id).end_timezone_id == 'America/New_York'
+        hydrated, = store.get_events_with_alarms([original.id])
+        op = store.apply('Edit title', [replace(original, title='Edited title')])
+        change, = store.pending_changes()
+        before, after = store.connection.execute(
+            'SELECT before_data, after_data FROM operations WHERE id=?', (op,)).fetchone()
+        snapshots = {'worker read': hydrated.to_dict(), 'stored': store.get_event(original.id).to_dict(),
+                     'outbox': change['payload'], 'history before': json.loads(before)[original.id],
+                     'history after': json.loads(after)[original.id]}
+        assert snapshots['stored']['title'] == snapshots['outbox']['title'] == 'Edited title'
+
+        def end_reminder(payload):
+            event = Event.from_dict(payload)
+            alarm, = (item for item in event.alarms if item.related == 'END')
+            return (payload.get('end_timezone_id'), payload['end'], alarm.trigger,
+                    alarm_trigger(alarm, event.start, event.end))
+
+        expected = ('America/New_York', '2026-10-24T21:45:00-04:00', '-P1D',
+                    datetime(2026, 10, 24, 1, 45, tzinfo=UTC))
+        assert {stage: end_reminder(payload) for stage, payload in snapshots.items()} == dict.fromkeys(snapshots, expected)
+
+
+@pytest.mark.parametrize('identifier, independent', [('Europe/Berlin', ''), ('Europe/Vienna', 'Europe/Vienna')])
+def test_legacy_noop_keeps_declared_end_when_recovered_start_has_same_clock(tmp_path, identifier, independent):
+    placeholder = legacy_late_fold_alarm_master()
+    original = replace(placeholder, end=placeholder.end.astimezone(ZoneInfo(identifier)))
+    with Store(tmp_path / 'db') as store:
+        store.save_calendar(Calendar('c', 'C', '#123456', kind='caldav'))
+        store.apply_remote([original])
+        assert store.get_event(original.id).end_timezone_id == identifier
+        recovered, = store.get_events_with_alarms([original.id])
+        assert recovered.timezone_id == BERLIN.key and recovered.end.tzinfo.key == identifier
+        assert recovered.end_timezone_id == independent
+        assert store.apply('Save', [original]) is None
+        assert not store.history() and not store.pending_changes()
+
+def test_legacy_private_alarm_hydration_obeys_declared_primary_zone():
+    placeholder = legacy_late_fold_alarm_master()
+    ny = ZoneInfo('America/New_York')
+    original = replace(placeholder, start=placeholder.start.astimezone(ny), timezone_id=ny.key)
+    recovered = hydrate_alarms(original)
+    start_alarm, = (alarm for alarm in recovered.alarms if alarm.related == 'START')
+    assert recovered.timezone_id == ny.key
+    assert start_alarm.trigger == '-P1D'
+    assert alarm_trigger(start_alarm, recovered.start, recovered.end) == datetime(2026, 10, 24, 1, tzinfo=UTC)

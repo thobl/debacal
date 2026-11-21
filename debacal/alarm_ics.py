@@ -314,7 +314,8 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
             component_key = event.ical_uid + '/' + key
             alarms = read_alarms('\n'.join(lines), component_key=component_key)
             restored_fields = {}
-            bounds = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
+            canonical = Event.from_dict(event.recurrence_overrides[key]) if key in event.recurrence_overrides else event
+            bounds = canonical
             # Pre-alarm snapshots retained only the primary TZID. Recover an
             # independently zoned DTEND only while it still describes this end.
             if (not bounds.all_day and not bounds.floating_time and not bounds.end_timezone_id
@@ -334,6 +335,12 @@ def _retained_alarms(event, raw, wanted, *, standalone_key=''):
                     props, component_key, bounds.start, bounds.end, bounds.timezone_id, alarms)
                 if restored is not alarms:
                     alarms = restored
+                    # Verified private groups recover the nominal alarm.
+                    # Their original zones fill gaps in the stored bounds.
+                    if canonical.timezone_id:
+                        start, identifier = canonical.start, canonical.timezone_id
+                    if canonical.end_timezone_id:
+                        end = canonical.end
                     restored_fields = dict(start=start, end=end, timezone_id=identifier)
             family[key] = alarms, restored_fields
     return family

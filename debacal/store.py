@@ -1758,10 +1758,12 @@ class Store:
                 and not submitted.get('floating_time') and submitted.get('timezone_id') == stored.get('timezone_id')):
             for bound, zone in (('start', 'timezone_id'), ('end', 'end_timezone_id')):
                 old_zone = stored.get(zone, '')
-                zone_recovered = canonical.get(zone, '') != old_zone
-                # Both bounds can recover the same named zone. DTEND then
-                # changes its wall-clock spelling without gaining its own TZID.
-                spelling_recovered = stored[bound] != canonical[bound] and submitted[bound] == stored[bound]
+                recovered = canonical.get(zone, '')
+                zone_recovered = not old_zone and bool(recovered)
+                # A shared DTEND has no independent TZID on either side.
+                # Copy only its unchanged legacy placeholder into the new zone.
+                spelling_recovered = (bound == 'end' and not old_zone and not recovered
+                                      and stored[bound] != canonical[bound] and submitted[bound] == stored[bound])
                 if ((zone_recovered or spelling_recovered) and submitted.get(zone, '') == old_zone
                         and datetime.fromisoformat(submitted[bound]) == datetime.fromisoformat(canonical[bound])):
                     submitted[bound] = canonical[bound]
@@ -1769,6 +1771,12 @@ class Store:
                         submitted[zone] = canonical[zone]
                     else:
                         submitted.pop(zone, None)
+            # A recovered DTSTART can now share the previously independent
+            # end's declared zone. The endpoint keeps that zone either way.
+            if submitted.get('end_timezone_id') and submitted['end_timezone_id'] == submitted.get('timezone_id'):
+                from .timezones import resolve_timezone
+                end_zone = resolve_timezone(submitted.pop('end_timezone_id'), submitted.get('timezone_definitions'))
+                submitted['end'] = datetime.fromisoformat(submitted['end']).astimezone(end_zone).isoformat()
         for key, child in submitted.get('recurrence_overrides', {}).items():
             if key in stored['recurrence_overrides']:
                 Store._inherit_legacy_fields(child, stored['recurrence_overrides'][key],
