@@ -37,6 +37,17 @@ _SCHEDULE_FIELDS = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 're
                     'timezone_definitions', 'floating_time', 'duration_spec')
 
 
+def _timing_overrides(overrides):
+    return {key: dict(payload, raw_ics='', alarms=[]) for key, payload in overrides.items()}
+
+
+def timing_event(event):
+    """Keep authored timing and content without transporting wire data through visual projections."""
+    if event is None:
+        return None
+    return replace(event, raw_ics='', alarms=(), recurrence_overrides=_timing_overrides(event.recurrence_overrides))
+
+
 def _checked(value):
     _aware(value)
     if value.astimezone(timezone.utc).astimezone(value.tzinfo).replace(tzinfo=None) != value.replace(tzinfo=None):
@@ -557,6 +568,15 @@ class ScheduleDraft:
                 count=self.count if self.ending == 'count' else None,
                 until=self.until if self.ending == 'until' else None,
                 overflow=self.overflow, range_span=self.range_span)
+
+    def timing_projection(self, prepared_source=None):
+        """Strip stored and graphically edited families before deriving or validating schedule fields."""
+        source = prepared_source or timing_event(self.source)
+        edited = timing_event(self._edited_master)
+        fields = self._edited_fields
+        if fields is not None:
+            fields = dict(fields, recurrence_overrides=_timing_overrides(fields['recurrence_overrides']))
+        return replace(self, source=source, _edited_master=edited, _edited_fields=fields)
 
     def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
         """Return Event recurrence/authoring fields, preserving untouched data."""

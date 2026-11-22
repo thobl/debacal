@@ -864,13 +864,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         occurrences = tuple(value for ref in refs if (value := (
             self.search_result_event(ref.id) if ref.recurring and not ref.series_id else ref)) is not None)
         args = event, refs, occurrences
-        def ready(snapshot):
+        def ready(read_snapshot):
             if (request != self._editor_request or self._closed or self.occurrence_picker or self._editor_active
                     or self._database_context() != context or QApplication.activeModalWidget() is not None):
                 return
             self._editor_active = True
             try:
-                self._open_editor(scope, dialog_scope, *snapshot)
+                self._open_editor(scope, dialog_scope, *read_snapshot())
             finally:
                 self._editor_active = False
         if self.store.path == ':memory:':
@@ -878,7 +878,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if all(v.alarms is not None and all(p.get('alarms') is not None for p in v.recurrence_overrides.values())
                    for v in families):
                 try:
-                    ready(_prepare_editor(families, *args))
+                    ready(lambda: _prepare_editor(families, *args))
                 except (ValueError, KeyError, OverflowError) as error:
                     self.report_error(str(error))
                 return
@@ -886,7 +886,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         else:
             future = self._editor_executor.submit(_read_file_editor, self.store.path, *args)
         self._editor_future = future
-        future.editor_request = request
         future.editor_ready = ready
         future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
 
@@ -2074,11 +2073,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if kind == 'editor':
                 if future is self._editor_future:
                     self._editor_future = None
-                if future.editor_request == self._editor_request and not self._closed:
-                    try:
-                        future.editor_ready(future.result())
-                    except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
-                        self.report_error(str(error))
+                try:
+                    # Consume either outcome only after checking the editor's current context.
+                    future.editor_ready(future.result)
+                except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+                    self.report_error(str(error))
                 continue
             if kind == 'account_credentials':
                 self._source_credential_saves.discard(future)

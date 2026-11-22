@@ -436,3 +436,84 @@ def test_rendered_reminder_rows_use_theme_surface_and_readable_text(mode):
         assert background in (scheme.background, scheme.sidebar, scheme.panel)
     finally:
         release_widget(dlg)
+
+
+@pytest.mark.parametrize('graphical', [False, True], ids=['source', 'edited-master'])
+def test_changed_anchor_preview_and_picker_do_not_decode_detached_reminders(monkeypatch, graphical):
+    from debacal.models import Event
+    from debacal.occurrence_picker import CalendarOccurrencePicker
+    from debacal.ui import MainWindow
+
+    master = alarm_event(calendar_id='local', alarms=(REL,), recurrence_rule='FREQ=DAILY;COUNT=4')
+    child = replace(occurrence(master, BASE + timedelta(days=2)), title='Detached', location='Studio',
+                    alarms=(REMOTE,))
+    master = replace(master, recurrence_overrides={child.recurrence_id: child.to_dict()})
+    first = occurrence(master, BASE)
+    with Store(':memory:') as store:
+        store.apply_remote([master])
+        window = MainWindow(store, enable_sync=False)
+        def edit(dlg):
+            if graphical:
+                assert dlg.add_calendar_occurrence(BASE + timedelta(days=6))
+            counts = {}
+            decode = Alarm.from_dict
+            calls = []
+            def count(payload):
+                calls.append(payload['key'])
+                return decode(payload)
+            with monkeypatch.context() as instrument:
+                instrument.setattr(Alarm, 'from_dict', staticmethod(count))
+                dlg.start.set_value(dlg.start.value() + timedelta(minutes=10))
+                counts['change'] = len(calls)
+                calls.clear()
+                dlg._refresh_preview()
+                counts['preview'] = len(calls)
+                calls.clear()
+                picker = CalendarOccurrencePicker(window, dlg)
+                picker.rebuild()
+                counts['picker'] = len(calls)
+            assert counts == {'change': 0, 'preview': 0, 'picker': 0}
+            assert dlg.alarm_edit() is None
+            dlg.save()
+            return dlg.result()
+        monkeypatch.setattr(EventDialog, 'exec', edit)
+        try:
+            window.edit_event(first.id, scope='group')
+            saved = store.get_event(master.id)
+            assert saved.start == BASE + timedelta(minutes=10)
+            assert saved.alarms == (REL,)
+            stored = next(Event.from_dict(p) for p in saved.recurrence_overrides.values() if p['title'] == 'Detached')
+            assert stored.alarms == (REMOTE,) and stored.location == 'Studio'
+            assert stored.start == child.start + timedelta(minutes=10)
+            if graphical:
+                assert saved.recurrence_dates
+        finally:
+            release_widget(window)
+
+
+@pytest.mark.parametrize('navigate', [True, False], ids=['stale', 'current'])
+def test_failed_editor_read_is_reported_only_in_its_requested_context(tmp_path, monkeypatch, navigate):
+    from threading import Event
+    from debacal import ui
+
+    with Store(tmp_path / 'db') as store:
+        source = alarm_event(calendar_id='local')
+        store.apply_remote([source])
+        window = ui.MainWindow(store, enable_sync=False)
+        entered, release = Event(), Event()
+        def failed(*args):
+            entered.set()
+            assert release.wait(3)
+            raise ValueError('Old selection was removed')
+        monkeypatch.setattr(ui, '_read_file_editor', failed)
+        try:
+            window.edit_event(source.id)
+            wait_for(entered.is_set)
+            if navigate:
+                window.open_day((BASE + timedelta(days=6)).date())
+            release.set()
+            wait_for(lambda: window._editor_future is None)
+            assert [issue.details for issue in window.local_issues] == ([] if navigate else ['Old selection was removed'])
+        finally:
+            release.set()
+            release_widget(window)

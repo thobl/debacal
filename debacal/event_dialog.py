@@ -29,7 +29,7 @@ from .date_time_fields import (DateTimeField, format_duration, format_event_dura
 from .date_time_picker import DateTimeRangePicker, range_duration, relocate_range, validate_range_order
 from .event_duration import add_duration, add_elapsed, end_for, normalized_spec
 from .dialog_base import FormDialog, dialog_buttons
-from .event_schedule import ScheduleDraft, count_to_until, until_to_count
+from .event_schedule import ScheduleDraft, count_to_until, timing_event, until_to_count
 from .event_scope import DEFAULT_MODE_BINDINGS, MODE_ACTIONS
 from .models import Event
 from .timezones import timezone_identifier
@@ -45,14 +45,6 @@ from .shortcuts import shortcut_keys, shortcut_label, shortcut_sequences
 
 
 REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
-
-
-def _timing_event(event):
-    """Keep recurrence and authored content while leaving wire metadata outside visual projections."""
-    if event is None:
-        return None
-    overrides = {key: dict(payload, raw_ics='', alarms=[]) for key, payload in event.recurrence_overrides.items()}
-    return replace(event, raw_ics='', alarms=(), recurrence_overrides=overrides)
 
 
 class EditorFamilies:
@@ -230,7 +222,7 @@ class EventDialog(FormDialog):
         self.setWindowTitle('Edit event' if event else 'Create event')
         install_button_focus(QApplication.instance())
         self.original, self.series = event, series
-        self._timing_series = _timing_event(series)
+        self._timing_series = timing_event(series)
         self.reminder_preferences = reminder_preferences or ReminderPreferences()
         self._selected_refs = tuple(selected_refs) or ((event,) if event else ())
         self._occurrence_refs = occurrence_refs
@@ -1313,6 +1305,9 @@ class EventDialog(FormDialog):
             raise
         source = self.schedule_source()
         draft = self._draft
+        if timing_only:
+            prepared_source = self._timing_series if draft.source is self.series else None
+            draft = draft.timing_projection(prepared_source)
         single = self.has_group and self.scope.currentData() == 'single'
         if not single and self._schedule_error and self.schedule_mode.currentData() != 'single':
             message, self._validation_field = self._schedule_error
@@ -1365,8 +1360,6 @@ class EventDialog(FormDialog):
         values['alarms'] = () if timing_only else self.reminders.alarms()
         if timing_only:
             values['raw_ics'] = ''
-            values['recurrence_overrides'] = {key: dict(payload, raw_ics='', alarms=[])
-                                              for key, payload in values.get('recurrence_overrides', {}).items()}
         event = replace(self.original, **values) if self.original else Event(**values)
         if self.original is None and self.series is None and event.recurrence_overrides:
             # A new draft has shared content controls and individual ranges.
