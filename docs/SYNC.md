@@ -52,7 +52,7 @@ so CPU-heavy sync work does not contend with the desktop's Python interpreter.
 Queued user writes take priority between background database transactions.
 
 The coordinating thread handles keyring access and sends passwords to that
-process through an anonymous pipe. Closing the desktop cancels its active sync
+process through an anonymous pipe. Quitting the app cancels its active sync
 process group; SQLite transactions and the outbox retain interrupted local work.
 
 Private state lives beside the database in `<database>.sync/`, with one hashed
@@ -94,6 +94,21 @@ worker and leaves local editing and calendar visibility independent of the serve
 The collection inventory uses an unfiltered PROPFIND listing instead of a
 VEVENT-filtered calendar query. Non-event resources such as VTODO are preserved
 in the mirror and ignored by the event view.
+
+### Saved alarms and local delivery
+
+Debacal encodes supported saved reminders in standard iCalendar `VALARM` components,
+including changes and explicit removals on detached occurrences. The **Keep**,
+**Remove**, **Add when missing**, and **Replace** choices in the import review
+apply to the selected incoming events. A saved change participates in the same
+history, outbox, conflict review and upload as the rest of its event.
+
+Each profile keeps its delivery preferences and calendar replacements locally.
+Its inbox, delivery receipts, dismissals and snoozes live beside the canonical
+database in `<database>.reminders.sqlite3`. These actions leave event history,
+the outbox and the server copy alone. For backup, quit the app and include its
+profile-local files alongside the calendar database. [Reminder behavior and
+interoperability](NOTIFICATIONS.md)
 
 ## Conflicts, credentials and status
 

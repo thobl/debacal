@@ -16,6 +16,7 @@ A native Linux desktop calendar built with Python and Qt. Your calendar stays us
 - **Nextcloud and other CalDAV calendars**, including discovery, server colors, saved credentials, and visual sync-conflict resolution. CalDAV sync uses vdirsyncer.
 - **Standard recurring events and irregular series.** Click dates in the preview or write a compact sequence. Edit one occurrence, the whole series, or this and following occurrences.
 - **Alternative time slots:** propose several dates, confirm one, and remove the other choices in one undoable action.
+- **Event reminders.** Add a saved reminder under **Reminders** in the event editor. Turn on delivery in **Preferences → Notifications** and choose desktop alerts, the in-app inbox, or both.
 - **ICS import/export**, with an import preview and selectable occurrences. Copy/paste, Ctrl+drag copies, and undo/redo work across calendars and series.
 
 <details>
@@ -68,6 +69,8 @@ debacal < appointment.ics # Import from standard input
 Use **+** beside Calendars to connect an account. Select a calendar's name to create events in it; the eye icon controls visibility separately. Double-click the calendar to create an event.
 
 `D` / `W` / `M` / `Y` change views. `E` or Enter edits the selection; `Ctrl+F` searches. `F1` / `F2` / `F3` choose one occurrence, all in the series, or this and following. Shortcuts and appearance are configurable in Preferences.
+
+Debacal must be running to deliver reminders. On desktops with a system tray, **Preferences → Notifications → Close window** can keep it running when you close the window. [Using reminders](docs/NOTIFICATIONS.md)
 
 Only one window opens per profile. Use `--test` for separate persistent test data, or `--profile NAME` for another profile. Passwords can be saved in your system keyring. See the [user guide](docs/USER_GUIDE.md) for data locations, backups, advanced sequences, and troubleshooting.
 
