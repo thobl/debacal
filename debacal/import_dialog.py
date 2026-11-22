@@ -95,6 +95,14 @@ def _navigate_locked(navigation, action, reference):
 class ImportDialog(FormDialog):
     """Preview immutable import snapshots without changing calendar storage."""
 
+    INTERRUPTED = -1
+
+    def exec(self):
+        result = super().exec()
+        # QCoreApplication.exit can unwind the nested loop without emitting
+        # finished(). Keep the live review distinct from an explicit Cancel.
+        return self.INTERRUPTED if self._active else result
+
     def __init__(self, calendars, paths=(), calendar_id=None, parent=None, *, sources=None,
                  preferences=None, executor=None, reminder_preferences=None, reserve_import=None):
         super().__init__(parent)

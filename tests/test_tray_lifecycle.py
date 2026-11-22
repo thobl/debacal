@@ -306,8 +306,9 @@ def test_screenshot_rejects_imports_before_storage_or_ipc(tmp_path, monkeypatch,
     assert 'screenshot' in capsys.readouterr().err.lower()
 
 
+@pytest.mark.parametrize('during_drain', ['qt_exit', 'native_open'])
 @pytest.mark.parametrize('saved', [False, True])
-def test_isolated_screenshot_waits_for_durable_write_and_preserves_status(tmp_path, saved):
+def test_isolated_screenshot_waits_for_durable_write_and_preserves_status(tmp_path, saved, during_drain):
     result = isolated_process(tmp_path, r'''
 import json, sys
 from pathlib import Path
@@ -321,7 +322,7 @@ states = []
 class Window(launch.MainWindow):
     def grab(self):
         states.append(self._delivery_allowed)
-        states.append(self.receive_file_open(path.with_suffix('.ics')))
+        self.receive_file_open(path.with_suffix('.ics'))
         release = threading.Event()
         def write(writer):
             if not release.wait(3):
@@ -329,9 +330,23 @@ class Window(launch.MainWindow):
             writer.set_setting('capture_write', True)
         self.write_database(write, force_async=True)
         from PySide6.QtWidgets import QApplication
-        QTimer.singleShot(30, lambda: QApplication.instance().exit(0))
-        QTimer.singleShot(100, release.set)
+        def interrupt_capture():
+            if sys.argv[2] == 'qt_exit':
+                QApplication.instance().exit(0)
+            else:
+                from PySide6.QtGui import QFileOpenEvent
+                QApplication.sendEvent(QApplication.instance(), QFileOpenEvent(str(path.with_suffix('.ics'))))
+            QTimer.singleShot(30, release.set)
+        QTimer.singleShot(0, interrupt_capture)
+        def detect_stranded_capture():
+            states.append('needed another quit')
+            self.request_quit(force=True)
+        QTimer.singleShot(1100, detect_stranded_capture)
         return super().grab()
+    def receive_file_open(self, path):
+        accepted = super().receive_file_open(path)
+        states.append(accepted)
+        return accepted
 def forbidden(*_, **__):
     raise ValueError('Screenshot attempted IPC')
 launch.InstanceCoordinator = forbidden
@@ -339,8 +354,9 @@ launch.MainWindow = Window
 status = launch.main(['--database', str(database), '--screenshot', str(path)])
 with Store(database) as store:
     print(json.dumps({'status': status, 'durable': store.get_setting('capture_write', False), 'states': states}))
-''', str(tmp_path / ('capture.png' if saved else 'capture.unknown')))
-    assert result == {'status': 0 if saved else 1, 'durable': True, 'states': [False, False]}
+''', str(tmp_path / ('capture.png' if saved else 'capture.unknown')), during_drain)
+    expected = [False, False, False] if during_drain == 'native_open' else [False, False]
+    assert result == {'status': 0 if saved else 1, 'durable': True, 'states': expected}
 
 
 def test_demo_handoff_drains_old_workspace_and_replacement_owns_exit(tmp_path):
@@ -410,3 +426,67 @@ def test_review_keeps_workspace_accessible_if_hidden_after_admission(workspace, 
     window.close()
     window._process_import_request()
     assert visible == [True]
+
+
+@pytest.mark.parametrize('interrupt', ['quit', 'exit'])
+@pytest.mark.parametrize('decision', ['import', 'cancel'])
+def test_acknowledged_stdin_review_survives_qt_loop_exit(tmp_path, interrupt, decision):
+    result = isolated_process(tmp_path, r'''
+import json, sys
+from PySide6.QtCore import QTimer
+from PySide6.QtNetwork import QLocalSocket
+from PySide6.QtWidgets import QApplication
+import debacal.__main__ as launch
+from debacal.import_dialog import ImportDialog
+from debacal.single_instance import _request_bytes
+body = (b'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:acknowledged\r\n'
+        b'DTSTART:20261106T090000Z\r\nDTEND:20261106T100000Z\r\nSUMMARY:Reviewed after exit\r\n'
+        b'END:VEVENT\r\nEND:VCALENDAR\r\n')
+request_id, frame = _request_bytes([], body)
+result = {'ack': False, 'resumed': False}
+class Window(launch.MainWindow):
+    def bind_instance(self, coordinator):
+        super().bind_instance(coordinator)
+        self.peer = QLocalSocket(self)
+        self.review_monitor = QTimer(self)
+        self.review_monitor.setInterval(10)
+        self.interrupted = False
+        def inspect():
+            if self.peer.canReadLine():
+                result['ack'] = json.loads(bytes(self.peer.readLine())) == {'ok': True, 'request': request_id}
+            dialog = QApplication.activeModalWidget()
+            if not result['ack'] or not isinstance(dialog, ImportDialog) or not dialog.preview_ready:
+                return
+            if not self.interrupted:
+                self.interrupted = True
+                # This draft choice distinguishes the live review from a fresh
+                # dialog or an empty replacement after returning to app.exec().
+                dialog.reminder_mode.setCurrentIndex(dialog.reminder_mode.findData('remove'))
+                if sys.argv[1] == 'quit':
+                    QApplication.instance().quit()
+                else:
+                    QApplication.instance().exit(0)
+                return
+            result['resumed'] = (self.isVisible() and dialog.isVisible()
+                                 and self._import_memory_bytes == len(body)
+                                 and dialog._sources[0].data == body
+                                 and dialog.reminder_mode.currentData() == 'remove')
+            self.review_monitor.stop()
+            button = dialog.import_button if sys.argv[2] == 'import' else dialog.cancel_button
+            button.click()
+            QTimer.singleShot(50, lambda: self.request_quit(force=True))
+        self.review_monitor.timeout.connect(inspect)
+        self.workspaceClosed.connect(lambda: result.update(
+            titles=[e.title for e in self.store.list_events()], remaining=self._import_memory_bytes))
+        def send():
+            self.peer.connectToServer(coordinator.server_name)
+            self.peer.write(frame)
+            self.review_monitor.start()
+            QTimer.singleShot(2200, lambda: self.request_quit(force=True))
+        QTimer.singleShot(0, send)
+launch.MainWindow = Window
+result['code'] = launch.main(['--test'], delivery_allowed=False)
+print(json.dumps(result))
+''', interrupt, decision)
+    titles = ['Reviewed after exit'] if decision == 'import' else []
+    assert result == {'code': 0, 'ack': True, 'resumed': True, 'titles': titles, 'remaining': 0}

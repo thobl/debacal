@@ -1909,7 +1909,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return True
 
     def receive_file_open(self, path):
-        if self._closed:
+        if self._closed or not self._imports_allowed:
             return False
         self._cancel_quit(restore=False)
         try:
@@ -1924,7 +1924,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return self._instance.pending_imports if self._instance is not None else (0, 0)
 
     def _fits_import_budget(self, requests, memory_bytes):
-        return (len(self._import_requests) + requests <= MAX_PENDING_IMPORT_REQUESTS
+        waiting = len(self._import_requests) - int(self._import_dialog_active)
+        return (waiting + requests <= MAX_PENDING_IMPORT_REQUESTS
                 and self._import_memory_bytes + memory_bytes <= MAX_PENDING_IMPORT_BYTES)
 
     def can_accept_import(self, memory_bytes=0, *, requests=1):
@@ -1964,12 +1965,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self.occurrence_picker or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             self._import_timer.start(100)
             return
-        sources, calendar_id = self._import_requests.popleft()
+        sources, calendar_id = self._import_requests[0]
         calendar = self.store.get_default_calendar()
         self._import_dialog_active = True
         memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
         reserved_bytes = memory_bytes
-        submitted_bytes = 0
 
         def reserve_import(prepared):
             nonlocal reserved_bytes
@@ -1982,6 +1982,28 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             reserved_bytes = wire_bytes
             return True
 
+        def finish_review(result):
+            submitted_bytes = 0
+            try:
+                if result == QDialog.DialogCode.Accepted and not self._closed:
+                    if dialog.selected_prepared is None:
+                        self.report_error('Wait for the calendar preview before importing.', title='Import preview is not ready')
+                    else:
+                        prepared = dialog.selected_prepared
+                        for item in prepared.items:
+                            accepted = AcceptedImportSource('import:' + uuid4().hex, item, dialog.selected_calendar_id,
+                                                            prepared.reminder_mode, prepared.reminder_alarms,
+                                                            dialog.selected_sources[item.index].path)
+                            self._submit_import(accepted)
+                            submitted_bytes += item.wire_bytes
+            finally:
+                self._import_requests.popleft()
+                self._import_memory_bytes -= reserved_bytes - submitted_bytes
+                dialog.deleteLater()
+                self._import_dialog_active = False
+                if self._import_requests and not self._closed:
+                    self._import_timer.start(0)
+
         dialog = None
         try:
             if self._hidden_to_tray:
@@ -1990,24 +2012,24 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
                                   preferences=self.preferences, executor=self.executor, reserve_import=reserve_import,
                                   reminder_preferences=load_reminder_preferences(self.store))
-            if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
-                if dialog.selected_prepared is None:
-                    self.report_error('Wait for the calendar preview before importing.', title='Import preview is not ready')
-                else:
-                    prepared = dialog.selected_prepared
-                    for item in prepared.items:
-                        accepted = AcceptedImportSource('import:' + uuid4().hex, item, dialog.selected_calendar_id,
-                                                        prepared.reminder_mode, prepared.reminder_alarms,
-                                                        dialog.selected_sources[item.index].path)
-                        self._submit_import(accepted)
-                        submitted_bytes += item.wire_bytes
-        finally:
-            self._import_memory_bytes -= reserved_bytes - submitted_bytes
+            result = dialog.exec()
+        except Exception as error:
+            # Until the user decides, the original request still owns its
+            # place and its initial reservation, including on a failed open.
+            self._import_memory_bytes -= reserved_bytes - memory_bytes
+            self._import_dialog_active = False
             if dialog is not None:
                 dialog.deleteLater()
-            self._import_dialog_active = False
-            if self._import_requests and not self._closed:
-                self._import_timer.start(0)
+            self.report_error(str(error), title='Could not open import review', action_label='Retry review…',
+                              action=self._process_import_request)
+            return
+        if result == ImportDialog.INTERRUPTED:
+            # The outer Qt loop will resume. Keep the same review, draft,
+            # original inputs and charge until its actual Import/Cancel.
+            dialog.finished.connect(finish_review, Qt.ConnectionType.SingleShotConnection)
+            dialog.open()
+        else:
+            finish_review(result)
 
     def _submit_import(self, accepted):
         future = self.executor.submit(accepted.prepare, self.store.path == ':memory:')

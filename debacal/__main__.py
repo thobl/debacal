@@ -122,11 +122,17 @@ class FileOpeningApplication(QApplication):
     file_open_requested = Signal(str)
 
     def __init__(self, argv):
+        self.quit_workspace = None
         self._pending_files = []
         self._files_ready = False
         super().__init__(argv)
 
     def event(self, event):
+        if event.type() == QEvent.Type.Quit and self.quit_workspace is not None:
+            # QApplication's default Quit closes modal dialogs first, which
+            # would synthesize a cancellation before their workspace can veto.
+            self.quit_workspace()
+            return True
         if event.type() == QEvent.Type.FileOpen:
             path = event.file() or event.url().toLocalFile()
             if path:
@@ -249,6 +255,7 @@ def main(argv=None, *, delivery_allowed=True, reminder_factory=None):
         if not primary:
             return 0
         window = create_workspace(path, coordinator, demo=args.demo)
+        app.quit_workspace = lambda: window.request_quit(force=True)
         if args.demo_conflict:
             from .conflict_demo import DemoConflictEngine
             window.engine = DemoConflictEngine(window.store)
@@ -300,6 +307,7 @@ def main(argv=None, *, delivery_allowed=True, reminder_factory=None):
         print('Could not start Debacal: ' + str(exc), file=sys.stderr)
         return 1
     finally:
+        app.quit_workspace = None
         for workspace_store, workspace_window in reversed(workspaces):
             if not workspace_window._closed:
                 workspace_window.request_quit(force=True)
