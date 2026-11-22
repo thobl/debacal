@@ -170,7 +170,8 @@ def history_stress(path, meter, size=2048):
     from debacal.store import Store
 
     zone = ZoneInfo('America/New_York')
-    first = (BASE - timedelta(hours=size - 1)).astimezone(zone)
+    # A backward DST fold provides one civil HOURLY slot for two elapsed hours.
+    first = (BASE - timedelta(hours=size + 1)).astimezone(zone)
     source = Event('history', 'local', 'Historical series', first, first + 20*MINUTE,
                    recurrence_rule='FREQ=HOURLY', alarms=(Alarm('clock', 'DISPLAY', 'PT0S', uid='clock'),))
     owner = ReminderOwner(str(path))
@@ -199,7 +200,7 @@ def history_stress(path, meter, size=2048):
                     store.record_delivery(due.key, desktop_id=None, unread=True)
                     issued.append(due.key)
             clock = high + MINUTE
-        assert len(issued) >= size-2, len(issued)
+        assert len(issued) >= size, len(issued)
         store.snooze(issued[-1], BASE + 5*MINUTE)
         state['issued'] = issued
         original = store._write

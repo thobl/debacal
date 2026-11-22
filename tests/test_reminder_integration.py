@@ -239,3 +239,49 @@ def test_successive_all_moves_preserve_the_same_delivered_occurrence(tmp_path):
                 assert resolved.start == moved.start
         finally:
             worker.release()
+
+@pytest.mark.parametrize('rule', ['FREQ=MONTHLY;BYHOUR=8,9', 'FREQ=YEARLY;BYHOUR=8,9'])
+def test_date_only_all_move_keeps_independent_hourly_slots(tmp_path, rule):
+    from alarm_support import FakeTransport
+    from debacal.reminder_reveal import reminder_target
+    from debacal.reminder_worker import ReminderWorker
+    from test_reminder_controller import ALARM
+
+    path = str(tmp_path / 'calendar')
+    first = BASE - 60*MINUTE
+    clock = FakeClock(first - 2*timedelta(days=1))
+    worker = ReminderWorker(path, clock, FakeTransport(), True, 'Example', lambda *_: None)
+
+    def drain():
+        for _ in range(100):
+            if worker.tick() >= 1:
+                return
+        pytest.fail('Reminder worker did not settle')
+
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Calendar', '#123456'))
+        later = replace(ALARM, key='later', uid='later', trigger='PT2H')
+        master = replace(event('hours', first, ALARM, later, recurrence_rule=rule), end=first + 2*timedelta(days=1))
+        writer.apply_remote([master])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app'), now=clock.now())
+        try:
+            drain()
+            clock.time = BASE
+            drain()
+            receipts = [row.reminder.key for row in worker.store.inbox()]
+            assert {key.trigger_utc for key in receipts} == {first, BASE}
+            root = occurrence(master, master.start)
+            shift = timedelta(days=1)
+            writer.move_selection([root], 'group', root, root.start-shift, root.end-shift)
+            drain()
+            keys = {row.reminder.key for row in worker.store.inbox()}
+            assert {key for key in keys if key.alarm_key == 'alarm'} == set(receipts)
+            assert {key.trigger_utc for key in keys if key.alarm_key == 'later'} == {
+                stamp-shift+120*MINUTE for stamp in (first, BASE)}
+            for key in receipts:
+                opened = worker.store.open_entry(key, partition=worker.store.partition_id)
+                assert opened is not None
+                _, current, _ = reminder_target(path, *opened)
+                assert current.start == key.trigger_utc-shift
+        finally:
+            worker.release()

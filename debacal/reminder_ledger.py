@@ -179,6 +179,10 @@ def _moved_native_key(previous, current, movement, key):
                 nominal = target.replace(year=year, month=month+1)
             else:
                 nominal = target.replace(year=target.year + old.year - begin.year)
+            # A date-only gesture can retain explicit BYHOUR/BYMINUTE slots
+            # within each period. Carry this slot's offset from the root clock.
+            original_clock = old.replace(year=begin.year, month=begin.month, day=begin.day, tzinfo=None)
+            nominal += original_clock - begin.replace(tzinfo=None)
         else:
             nominal = old + shift
         moved = recurrence_key(normalize_recurrence_time(nominal), current.master.all_day,

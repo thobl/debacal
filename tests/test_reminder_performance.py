@@ -323,3 +323,49 @@ def test_synthetic_reminder_benchmark_reports_complete_workflows(tmp_path):
     assert report['rounds'][1]['index']['retained_partition']
     assert report['rounds'][1]['history']['groups'] >= 47
     assert {'enable_and_build', 'drain_due_cohort', 'held_writer_inbox', 'history_rule_edit'} <= report['operations'].keys()
+
+def test_owner_thread_services_inbox_request_between_history_pages(tmp_path, monkeypatch):
+    from threading import current_thread
+    from alarm_support import FakeClock, wait_for
+    from debacal import reminder_ledger
+    from debacal.alarms import Alarm
+    from debacal.reminder_preferences import ReminderPreferences, save_reminder_preferences
+    from debacal.reminder_worker import ReminderWorker
+    from test_reminder_controller import event, running
+
+    path = tmp_path / 'calendar'
+    clock = FakeClock(BASE - timedelta(minutes=1))
+    source = event('many', BASE, *(Alarm(str(i), 'DISPLAY', 'PT0S', uid=str(i)) for i in range(100)))
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Calendar', '#123456'))
+        writer.apply_remote([source])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app'), now=clock.now())
+        with running(path, clock) as (controller, _, page):
+            assert not page()
+            clock.time = BASE
+            controller.reload_settings()
+            wait_for(lambda: controller.unread_count == 100)
+            counts = []
+            observed = []
+            original = reminder_ledger._staged_group
+            command = ReminderWorker.command
+            def project(*args):
+                counts.append(1)
+                if len(counts) == reminder_ledger.HISTORY_PAGE:
+                    current_thread().enqueue('page', 9900, 1, 0, False)
+                return original(*args)
+            def handle(self, kind, args):
+                if kind == 'page' and args[0] == 9900:
+                    observed.append((len(counts), self.store.cursor, self.store._db.in_transaction))
+                return command(self, kind, args)
+            monkeypatch.setattr(reminder_ledger, '_staged_group', project)
+            monkeypatch.setattr(ReminderWorker, 'command', handle)
+            writer.apply('Change duration', [replace(source, end=source.end+timedelta(minutes=1))])
+            revision = writer.events_revision()
+            controller.reload_settings()
+            wait_for(lambda: observed)
+            computed, cursor, in_transaction = observed[0]
+            assert computed in (reminder_ledger.HISTORY_PAGE, 2*reminder_ledger.HISTORY_PAGE)
+            assert cursor[0] < revision and not in_transaction
+            wait_for(lambda: len(counts) == 100)
+            assert len(page()) == 100
