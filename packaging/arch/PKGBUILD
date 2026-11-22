@@ -14,6 +14,7 @@ depends=(
   'vdirsyncer>=0.21' 'vdirsyncer<0.22'
   'python-dateutil>=2.9' 'python-dateutil<3'
   'python-keyring>=25' 'python-keyring<26'
+  'python-jeepney>=0.9.0'
   'desktop-file-utils'
   'hicolor-icon-theme'
   'ttf-dejavu'

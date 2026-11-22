@@ -579,6 +579,7 @@ source = { editable = "." }
 dependencies = [
     { name = "caldav" },
     { name = "icalendar" },
+    { name = "jeepney", marker = "sys_platform == 'linux'" },
     { name = "keyring" },
     { name = "pyside6", version = "6.11.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pyside6", version = "6.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -599,6 +600,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
     { name = "caldav", specifier = ">=2,<4" },
     { name = "icalendar", specifier = ">=6.3,<8" },
+    { name = "jeepney", marker = "sys_platform == 'linux'", specifier = ">=0.9.0" },
     { name = "keyring", specifier = ">=25,<26" },
     { name = "pyside6", marker = "python_full_version < '3.12'", specifier = ">=6.7,!=6.12.0,<7" },
     { name = "pyside6", marker = "python_full_version >= '3.12'", specifier = ">=6.7,<7" },

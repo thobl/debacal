@@ -28,7 +28,8 @@ CREATE INDEX IF NOT EXISTS ledger_snooze_order ON ledger(until,source,component,
     WHERE status='snoozed';
 DROP INDEX IF EXISTS ledger_snoozes;
 CREATE INDEX IF NOT EXISTS ledger_status ON ledger(source,status);
-CREATE INDEX IF NOT EXISTS ledger_inbox ON ledger(stamp DESC,key);
+DROP INDEX IF EXISTS ledger_inbox;
+CREATE INDEX IF NOT EXISTS ledger_visible_inbox ON ledger(stamp DESC,key) WHERE status!='suppressed';
 CREATE INDEX IF NOT EXISTS ledger_unread ON ledger(unread);
 CREATE TABLE IF NOT EXISTS delivery_context (
     source TEXT, component TEXT, alarm TEXT, occurrence TEXT, fingerprint TEXT, changed INTEGER,

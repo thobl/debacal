@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS source (
     generation INTEGER NOT NULL, changed INTEGER NOT NULL, zone TEXT, schedule BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS source_civil ON source(id,zone) WHERE zone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS source_calendar ON source(calendar,id);
+CREATE TABLE IF NOT EXISTS catchup_group (
+    source TEXT, component TEXT, alarm TEXT, occurrence TEXT, fingerprint TEXT, through INTEGER,
+    PRIMARY KEY(source,component,alarm,occurrence,fingerprint));
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 """
 
@@ -74,10 +77,15 @@ class ReminderStore:
         self._partition.check_owner()
         self._partition.refresh(self._now)
 
-    def read_sources(self, method, *args, **kwargs):
-        if method not in ('scan', 'changes', 'revision', 'calendar_states', 'source_stamp', 'selected'):
+    def _check_partition(self, expected):
+        if expected is not None and self.partition_id != expected:
+            raise sqlite3.OperationalError('The reminder work page belongs to a previous database incarnation.')
+
+    def read_sources(self, method, *args, partition=None, **kwargs):
+        if method not in ('scan', 'changes', 'revision', 'calendar_states', 'calendar_name', 'source_stamp', 'selected'):
             raise ValueError('Unknown reminder source operation.')
         self._refresh()
+        self._check_partition(partition)
         try:
             with self._partition.guarded() as reader:
                 result = getattr(reader, method)(*args, **kwargs)
@@ -91,14 +99,14 @@ class ReminderStore:
             self._partition.latch(error)
             raise
 
-    def rebind_sources(self, zone, *, after_id='', limit=128):
+    def rebind_sources(self, zone, *, after_id='', limit=128, partition=None):
         """Page civil schedules bound to an earlier local timezone."""
         if limit < 0:
             raise ValueError('Reminder batch size must be nonnegative.')
         self._refresh()
         rows = self._db.execute('SELECT id FROM source WHERE zone IS NOT NULL AND zone!=? AND id>? '
                                 'ORDER BY id LIMIT ?', (StateWriter().zone(zone), after_id, limit))
-        return self.read_sources('selected', tuple(row[0] for row in rows))
+        return self.read_sources('selected', tuple(row[0] for row in rows), partition=partition)
 
     def finish_bootstrap(self):
         self._refresh()
@@ -287,11 +295,11 @@ class ReminderStore:
         with self._partition.guarded() as reader:
             return self._valid_source(reader, due.key.source_id, due.source_revision, due.calendar_id, row[1])
 
-    def record_delivery(self, key: DeliveryKey, *, desktop_id: int | None, unread: bool = False,
+    def record_delivery(self, key: DeliveryKey, *, desktop_id: int | None, unread: bool | None = False,
                         uncertain: bool = False, fence=None) -> None:
         self._partition.check_owner()
         with self._write():
-            self._db.execute("UPDATE ledger SET status=?,desktop_id=?,unread=?,claim=NULL WHERE key=? "
+            self._db.execute("UPDATE ledger SET status=?,desktop_id=?,unread=coalesce(?,unread),claim=NULL WHERE key=? "
                              "AND status='pending' AND (? IS NULL OR claim=?)",
                              ('uncertain' if uncertain else 'delivered', desktop_id, unread,
                               ledger.encode_key(key), fence, fence))
@@ -318,6 +326,87 @@ class ReminderStore:
             self._db.execute("UPDATE ledger SET status='snoozed',until=?,closed=1,unread=0,claim=NULL WHERE key=?",
                              (micros(until), ledger.encode_key(key)))
 
+    def mute(self):
+        """A deliberate global disable retires pending sends and cancels local snoozes."""
+        with self._write():
+            self._partition.check_owner()
+            self._db.execute("UPDATE ledger SET status='uncertain',claim=NULL WHERE status='pending'")
+            self._db.execute("UPDATE ledger SET status='dismissed',until=NULL,closed=0,unread=0 WHERE status='snoozed'")
+
+    def entry(self, key):
+        encoded = ledger.encode_key(key)
+        self._partition.check_target()
+        row = self._db.execute("SELECT payload,status,unread,until FROM ledger WHERE key=? AND status!='suppressed'",
+                               (encoded,)).fetchone()
+        if row:
+            return InboxEntry(ledger.current_due(self._db, encoded, row[0]), row[1], bool(row[2]),
+                              instant(row[3]) if row[3] is not None else None)
+
+    def actionable(self, due):
+        self._refresh()
+        row = self._db.execute('SELECT revision,generation FROM source WHERE id=?', (due.key.source_id,)).fetchone()
+        context = self._db.execute('SELECT fingerprint FROM delivery_context WHERE source=? AND component=? '
+                                   'AND alarm=? AND occurrence=?', ledger.group(due.key)).fetchone()
+        if not row or row[0] != due.source_revision or not context or context[0] != due.anchor_fingerprint:
+            return False
+        with self._partition.guarded() as reader:
+            return self._valid_source(reader, due.key.source_id, row[0], due.calendar_id, row[1])
+
+    def prepare_unsent(self, due, fence):
+        """Renew only a caller-held, still-unsent claim after a policy change."""
+        prefix = f'{self.partition_id}/{self._partition.epoch}/'
+        if not fence or not fence.startswith(prefix) or not self.actionable(due):
+            return None
+        if fence.startswith(f'{prefix}{self._generation}/'):
+            return fence
+        with self._write():
+            self._partition.check_owner()
+            renewed = self._new_claim()
+            changed = self._db.execute("UPDATE ledger SET claim=? WHERE key=? AND status='pending' AND claim=?",
+                                       (renewed, ledger.encode_key(due.key), fence))
+            return renewed if changed.rowcount else None
+
+    def pending_unread(self, key, fence):
+        with self._write():
+            self._db.execute("UPDATE ledger SET unread=1 WHERE key=? AND status='pending' AND claim=?",
+                             (ledger.encode_key(key), fence))
+
+    def is_snooze_claim(self, key, fence):
+        return bool(self._db.execute("SELECT 1 FROM ledger WHERE key=? AND claim=? AND closed=1",
+                                     (ledger.encode_key(key), fence)).fetchone())
+
+    def suppress(self, key, fence):
+        with self._write():
+            self._db.execute("UPDATE ledger SET status='suppressed',claim=NULL,unread=0 WHERE key=? AND claim=?",
+                             (ledger.encode_key(key), fence))
+
+    def begin_catchup(self, due, now):
+        """Only the first overdue rank represents this logical alarm through now."""
+        identity = (*ledger.group(due.key), due.anchor_fingerprint)
+        with self._write():
+            row = self._db.execute('SELECT through FROM catchup_group WHERE source=? AND component=? AND alarm=? '
+                                   'AND occurrence=? AND fingerprint=?', identity).fetchone()
+            if row and micros(due.key.trigger_utc) <= row[0]:
+                return False
+            self._db.execute('INSERT OR REPLACE INTO catchup_group VALUES(?,?,?,?,?,?)', (*identity, micros(now)))
+            return True
+
+    def controller_state(self):
+        return self._partition.get('controller', {})
+
+    def checkpoint(self, state, *, cancel_snoozes=False, calendars=(), partition=None):
+        """Commit scheduling policy changes and their unfinished calendar scans together."""
+        with self._write():
+            self._partition.check_owner()
+            self._check_partition(partition)
+            cancel = "UPDATE ledger SET status='dismissed',unread=0,closed=0,until=NULL WHERE status='snoozed'"
+            if cancel_snoozes:
+                self._db.execute(cancel)
+            else:
+                self._db.executemany(cancel + ' AND source IN (SELECT id FROM source WHERE calendar=?)',
+                                     ((cal,) for cal in calendars))
+            self._partition.set('controller', state)
+
     def inbox(self, *, limit: int = 100, offset: int = 0) -> tuple[InboxEntry, ...]:
         self._partition.check_target()
         if min(limit, offset) < 0:
@@ -325,14 +414,17 @@ class ReminderStore:
         rows = self._db.execute(
             'SELECT l.key,l.payload,l.status,l.unread,l.until,m.first_revision,m.revision,m.title '
             'FROM ledger l LEFT JOIN source_label m ON m.source=l.source AND m.component=l.component '
+            "WHERE l.status!='suppressed' "
             'ORDER BY l.stamp DESC,l.key LIMIT ? OFFSET ?', (limit, offset))
         reader = ledger.inbox_reader(self._db)
         return tuple(InboxEntry(ledger.decode_due(reader, key, payload, label), status, bool(unread),
                                 instant(until) if until is not None else None)
                      for key, payload, status, unread, until, *label in rows)
 
-    def mark_read(self, keys: Iterable[DeliveryKey]) -> None:
+    def mark_read(self, keys: Iterable[DeliveryKey], *, partition=None) -> None:
         with self._write():
+            if partition is not None and self.partition_id != partition:
+                return
             self._db.executemany('UPDATE ledger SET unread=0 WHERE key=?', ((ledger.encode_key(k),) for k in keys))
 
     def unread_count(self) -> int:

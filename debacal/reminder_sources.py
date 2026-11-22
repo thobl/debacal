@@ -206,6 +206,11 @@ class ReminderSources:
                              (event_id,)).fetchone()
             return row[0] if row is not None else None
 
+    def calendar_name(self, calendar_id: str) -> str:
+        with self._snapshot() as db:
+            row = db.execute("SELECT json_extract(data,'$.name') FROM calendars WHERE id=?", (calendar_id,)).fetchone()
+            return row[0] if row and row[0] else calendar_id
+
     def calendar_state(self, calendar_id: str):
         with self._snapshot() as db:
             row = db.execute('SELECT enabled,generation,changed_at FROM calendar_enable_transitions '

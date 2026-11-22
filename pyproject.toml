@@ -26,6 +26,7 @@ dependencies = [
     "vdirsyncer>=0.21,<0.22",
     "python-dateutil>=2.9,<3",
     "keyring>=25,<26",
+    "jeepney>=0.9.0; sys_platform == 'linux'",
 ]
 
 [project.urls]
