@@ -84,7 +84,7 @@ def test_loader_restores_valid_late_hour_pair_and_falls_back_for_invalid_setting
 
 def test_dialog_has_categories_and_updates_date_language_preview(desktop):
     widget = dialog(desktop, bindings=BINDINGS, default_bindings=BINDINGS)
-    assert [widget.categories.item(index).text() for index in range(widget.categories.count())] == ['Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts']
+    assert [widget.categories.item(index).text() for index in range(widget.categories.count())] == ['Calendar', 'Appearance', 'Calendar sources', 'Notifications', 'Sync', 'Keyboard shortcuts']
     widget.locale.setCurrentIndex(widget.locale.findData('de_DE'))
     assert 'Mittwoch' in widget.date_format.toolTip() and 'Montag' in widget.date_format.toolTip()
     assert widget.week_start.itemText(widget.week_start.findData(0)) == 'Montag'
@@ -159,7 +159,7 @@ def test_calendar_category_owns_functional_controls_and_selected_category_uses_s
         assert widget.calendar_page.isAncestorOf(field)
         assert not widget.appearance_editor.isAncestorOf(field)
     assert set(widget.appearance_editor.section_widgets) == {'Colors', 'Font', 'Interface', 'Year view', 'Sidebar'}
-    for name in ('Calendar', 'Appearance', 'Calendar sources', 'Sync', 'Keyboard shortcuts'):
+    for name in ('Calendar', 'Appearance', 'Calendar sources', 'Notifications', 'Sync', 'Keyboard shortcuts'):
         assert widget.set_category(name)
         for row in range(widget.categories.count()):
             item = widget.categories.item(row)

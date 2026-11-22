@@ -143,6 +143,8 @@ class _ResourceTimezone(tzinfo):
     """
     def __init__(self, identifier, backend):
         self.identifier, self.backend = identifier, backend
+        self.observance_offsets = frozenset(offset for component in getattr(backend, '_comps', ())
+                                            for offset in (component.tzoffsetfrom, component.tzoffsetto))
 
     def __deepcopy__(self, memo):
         # Authoring drafts share immutable prepared rules like ZoneInfo objects.

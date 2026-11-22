@@ -1,0 +1,1414 @@
+{
+  "source": {
+    "revision": "8e6bee7",
+    "application_sha256": "9fbb374c78493933762fe5c637674bdc8fd99cd05f6604c55d3c37e623da8f10",
+    "application_files": 128
+  },
+  "script_sha256": "6b43920eadf66c4dc339f5717eb731339cf33e188507a73f75ecc8b16c0a12dd",
+  "workload": {
+    "sources": 20000,
+    "due": 72,
+    "saved_alarm_components": 4201,
+    "disabled_sources": 1172,
+    "hidden_sources": 2679,
+    "legacy_families": 79
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "phase": "disabled",
+      "records": [
+        {
+          "operation": "store_open_disabled",
+          "elapsed_ms": 967.654,
+          "dispatch_ms": 947.817,
+          "max_event_loop_gap_ms": 967.642,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_disabled",
+          "elapsed_ms": 162.994,
+          "dispatch_ms": 127.913,
+          "max_event_loop_gap_ms": 140.37,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_disabled",
+          "elapsed_ms": 1449.377,
+          "dispatch_ms": 127.913,
+          "max_event_loop_gap_ms": 140.37,
+          "paint_events": 100
+        },
+        {
+          "operation": "disabled_worker_idle",
+          "elapsed_ms": 7.644,
+          "dispatch_ms": 0.021,
+          "max_event_loop_gap_ms": 6.072,
+          "paint_events": 13
+        },
+        {
+          "operation": "enable_and_build",
+          "elapsed_ms": 51648.802,
+          "dispatch_ms": 0.218,
+          "max_event_loop_gap_ms": 72.272,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "rss_before_mib": 175.258,
+        "rss_after_mib": 178.98,
+        "source_rows": 3262,
+        "frontier_rows": 5014,
+        "allocated_bytes": 3211264,
+        "database_bytes": 3194880,
+        "wal_bytes": 4206552
+      },
+      "history": {},
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 1,
+      "phase": "enabled",
+      "records": [
+        {
+          "operation": "store_open_enabled",
+          "elapsed_ms": 949.353,
+          "dispatch_ms": 929.804,
+          "max_event_loop_gap_ms": 949.341,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_enabled",
+          "elapsed_ms": 164.003,
+          "dispatch_ms": 120.854,
+          "max_event_loop_gap_ms": 135.79,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_enabled",
+          "elapsed_ms": 1433.437,
+          "dispatch_ms": 120.854,
+          "max_event_loop_gap_ms": 135.79,
+          "paint_events": 100
+        },
+        {
+          "operation": "ready_index_restart",
+          "elapsed_ms": 7.626,
+          "dispatch_ms": 0.02,
+          "max_event_loop_gap_ms": 6.036,
+          "paint_events": 13
+        },
+        {
+          "operation": "single_source_commit_and_index",
+          "elapsed_ms": 1016.272,
+          "dispatch_ms": 10.457,
+          "max_event_loop_gap_ms": 21.013,
+          "paint_events": 57
+        },
+        {
+          "operation": "cold_navigation",
+          "elapsed_ms": 16.124,
+          "dispatch_ms": 8.814,
+          "max_event_loop_gap_ms": 16.117,
+          "paint_events": 53
+        },
+        {
+          "operation": "idle_worker_tick",
+          "elapsed_ms": 5.831,
+          "dispatch_ms": 0.022,
+          "max_event_loop_gap_ms": 5.83,
+          "paint_events": 0
+        },
+        {
+          "operation": "drain_due_cohort",
+          "elapsed_ms": 416.989,
+          "dispatch_ms": 0.011,
+          "max_event_loop_gap_ms": 11.336,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_dispatch",
+          "elapsed_ms": 1.621,
+          "dispatch_ms": 0.859,
+          "max_event_loop_gap_ms": 1.62,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_navigation",
+          "elapsed_ms": 20.637,
+          "dispatch_ms": 8.455,
+          "max_event_loop_gap_ms": 20.628,
+          "paint_events": 53
+        },
+        {
+          "operation": "held_writer_inbox",
+          "elapsed_ms": 44.063,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 11.568,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_release_to_commit",
+          "elapsed_ms": 33.176,
+          "dispatch_ms": 0.008,
+          "max_event_loop_gap_ms": 12.29,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_metadata_edit",
+          "elapsed_ms": 10.62,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 5.426,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_rule_edit",
+          "elapsed_ms": 138.666,
+          "dispatch_ms": 0.01,
+          "max_event_loop_gap_ms": 12.983,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_duration_edit",
+          "elapsed_ms": 158.706,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 13.53,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_concurrent_action",
+          "elapsed_ms": 155.902,
+          "dispatch_ms": 0.001,
+          "max_event_loop_gap_ms": 14.017,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "retained_partition": true
+      },
+      "history": {
+        "groups": 2049,
+        "active_snoozes_before": 1,
+        "final_snooze": "snoozed",
+        "actions": {
+          "metadata": {
+            "writer_sections_ms": [
+              0.325
+            ]
+          },
+          "rule": {
+            "writer_sections_ms": [
+              21.754
+            ]
+          },
+          "duration": {
+            "writer_sections_ms": [
+              17.546
+            ]
+          },
+          "concurrent": {
+            "elapsed_ms": 19.894,
+            "busy_retries": 6
+          }
+        }
+      },
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 2,
+      "phase": "disabled",
+      "records": [
+        {
+          "operation": "store_open_disabled",
+          "elapsed_ms": 953.093,
+          "dispatch_ms": 933.234,
+          "max_event_loop_gap_ms": 953.08,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_disabled",
+          "elapsed_ms": 166.005,
+          "dispatch_ms": 130.737,
+          "max_event_loop_gap_ms": 142.809,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_disabled",
+          "elapsed_ms": 1444.643,
+          "dispatch_ms": 130.737,
+          "max_event_loop_gap_ms": 142.809,
+          "paint_events": 100
+        },
+        {
+          "operation": "disabled_worker_idle",
+          "elapsed_ms": 7.265,
+          "dispatch_ms": 0.022,
+          "max_event_loop_gap_ms": 5.933,
+          "paint_events": 13
+        },
+        {
+          "operation": "enable_and_build",
+          "elapsed_ms": 51620.539,
+          "dispatch_ms": 0.212,
+          "max_event_loop_gap_ms": 72.575,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "rss_before_mib": 175.395,
+        "rss_after_mib": 179.121,
+        "source_rows": 3262,
+        "frontier_rows": 5014,
+        "allocated_bytes": 3211264,
+        "database_bytes": 3194880,
+        "wal_bytes": 4206552
+      },
+      "history": {},
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 2,
+      "phase": "enabled",
+      "records": [
+        {
+          "operation": "store_open_enabled",
+          "elapsed_ms": 957.92,
+          "dispatch_ms": 938.287,
+          "max_event_loop_gap_ms": 957.908,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_enabled",
+          "elapsed_ms": 167.222,
+          "dispatch_ms": 123.161,
+          "max_event_loop_gap_ms": 137.86,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_enabled",
+          "elapsed_ms": 1445.267,
+          "dispatch_ms": 123.161,
+          "max_event_loop_gap_ms": 137.86,
+          "paint_events": 100
+        },
+        {
+          "operation": "ready_index_restart",
+          "elapsed_ms": 7.687,
+          "dispatch_ms": 0.039,
+          "max_event_loop_gap_ms": 6.141,
+          "paint_events": 13
+        },
+        {
+          "operation": "drain_due_cohort",
+          "elapsed_ms": 404.597,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 11.576,
+          "paint_events": 7
+        },
+        {
+          "operation": "cold_navigation",
+          "elapsed_ms": 24.752,
+          "dispatch_ms": 12.303,
+          "max_event_loop_gap_ms": 24.686,
+          "paint_events": 67
+        },
+        {
+          "operation": "idle_worker_tick",
+          "elapsed_ms": 43.863,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 11.751,
+          "paint_events": 0
+        },
+        {
+          "operation": "single_source_commit_and_index",
+          "elapsed_ms": 1008.938,
+          "dispatch_ms": 8.436,
+          "max_event_loop_gap_ms": 15.423,
+          "paint_events": 44
+        },
+        {
+          "operation": "held_writer_dispatch",
+          "elapsed_ms": 1.353,
+          "dispatch_ms": 0.726,
+          "max_event_loop_gap_ms": 1.352,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_navigation",
+          "elapsed_ms": 16.428,
+          "dispatch_ms": 7.52,
+          "max_event_loop_gap_ms": 16.421,
+          "paint_events": 53
+        },
+        {
+          "operation": "held_writer_inbox",
+          "elapsed_ms": 5.797,
+          "dispatch_ms": 0.019,
+          "max_event_loop_gap_ms": 5.796,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_release_to_commit",
+          "elapsed_ms": 30.454,
+          "dispatch_ms": 0.008,
+          "max_event_loop_gap_ms": 14.45,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_metadata_edit",
+          "elapsed_ms": 10.877,
+          "dispatch_ms": 0.015,
+          "max_event_loop_gap_ms": 10.466,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_rule_edit",
+          "elapsed_ms": 137.603,
+          "dispatch_ms": 0.01,
+          "max_event_loop_gap_ms": 12.902,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_duration_edit",
+          "elapsed_ms": 141.338,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 16.198,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_concurrent_action",
+          "elapsed_ms": 141.746,
+          "dispatch_ms": 0.0,
+          "max_event_loop_gap_ms": 16.753,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "retained_partition": true
+      },
+      "history": {
+        "groups": 2049,
+        "active_snoozes_before": 1,
+        "final_snooze": "snoozed",
+        "actions": {
+          "metadata": {
+            "writer_sections_ms": [
+              0.329
+            ]
+          },
+          "rule": {
+            "writer_sections_ms": [
+              21.34
+            ]
+          },
+          "duration": {
+            "writer_sections_ms": [
+              16.119
+            ]
+          },
+          "concurrent": {
+            "elapsed_ms": 19.796,
+            "busy_retries": 6
+          }
+        }
+      },
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 3,
+      "phase": "disabled",
+      "records": [
+        {
+          "operation": "store_open_disabled",
+          "elapsed_ms": 937.783,
+          "dispatch_ms": 918.359,
+          "max_event_loop_gap_ms": 937.771,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_disabled",
+          "elapsed_ms": 162.563,
+          "dispatch_ms": 127.012,
+          "max_event_loop_gap_ms": 138.813,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_disabled",
+          "elapsed_ms": 1419.755,
+          "dispatch_ms": 127.012,
+          "max_event_loop_gap_ms": 138.813,
+          "paint_events": 100
+        },
+        {
+          "operation": "disabled_worker_idle",
+          "elapsed_ms": 7.626,
+          "dispatch_ms": 0.023,
+          "max_event_loop_gap_ms": 6.151,
+          "paint_events": 13
+        },
+        {
+          "operation": "enable_and_build",
+          "elapsed_ms": 51005.715,
+          "dispatch_ms": 0.277,
+          "max_event_loop_gap_ms": 69.637,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "rss_before_mib": 175.363,
+        "rss_after_mib": 179.086,
+        "source_rows": 3262,
+        "frontier_rows": 5014,
+        "allocated_bytes": 3211264,
+        "database_bytes": 3194880,
+        "wal_bytes": 4206552
+      },
+      "history": {},
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 3,
+      "phase": "enabled",
+      "records": [
+        {
+          "operation": "store_open_enabled",
+          "elapsed_ms": 946.394,
+          "dispatch_ms": 926.35,
+          "max_event_loop_gap_ms": 946.382,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_enabled",
+          "elapsed_ms": 162.997,
+          "dispatch_ms": 120.696,
+          "max_event_loop_gap_ms": 135.251,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_enabled",
+          "elapsed_ms": 1427.031,
+          "dispatch_ms": 120.696,
+          "max_event_loop_gap_ms": 135.251,
+          "paint_events": 100
+        },
+        {
+          "operation": "ready_index_restart",
+          "elapsed_ms": 7.699,
+          "dispatch_ms": 0.02,
+          "max_event_loop_gap_ms": 6.071,
+          "paint_events": 13
+        },
+        {
+          "operation": "single_source_commit_and_index",
+          "elapsed_ms": 1018.263,
+          "dispatch_ms": 10.15,
+          "max_event_loop_gap_ms": 20.842,
+          "paint_events": 57
+        },
+        {
+          "operation": "cold_navigation",
+          "elapsed_ms": 18.477,
+          "dispatch_ms": 10.033,
+          "max_event_loop_gap_ms": 18.469,
+          "paint_events": 53
+        },
+        {
+          "operation": "drain_due_cohort",
+          "elapsed_ms": 423.58,
+          "dispatch_ms": 0.023,
+          "max_event_loop_gap_ms": 11.722,
+          "paint_events": 7
+        },
+        {
+          "operation": "idle_worker_tick",
+          "elapsed_ms": 47.777,
+          "dispatch_ms": 0.01,
+          "max_event_loop_gap_ms": 10.77,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_dispatch",
+          "elapsed_ms": 1.27,
+          "dispatch_ms": 0.651,
+          "max_event_loop_gap_ms": 1.27,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_navigation",
+          "elapsed_ms": 14.393,
+          "dispatch_ms": 5.483,
+          "max_event_loop_gap_ms": 14.387,
+          "paint_events": 49
+        },
+        {
+          "operation": "held_writer_inbox",
+          "elapsed_ms": 5.757,
+          "dispatch_ms": 0.024,
+          "max_event_loop_gap_ms": 5.752,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_release_to_commit",
+          "elapsed_ms": 12.766,
+          "dispatch_ms": 0.008,
+          "max_event_loop_gap_ms": 12.765,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_metadata_edit",
+          "elapsed_ms": 10.798,
+          "dispatch_ms": 0.015,
+          "max_event_loop_gap_ms": 10.36,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_rule_edit",
+          "elapsed_ms": 137.786,
+          "dispatch_ms": 0.011,
+          "max_event_loop_gap_ms": 13.014,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_duration_edit",
+          "elapsed_ms": 141.37,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 17.241,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_concurrent_action",
+          "elapsed_ms": 141.324,
+          "dispatch_ms": 0.001,
+          "max_event_loop_gap_ms": 16.814,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "retained_partition": true
+      },
+      "history": {
+        "groups": 2049,
+        "active_snoozes_before": 1,
+        "final_snooze": "snoozed",
+        "actions": {
+          "metadata": {
+            "writer_sections_ms": [
+              0.32
+            ]
+          },
+          "rule": {
+            "writer_sections_ms": [
+              21.495
+            ]
+          },
+          "duration": {
+            "writer_sections_ms": [
+              15.893
+            ]
+          },
+          "concurrent": {
+            "elapsed_ms": 19.86,
+            "busy_retries": 6
+          }
+        }
+      },
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 4,
+      "phase": "disabled",
+      "records": [
+        {
+          "operation": "store_open_disabled",
+          "elapsed_ms": 930.261,
+          "dispatch_ms": 910.373,
+          "max_event_loop_gap_ms": 930.249,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_disabled",
+          "elapsed_ms": 161.374,
+          "dispatch_ms": 126.129,
+          "max_event_loop_gap_ms": 137.746,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_disabled",
+          "elapsed_ms": 1409.585,
+          "dispatch_ms": 126.129,
+          "max_event_loop_gap_ms": 137.746,
+          "paint_events": 100
+        },
+        {
+          "operation": "disabled_worker_idle",
+          "elapsed_ms": 7.464,
+          "dispatch_ms": 0.023,
+          "max_event_loop_gap_ms": 6.128,
+          "paint_events": 13
+        },
+        {
+          "operation": "enable_and_build",
+          "elapsed_ms": 51222.385,
+          "dispatch_ms": 0.246,
+          "max_event_loop_gap_ms": 73.735,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "rss_before_mib": 175.312,
+        "rss_after_mib": 179.059,
+        "source_rows": 3262,
+        "frontier_rows": 5014,
+        "allocated_bytes": 3211264,
+        "database_bytes": 3194880,
+        "wal_bytes": 4206552
+      },
+      "history": {},
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 4,
+      "phase": "enabled",
+      "records": [
+        {
+          "operation": "store_open_enabled",
+          "elapsed_ms": 938.082,
+          "dispatch_ms": 918.501,
+          "max_event_loop_gap_ms": 938.07,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_enabled",
+          "elapsed_ms": 162.45,
+          "dispatch_ms": 119.404,
+          "max_event_loop_gap_ms": 133.895,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_enabled",
+          "elapsed_ms": 1417.826,
+          "dispatch_ms": 119.404,
+          "max_event_loop_gap_ms": 133.895,
+          "paint_events": 100
+        },
+        {
+          "operation": "ready_index_restart",
+          "elapsed_ms": 7.641,
+          "dispatch_ms": 0.02,
+          "max_event_loop_gap_ms": 6.012,
+          "paint_events": 13
+        },
+        {
+          "operation": "single_source_commit_and_index",
+          "elapsed_ms": 1011.427,
+          "dispatch_ms": 9.996,
+          "max_event_loop_gap_ms": 20.186,
+          "paint_events": 57
+        },
+        {
+          "operation": "drain_due_cohort",
+          "elapsed_ms": 415.456,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 11.219,
+          "paint_events": 7
+        },
+        {
+          "operation": "cold_navigation",
+          "elapsed_ms": 18.476,
+          "dispatch_ms": 10.2,
+          "max_event_loop_gap_ms": 18.426,
+          "paint_events": 41
+        },
+        {
+          "operation": "idle_worker_tick",
+          "elapsed_ms": 48.956,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 11.552,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_dispatch",
+          "elapsed_ms": 1.221,
+          "dispatch_ms": 0.731,
+          "max_event_loop_gap_ms": 1.22,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_navigation",
+          "elapsed_ms": 10.912,
+          "dispatch_ms": 5.026,
+          "max_event_loop_gap_ms": 10.908,
+          "paint_events": 46
+        },
+        {
+          "operation": "held_writer_inbox",
+          "elapsed_ms": 5.565,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 5.564,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_release_to_commit",
+          "elapsed_ms": 17.764,
+          "dispatch_ms": 0.008,
+          "max_event_loop_gap_ms": 12.276,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_metadata_edit",
+          "elapsed_ms": 10.427,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 5.379,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_rule_edit",
+          "elapsed_ms": 137.5,
+          "dispatch_ms": 0.01,
+          "max_event_loop_gap_ms": 20.822,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_duration_edit",
+          "elapsed_ms": 139.407,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 15.919,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_concurrent_action",
+          "elapsed_ms": 139.949,
+          "dispatch_ms": 0.001,
+          "max_event_loop_gap_ms": 16.06,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "retained_partition": true
+      },
+      "history": {
+        "groups": 2049,
+        "active_snoozes_before": 1,
+        "final_snooze": "snoozed",
+        "actions": {
+          "metadata": {
+            "writer_sections_ms": [
+              0.314
+            ]
+          },
+          "rule": {
+            "writer_sections_ms": [
+              21.451
+            ]
+          },
+          "duration": {
+            "writer_sections_ms": [
+              15.833
+            ]
+          },
+          "concurrent": {
+            "elapsed_ms": 19.112,
+            "busy_retries": 6
+          }
+        }
+      },
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 5,
+      "phase": "disabled",
+      "records": [
+        {
+          "operation": "store_open_disabled",
+          "elapsed_ms": 956.951,
+          "dispatch_ms": 937.608,
+          "max_event_loop_gap_ms": 956.94,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_disabled",
+          "elapsed_ms": 167.018,
+          "dispatch_ms": 129.043,
+          "max_event_loop_gap_ms": 141.714,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_disabled",
+          "elapsed_ms": 1442.324,
+          "dispatch_ms": 129.043,
+          "max_event_loop_gap_ms": 141.714,
+          "paint_events": 100
+        },
+        {
+          "operation": "disabled_worker_idle",
+          "elapsed_ms": 7.467,
+          "dispatch_ms": 0.024,
+          "max_event_loop_gap_ms": 6.029,
+          "paint_events": 13
+        },
+        {
+          "operation": "enable_and_build",
+          "elapsed_ms": 51043.947,
+          "dispatch_ms": 0.216,
+          "max_event_loop_gap_ms": 78.455,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "rss_before_mib": 175.395,
+        "rss_after_mib": 179.621,
+        "source_rows": 3262,
+        "frontier_rows": 5014,
+        "allocated_bytes": 3211264,
+        "database_bytes": 3194880,
+        "wal_bytes": 4206552
+      },
+      "history": {},
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    },
+    {
+      "round": 5,
+      "phase": "enabled",
+      "records": [
+        {
+          "operation": "store_open_enabled",
+          "elapsed_ms": 935.889,
+          "dispatch_ms": 916.352,
+          "max_event_loop_gap_ms": 935.877,
+          "paint_events": 0
+        },
+        {
+          "operation": "workspace_enabled",
+          "elapsed_ms": 163.759,
+          "dispatch_ms": 120.767,
+          "max_event_loop_gap_ms": 135.802,
+          "paint_events": 100
+        },
+        {
+          "operation": "process_to_first_paint_enabled",
+          "elapsed_ms": 1423.864,
+          "dispatch_ms": 120.767,
+          "max_event_loop_gap_ms": 135.802,
+          "paint_events": 100
+        },
+        {
+          "operation": "ready_index_restart",
+          "elapsed_ms": 7.724,
+          "dispatch_ms": 0.02,
+          "max_event_loop_gap_ms": 6.036,
+          "paint_events": 13
+        },
+        {
+          "operation": "idle_worker_tick",
+          "elapsed_ms": 5.738,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 5.734,
+          "paint_events": 0
+        },
+        {
+          "operation": "cold_navigation",
+          "elapsed_ms": 19.083,
+          "dispatch_ms": 9.614,
+          "max_event_loop_gap_ms": 19.076,
+          "paint_events": 67
+        },
+        {
+          "operation": "drain_due_cohort",
+          "elapsed_ms": 406.958,
+          "dispatch_ms": 0.016,
+          "max_event_loop_gap_ms": 11.877,
+          "paint_events": 7
+        },
+        {
+          "operation": "single_source_commit_and_index",
+          "elapsed_ms": 1074.153,
+          "dispatch_ms": 11.158,
+          "max_event_loop_gap_ms": 20.493,
+          "paint_events": 44
+        },
+        {
+          "operation": "held_writer_dispatch",
+          "elapsed_ms": 1.242,
+          "dispatch_ms": 0.652,
+          "max_event_loop_gap_ms": 1.241,
+          "paint_events": 7
+        },
+        {
+          "operation": "held_writer_navigation",
+          "elapsed_ms": 16.774,
+          "dispatch_ms": 7.167,
+          "max_event_loop_gap_ms": 16.767,
+          "paint_events": 53
+        },
+        {
+          "operation": "held_writer_inbox",
+          "elapsed_ms": 5.756,
+          "dispatch_ms": 0.016,
+          "max_event_loop_gap_ms": 5.755,
+          "paint_events": 0
+        },
+        {
+          "operation": "held_writer_release_to_commit",
+          "elapsed_ms": 31.079,
+          "dispatch_ms": 0.008,
+          "max_event_loop_gap_ms": 15.024,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_metadata_edit",
+          "elapsed_ms": 10.847,
+          "dispatch_ms": 0.013,
+          "max_event_loop_gap_ms": 10.438,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_rule_edit",
+          "elapsed_ms": 137.903,
+          "dispatch_ms": 0.011,
+          "max_event_loop_gap_ms": 13.08,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_duration_edit",
+          "elapsed_ms": 140.75,
+          "dispatch_ms": 0.014,
+          "max_event_loop_gap_ms": 15.994,
+          "paint_events": 0
+        },
+        {
+          "operation": "history_concurrent_action",
+          "elapsed_ms": 140.227,
+          "dispatch_ms": 0.001,
+          "max_event_loop_gap_ms": 17.287,
+          "paint_events": 0
+        }
+      ],
+      "index": {
+        "retained_partition": true
+      },
+      "history": {
+        "groups": 2049,
+        "active_snoozes_before": 1,
+        "final_snooze": "snoozed",
+        "actions": {
+          "metadata": {
+            "writer_sections_ms": [
+              0.324
+            ]
+          },
+          "rule": {
+            "writer_sections_ms": [
+              21.757
+            ]
+          },
+          "duration": {
+            "writer_sections_ms": [
+              15.893
+            ]
+          },
+          "concurrent": {
+            "elapsed_ms": 17.296,
+            "busy_retries": 5
+          }
+        }
+      },
+      "environment": {
+        "backend": "xcb",
+        "python": "3.14.10",
+        "pyside6": "6.12.0",
+        "sqlite": "3.54.1",
+        "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+        "cpus": 12
+      }
+    }
+  ],
+  "environment": {
+    "backend": "xcb",
+    "python": "3.14.10",
+    "pyside6": "6.12.0",
+    "sqlite": "3.54.1",
+    "platform": "Linux-7.3.4-arch1-2-x86_64-with-glibc2.44",
+    "cpus": 12
+  },
+  "methodology": "Fresh process and synthetic profile per disabled run, original files reopened for ready-index startup. Normal OS filesystem caching. Seeded mixed action order and random date windows. Fake delivery.",
+  "operations": {
+    "store_open_disabled": {
+      "samples": 5,
+      "mean_ms": 949.148,
+      "p95_ms": 967.654,
+      "max_ms": 967.654,
+      "min_ms": 930.261,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 929.478,
+        "p95_ms": 947.817,
+        "max_ms": 947.817,
+        "min_ms": 910.373
+      },
+      "worst_event_loop_gap_ms": 967.642
+    },
+    "workspace_disabled": {
+      "samples": 5,
+      "mean_ms": 163.991,
+      "p95_ms": 167.018,
+      "max_ms": 167.018,
+      "min_ms": 161.374,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 128.167,
+        "p95_ms": 130.737,
+        "max_ms": 130.737,
+        "min_ms": 126.129
+      },
+      "worst_event_loop_gap_ms": 142.809
+    },
+    "process_to_first_paint_disabled": {
+      "samples": 5,
+      "mean_ms": 1433.137,
+      "p95_ms": 1449.377,
+      "max_ms": 1449.377,
+      "min_ms": 1409.585,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 128.167,
+        "p95_ms": 130.737,
+        "max_ms": 130.737,
+        "min_ms": 126.129
+      },
+      "worst_event_loop_gap_ms": 142.809
+    },
+    "disabled_worker_idle": {
+      "samples": 5,
+      "mean_ms": 7.493,
+      "p95_ms": 7.644,
+      "max_ms": 7.644,
+      "min_ms": 7.265,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.023,
+        "p95_ms": 0.024,
+        "max_ms": 0.024,
+        "min_ms": 0.021
+      },
+      "worst_event_loop_gap_ms": 6.151
+    },
+    "enable_and_build": {
+      "samples": 5,
+      "mean_ms": 51308.278,
+      "p95_ms": 51648.802,
+      "max_ms": 51648.802,
+      "min_ms": 51005.715,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.234,
+        "p95_ms": 0.277,
+        "max_ms": 0.277,
+        "min_ms": 0.212
+      },
+      "worst_event_loop_gap_ms": 78.455
+    },
+    "store_open_enabled": {
+      "samples": 5,
+      "mean_ms": 945.528,
+      "p95_ms": 957.92,
+      "max_ms": 957.92,
+      "min_ms": 935.889,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 925.859,
+        "p95_ms": 938.287,
+        "max_ms": 938.287,
+        "min_ms": 916.352
+      },
+      "worst_event_loop_gap_ms": 957.908
+    },
+    "workspace_enabled": {
+      "samples": 5,
+      "mean_ms": 164.086,
+      "p95_ms": 167.222,
+      "max_ms": 167.222,
+      "min_ms": 162.45,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 120.976,
+        "p95_ms": 123.161,
+        "max_ms": 123.161,
+        "min_ms": 119.404
+      },
+      "worst_event_loop_gap_ms": 137.86
+    },
+    "process_to_first_paint_enabled": {
+      "samples": 5,
+      "mean_ms": 1429.485,
+      "p95_ms": 1445.267,
+      "max_ms": 1445.267,
+      "min_ms": 1417.826,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 120.976,
+        "p95_ms": 123.161,
+        "max_ms": 123.161,
+        "min_ms": 119.404
+      },
+      "worst_event_loop_gap_ms": 137.86
+    },
+    "ready_index_restart": {
+      "samples": 5,
+      "mean_ms": 7.675,
+      "p95_ms": 7.724,
+      "max_ms": 7.724,
+      "min_ms": 7.626,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.024,
+        "p95_ms": 0.039,
+        "max_ms": 0.039,
+        "min_ms": 0.02
+      },
+      "worst_event_loop_gap_ms": 6.141
+    },
+    "single_source_commit_and_index": {
+      "samples": 5,
+      "mean_ms": 1025.811,
+      "p95_ms": 1074.153,
+      "max_ms": 1074.153,
+      "min_ms": 1008.938,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 10.039,
+        "p95_ms": 11.158,
+        "max_ms": 11.158,
+        "min_ms": 8.436
+      },
+      "worst_event_loop_gap_ms": 21.013
+    },
+    "cold_navigation": {
+      "samples": 5,
+      "mean_ms": 19.382,
+      "p95_ms": 24.752,
+      "max_ms": 24.752,
+      "min_ms": 16.124,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 10.193,
+        "p95_ms": 12.303,
+        "max_ms": 12.303,
+        "min_ms": 8.814
+      },
+      "worst_event_loop_gap_ms": 24.686
+    },
+    "idle_worker_tick": {
+      "samples": 5,
+      "mean_ms": 30.433,
+      "p95_ms": 48.956,
+      "max_ms": 48.956,
+      "min_ms": 5.738,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.015,
+        "p95_ms": 0.022,
+        "max_ms": 0.022,
+        "min_ms": 0.01
+      },
+      "worst_event_loop_gap_ms": 11.751
+    },
+    "drain_due_cohort": {
+      "samples": 5,
+      "mean_ms": 413.516,
+      "p95_ms": 423.58,
+      "max_ms": 423.58,
+      "min_ms": 404.597,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.015,
+        "p95_ms": 0.023,
+        "max_ms": 0.023,
+        "min_ms": 0.011
+      },
+      "worst_event_loop_gap_ms": 11.877
+    },
+    "held_writer_dispatch": {
+      "samples": 5,
+      "mean_ms": 1.341,
+      "p95_ms": 1.621,
+      "max_ms": 1.621,
+      "min_ms": 1.221,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.724,
+        "p95_ms": 0.859,
+        "max_ms": 0.859,
+        "min_ms": 0.651
+      },
+      "worst_event_loop_gap_ms": 1.62
+    },
+    "held_writer_navigation": {
+      "samples": 5,
+      "mean_ms": 15.829,
+      "p95_ms": 20.637,
+      "max_ms": 20.637,
+      "min_ms": 10.912,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 6.73,
+        "p95_ms": 8.455,
+        "max_ms": 8.455,
+        "min_ms": 5.026
+      },
+      "worst_event_loop_gap_ms": 20.628
+    },
+    "held_writer_inbox": {
+      "samples": 5,
+      "mean_ms": 13.388,
+      "p95_ms": 44.063,
+      "max_ms": 44.063,
+      "min_ms": 5.565,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.017,
+        "p95_ms": 0.024,
+        "max_ms": 0.024,
+        "min_ms": 0.013
+      },
+      "worst_event_loop_gap_ms": 11.568
+    },
+    "held_writer_release_to_commit": {
+      "samples": 5,
+      "mean_ms": 25.048,
+      "p95_ms": 33.176,
+      "max_ms": 33.176,
+      "min_ms": 12.766,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.008,
+        "p95_ms": 0.008,
+        "max_ms": 0.008,
+        "min_ms": 0.008
+      },
+      "worst_event_loop_gap_ms": 15.024
+    },
+    "history_metadata_edit": {
+      "samples": 5,
+      "mean_ms": 10.714,
+      "p95_ms": 10.877,
+      "max_ms": 10.877,
+      "min_ms": 10.427,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.014,
+        "p95_ms": 0.015,
+        "max_ms": 0.015,
+        "min_ms": 0.013
+      },
+      "worst_event_loop_gap_ms": 10.466
+    },
+    "history_rule_edit": {
+      "samples": 5,
+      "mean_ms": 137.892,
+      "p95_ms": 138.666,
+      "max_ms": 138.666,
+      "min_ms": 137.5,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.01,
+        "p95_ms": 0.011,
+        "max_ms": 0.011,
+        "min_ms": 0.01
+      },
+      "worst_event_loop_gap_ms": 20.822
+    },
+    "history_duration_edit": {
+      "samples": 5,
+      "mean_ms": 144.314,
+      "p95_ms": 158.706,
+      "max_ms": 158.706,
+      "min_ms": 139.407,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.014,
+        "p95_ms": 0.014,
+        "max_ms": 0.014,
+        "min_ms": 0.013
+      },
+      "worst_event_loop_gap_ms": 17.241
+    },
+    "history_concurrent_action": {
+      "samples": 5,
+      "mean_ms": 143.83,
+      "p95_ms": 155.902,
+      "max_ms": 155.902,
+      "min_ms": 139.949,
+      "dispatch": {
+        "samples": 5,
+        "mean_ms": 0.001,
+        "p95_ms": 0.001,
+        "max_ms": 0.001,
+        "min_ms": 0.0
+      },
+      "worst_event_loop_gap_ms": 17.287
+    }
+  }
+}

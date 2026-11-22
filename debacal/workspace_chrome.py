@@ -249,6 +249,7 @@ class WorkspaceChrome:
                 button.setIcon(icon(button.property('iconName'), icon_color))
                 button.setProperty('interfaceIconColor', icon_color)
             shortcut = shortcut_label(self.bindings.get(binding, '')) if binding else ''
+            title = button.property('statusTitle') or title
             button.setToolTip(title + (f' ({shortcut})' if shortcut else ''))
             if button.property('iconOnly'):
                 compact = button.property('compactIcon')

@@ -151,6 +151,8 @@ def test_queued_editor_uses_snapshot_after_dialog_is_deleted(tmp_path, monkeypat
                 self.mode_changed = Signal()
                 self.deleted = False
                 instances.append(self)
+            def alarm_edit(self):
+                return None
             def exec(self):
                 return QDialog.DialogCode.Accepted
             def deleteLater(self):
@@ -158,16 +160,55 @@ def test_queued_editor_uses_snapshot_after_dialog_is_deleted(tmp_path, monkeypat
                 self.result_events.clear()
                 self.edit_reference = None
         monkeypatch.setattr('debacal.ui.EventDialog', Dialog)
+        enumerations = []
+        original_ids = Store.event_ids
+        def count_ids(reader):
+            enumerations.append(1)
+            return original_ids(reader)
+        monkeypatch.setattr(Store, 'event_ids', count_ids)
         try:
             with held_writer(path):
                 begin = monotonic()
                 window.edit_event(original.id)
                 assert monotonic() - begin < .2
-                assert instances[0].deleted
+                until(lambda: instances and instances[0].deleted)
                 assert window.database_commands.pending == 1
             until(lambda: window.database_commands.pending == 0)
             assert store.get_event(original.id).title == 'Saved snapshot'
+            assert not enumerations, 'Reselect only the edited or created resources.'
             assert not window.local_issues
+        finally:
+            window.close()
+            APP.processEvents()
+
+def test_queued_split_reselects_its_new_tail_after_unrelated_write(tmp_path, monkeypatch):
+    from debacal.recurrence import occurrence
+
+    path = tmp_path/'calendar'
+    with Store(path) as store, Store(path, query_index=False) as peer:
+        master = event('series', recurrence_rule='FREQ=DAILY;COUNT=4')
+        store.apply_remote([master])
+        window = MainWindow(store, enable_sync=False, demo_mode=True)
+        try:
+            selected = occurrence(master, START+timedelta(days=1))
+            window.open_day(selected.start.date())
+            window.set_selection_mode('future')
+            window.select_event(selected.id)
+            target = selected.start + timedelta(minutes=15)
+            select = window.reselect_after_operation
+            received = []
+            def interleave(refs, start, identities, *args, **kwargs):
+                peer.apply_remote([event('other', start=target, end=target+timedelta(hours=1))])
+                received.append(identities)
+                return select(refs, start, identities, *args, **kwargs)
+            monkeypatch.setattr(window, 'reselect_after_operation', interleave)
+            with held_writer(path):
+                window.move_event(selected.id, target, target+timedelta(hours=1))
+                assert window.database_commands.pending
+            until(lambda: not window.database_commands.pending)
+            tail, = [e for e in store.list_events() if e.id not in ('series','other')]
+            assert received == [{tail.id}]
+            assert window.selection.primary.series_id == tail.id
         finally:
             window.close()
             APP.processEvents()

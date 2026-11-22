@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, QLockFile, QStandardPaths, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from .import_request import ImportRequest
-from .import_sources import MAX_IMPORT_BYTES
+from .import_sources import ImportSource, MAX_IMPORT_BYTES
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -58,7 +58,10 @@ def _runtime_directory() -> Path:
 def _request_bytes(files, stdin_data=None) -> tuple[str, bytes]:
     # A file may live on a slow/unavailable mount. Do not resolve links or
     # inspect it before the user reviews the import and a worker reads it.
-    paths = [str(Path(path).expanduser().absolute()) for path in files]
+    try:
+        paths = [str(ImportSource.from_path(path).path) for path in files]
+    except ValueError as exc:
+        raise InstanceError(str(exc)) from exc
     if len(paths) > MAX_FILES or any('\0' in path or len(os.fsencode(path)) > 4096 for path in paths):
         raise InstanceError('Open at most 128 calendar files at a time, using ordinary local file paths.')
     request_id = uuid4().hex
@@ -120,6 +123,13 @@ class InstanceCoordinator(QObject):
         # Optional application queue budget, combined with the requests that
         # have been accepted here but have not reached that queue yet.
         self.admission_check = None
+        self.shutting_down = None
+        self.take_request = None
+
+    @property
+    def pending_imports(self):
+        """Reservations held here until a GUI-thread consumer takes ownership."""
+        return sum(bool(request) for request in self._requests), self._queued_bytes
 
     def start(self, files=(), *, stdin_data=None, timeout_ms=3000) -> bool:
         if self._started:
@@ -197,7 +207,10 @@ class InstanceCoordinator(QObject):
         self._draining = True
         try:
             while self._enabled and self._requests:
-                request = self._requests.popleft()
+                request = self._requests[0]
+                if self.take_request is not None and not self.take_request(request):
+                    break
+                self._requests.popleft()
                 self._queued_bytes -= _request_size(request)
                 self.request_received.emit(request)
         finally:
@@ -212,7 +225,7 @@ class InstanceCoordinator(QObject):
                 continue
             timer = QTimer(socket)
             timer.setSingleShot(True)
-            timer.timeout.connect(socket.abort)
+            timer.timeout.connect(lambda source=socket: source.abort())
             timer.start(10000)
             socket.setReadBufferSize(256 * 1024)
             self._clients[socket] = {'buffer': bytearray(), 'header': None, 'timer': timer}
@@ -262,6 +275,8 @@ class InstanceCoordinator(QObject):
                         or version == 2 and (type(value['stdin_size']) is not int
                                              or not 1 <= value['stdin_size'] <= MAX_IMPORT_BYTES)):
                     raise ValueError
+                for path in value['files']:
+                    ImportSource.from_path(path)
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 socket.abort()
                 return
@@ -276,11 +291,14 @@ class InstanceCoordinator(QObject):
             return
         request_id = value['request']
         if request_id not in self._seen:
+            if self.shutting_down is not None and self.shutting_down():
+                self._respond(socket, request_id, error='Debacal is shutting down. Try again after it closes.')
+                return
             incoming_size = value.get('stdin_size', 0)
             importing = bool(value['files']) or value['version'] == 2
             if (len(self._requests) >= MAX_PENDING_REQUESTS
                     or importing and self.admission_check is not None and not self.admission_check(
-                        len(self._requests) + 1, self._queued_bytes + incoming_size)):
+                        self.pending_imports[0] + 1, self._queued_bytes + incoming_size)):
                 self._respond(socket, request_id, error='Debacal has too many pending imports. Finish or cancel an import, then try again.')
                 return
             request = (ImportRequest(tuple(value['files']), bytes(memoryview(buffer)[state['body_start']:]))
@@ -310,6 +328,7 @@ class InstanceCoordinator(QObject):
 
     def close(self):
         self._enabled = False
+        self.admission_check = self.shutting_down = self.take_request = None
         for socket in list(self._clients):
             socket.abort()
         self._clients.clear()

@@ -16,6 +16,7 @@ from urllib.parse import quote, urlparse, urlsplit, unquote
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from .alarm_ics import hydrate_alarms
 from .ics import export_ics, normalize_caldav_ics, parse_ics, parse_ics_report, patch_ics
 from .credentials import CredentialStore, CredentialError, account_key
 from .models import Calendar, Event
@@ -492,7 +493,7 @@ class SyncEngine:
                     continue
                 state = states.get(event_id)
                 remote_event, resource = remote.get(event_id, (None, None))
-                local = Event.from_dict(change["payload"]) if change["payload"] else None
+                local = hydrate_alarms(Event.from_dict(change["payload"])) if change["payload"] else None
                 if state and resource and state["etag"] != resource.etag:
                     self._conflict(calendar, event_id, local, remote_event, "Both this app and the server changed the event.", href=resource.href)
                     continue
@@ -548,7 +549,8 @@ class SyncEngine:
             matches = self._parse_resource(calendar.id, resource, states) if resource else []
             remote_event = next((e for e in matches if e.id == conflict.event_id), matches[0] if matches else None)
             changes = [c for c in store.pending_changes(calendar.id) if c["event_id"] == conflict.event_id]
-            local_event = store.get_event(conflict.event_id)
+            reviewed = store.get_events_with_alarms([conflict.event_id])
+            local_event = reviewed[0] if reviewed else None
             try:
                 with store._transaction():
                     store._assert_identity_owner(conflict.event_id, calendar.id,

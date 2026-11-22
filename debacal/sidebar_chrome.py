@@ -143,6 +143,7 @@ def build_sidebar(window, root):
     window.status.setAccessibleName('Synchronization status and details')
     window.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     footer.addWidget(window.status, 1)
+    window.reminder_button = window.icon_button('reminders', 'Reminders', window.show_reminders, footer)
     window.warning_button = window.icon_button('conflict', 'Warnings and errors', window.show_issues, footer)
     window.warning_button.setProperty('iconColorRole', 'error')
     policy = window.warning_button.sizePolicy()

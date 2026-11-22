@@ -29,7 +29,7 @@ class Enter(DragMixin, QDragEnterEvent):
     def __init__(self, row, point):
         self.row, self.mime = row, QMimeData()
         self.mime.setData(CALENDAR_ORDER_MIME, row.calendar.id.encode())
-        super().__init__(QPoint(point), Qt.DropAction.MoveAction, self.mime,
+        super().__init__(QPointF(point), Qt.DropAction.MoveAction, self.mime,
                          Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
 
 

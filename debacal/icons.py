@@ -30,6 +30,8 @@ _SHAPES = {
     'search': '<circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/>',
     'import': '<path d="M10 2v10m-4-4 4 4 4-4M3 12v5h14v-5"/>',
     'export': '<path d="M10 12V2M6 6l4-4 4 4M3 12v5h14v-5"/>',
+    'reminders': '<path d="M3 14h14l-2-3V8A5 5 0 0 0 5 8v3Zm5 3a2 2 0 0 0 4 0"/>',
+    'reminders_unread': '<path d="M3 14h14l-2-3V9M10 3a5 5 0 0 0-5 5v3Zm-2 14a2 2 0 0 0 4 0"/><circle cx="15.5" cy="4.5" r="2.5" stroke-width="3"/>',
     'history': '<path d="M3 8a7 7 0 1 1 0 5M3 3v5h5M10 6v5l3 2"/>',
     'undo': '<path d="M3 8h8a6 6 0 0 1 6 6v2M7 4 3 8l4 4"/>',
     'redo': '<path d="M17 8H9a6 6 0 0 0-6 6v2M13 4l4 4-4 4"/>',

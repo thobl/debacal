@@ -5,11 +5,16 @@ parsing, recurrence expansion, and destination remapping on a worker thread.
 """
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 import hashlib
+from pathlib import Path
+from typing import get_args
 from uuid import NAMESPACE_URL, uuid5
 
+from .alarm_ics import hydrate_alarms
+from .alarms import Alarm
 from .ics import parse_ics_report
 from .ics_resources import ParseReport, RejectedResource, ResourceIssue, reject_duplicate_identities
 from .import_sources import ImportSource, MAX_IMPORT_BYTES, MAX_PENDING_IMPORT_BYTES
@@ -19,11 +24,63 @@ from .recurrence import (
     RecurrenceRangeError, event_zone, expand_series, key_datetime, occurrence,
     occurrence_id, recurrence_key, recurrence_set,
 )
+from .reminder_preferences import ImportReminderMode, instantiate_reminder_templates, relative_templates
 from .timeutil import local_zone, now
 
 
 PREVIEW_CALENDAR_ID = '__debacal_import_preview__'
 MAX_IMPORT_EVENTS = 50_000
+
+
+def _selected_overrides(event: Event):
+    excluded = set(event.excluded_dates)
+    return ((key, payload) for key, payload in event.recurrence_overrides.items() if key not in excluded)
+
+
+def count_reminder_sources(report: ParseReport) -> tuple[int, int]:
+    """Count alarm-bearing and total selected components without expanding a rule."""
+    with_alarms = total = 0
+    for source in report.events:
+        event = hydrate_alarms(source)
+        with_alarms += bool(event.alarms)
+        total += 1
+        for _, payload in _selected_overrides(event):
+            with_alarms += bool(payload.get('alarms'))
+            total += 1
+    return with_alarms, total
+
+
+def _reviewed_templates(mode: str, alarms: tuple[Alarm, ...]) -> tuple[Alarm, ...]:
+    if mode not in get_args(ImportReminderMode):
+        raise ValueError('Unknown import reminder mode.')
+    return relative_templates(alarms)
+
+
+def transform_import_reminders(report: ParseReport, mode: str, alarms: tuple[Alarm, ...]) -> ParseReport:
+    """Apply a manual policy to the filtered and destination-remapped report."""
+    templates = _reviewed_templates(mode, alarms)
+    if mode == 'keep' or (mode == 'add_missing' and not templates):
+        return report
+    if mode == 'remove':
+        templates = ()
+
+    events = []
+    for source in report.events:
+        event = hydrate_alarms(source)
+        master_alarms = event.alarms
+        if mode != 'add_missing' or master_alarms == ():
+            master_alarms = instantiate_reminder_templates(templates, calendar_id=event.calendar_id,
+                                                          event_uid=event.ical_uid)
+        overrides = dict(event.recurrence_overrides)
+        for key, payload in _selected_overrides(event):
+            existing = payload.get('alarms')
+            if mode == 'add_missing' and (existing is None or existing):
+                continue
+            child_alarms = instantiate_reminder_templates(templates, calendar_id=event.calendar_id,
+                                                         event_uid=event.ical_uid, recurrence_id=key)
+            overrides[key] = dict(payload, alarms=[alarm.to_dict() for alarm in child_alarms])
+        events.append(replace(event, alarms=master_alarms, recurrence_overrides=overrides))
+    return replace(report, events=tuple(events))
 
 
 def _display_date(event: Event, value: datetime | None = None) -> date:
@@ -103,11 +160,51 @@ class PreparedSource:
     label: str
     report: ParseReport | None = None
     error: str = ''
+    wire_bytes: int = 0
 
     def remap(self, calendar_id: str) -> ParseReport:
         if self.report is None:
             raise ValueError(self.error or 'This calendar could not be read.')
         return remap_calendar(self.report, calendar_id)
+
+
+def _last_source_versions(items: tuple[PreparedSource, ...]) -> tuple[PreparedSource, ...]:
+    """Keep each UID in its last source while preserving every source's diagnostics."""
+    if len(items) < 2:
+        return items
+    later_uids = set()
+    effective = None
+    for index in reversed(range(len(items))):
+        item = items[index]
+        if item.report is None:
+            continue
+        events = tuple(event for event in item.report.events if event.ical_uid not in later_uids)
+        later_uids.update(event.ical_uid for event in events)
+        if len(events) != len(item.report.events):
+            if effective is None:
+                effective = list(items)
+            effective[index] = replace(item, report=replace(item.report, events=events))
+    return tuple(effective) if effective is not None else items
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedImportSource:
+    """One reviewed source, shared by its initial submission and every retry."""
+    key: str
+    item: PreparedSource
+    calendar_id: str
+    reminder_mode: str
+    reminder_alarms: tuple[Alarm, ...]
+    source_path: Path | None
+
+    def prepare(self, in_memory: bool) -> ParseReport:
+        report = self.item.remap(self.calendar_id)
+        # An in-memory Store belongs to Qt. Finish its transformation here
+        # before handing the ready report to the GUI connection.
+        return self.transform(report) if in_memory else report
+
+    def transform(self, report: ParseReport) -> ParseReport:
+        return transform_import_reminders(report, self.reminder_mode, self.reminder_alarms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,15 +219,22 @@ class ImportPage:
 @dataclass(frozen=True, slots=True)
 class PreparedImport:
     items: tuple[PreparedSource, ...]
+    reminder_mode: str = 'keep'
+    reminder_alarms: tuple[Alarm, ...] = ()
+    _effective_items: tuple[PreparedSource, ...] = field(init=False, repr=False, compare=False)
+    reminder_counts: tuple[int, int] = field(init=False)
     events: tuple[Event, ...] = field(init=False)
     warnings: tuple[str, ...] = field(init=False)
 
     def __post_init__(self):
-        # Matching UIDs imported into one calendar replace each other. Preview
-        # the final version, retaining individual source reports for undo.
-        by_id = {event.id: event for item in self.items if item.report is not None
-                 for event in item.report.events}
-        object.__setattr__(self, 'events', tuple(sorted(by_id.values(), key=lambda event: (event.start.timestamp(), event.id))))
+        object.__setattr__(self, 'reminder_alarms', _reviewed_templates(self.reminder_mode, self.reminder_alarms))
+        # The last source owns a repeated UID in this review. Retain the
+        # original reports for diagnostics and direct destination remapping.
+        effective = _last_source_versions(self.items)
+        object.__setattr__(self, '_effective_items', effective)
+        events = (event for item in effective if item.report is not None for event in item.report.events)
+        object.__setattr__(self, 'events', tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))))
+        object.__setattr__(self, 'reminder_counts', count_reminder_sources(ParseReport(self.events)))
         warnings = []
         count = 0
         for item in self.items:
@@ -148,12 +252,29 @@ class PreparedImport:
     def event_count(self) -> int:
         return len(self.events)
 
+    def with_reminders(self, mode: str, alarms: tuple[Alarm, ...]) -> PreparedImport:
+        alarms = _reviewed_templates(mode, alarms)
+        if (mode, alarms) == (self.reminder_mode, self.reminder_alarms):
+            return self
+        # Only the policy changes on Save. Share the worker's immutable preview
+        # projections instead of sorting and counting the selected families on Qt.
+        reviewed = copy(self)
+        object.__setattr__(reviewed, 'reminder_mode', mode)
+        object.__setattr__(reviewed, 'reminder_alarms', alarms)
+        return reviewed
+
     def with_selection(self, selection) -> PreparedImport:
         """Filter reviewed reports on a worker without reading their sources again."""
         if selection.all_selected and not selection.choices:
-            return self
-        return PreparedImport(tuple(replace(item, report=selection.filter_report(item.report))
-                                    if item.report is not None else item for item in self.items))
+            if self.items is self._effective_items:
+                return self
+            # The worker already computed this choice and its projections.
+            reviewed = copy(self)
+            object.__setattr__(reviewed, 'items', self._effective_items)
+            return reviewed
+        items = tuple(replace(item, report=selection.filter_report(item.report))
+                      if item.report is not None else item for item in self._effective_items)
+        return replace(self, items=items)
 
     def initial_month(self, preferences: Preferences, today: date | None = None) -> date:
         """Prefer an ongoing/upcoming occurrence over an old recurring anchor."""
@@ -253,7 +374,7 @@ def prepare_sources(sources) -> PreparedImport:
             if event_count + len(report.events) > MAX_IMPORT_EVENTS:
                 raise ValueError('Import exceeds 50,000 events. Choose fewer files.')
             event_count += len(report.events)
-            items.append(PreparedSource(index, source.label, report))
+            items.append(PreparedSource(index, source.label, report, wire_bytes=len(data)))
         except (OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
             items.append(PreparedSource(index, source.label, error=str(exc)))
     return PreparedImport(tuple(items))

@@ -88,6 +88,10 @@ def components(data):
     for line in lines:
         if not line:
             continue
+        # Nested component properties belong to their own decoder. Malformed
+        # alarm metadata cannot invalidate the containing event's fields.
+        if nested and not line.upper().startswith(('BEGIN:', 'END:')):
+            continue
         key, parameters, value = content_line(line)
         if key == 'BEGIN' and value.upper() == 'VEVENT':
             if current is not None:

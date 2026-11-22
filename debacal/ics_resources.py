@@ -13,7 +13,10 @@ import hashlib
 from uuid import NAMESPACE_URL, uuid5
 import re
 
+from . import alarm_fold_ics, alarm_rdate_ics
+from .alarm_ics import read_alarms, without_alarms, write_alarms
 from .models import Event
+from .alarm_series import materialize_alarms
 from .event_duration import add_duration, end_for, normalized_spec, parse_duration_spec
 from .timezones import TimezoneError, event_timezone, resolve_timezone
 from . import ics_fallback as fallback
@@ -141,7 +144,7 @@ def parse_report(data, calendar_id, *, limit=10000, use_full=True, repair_missin
                            (RejectedResource(uid, raw, resource_id, reason),))
     timezones = [block for block in blocks if block[0] == "BEGIN:VTIMEZONE"]
     event_blocks = [block for block in blocks if block[0] == "BEGIN:VEVENT"]
-    generated_count = sum(_property_of(block, range_codec.GENERATED) is not None for block in event_blocks)
+    generated_count = sum(_generated_block(block) for block in event_blocks)
     if len(event_blocks) - generated_count > limit or generated_count > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f"Import exceeds {limit:,} event components.")
     grouped = {}
@@ -220,7 +223,7 @@ def _parse_calendar_stream(lines, calendar_id, *, limit, use_full, repair_missin
             context = None  # The ordinary per-resource path retains damage.
         event_blocks = [block for block in context[1] if block[0] == 'BEGIN:VEVENT'] if context else []
         count += len(event_blocks)
-        generated += sum(_property_of(block, range_codec.GENERATED) is not None for block in event_blocks)
+        generated += sum(_generated_block(block) for block in event_blocks)
         prepared.append((data, context, {_uid_of(block) for block in event_blocks if _uid_of(block)}))
     if count - generated > limit or generated > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f'Import exceeds {limit:,} event components.')
@@ -262,7 +265,7 @@ def _parse_calendar_stream(lines, calendar_id, *, limit, use_full, repair_missin
         tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))), tuple(issues), tuple(rejected)))
 
 
-_DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID'}
+_DATE_PROPERTIES = {'DTSTART', 'DTEND', 'RDATE', 'EXDATE', 'RECURRENCE-ID', alarm_fold_ics.ANCHOR, alarm_rdate_ics.ZONE}
 
 
 def _references_timezone(parameters, raw):
@@ -310,8 +313,11 @@ def _read(data, use_full=True):
                   for params, value in component.get(key, [])
                   if _references_timezone(params, value)}
     definitions = _timezone_definitions(blocks, referenced)
-    for component in lexical:
+    events = (block for block in blocks if block[0] == 'BEGIN:VEVENT')
+    for component, block in zip(lexical, events, strict=True):
         component['_timezone_definitions'] = definitions
+        if 'BEGIN:VALARM' in block:
+            component['_alarm_source'] = block
     if not use_full or ICalendar is None:
         return lexical
     # The library's global TZID cache can substitute another resource's rules.
@@ -322,10 +328,12 @@ def _read(data, use_full=True):
     for block in blocks:
         if block[0] != 'BEGIN:VEVENT':
             continue
-        for line in block:
+        for line in without_alarms(block):
             if not line:
                 continue
             key, params, value = fallback.content_line(line)
+            if key == alarm_fold_ics.ORIGINAL:
+                continue  # Decode this optional private payload independently of the event.
             if key == 'RDATE' and (params.get('VALUE') == 'PERIOD' or '/' in value):
                 # Periods are decoded from their lexical form below. Letting
                 # the library discard an invalid value would hide the issue.
@@ -344,6 +352,10 @@ def _read(data, use_full=True):
     result = []
     for index, original in enumerate(originals):
         component = {"_decoded": {}, '_timezone_definitions': definitions}
+        if '_alarm_source' in lexical[index]:
+            component['_alarm_source'] = lexical[index]['_alarm_source']
+        if alarm_fold_ics.ORIGINAL in lexical[index]:
+            component[alarm_fold_ics.ORIGINAL] = lexical[index][alarm_fold_ics.ORIGINAL]
         for key, values in original.items():
             if key in {'SUMMARY', 'DESCRIPTION', 'LOCATION'} and any(
                     str(params.get('ENCODING', '')).upper() == 'QUOTED-PRINTABLE'
@@ -468,7 +480,7 @@ def _period_overrides(component, master, tz):
                                schedule_expression='', expression_anchor='', schedule_syntax=1, range_policy='')
             if key in result and Event.from_dict(result[key]).end.timestamp() != override.end.timestamp():
                 raise PeriodError('Conflicting RDATE periods assign different ranges to the same occurrence.')
-            result.setdefault(key, override.to_dict())
+            result.setdefault(key, materialize_alarms(master, override).to_dict())
     return result
 
 
@@ -610,6 +622,12 @@ def _blocks(data):
     return header, blocks
 
 
+def _generated_block(block):
+    markers = (range_codec.GENERATED, alarm_rdate_ics.GENERATED)
+    return any(line.upper().startswith(markers) for line in block) and any(
+        _property_of(block, name) is not None for name in markers)
+
+
 def _property_of(block, name):
     depth = 0
     for line in block:
@@ -656,8 +674,16 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), defin
     selected_events = [b for b in blocks if b[0] == 'BEGIN:VEVENT'
                        and (_uid_of(b) == uid or (synthetic and not _uid_of(b)))]
     selected_ids = {id(block) for block in selected_events}
-    referenced = {params['TZID'] for block in selected_events for line in block if line
-                  for _, params, _ in [fallback.content_line(line)] if params.get('TZID')}
+    referenced = set()
+    for block in selected_events:
+        for line in block:
+            if ';TZID=' in line.upper():
+                try:
+                    _, params, _ = fallback.content_line(line)
+                except ValueError:
+                    continue  # Malformed retained alarm properties have their own diagnostic.
+                if params.get('TZID'):
+                    referenced.add(params['TZID'])
     selected = [b for b in blocks if (b[0] == 'BEGIN:VTIMEZONE'
                 and fallback.text(_property_of(b, 'TZID') or '') in referenced) or id(b) in selected_ids]
     if discard_generated:
@@ -665,7 +691,7 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), defin
         tz, omitted = local_timezone(), set(discard_generated)
         retained = []
         for block in selected:
-            if block[0] == 'BEGIN:VEVENT' and _property_of(block, range_codec.GENERATED) is not None:
+            if block[0] == 'BEGIN:VEVENT' and _generated_block(block):
                 component = fallback.components('\n'.join(['BEGIN:VCALENDAR', *block, 'END:VCALENDAR']))[0]
                 component['_timezone_definitions'] = definitions or {}
                 if 'RECURRENCE-ID' in component and _key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz, floating) in omitted:
@@ -673,6 +699,11 @@ def _resource_for_uid(data, uid, *, synthetic=False, discard_generated=(), defin
             retained.append(block)
         selected = retained
     return fallback.folded(["BEGIN:VCALENDAR", *header, *(line for block in selected for line in block), "END:VCALENDAR"]).decode()
+
+
+def _component_alarms(component, uid, recurrence_id=''):
+    lines = component.get('_alarm_source')
+    return read_alarms('\n'.join(lines), component_key=uid + '/' + recurrence_id) if lines else ()
 
 
 def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
@@ -686,11 +717,12 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
     from .recurrence import canonical_rule, occurrence_id, recurrence_set
     tz = local_timezone()
     source = _read(data, use_full) if _source is None else _source
-    generated_count = sum(range_codec.GENERATED in component for component in source)
+    generated_count = sum(range_codec.GENERATED in component or alarm_rdate_ics.GENERATED in component
+                          for component in source)
     if len(source) - generated_count > limit or generated_count > range_codec.MAX_GENERATED_RANGES:
         raise ValueError(f"Import exceeds {limit:,} event components.")
-    generated_safety = {}
-    if generated_count:
+    generated_blocks = {}
+    if any(range_codec.GENERATED in component for component in source):
         _, raw_blocks = _blocks(data)
         definitions = {identifier: definition for component in source
                        for identifier, definition in component.get('_timezone_definitions', {}).items()}
@@ -705,8 +737,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 key = _key(_decoded(raw_component, 'RECURRENCE-ID', tz)[0], tz,
                            floating_uids.get(_uid_of(block), False))
                 slot = (_uid_of(block), key)
-                generated_safety[slot] = (range_codec.safe_generated_block(block)
-                                          and slot not in generated_safety)
+                generated_blocks[slot] = block if slot not in generated_blocks else None
     grouped = {}
     for component in source:
         if "EXRULE" in component:
@@ -751,6 +782,8 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         timezone_id = ('' if all_day or floating else
                        'UTC' if master_component['DTSTART'][0][1].upper().endswith('Z') else str(params.get('TZID', '')))
         definitions = _used_definitions(components)
+        event_start, event_end, timezone_id, alarms = alarm_fold_ics.restore_alarms(
+            master_component, uid + '/', event_start, event_end, timezone_id, _component_alarms(master_component, uid))
         master = Event(
             id=event_id, calendar_id=calendar_id,
             title=_event_title(master_component), start=event_start, end=event_end,
@@ -759,7 +792,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             candidate=fallback.prop(master_component, "X-DEBACAL-CANDIDATE").upper() == "TRUE",
             all_day=all_day, ical_uid=uid, timezone_id=timezone_id,
             timezone_definitions=definitions, floating_time=floating,
-            duration_spec=duration_spec,
+            duration_spec=duration_spec, alarms=alarms,
             recurrence_rule=fallback.prop(master_component, "RRULE"),
             recurrence_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "RDATE", tz)),
             excluded_dates=tuple(_key(value, tz, floating) for value in _decoded(master_component, "EXDATE", tz)),
@@ -782,6 +815,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
         policy_fingerprint = range_codec.signature(master) if master.range_policy else ''
         verified_policy = (master.range_policy == 'cut'
                            and fallback.prop(master_component, range_codec.SIGNATURE) == policy_fingerprint)
+        current_marker = range_codec.generated_marker(master, policy_fingerprint) if verified_policy else None
         if verified_policy:
             expected = range_codec.expected_ranges(master)
             present = {_key(_decoded(component, 'RECURRENCE-ID', tz)[0], tz, floating)
@@ -791,15 +825,27 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             master = replace(master, range_policy='')
         discarded = set()
         overrides, exclusions = _period_overrides(master_component, master, tz), set(master.excluded_dates)
+        rdate_sources = {}
+        zoned_master = alarm_rdate_ics.candidate(master, master_component)
         for component in components:
             if "RECURRENCE-ID" not in component:
                 continue
             key = _key(_decoded(component, "RECURRENCE-ID", tz)[0], tz, floating)
-            if (verified_policy and generated_safety.get((uid, key), False)
-                    and range_codec.matches_generated(component, master, key, expected, decode=_decoded, tz=tz,
-                                                       fingerprint=policy_fingerprint)):
-                discarded.add(key)
-                continue
+            tagged = generated_blocks.get((uid, key))
+            if verified_policy and tagged and key in expected:
+                marker = fallback.prop(component, range_codec.GENERATED)
+                if marker == policy_fingerprint:
+                    generated = (range_codec.safe_generated_block(tagged)
+                                 and range_codec.matches_generated(component, master, key, expected,
+                                     decode=_decoded, tz=tz, fingerprint=policy_fingerprint))
+                elif marker == current_marker:
+                    expected_block = _cut_child_block(master, uid, key, *expected[key], marker)
+                    generated = alarm_rdate_ics.matches_child(tagged, expected_block)
+                else:
+                    generated = False
+                if generated:
+                    discarded.add(key)
+                    continue
             if fallback.prop(component, "STATUS").upper() == "CANCELLED":
                 exclusions.add(key)
                 continue
@@ -812,6 +858,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
             override_start = _datetime(raw_override_start, tz)
             override_zone = override_start.tzinfo
             override_timezone_id = ('' if override_all_day or override_floating else
+                                    'UTC' if component.get('DTSTART', [({}, '')])[0][1].upper().endswith('Z') else
                                     str(component.get('DTSTART', [({}, '')])[0][0].get('TZID', '')) or master.timezone_id)
             if 'DTSTART' not in component:
                 from .recurrence import event_zone
@@ -820,6 +867,9 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 override_floating = inherited.floating_time
             override_end, override_spec = _component_end(component, override_start, override_all_day, tz,
                 inherited=inherited if 'DTSTART' not in component else None, duration_zone=override_zone)
+            override_start, override_end, override_timezone_id, alarms = alarm_fold_ics.restore_alarms(
+                component, uid + '/' + key, override_start, override_end, override_timezone_id,
+                _component_alarms(component, uid, key))
             override = replace(
                 master, id=occurrence_id(master.id, key), start=override_start, end=override_end,
                 title=_event_title(component, master.title),
@@ -827,7 +877,7 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 location=fallback.prop(component, "LOCATION", master.location),
                 all_day=override_all_day,
                 floating_time=override_floating,
-                duration_spec=override_spec, timezone_id=override_timezone_id,
+                duration_spec=override_spec, timezone_id=override_timezone_id, alarms=alarms,
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 series_id=master.id, recurrence_id=key,
                 schedule_expression="", expression_anchor="",
@@ -835,6 +885,16 @@ def parse(data, calendar_id, window_start=None, window_end=None, *, limit=10000,
                 range_policy='',
             )
             overrides[key] = override.to_dict()
+            if zoned_master is not None:
+                unique = key not in rdate_sources and alarm_rdate_ics.GENERATED in component
+                rdate_sources[key] = component.get('_alarm_source') if unique else None
+        if zoned_master is not None:
+            verified = alarm_rdate_ics.verified_children(zoned_master, overrides, rdate_sources, _rdate_child_block)
+            if verified is not None:
+                master = zoned_master
+                for key in verified:
+                    del overrides[key]
+                discarded.update(verified)
         master = replace(master, recurrence_overrides=overrides, excluded_dates=tuple(sorted(exclusions)))
         master = replace(master, raw_ics=_resource_for_uid(data, uid, synthetic='UID' not in master_component,
                                                           discard_generated=discarded,
@@ -910,28 +970,38 @@ def _named_start(event):
     # A v2 literal uses calendar-day/month steps in its fixed event's zone.
     # Preserve that zone even when its interoperable schedule uses UTC RDATEs.
     authored_v2 = bool(event.schedule_expression and event.schedule_syntax == 2)
-    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions) and not event.all_day and not event.floating_time
+    zoned_alarms = event.alarms is not None and any(
+        'D' in (duration or '').upper() or 'W' in (duration or '').upper()
+        for alarm in event.alarms for duration in (alarm.trigger, alarm.repeat_interval))
+    return bool((event.recurrence_rule or authored_v2 or event.range_policy or event.duration_spec or event.timezone_definitions or zoned_alarms or event.end_timezone_id) and not event.all_day and not event.floating_time
                 and event.timezone_id and (event.timezone_id not in {'UTC', 'Etc/UTC'}
                                           or event.timezone_id in event.timezone_definitions))
 
 
-def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
+def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False, named_detached=False):
     lines = fallback.event_lines(event)[1:-1]
     lines = [line for line in lines if not line.startswith("UID:")]
+    end_zone = event.end_timezone_id
     nominal_duration = bool(event.duration_spec and not event.all_day and not recurrence_id)
+    named_start = (_named_start(event) or named_detached and not event.all_day
+                   and not event.floating_time and bool(event.timezone_id))
     if event.floating_time:
         lines = [line for line in lines if not line.startswith(('DTSTART:', 'DTEND:'))]
         lines.append(f'DTSTART:{event.start:%Y%m%dT%H%M%S}')
         if event.end.replace(tzinfo=None) > event.start.replace(tzinfo=None):
             lines.append(f'DTEND:{event.end:%Y%m%dT%H%M%S}')
     fixed_late_start = False
-    if (nominal_duration or _named_start(event)) and not event.recurring and not event.floating_time:
-        from .recurrence import event_zone
-        local_start = event.start.astimezone(event_zone(event))
+    # An explicit set of instants with an elapsed duration has no wall-clock
+    # recurrence to anchor. Its primary can use UTC just like a standalone
+    # event; writing a TZID wall time here would select the earlier fold.
+    wall_schedule = event.recurring and (event.recurrence_rule or event.range_policy or nominal_duration
+                                         or event.schedule_expression and event.schedule_syntax == 2)
+    if (nominal_duration or named_start) and not wall_schedule and not event.floating_time:
+        local_start = event.start.astimezone(event_timezone(event))
         fixed_late_start = bool(local_start.fold and local_start.replace(fold=0).timestamp() != local_start.timestamp())
         if fixed_late_start:
             nominal_duration = False  # One fixed range can use exact UTC endpoints.
-    if not recurrence_id and not fixed_late_start and _named_start(event):
+    if (not recurrence_id or end_zone or named_detached) and not fixed_late_start and named_start:
         zone = event_timezone(event)
         lines = [line for line in lines if not line.startswith(("DTSTART:", "DTEND:"))]
         lines.append(f"DTSTART;TZID={fallback.parameter(event.timezone_id)}:{event.start.astimezone(zone):%Y%m%dT%H%M%S}")
@@ -941,12 +1011,26 @@ def _known_lines(event, uid, recurrence_id="", *, recurrence_floating=False):
                 # A TZID clock alone denotes the first repeated-hour instant.
                 # Keep the selected endpoint unambiguous, including ranges
                 # whose written end clock precedes their written start clock.
-                lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
+                if (event.recurrence_rule and not recurrence_id and not end_zone and not nominal_duration
+                        and any(alarm_fold_ics.needs_projection(a, {'END'}) for a in event.alarms or ())):
+                    # An elapsed DURATION reaches the late end in its own
+                    # scheduling zone for every instance of the rule.
+                    seconds = int(event.end.timestamp() - event.start.timestamp())
+                    lines.append(f'DURATION:PT{seconds}S')
+                else:
+                    lines.append(f"DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}")
             else:
                 lines.append(f"DTEND;TZID={fallback.parameter(event.timezone_id)}:{local_end:%Y%m%dT%H%M%S}")
     if nominal_duration:
         lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
         lines.append('DURATION:' + event.duration_spec)
+    elif end_zone and event.end.timestamp() > event.start.timestamp():
+        lines = [line for line in lines if not line.startswith(('DTEND:', 'DTEND;'))]
+        if ((end_zone in {'UTC', 'Etc/UTC'} and end_zone not in event.timezone_definitions)
+                or event.end.fold and event.end.replace(fold=0).timestamp() != event.end.timestamp()):
+            lines.append(f'DTEND:{event.end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}')
+        else:
+            lines.append(f'DTEND;TZID={fallback.parameter(end_zone)}:{event.end:%Y%m%dT%H%M%S}')
     lines.insert(0, "UID:" + fallback.escaped(uid))
     if event.schedule_expression and not recurrence_id:
         lines.append("X-DEBACAL-PATTERN:" + fallback.escaped(event.schedule_expression))
@@ -992,12 +1076,14 @@ def _timezone_definition(timezone_id, first_date, last_date):
     return fallback.unfolded(generated.to_ical())
 
 
-def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=False):
+def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=False, utc_range=False, named_detached=False):
     known = {"UID", "SUMMARY", "DTSTART", "DTEND", "DURATION", "DTSTAMP", "DESCRIPTION", "LOCATION",
              "X-DEBACAL-ID", "X-DEBACAL-CALENDAR", "X-DEBACAL-GROUP", "X-DEBACAL-CANDIDATE",
              "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"}
     known.update({"X-DEBACAL-PATTERN", "X-DEBACAL-PATTERN-ANCHOR", "X-DEBACAL-PATTERN-VERSION"})
     known.update(range_codec.PROPERTIES)
+    if event.alarms is not None:
+        known.update({alarm_fold_ics.ANCHOR, alarm_fold_ics.ORIGINAL, alarm_rdate_ics.ZONE, alarm_rdate_ics.GENERATED})
     result, nested = ["BEGIN:VEVENT"], 0
     for line in block[1:-1]:
         key = line.split(":", 1)[0].split(";")[0].upper()
@@ -1007,7 +1093,35 @@ def _patch_block(block, event, uid, recurrence_id="", *, recurrence_floating=Fal
             result.append(line)
         if line.startswith("END:"):
             nested -= 1
-    return [*result, *_known_lines(event, uid, recurrence_id, recurrence_floating=recurrence_floating), "END:VEVENT"]
+    range_event = alarm_rdate_ics.utc_range(event) if utc_range else event
+    result.extend(_known_lines(range_event, uid, recurrence_id, recurrence_floating=recurrence_floating,
+                               named_detached=named_detached))
+    result.append('END:VEVENT')
+    if event.alarms is not None and (len(event.alarms) or 'BEGIN:VALARM' in result):
+        alarms, annotations = alarm_fold_ics.project_alarms(event, result, uid + '/' + recurrence_id)
+        result[-1:-1] = annotations
+        result = fallback.unfolded(write_alarms('\n'.join(result), alarms))
+    return result
+
+
+def _cut_child_block(event, uid, key, start, end, marker, template=None):
+    from .event_duration import occurrence_end_zone
+    from .recurrence import occurrence_id
+    child = replace(event, id=occurrence_id(event.id, key), start=start, end=occurrence_end_zone(event, end),
+                    recurrence_rule='', recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
+                    series_id=event.id, recurrence_id=key, range_policy='', schedule_expression='',
+                    expression_anchor='', schedule_syntax=1, raw_ics='', duration_spec='')
+    child = materialize_alarms(event, child) if event.alarms else child
+    block = _patch_block(template or ['BEGIN:VEVENT', 'END:VEVENT'], child, uid, key,
+                         recurrence_floating=event.floating_time)
+    block.insert(-1, range_codec.GENERATED + ':' + marker)
+    return block
+
+
+def _rdate_child_block(child, uid, key):
+    block = _patch_block(['BEGIN:VEVENT', 'END:VEVENT'], child, uid, key, utc_range=True)
+    block.insert(-1, alarm_rdate_ics.GENERATED + ':1')
+    return block
 
 
 def _timezone_span(event):
@@ -1155,6 +1269,33 @@ def normalize_caldav_resource(data: str | bytes) -> bytes:
                             *(line for block in blocks for line in block), "END:VCALENDAR"])
 
 
+def _named_detached(override):
+    # Fixed detached DURATION ranges traditionally use UTC endpoints. A
+    # nominal reminder additionally owns its endpoint's calculation zone.
+    return not override.duration_spec or any(
+        alarm_fold_ics.needs_projection(alarm, {'START', 'END'}) for alarm in override.alarms or ())
+
+
+def _union_span(first, second):
+    return min(first[0], second[0]), max(first[1], second[1])
+
+
+def _required_timezone_spans(event):
+    if _named_start(event) and event.timezone_id not in event.timezone_definitions:
+        yield event.timezone_id, _timezone_span(event)
+    end_id = event.end_timezone_id
+    if end_id and end_id != 'UTC' and end_id not in event.timezone_definitions:
+        yield end_id, _timezone_span(event)
+    for payload in event.recurrence_overrides.values():
+        if not (payload.get('end_timezone_id') or payload.get('timezone_id') and not payload.get('all_day')):
+            continue
+        override = Event.from_dict(payload)
+        if override.end_timezone_id or _named_detached(override):
+            for identifier in (override.timezone_id, override.end_timezone_id):
+                if identifier and identifier != 'UTC' and identifier not in event.timezone_definitions:
+                    yield identifier, _timezone_span(override)
+
+
 def serialize_resource(event, *, timezone_spans=None):
     raw = event.raw_ics
     header, blocks = _blocks(raw) if raw else (["VERSION:2.0", "PRODID:-//Debacal//Local-first calendar//EN", "CALSCALE:GREGORIAN"], [])
@@ -1179,38 +1320,40 @@ def serialize_resource(event, *, timezone_spans=None):
         if identifier not in existing_ids:
             result.append(fallback.unfolded(definition))
             existing_ids.add(identifier)
+    required = {}
+    for identifier, span in _required_timezone_spans(event):
+        required[identifier] = _union_span(required.get(identifier, span), span)
     for index, block in enumerate(result):
         if block[0] == 'BEGIN:VTIMEZONE':
             coverage = _generated_timezone_coverage(tuple(block))
             if coverage is not None:
                 identifier = fallback.text(_property_of(block, 'TZID') or '')
+                coverage = _union_span(required.get(identifier, coverage), coverage)
                 result[index] = _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, coverage))
-    if _named_start(event):
-        existing_ids = {fallback.text(_property_of(block, 'TZID') or '')
-                        for block in result if block[0] == 'BEGIN:VTIMEZONE'}
-        if event.timezone_id not in existing_ids:
-            # Maintained timezone generation is cached. Its documented range
-            # covers 1970–2100 and extends to encompass historical event starts.
-            first_date, last_date = (timezone_spans or {}).get(event.timezone_id, _timezone_span(event))
-            result.insert(0, _timezone_definition(event.timezone_id, first_date, last_date))
-    result.append(_patch_block(masters[0] if masters else ["BEGIN:VEVENT", "END:VEVENT"], event, uid))
+    for identifier, span in required.items():
+        if identifier not in existing_ids:
+            result.insert(0, _timezone_definition(identifier, *(timezone_spans or {}).get(identifier, span)))
+            existing_ids.add(identifier)
+    master_template = masters[0] if masters else ['BEGIN:VEVENT', 'END:VEVENT']
+    if event.alarms is None and (event.range_policy or _property_of(master_template, alarm_rdate_ics.ZONE) is not None):
+        from .alarm_ics import hydrate_alarms
+        event = hydrate_alarms(event)
+    if alarm_rdate_ics.applies(event):
+        master_block = _patch_block(master_template, alarm_rdate_ics.utc_range(event), uid)
+        master_block[-1:-1] = alarm_rdate_ics.zone_lines(event)
+        result.append(master_block)
+        result.extend(_rdate_child_block(child, uid, key)
+                      for key, child in alarm_rdate_ics.exceptions(event, event.recurrence_overrides))
+    else:
+        result.append(_patch_block(master_template, event, uid))
     for key, payload in sorted(event.recurrence_overrides.items()):
         override = Event.from_dict(payload)
         result.append(_patch_block(detached.get(key, ["BEGIN:VEVENT", "END:VEVENT"]), override, uid, key,
-                                   recurrence_floating=event.floating_time))
+                                   recurrence_floating=event.floating_time, named_detached=_named_detached(override)))
     if event.range_policy == 'cut':
-        from .recurrence import occurrence_id
-        fingerprint = range_codec.signature(event)
+        marker = range_codec.generated_marker(event, range_codec.signature(event))
         for key, start, end in range_codec.generated_ranges(event):
-            override = replace(event, id=occurrence_id(event.id, key), start=start, end=end,
-                               recurrence_rule='', recurrence_dates=(), excluded_dates=(),
-                               recurrence_overrides={}, series_id=event.id, recurrence_id=key,
-                               range_policy='', schedule_expression='', expression_anchor='',
-                               schedule_syntax=1, raw_ics='')
-            block = _patch_block(detached.get(key, ['BEGIN:VEVENT', 'END:VEVENT']), override, uid, key,
-                                 recurrence_floating=event.floating_time)
-            block.insert(-1, range_codec.GENERATED + ':' + fingerprint)
-            result.append(block)
+            result.append(_cut_child_block(event, uid, key, start, end, marker, detached.get(key)))
     # Keep imported cancellation metadata while it remains excluded. Removing
     # the exclusion also removes the cancelled detached component.
     for key in set(detached) - event.recurrence_overrides.keys():
@@ -1230,10 +1373,8 @@ def export(events):
     # equality alone cannot consolidate the same zone generated for two eras.
     spans = {}
     for event in events:
-        if _named_start(event) and event.timezone_id not in event.timezone_definitions:
-            first, last = _timezone_span(event)
-            previous = spans.get(event.timezone_id, (first, last))
-            spans[event.timezone_id] = min(first, previous[0]), max(last, previous[1])
+        for identifier, span in _required_timezone_spans(event):
+            spans[identifier] = _union_span(spans.get(identifier, span), span)
         if event.raw_ics:
             for block in _blocks(event.raw_ics)[1]:
                 if block[0] != 'BEGIN:VTIMEZONE':
@@ -1241,8 +1382,7 @@ def export(events):
                 coverage = _generated_timezone_coverage(tuple(block))
                 if coverage is not None:
                     identifier = fallback.text(_property_of(block, 'TZID') or '')
-                    previous = spans.get(identifier, coverage)
-                    spans[identifier] = min(coverage[0], previous[0]), max(coverage[1], previous[1])
+                    spans[identifier] = _union_span(spans.get(identifier, coverage), coverage)
     components = []
     for event in events:
         _, blocks = _blocks(serialize_resource(event, timezone_spans=spans))
@@ -1268,5 +1408,9 @@ def patch(data, event):
     if len(parsed) != 1:
         raise ValueError("A CalDAV resource must contain exactly one event UID.")
     original = parsed[0]
+    # Resolve legacy local intent against its own family before replacing the
+    # transport envelope. The block patcher reconciles it on the chosen template.
+    from .alarm_ics import hydrate_alarms
+    event = hydrate_alarms(event)
     return serialize_resource(replace(event, raw_ics=data.decode() if isinstance(data, bytes) else data,
                                       ical_uid=original.ical_uid))

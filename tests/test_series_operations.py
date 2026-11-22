@@ -321,7 +321,8 @@ class SeriesCopyTests(unittest.TestCase):
         snapshot = detach_event(source, selected)
         serialized = self.assert_ordinary_copy(source, selected, snapshot)
         self.assertEqual(serialized.count('BEGIN:VALARM'), 1)
-        self.assertIn('UID:specific-alarm', serialized)
+        self.assertNotIn('UID:specific-alarm', serialized)
+        self.assertIn('UID:urn:uuid:', serialized)
         self.assertIn('TRIGGER:-PT5M', serialized)
         self.assertNotIn('parent-alarm', serialized)
         self.assertNotIn('TRIGGER:-PT15M', serialized)
@@ -332,13 +333,13 @@ class SeriesCopyTests(unittest.TestCase):
         self.assertIn('X-SERVER-HEADER:retained header', serialized)
         self.assertEqual(source.to_dict(), original)
 
-    def test_detach_override_without_alarms_inherits_parent_alarm_group(self):
+    def test_detach_foreign_override_without_alarms_stays_empty(self):
         source = master()
         exception = detached(source, 1, shift=timedelta(hours=3))
         source = metadata_source(replace(source, recurrence_overrides={exception.recurrence_id: exception.to_dict()}))
         selected = next(value for value in instances(source) if value.recurrence_id == exception.recurrence_id)
         serialized = self.assert_ordinary_copy(source, selected, detach_event(source, selected))
-        self.assertEqual(serialized.count('BEGIN:VALARM'), 2)
+        self.assertNotIn('BEGIN:VALARM', serialized)
         self.assertIn('X-SERVER-DETACHED:retained override', serialized)
 
     def test_detach_restored_occurrence_does_not_reuse_cancelled_template(self):
@@ -439,10 +440,11 @@ END:VCALENDAR\r
         original = source.to_dict()
         selected = instances(source)[1]
         before, after = partition_series(source, selected)
-        copied = reidentify_series(after, 'new-resource-id', 'new-resource-uid')
+        copied = reidentify_series(after, 'new-resource-id', 'new-resource-uid', copy_alarms=True)
         serialized = export_ics([copied]).decode()
         self.assertIn('BEGIN:VALARM', serialized)
-        self.assertIn('UID:independent-alarm-id', serialized)
+        self.assertNotIn('UID:independent-alarm-id', serialized)
+        self.assertIn('UID:urn:uuid:', serialized)
         self.assertIn('TRIGGER:-PT15M', serialized)
         self.assertIn('X-SERVER-CALENDAR:retained header', serialized)
         self.assertIn('X-SERVER-METADATA:retained master', serialized)
@@ -500,9 +502,11 @@ END:VCALENDAR\r
 
 
 class RawTemplateProjectionTests(unittest.TestCase):
-    def assert_shifted_metadata(self, event):
+    def assert_shifted_metadata(self, event, *, copied=False):
         serialized = export_ics([event]).decode()
-        for retained in ('UID:parent-alarm-first', 'UID:specific-alarm',
+        for uid in ('UID:parent-alarm-first', 'UID:specific-alarm'):
+            self.assertEqual(uid in serialized, not copied)
+        for retained in (
                          'X-SERVER-INHERITED:retained parent', 'X-SERVER-DETACHED:retained override',
                          'X-SERVER-CANCELLATION:retained cancellation', 'X-SERVER-HEADER:retained header',
                          'BEGIN:VTIMEZONE'):
@@ -533,7 +537,7 @@ class RawTemplateProjectionTests(unittest.TestCase):
                 clipboard = EventClipboard.capture([source], selected, scope)
                 copied = clipboard.instantiate(scope, selected.start + timedelta(days=7), 'destination')[0]
                 self.assertNotEqual(copied.ical_uid, source.ical_uid)
-                self.assert_shifted_metadata(copied)
+                self.assert_shifted_metadata(copied, copied=True)
         self.assertEqual(source.to_dict(), original)
 
     def test_saved_group_and_future_moves_keep_templates_and_past_unchanged(self):

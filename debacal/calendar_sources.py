@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import replace
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -19,6 +20,9 @@ from .credentials import account_key
 from .discovery import discover_calendars
 from .models import Calendar
 from .preferences import Preferences
+from .notification_preferences import choice
+from .reminder_editor import ReminderEditor
+from .reminder_preferences import CalendarReminderPolicy
 from .theme import scheme_for
 
 
@@ -60,9 +64,10 @@ class CalendarSourcesEditor(QWidget):
     credential_requested = Signal(str, str, bool)
 
     def __init__(self, store, preferences=None, parent=None, *, credentials=None,
-                 executor=None, allow_remote=True):
+                 executor=None, allow_remote=True, reminder_policies=None):
         super().__init__(parent)
         self.store = store
+        self.reminder_policies = dict(reminder_policies or {})
         self.preferences = preferences or Preferences()
         self.credentials = credentials
         self.allow_remote = allow_remote
@@ -161,6 +166,15 @@ class CalendarSourcesEditor(QWidget):
         self.address_label = QLabel('Address')
         form.addRow(self.address_label, self.source_url)
         form.addRow('Access', self.calendar_access)
+        self.reminder_mode = choice([('Use saved event reminders', 'event'), ('Mute this calendar', 'mute'),
+                                     ('Use replacement reminders', 'replace')])
+        self.reminder_mode.setToolTip('Controls delivery on this device, including for read-only calendars.')
+        self.reminder_alarms = ReminderEditor(templates_only=True, parent=self)
+        self.reminder_alarms.setFixedHeight(self.fontMetrics().height() * 7)
+        form.addRow('Local reminders', self.reminder_mode)
+        form.addRow('', self.reminder_alarms)
+        self.reminder_mode.currentIndexChanged.connect(self._policy_changed)
+        self.reminder_alarms.changed.connect(self._policy_changed)
         self.account_button = action_button('Account settings…', self.select_account)
         self.account_button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         form.addRow('', self.account_button)
@@ -241,6 +255,21 @@ class CalendarSourcesEditor(QWidget):
             self._loading = False
         self._selection_changed(self.sources.currentItem())
 
+    def select_calendar(self, identity):
+        if identity in self._items:
+            self.sources.setCurrentItem(self._items[identity])
+
+    def _policy_changed(self):
+        if self._loading or not self._selected:
+            return
+        mode = self.reminder_mode.currentData()
+        self.calendar_form.setRowVisible(self.reminder_alarms, mode == 'replace')
+        policy = CalendarReminderPolicy(mode, self.reminder_alarms.alarms())
+        if policy == CalendarReminderPolicy():
+            self.reminder_policies.pop(self._selected, None)
+        else:
+            self.reminder_policies[self._selected] = policy
+
     def _selection_changed(self, item, _previous=None):
         if self._loading:
             return
@@ -285,6 +314,10 @@ class CalendarSourcesEditor(QWidget):
             self.source_url.setText(calendar.url if calendar else '')
             self.address_label.setText('Subscription' if calendar and calendar.kind == 'ics' else 'Calendar address')
             if calendar:
+                policy = self.reminder_policies.get(calendar.id, CalendarReminderPolicy())
+                self.reminder_mode.setCurrentIndex(self.reminder_mode.findData(policy.mode))
+                self.reminder_alarms.set_alarms(policy.alarms)
+                self.calendar_form.setRowVisible(self.reminder_alarms, policy.mode == 'replace')
                 self.color_button.setIcon(calendar_color_icon(calendar.color, self.preferences))
                 self.color_button.setToolTip(calendar.color)
                 if calendar.kind == 'ics':
@@ -473,7 +506,7 @@ class CalendarSourcesEditor(QWidget):
                 self.alias.setFocus()
                 raise ValueError('Enter a calendar name.')
 
-    def apply(self, *, on_success=None, on_error=None):
+    def apply(self, *, on_success=None, on_error=None, save_reminders=None):
         """Apply one captured source draft without waiting for the sync writer."""
         if self._applying:
             return False
@@ -492,6 +525,8 @@ class CalendarSourcesEditor(QWidget):
             if on_success is not None:
                 on_success(changed)
         if not changed_sources:
+            if save_reminders is not None:
+                save_reminders(self.store)
             completed((False, tuple(self.store.list_calendars(include_disabled=True))))
             return result['changed']
         from .ui_database import submit_write
@@ -508,8 +543,14 @@ class CalendarSourcesEditor(QWidget):
             else:
                 self._set_message(str(error), error=True)
         def save(writer):
-            changed = writer.apply_calendar_preferences(originals, drafts)
-            return changed, tuple(writer.list_calendars(include_disabled=True))
+            # DatabaseCommands holds the outer canonical transaction. Publish local
+            # policy before a newly enabled calendar can become visible to the scheduler.
+            with writer.ui_transaction() if save_reminders is not None else nullcontext():
+                changed = writer.apply_calendar_preferences(originals, drafts)
+                calendars = tuple(writer.list_calendars(include_disabled=True))
+                if save_reminders is not None:
+                    save_reminders(writer)
+            return changed, calendars
         try:
             submit_write(self, self.store, save, on_success=completed, on_error=failed)
         finally:

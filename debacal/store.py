@@ -14,6 +14,9 @@ import time
 from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
+from . import alarm_ics
+from .alarms import Alarm, AlarmEdit, alarm_semantic
+from .alarm_series import apply_alarm_edit, edit_child_alarms, is_relative, materialize_alarms, relative_alarms
 from .models import Calendar, Event
 from .event_duration import add_duration, end_for, same_duration
 from .schedule_replacement import ScheduleReplacement
@@ -42,7 +45,91 @@ class EventOwnershipConflict(ValueError):
     """A resource claims an ID or UID already owned by another resource."""
 
 
-class Store:
+def resolve_indexed_occurrence(record, event_id, key):
+    """Resolve one explicit or rule-generated identity from a prepared family."""
+    if record is None or record.error is not None:
+        return None
+    item = record.occurrences.get(event_id)
+    if item is not None:
+        from .event_range_index import _local_floating
+        return _local_floating(item)
+    if record.prepared is None:
+        return None  # A fully indexed finite schedule has no other IDs.
+    master = record.master
+    if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
+        return None
+    try:
+        # Selection refresh uses the same prepared seek plan. It must
+        # not reparse a large master merely to confirm membership.
+        from .timeutil import local_zone
+        return record.prepared.occurrence_at(
+            key, floating_zone=local_zone() if master.floating_time else None)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+class _CanonicalEventReader:
+    """Named-resource reads shared by the workspace and independent editor snapshots."""
+    @contextmanager
+    def read_snapshot(self):
+        """Read a consistent WAL snapshot without claiming the writer slot."""
+        with self._lock:
+            own = not self.connection.in_transaction
+            if own:
+                self.connection.execute('BEGIN')
+            try:
+                yield
+            finally:
+                if own:
+                    self.connection.rollback()
+
+    def get_event(self, event_id: str) -> Event | None:
+        with self._lock:
+            row = self.connection.execute("SELECT data FROM events WHERE id=?", (event_id,)).fetchone()
+            return Event.from_dict(json.loads(row[0])) if row else None
+
+    def get_events(self, event_ids: Iterable[str]) -> list[Event]:
+        """Fetch only requested resources; missing IDs are omitted."""
+        keys = list(dict.fromkeys(event_ids))
+        result = []
+        with self._lock:
+            for offset in range(0, len(keys), 500):
+                chunk = keys[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                result.extend(Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                    f"SELECT data FROM events WHERE id IN ({placeholders})", chunk,
+                ))
+        return result
+
+    def get_events_with_alarms(self, identities: Iterable[str]) -> list[Event]:
+        """Read the named canonical families and resolve their retained reminders."""
+        return [alarm_ics.hydrate_alarms(event) for event in self.get_events(identities)]
+
+    def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
+        """Load a legacy group without decoding unrelated calendar resources."""
+        if not group_id:
+            return []
+        with self._lock:
+            return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                "SELECT data FROM events WHERE calendar_id=? AND group_id=? ORDER BY start,end,id",
+                (calendar_id, group_id),
+            )]
+
+
+@contextmanager
+def open_editor_reader(path):
+    """Pin a read-only WAL connection without initializing any workspace services."""
+    reader = _CanonicalEventReader()
+    reader._lock = threading.RLock()
+    reader.connection = sqlite3.connect(Path(path).absolute().as_uri() + '?mode=ro', uri=True)
+    try:
+        with reader.read_snapshot():
+            yield reader
+    finally:
+        reader.connection.close()
+
+
+class Store(_CanonicalEventReader):
     def __init__(self, path: str | Path, *, query_index: bool = True):
         self.path = str(path)
         legacy_profile = self.path != ':memory:' and Path(self.path).is_file() and Path(self.path).stat().st_size > 0
@@ -172,7 +259,9 @@ class Store:
             self.connection.execute("CREATE TABLE IF NOT EXISTS event_revisions (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)")
             self.connection.execute("INSERT OR IGNORE INTO event_revisions(id,version) VALUES (1,0)")
             self.connection.execute("CREATE TABLE IF NOT EXISTS event_query_changes (event_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
-            self.connection.execute("CREATE INDEX IF NOT EXISTS event_query_changes_version ON event_query_changes(version)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS event_query_changes_cursor ON event_query_changes(version,event_id)")
+            self.connection.execute("CREATE INDEX IF NOT EXISTS events_calendar_id ON events(calendar_id,id)")
+            self._initialize_reminder_sources()
             # These counters live in the same transaction as each event write.
             # Unlike data_version/total_changes they ignore settings, visibility,
             # outbox acknowledgments and unrelated ingestion metadata.
@@ -213,6 +302,33 @@ class Store:
             from .event_range_index import EventRangeIndex
             self._query_index = EventRangeIndex()
             self._synchronize_query_index()
+
+    def _initialize_reminder_sources(self) -> None:
+        """Install source identity and enabled-state tracking in the schema transaction."""
+        db = self.connection
+        db.execute("CREATE TABLE IF NOT EXISTS database_incarnation "
+                   "(id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL)")
+        installed = db.execute("INSERT OR IGNORE INTO database_incarnation VALUES (1,lower(hex(randomblob(16))))")
+        db.execute("CREATE TABLE IF NOT EXISTS calendar_enable_transitions "
+                   "(calendar_id TEXT PRIMARY KEY, enabled INTEGER, generation INTEGER NOT NULL, changed_at TEXT NOT NULL)")
+        now = "strftime('%Y-%m-%dT%H:%M:%f+00:00','now')"
+        # An absent enabled field in a legacy calendar means enabled.
+        enabled = "COALESCE(json_extract(new.data,'$.enabled'),1)"
+        if installed.rowcount:
+            db.execute("INSERT INTO calendar_enable_transitions "
+                       f"SELECT id,COALESCE(json_extract(data,'$.enabled'),1),1,{now} FROM calendars")
+        # A NULL enabled value is a tombstone. Reusing a deleted calendar ID
+        # continues its generation even if the worker missed the deletion.
+        retire = (f"UPDATE calendar_enable_transitions SET enabled=NULL,generation=generation+1,changed_at={now} "
+                  "WHERE calendar_id=old.id")
+        publish = (f"INSERT INTO calendar_enable_transitions VALUES (new.id,{enabled},1,{now}) "
+                   "ON CONFLICT(calendar_id) DO UPDATE SET enabled=excluded.enabled,"
+                   "generation=generation+1,changed_at=excluded.changed_at WHERE enabled IS NOT excluded.enabled")
+        db.execute(f"CREATE TRIGGER IF NOT EXISTS calendar_enable_insert AFTER INSERT ON calendars BEGIN {publish}; END")
+        db.execute(f"CREATE TRIGGER IF NOT EXISTS calendar_enable_delete AFTER DELETE ON calendars BEGIN {retire}; END")
+        db.execute("CREATE TRIGGER IF NOT EXISTS calendar_enable_update AFTER UPDATE OF data,id ON calendars "
+                   f"WHEN old.id IS NOT new.id OR COALESCE(json_extract(old.data,'$.enabled'),1) IS NOT {enabled} "
+                   f"BEGIN {retire} AND old.id IS NOT new.id; {publish}; END")
 
     def _enable_wal(self) -> None:
         # SQLite can return SQLITE_BUSY immediately for journal-mode changes,
@@ -299,19 +415,6 @@ class Store:
         with self._lock:
             with self._ui_state.transaction():
                 yield
-
-    @contextmanager
-    def read_snapshot(self):
-        """Read a consistent WAL snapshot without claiming the writer slot."""
-        with self._lock:
-            own = not self.connection.in_transaction
-            if own:
-                self.connection.execute('BEGIN')
-            try:
-                yield
-            finally:
-                if own:
-                    self.connection.rollback()
 
     def configure_ui_access(self, maintenance_callback, mutation_callback=None):
         """Make foreground reads fail-fast and delegate derived-data repairs.
@@ -619,24 +722,6 @@ class Store:
             self.connection.execute('DELETE FROM quarantined_resources WHERE calendar_id=? AND resource_id=?',
                                     (calendar_id, resource_id))
 
-    def get_event(self, event_id: str) -> Event | None:
-        with self._lock:
-            row = self.connection.execute("SELECT data FROM events WHERE id=?", (event_id,)).fetchone()
-            return Event.from_dict(json.loads(row[0])) if row else None
-
-    def get_events(self, event_ids: Iterable[str]) -> list[Event]:
-        """Fetch only requested resources; missing IDs are omitted."""
-        keys = list(dict.fromkeys(event_ids))
-        result = []
-        with self._lock:
-            for offset in range(0, len(keys), 500):
-                chunk = keys[offset:offset + 500]
-                placeholders = ",".join("?" for _ in chunk)
-                result.extend(Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
-                    f"SELECT data FROM events WHERE id IN ({placeholders})", chunk,
-                ))
-        return result
-
     def get_events_by_uid(self, calendar_id: str, uids: Iterable[str]) -> list[Event]:
         """Find matching resource owners without decoding a whole calendar.
 
@@ -922,6 +1007,16 @@ class Store:
         with self._lock:
             return {row[0] for row in self.connection.execute("SELECT id FROM events")}
 
+    def created_event_ids(self, operation_id: int | None) -> set[str]:
+        """Return resources introduced by this one recorded history operation."""
+        if operation_id is None:
+            return set()
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT item.key FROM operations o, json_each(o.before_data) item "
+                "WHERE o.id=? AND item.type='null'", (operation_id,))
+            return {row[0] for row in rows}
+
     def list_events(
         self, start: datetime | None = None, end: datetime | None = None,
         calendar_ids: Iterable[str] | None = None,
@@ -992,16 +1087,6 @@ class Store:
             return (cls._floating_timestamp(event.start.date().isoformat(), zone),
                     cls._floating_timestamp(event.end.date().isoformat(), zone), event.id)
         return event.start.timestamp(), event.end.timestamp(), event.id
-
-    def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
-        """Load a legacy group without decoding unrelated calendar resources."""
-        if not group_id:
-            return []
-        with self._lock:
-            return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
-                "SELECT data FROM events WHERE calendar_id=? AND group_id=? ORDER BY start,end,id",
-                (calendar_id, group_id),
-            )]
 
     def query_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
                           *, issues: list | None = None) -> list[Event]:
@@ -1140,49 +1225,50 @@ class Store:
                 from .event_range_index import EventRangeIndex
                 master = self.get_event(master_id)
                 record = EventRangeIndex.prepare(master) if master is not None else None
-            if record is None or record.error is not None:
-                return None
-            item = record.occurrences.get(event_id)
-            if item is not None:
-                from .event_range_index import _local_floating
-                return _local_floating(item)
-            if record.prepared is None:
-                return None  # A fully indexed finite schedule has no other IDs.
-            master = record.master
-            if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
-                return None
-            try:
-                # Selection refresh uses the same prepared seek plan. It must
-                # not reparse a large master merely to confirm membership.
-                from .timeutil import local_zone
-                return record.prepared.occurrence_at(
-                    key, floating_zone=local_zone() if master.floating_time else None)
-            except (ValueError, TypeError, OverflowError):
-                return None
+            return resolve_indexed_occurrence(record, event_id, key)
+
+    @staticmethod
+    def _family_alarm_fields(item, master):
+        """Recover omitted fields on a selected instance from its canonical family."""
+        if not item.series_id:
+            return master
+        child = master.recurrence_overrides.get(item.recurrence_id)
+        source = Event.from_dict(child) if child is not None else master
+        end = item.end
+        if source.end_timezone_id and (child is not None or not master.duration_spec):
+            end = end.astimezone(source.end.tzinfo)
+        return replace(item, alarms=source.alarms if child is not None else relative_alarms(source.alarms), end=end)
 
     def _reviewed_master(self, reference: Event) -> Event:
         master = self.get_event(reference.series_id or reference.id)
         current = self.get_occurrence(reference.id)
         if self._ui_access and self._query_revision != self.events_revision():
             current = self.get_occurrence(reference.id, canonical=True)
+        if (not self._ui_access and master is not None and current is not None and current.alarms is None
+                and (reference.alarms is not None or reference.raw_ics)):
+            master = alarm_ics.hydrate_alarms(master)
+            current = self._family_alarm_fields(current, master)
         def content(event):
             if reference.series_id:
                 # A sibling edit can refresh the master's derived authoring
                 # annotation without changing this dated occurrence. Resource
                 # snapshots still compare it for whole-series stale guards.
                 event = replace(event, schedule_expression="", expression_anchor="", schedule_syntax=1)
-            return self._semantic_event(event.to_dict())
-        if master is None or current is None or content(current) != content(reference):
+            return event.to_dict()
+        if (master is None or current is None or not self._same_event(content(current), content(reference),
+                partial=self._ui_access or reference._query_projection and reference.alarms is None)):
             raise HistoryConflict("This event changed while it was being edited. Open it again before saving.")
         return master
 
-    def edit_occurrence(self, instance: Event, edited: Event, label: str = "Edit occurrence") -> int | None:
+    def edit_occurrence(self, instance: Event, edited: Event, label: str = "Edit occurrence", *,
+                        alarm_edit: AlarmEdit = None) -> int | None:
         from .recurrence import occurrence_id
         if edited.calendar_id != instance.calendar_id:
-            return self.edit_selection([instance], "single", instance, edited, label=label)
+            return self.edit_selection([instance], "single", instance, edited, label=label, alarm_edit=alarm_edit)
         with self._transaction():
-            master = self._reviewed_master(instance)
+            master = alarm_ics.hydrate_alarms(self._reviewed_master(instance))
             if not instance.series_id:
+                edited = apply_alarm_edit(replace(edited, alarms=master.alarms), alarm_edit)
                 if instance._query_projection and not edited.raw_ics:
                     edited = replace(edited, raw_ics=master.raw_ics, _query_projection=False)
                 return self.apply(label, [replace(edited, id=master.id, calendar_id=master.calendar_id)])
@@ -1192,6 +1278,7 @@ class Store:
                 recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={}, raw_ics="",
                 schedule_expression="", expression_anchor="", schedule_syntax=1,
             )
+            override = edit_child_alarms(master, override, alarm_edit)
             overrides = master.recurrence_overrides | {instance.recurrence_id: override.to_dict()}
             return self.apply(label, [replace(master, recurrence_overrides=overrides)])
 
@@ -1213,6 +1300,8 @@ class Store:
         """
         with self._transaction():
             master = self._reviewed_master(instance)
+            master = alarm_ics.hydrate_alarms(master)
+            instance = self._family_alarm_fields(instance, master)
             if not instance.candidate:
                 raise ValueError("Select an alternative time slot to confirm.")
             if master.recurring and not instance.series_id:
@@ -1220,6 +1309,8 @@ class Store:
             if master.recurring and not master.candidate:
                 # A lone tentative exception in a confirmed series must not
                 # destroy its other, already confirmed occurrences.
+                if instance.recurrence_id not in master.recurrence_overrides:
+                    instance = materialize_alarms(master, instance)
                 confirmed = replace(instance, candidate=False, schedule_expression="", expression_anchor="", schedule_syntax=1)
                 overrides = master.recurrence_overrides | {instance.recurrence_id: confirmed.to_dict()}
                 chosen = replace(master, recurrence_overrides=overrides)
@@ -1232,6 +1323,10 @@ class Store:
                     read_only=master.read_only,
                     schedule_expression="", expression_anchor="", schedule_syntax=1,
                 )
+                if instance.series_id:
+                    # The chosen occurrence becomes the sole original-UID owner.
+                    component_alarms = tuple(a for a in master.alarms if not is_relative(a))
+                    chosen = replace(chosen, alarms=(*instance.alarms, *component_alarms))
             alternatives = []
             if master.group_id:
                 alternatives = [row[0] for row in self.connection.execute(
@@ -1311,7 +1406,8 @@ class Store:
             for event_id in master_ids(roots):
                 current = self.get_event(event_id)
                 previous = snapshots.get(event_id)
-                if previous is None or current is None or self._semantic_event(current.to_dict()) != self._semantic_event(previous.to_dict()):
+                if previous is None or current is None or not self._same_event(
+                        current.to_dict(), previous.to_dict(), partial=self._ui_access or previous._query_projection and previous.alarms is None):
                     raise HistoryConflict("This selection changed while it was being edited. Select it again before saving.")
         if reference is not None:
             self._reviewed_master(reference)
@@ -1345,7 +1441,7 @@ class Store:
 
     def _transform_selection(self, roots, scope, reference, edited, *, common_changes=None,
                              schedule_changes=None, replace_schedule=False, calendar_id=None,
-                             delete_ids=None):
+                             delete_ids=None, alarm_edit: AlarmEdit = None):
         """Compile projections in memory; no write occurs until every root passes."""
         from datetime import timedelta
         from .event_clipboard import _moved_times, calendar_day_delta
@@ -1364,13 +1460,16 @@ class Store:
             uid = value.ical_uid if value.ical_uid not in used_uids else str(uuid4())
             used_uids.add(uid)
             return clone_event(value, new_id=identifier, new_uid=uid,
-                               calendar_id=calendar_id, group_id=value.group_id)
+                               calendar_id=calendar_id, group_id=value.group_id, copy_alarms=False)
 
         resized = not same_duration(reference, edited)
         changed = {}
         for root in roots:
             root_scope = "group" if is_whole_root(root) else scope
             master = self.get_event(root.series_id or root.id)
+            master = alarm_ics.hydrate_alarms(master)
+            if root.alarms is None:
+                root = self._family_alarm_fields(root, master)
             if root._query_projection and not root.series_id:
                 root = replace(root, raw_ics=master.raw_ics, _query_projection=False)
             source = root if root_scope == "single" or root_scope == "future" else master
@@ -1383,10 +1482,14 @@ class Store:
             exact_target = (edited.start if source.id == reference.id
                             and not common_changes.get('all_day', source.all_day) else None)
             start, end = _moved_times(source, shift, zone, target=exact_target)
+            if root_scope == 'single' and not source.all_day and not source.floating_time:
+                start = start.astimezone(source.start.tzinfo)
             # A timed duration cannot describe the range of an unchanged
             # all-day companion (or vice versa). An explicit type conversion
             # does apply the new duration to every selected event.
             resize_source = resized and (source.all_day == reference.all_day or 'all_day' in common_changes)
+            if source.end_timezone_id and not resize_source:
+                end = end.astimezone(source.end.tzinfo)
             if resize_source:
                 end = add_duration(start, edited.duration_spec) if edited.duration_spec else end_for(edited, start)
             duration_spec = edited.duration_spec if resize_source else source.duration_spec
@@ -1400,6 +1503,7 @@ class Store:
             if root_scope == "single":
                 value = replace(root, start=start, end=end, duration_spec=duration_spec, **common_changes)
                 if root.series_id:
+                    value = edit_child_alarms(master, value, alarm_edit, distributed=len(roots) > 1)
                     value = replace(value, recurrence_rule="", recurrence_dates=(), excluded_dates=(), recurrence_overrides={},
                                     schedule_expression="", expression_anchor="", schedule_syntax=1, raw_ics="")
                     previous = changed.get(master.id, master)
@@ -1408,12 +1512,12 @@ class Store:
                             excluded_dates=tuple(sorted(set(previous.excluded_dates) | {root.recurrence_id})),
                             recurrence_overrides={key: payload for key, payload in previous.recurrence_overrides.items()
                                                   if key != root.recurrence_id})
-                        value = transferred(detach_event(master, value))
+                        value = transferred(replace(detach_event(master, value), alarms=value.alarms))
                         changed[value.id] = value
                     else:
                         changed[master.id] = replace(previous, recurrence_overrides=previous.recurrence_overrides | {root.recurrence_id: value.to_dict()})
                 else:
-                    value = replace(value, **schedule_changes)
+                    value = apply_alarm_edit(replace(value, **schedule_changes), alarm_edit, distributed=len(roots) > 1)
                     if calendar_id is not None and calendar_id != master.calendar_id:
                         deleted.add(master.id)
                         value = transferred(value)
@@ -1456,7 +1560,7 @@ class Store:
                 if before is None:
                     deleted.add(master.id)
                 projected = transferred(projected, keep_id=before is not None)
-            changed[projected.id] = projected
+            changed[projected.id] = apply_alarm_edit(projected, alarm_edit, distributed=len(roots) > 1)
         return list(changed.values())
 
     def move_selection(self, refs, scope, reference, start, end, *, copy=False,
@@ -1476,7 +1580,7 @@ class Store:
             return self.apply(label, self._transform_selection(roots, scope, reference, edited))
 
     def edit_selection(self, refs, scope, reference, edited, *, replace_schedule: bool | ScheduleReplacement = False,
-                       label="Edit selected events", expected_masters=(), calendar_id=None) -> int | None:
+                       label="Edit selected events", expected_masters=(), calendar_id=None, alarm_edit: AlarmEdit = None) -> int | None:
         """Edit an exact selected union, including an optional calendar transfer.
 
         An unchanged editor calendar retains each selected event's source.
@@ -1484,7 +1588,7 @@ class Store:
         reference, allowing a mixed-calendar selection to be gathered together.
         """
         from .series_operations import partition_series
-        from .recurrence import rules_equivalent
+        from .recurrence import complete_occurrence_schedule, rules_equivalent
         from .selection import is_whole_root
         with self._transaction():
             _, roots = self._review_selection(refs, scope, reference, expected_masters)
@@ -1497,6 +1601,8 @@ class Store:
             base = master if reference_scope != "single" else reference
             if reference_scope == "future" and master.recurring:
                 _, base = partition_series(master, reference)
+            if reference_scope != 'single':
+                edited = complete_occurrence_schedule(base, reference, edited, replace_schedule, alarm_edit)
             common = {name: getattr(edited, name) for name in ("title", "description", "location", "all_day", "candidate")
                       if getattr(edited, name) != getattr(reference, name)}
             names = ("recurrence_rule", "recurrence_dates", "excluded_dates", "recurrence_overrides",
@@ -1515,30 +1621,33 @@ class Store:
             projections = self._transform_selection(roots, scope, reference, edited,
                                                     common_changes=common, schedule_changes=schedule,
                                                     replace_schedule=replace_schedule,
-                                                    calendar_id=calendar_id, delete_ids=deleted)
+                                                    calendar_id=calendar_id, delete_ids=deleted, alarm_edit=alarm_edit)
             return self.apply(label, projections, deleted)
 
     def edit_series(
         self, reference: Event, edited: Event, label: str = "Edit series", *,
         replace_schedule: bool | ScheduleReplacement = False, preserve_exceptions: bool = False,
+        alarm_edit: AlarmEdit = None,
     ) -> int | None:
         """Persist the same pure series projection used by editor previews."""
         from .recurrence import updated_series
         if edited.calendar_id != reference.calendar_id:
             return self.edit_selection([reference], "group", reference, edited, label=label,
-                                       replace_schedule=replace_schedule)
+                                       replace_schedule=replace_schedule, alarm_edit=alarm_edit)
         with self._transaction():
-            master = self._reviewed_master(reference)
-            updated = updated_series(master, reference, edited, replace_schedule)
+            master = alarm_ics.hydrate_alarms(self._reviewed_master(reference))
+            updated = updated_series(master, reference, edited, replace_schedule, alarm_edit=alarm_edit)
             if preserve_exceptions and replace_schedule is not ScheduleReplacement.RESET:
                 updated = self._preserve_mouse_exceptions(master, reference, edited, updated)
+                updated = apply_alarm_edit(updated, alarm_edit)
             return self.apply(label, [updated])
 
     def _reviewed_future_master(self, reference: Event, expected_master: Event | None) -> Event:
         master = self._reviewed_master(reference)
         if expected_master is not None and (
             expected_master.id != master.id
-            or self._semantic_event(expected_master.to_dict()) != self._semantic_event(master.to_dict())
+            or not self._same_event(expected_master.to_dict(), master.to_dict(), partial=self._ui_access
+                                    or expected_master._query_projection and expected_master.alarms is None)
         ):
             raise HistoryConflict("This series changed while it was being edited. Open it again before saving.")
         return master
@@ -1549,10 +1658,12 @@ class Store:
         The snapshot retains its source identity. Copy/paste must assign a new
         event ID and UID before storing it as another resource.
         """
-        from .series_operations import partition_series
+        from .series_operations import following_snapshot
         with self.read_snapshot():
             master = self._reviewed_future_master(reference, expected_master)
-            _, tail = partition_series(master, reference)
+            if not self._ui_access:
+                master = alarm_ics.hydrate_alarms(master)
+            tail = following_snapshot(master, reference)
             if tail is None:
                 raise ValueError("There are no events at or after this occurrence.")
             return tail
@@ -1560,7 +1671,7 @@ class Store:
     def edit_future(
         self, reference: Event, edited: Event, label: str = "Edit this and following events", *,
         replace_schedule: bool | ScheduleReplacement = False, expected_master: Event | None = None,
-        preserve_exceptions: bool = False,
+        preserve_exceptions: bool = False, alarm_edit: AlarmEdit = None,
     ) -> int | None:
         """Split and edit a series in one undoable, synchronizable operation.
 
@@ -1568,13 +1679,15 @@ class Store:
         becomes a new resource, while a split before the first occurrence
         updates the original resource without creating an empty past.
         """
+        from .recurrence import complete_occurrence_schedule
         from .series_operations import reidentify_series, updated_future
         if edited.calendar_id != reference.calendar_id:
             return self.edit_selection([reference], "future", reference, edited, label=label,
-                                       replace_schedule=replace_schedule,
+                                       replace_schedule=replace_schedule, alarm_edit=alarm_edit,
                                        expected_masters=[expected_master] if expected_master is not None else ())
         with self._transaction():
-            master = self._reviewed_future_master(reference, expected_master)
+            master = alarm_ics.hydrate_alarms(self._reviewed_future_master(reference, expected_master))
+            edited = complete_occurrence_schedule(master, reference, edited, replace_schedule, alarm_edit)
             before, after = updated_future(master, reference, edited, replace_schedule)
             if after is None:
                 raise ValueError("There are no events at or after this occurrence.")
@@ -1583,10 +1696,10 @@ class Store:
             if before is None:
                 after = replace(after, id=master.id, calendar_id=master.calendar_id,
                                 ical_uid=master.ical_uid)
-                return self.apply(label, [after])
+                return self.apply(label, [apply_alarm_edit(after, alarm_edit)])
             after_id = str(uuid4())
             after = reidentify_series(after, after_id, after_id)
-            return self.apply(label, [before, after])
+            return self.apply(label, [before, apply_alarm_edit(after, alarm_edit)])
 
     def delete_future(
         self, reference: Event, label: str = "Delete this and following events", *,
@@ -1705,10 +1818,75 @@ class Store:
                 for key, value in snapshot.items()}
 
     @staticmethod
-    def _semantic_event(value):
+    def _canonical_alarm_snapshot(value):
+        if value is not None and (value.get('alarms') is None or any(
+                child.get('alarms') is None for child in value.get('recurrence_overrides', {}).values())):
+            return alarm_ics.hydrate_alarms(Event.from_dict(value)).to_dict()
+        return value
+
+    @staticmethod
+    def _inherit_legacy_fields(submitted, stored, canonical, *, same_template=True):
+        """Overlay only the unknown fields of this matching family component."""
+        if submitted.get('alarms') is None:
+            submitted['alarms'] = canonical['alarms']
+        same_template = same_template and submitted.get('raw_ics', '') == stored.get('raw_ics', '')
+        if (same_template and stored.get('alarms') is None and not submitted.get('all_day')
+                and not submitted.get('floating_time') and submitted.get('timezone_id') == stored.get('timezone_id')):
+            for bound, zone in (('start', 'timezone_id'), ('end', 'end_timezone_id')):
+                old_zone = stored.get(zone, '')
+                recovered = canonical.get(zone, '')
+                zone_recovered = not old_zone and bool(recovered)
+                # A shared DTEND has no independent TZID on either side.
+                # Copy only its unchanged legacy placeholder into the new zone.
+                spelling_recovered = (bound == 'end' and not old_zone and not recovered
+                                      and stored[bound] != canonical[bound] and submitted[bound] == stored[bound])
+                if ((zone_recovered or spelling_recovered) and submitted.get(zone, '') == old_zone
+                        and datetime.fromisoformat(submitted[bound]) == datetime.fromisoformat(canonical[bound])):
+                    submitted[bound] = canonical[bound]
+                    if zone in canonical:
+                        submitted[zone] = canonical[zone]
+                    else:
+                        submitted.pop(zone, None)
+            # A recovered DTSTART can now share the previously independent
+            # end's declared zone. The endpoint keeps that zone either way.
+            if submitted.get('end_timezone_id') and submitted['end_timezone_id'] == submitted.get('timezone_id'):
+                from .timezones import resolve_timezone
+                end_zone = resolve_timezone(submitted.pop('end_timezone_id'), submitted.get('timezone_definitions'))
+                submitted['end'] = datetime.fromisoformat(submitted['end']).astimezone(end_zone).isoformat()
+        for key, child in submitted.get('recurrence_overrides', {}).items():
+            if key in stored['recurrence_overrides']:
+                Store._inherit_legacy_fields(child, stored['recurrence_overrides'][key],
+                                             canonical['recurrence_overrides'][key], same_template=same_template)
+
+    @staticmethod
+    def _semantic_event(value, *, hydrate=True, authored=False):
         if value is None:
             return None
+        if hydrate:
+            value = Store._canonical_alarm_snapshot(value)
         result = {key: item for key, item in value.items() if key != "raw_ics"}
+        alarms = value.get('alarms')
+        result['alarms'] = None if alarms is None else alarm_semantic(tuple(Alarm.from_dict(a) for a in alarms))
+        if result.get("recurrence_overrides"):
+            result["recurrence_overrides"] = {key: Store._semantic_event(item, hydrate=False, authored=authored)
+                                              for key, item in result["recurrence_overrides"].items()}
+        if authored:
+            # Local edits retain every submitted scheduling field, including
+            # timezone choices that have the same standard UTC wire rendering.
+            return result
+        if not value.get('all_day') and not value.get('floating_time'):
+            explicit_dates = (value.get('recurrence_dates') and not value.get('recurrence_rule')
+                              and not value.get('schedule_expression') and not value.get('duration_spec'))
+            if explicit_dates or value.get('duration_spec') or value.get('end_timezone_id') or alarms:
+                event = Event.from_dict(value)
+                alarm_ics.normalize_alarm_context(event, result)
+                # A nominal duration derives its projected end from DTSTART;
+                # a UTC-only explicit date set can omit the named primary zone.
+                if alarm_ics.repeated_rdate_primary(event):
+                    result['timezone_id'] = ''
+                    result['start'] = event.start.astimezone(timezone.utc).isoformat()
+                if explicit_dates or value.get('duration_spec') or value.get('end_timezone_id'):
+                    result['end'] = event.end.astimezone(timezone.utc).isoformat()
         if 'duration_spec' not in value and not value.get('all_day'):
             from .event_duration import retained_duration_spec
             if retained_duration_spec(value.get('raw_ics', '')):
@@ -1719,16 +1897,42 @@ class Store:
             result.pop('duration_spec', None)
         if not result.get("schedule_expression"):
             result.pop("schedule_syntax", None)
-        if result.get("recurrence_overrides"):
-            result["recurrence_overrides"] = {key: Store._semantic_event(item)
-                                              for key, item in result["recurrence_overrides"].items()}
         if result.get("recurrence_rule"):
             result["recurrence_rule"] = ";".join(sorted(result["recurrence_rule"].upper().removeprefix("RRULE:").split(";")))
         return result
 
-    def _snapshot_matches(self, current, expected):
-        return all(self._semantic_event(current[key]) == self._semantic_event(value)
-                   for key, value in expected.items())
+    @classmethod
+    def _same_event(cls, left, right, *, partial=False, hydrate=True, authored=False):
+        if left == right:
+            return True
+        if left is None or right is None:
+            return False
+        if left.get('timezone_id') and right.get('timezone_id') and left['timezone_id'] != right['timezone_id']:
+            return False  # Two explicit named schedules are distinct even at a repeated hour.
+        a, b = (cls._semantic_event(value, hydrate=hydrate and not partial, authored=authored) for value in (left, right))
+        if not partial:
+            return a == b
+
+        def known_fields_match(first, second):
+            if first.get('alarms') is None or second.get('alarms') is None:
+                # Old snapshots also omitted independent DTEND provenance.
+                # The worker resolves it before accepting the mutation.
+                unknown_end_zone = any(item.get('alarms') is None and not item.get('end_timezone_id')
+                                       for item in (first, second))
+                for item in (first, second):
+                    item.pop('alarms', None)
+                    item.pop('alarm_calculation_zones', None)
+                    if unknown_end_zone and not item.get('all_day') and not item.get('floating_time'):
+                        item.pop('end_timezone_id', None)
+                        item['end'] = datetime.fromisoformat(item['end']).astimezone(timezone.utc).isoformat()
+            children = first.pop('recurrence_overrides', {})
+            others = second.pop('recurrence_overrides', {})
+            return (first == second and children.keys() == others.keys()
+                    and all(known_fields_match(child, others[key]) for key, child in children.items()))
+        return known_fields_match(a, b)
+
+    def _snapshot_matches(self, current, expected, *, partial=False):
+        return all(self._same_event(current[key], value, partial=partial) for key, value in expected.items())
 
     def _assert_writable(self, values: Iterable[dict[str, Any] | None]) -> None:
         calendars = {}
@@ -1864,8 +2068,16 @@ class Store:
                 if reconciled is not event:
                     after[event.id] = reconciled.to_dict()
                     preserve_transport(event)
-            # Ignore absent deletions and unchanged updates.
-            changed = [key for key in ids if before[key] != after[key]]
+            # Resolve affected legacy families against their own retained
+            # envelopes before history or undo can substitute another template.
+            for key, submitted in after.items():
+                stored = before[key]
+                before[key] = self._canonical_alarm_snapshot(stored)
+                if submitted is not None and stored is not None:
+                    self._inherit_legacy_fields(submitted, stored, before[key])
+                after[key] = self._canonical_alarm_snapshot(submitted)
+            changed = [key for key in ids if not self._same_event(before[key], after[key], authored=True) or
+                       not alarm_ics.same_transport(before[key], after[key])]
             if not changed:
                 for event in upserts:
                     self._retry_incomplete_projection(event.id)
@@ -1878,8 +2090,8 @@ class Store:
             )
             return int(cursor.lastrowid)
 
-    def _matches(self, snapshot: dict[str, dict[str, Any] | None]) -> bool:
-        return self._snapshot_matches(self._snapshot(snapshot), snapshot)
+    def _matches(self, snapshot: dict[str, dict[str, Any] | None], *, partial=False) -> bool:
+        return self._snapshot_matches(self._snapshot(snapshot), snapshot, partial=partial)
 
     def history(self, limit: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
@@ -1903,7 +2115,7 @@ class Store:
                 records = []
                 for row, expected in zip(operations, expected_states):
                     applied = bool(row["applied"])
-                    allowed = self._snapshot_matches(current, expected)
+                    allowed = self._snapshot_matches(current, expected, partial=self._ui_access)
                     records.append({
                         "id": row["id"], "label": row["label"], "created_at": row["created_at"],
                         "applied": applied, "can_undo": applied and allowed,
@@ -1933,6 +2145,7 @@ class Store:
                 raise HistoryConflict("These events changed after this operation. Undo the dependent change first.")
             self._assert_writable(expected.values())
             self._assert_writable(target.values())
+            target = {key: self._canonical_alarm_snapshot(value) for key, value in target.items()}
             self._restore(target, preserve_source=True)
             sequence = self.connection.execute("SELECT COALESCE(MAX(toggled),0)+1 FROM operations").fetchone()[0]
             self.connection.execute("UPDATE operations SET applied=?,toggled=? WHERE id=?", (applied, sequence, row["id"]))
@@ -1978,7 +2191,7 @@ class Store:
                                                   (candidate[0],)).fetchone()
                     before, after = (self._normalized_snapshot(json.loads(row[field]))
                                      for field in ('before_data', 'after_data'))
-                    if self._matches(after if applied else before):
+                    if self._matches(after if applied else before, partial=self._ui_access):
                         try:
                             self._assert_writable(before.values())
                             self._assert_writable(after.values())
@@ -2086,7 +2299,9 @@ class Store:
         if any(event.calendar_id != calendar_id for event in upserts):
             raise ValueError("Remote replacements must belong to this calendar.")
         with self._transaction():
-            if self.get_event(event_id) != expected:
+            current_event = self.get_event(event_id)
+            if not self._same_event(current_event.to_dict() if current_event else None,
+                                    expected.to_dict() if expected else None):
                 raise HistoryConflict("This event changed after the conflict was reviewed. Review it again.")
             self._assert_remote_owners(upserts, delete_ids, calendar_id,
                                        {event_id: expected.ical_uid} if expected else None)

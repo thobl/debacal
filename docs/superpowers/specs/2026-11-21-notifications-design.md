@@ -247,7 +247,9 @@ those remaining repeats with one local alert at the chosen later time.
 
 Use the freedesktop D-Bus notification service for Linux desktop delivery,
 independently of system-tray availability. Discover its capabilities and use
-asynchronous calls. When desktop delivery is unavailable, retain the reminder
+asynchronous calls. The Qt transport uses Jeepney on a persistent worker connection for
+typed unsigned arguments and native actions directed to the original sender. The
+PySide6 QtDBus binding lacks a public unsigned argument writer. When desktop delivery is unavailable, retain the reminder
 in the in-app list and show one actionable issue through the existing footer.
 Notification clicks restore Debacal and reveal the relevant occurrence.
 
@@ -277,7 +279,9 @@ retain uncertain deliveries for inspection in the in-app list.
 
 After ordinary quit/start or system resume, the proposed catch-up window is the
 last 24 hours. The default delivers eligible overdue reminders only for events
-that have not ended; group multiple overdue triggers for the same occurrence.
+that have not ended. Group overdue repeats of the same alarm for the same
+occurrence into one reminder. Distinct alarms retain their own dismissal,
+snooze and future triggers.
 The other modes include ended events in that window or deliver no catch-up.
 The first activation and re-enabling after a deliberate mute start with future
 triggers, rather than replaying the time during which notifications were off.

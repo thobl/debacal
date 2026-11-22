@@ -23,6 +23,8 @@ import subprocess
 import sys
 from typing import Any
 
+from .alarm_ics import hydrate_alarms, normalize_alarm_context
+from .alarms import alarm_semantic
 from .ics import export_ics, normalize_caldav_ics, parse_ics, parse_ics_report, patch_ics
 from .ics_resources import ParseReport, ResourceIssue, RejectedResource, _safe_reason, reject_duplicate_identities
 from .import_sources import MAX_IMPORT_BYTES
@@ -41,6 +43,8 @@ def semantic(event: Event | None) -> str:
     def normalized(item):
         from .recurrence import canonical_rule, normalized_rule
         values = item.to_dict()
+        values['alarms'] = alarm_semantic(item.alarms) if item.alarms is not None else None
+        normalize_alarm_context(item, values)
         for key in ("raw_ics", "id", "calendar_id", "series_id", "recurrence_id", "read_only"):
             values.pop(key, None)
         def endpoint(value):
@@ -85,7 +89,7 @@ def semantic(event: Event | None) -> str:
         values["recurrence_overrides"] = {key: normalized(Event.from_dict(payload))
                                           for key, payload in sorted(item.recurrence_overrides.items())}
         return values
-    return _digest(json.dumps(normalized(event), sort_keys=True, separators=(",", ":")))
+    return _digest(json.dumps(normalized(hydrate_alarms(event)), sort_keys=True, separators=(",", ":")))
 
 
 def parsed_one(data: str | bytes, calendar_id="bridge") -> Event:
@@ -387,7 +391,10 @@ class VdirsyncerBackend:
     def _state_event(state):
         payload = (state or {}).get("base_payload") or {}
         if payload.get("event"):
-            return Event.from_dict(payload["event"])
+            item = Event.from_dict(payload["event"])
+            if not item.raw_ics and payload.get("ics"):
+                item = replace(item, raw_ics=payload["ics"])
+            return hydrate_alarms(item)
         return None
 
     @classmethod
@@ -606,7 +613,7 @@ class VdirsyncerBackend:
                         continue
                     current, data = remote.get(uid, (None, None))
                     local_data = normalize_caldav_ics(
-                        patch_ics(data, local) if data else export_ics([local])).decode() if local else None
+                        patch_ics(data, local) if data else export_ics([hydrate_alarms(local)])).decode() if local else None
                     canonical_local = parsed_one(local_data, calendar.id) if local_data else None
                     staged[uid] = (change, local, local_data)
                     marker_path = self._marker(path, uid)

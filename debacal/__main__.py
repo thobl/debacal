@@ -6,7 +6,7 @@ import sys
 import sqlite3
 import tempfile
 
-from PySide6.QtCore import QEvent, QTimer, QUrl, Signal, Qt
+from PySide6.QtCore import QEvent, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -17,7 +17,6 @@ from .timeutil import now
 from .ui import MainWindow
 from .profiles import resolve_profile, validate_profile_name
 from .single_instance import InstanceCoordinator, InstanceError
-from .import_request import ImportRequest
 from .import_sources import ImportSource, MAX_IMPORT_BYTES
 from .fonts import configure_application_font
 
@@ -123,11 +122,17 @@ class FileOpeningApplication(QApplication):
     file_open_requested = Signal(str)
 
     def __init__(self, argv):
+        self.quit_workspace = None
         self._pending_files = []
         self._files_ready = False
         super().__init__(argv)
 
     def event(self, event):
+        if event.type() == QEvent.Type.Quit and self.quit_workspace is not None:
+            # QApplication's default Quit closes modal dialogs first, which
+            # would synthesize a cancellation before their workspace can veto.
+            self.quit_workspace()
+            return True
         if event.type() == QEvent.Type.FileOpen:
             path = event.file() or event.url().toLocalFile()
             if path:
@@ -171,58 +176,54 @@ def configure_application(app):
     app.setApplicationDisplayName('Debacal')
 
 
-def main(argv=None):
+def main(argv=None, *, delivery_allowed=True, reminder_factory=None):
     args = parse_arguments(argv)
     try:
         stdin_data = read_standard_input(force=args.stdin)
     except ValueError as exc:
         print('Could not import standard input: ' + str(exc), file=sys.stderr)
         return 1
+    if args.screenshot and (args.files or stdin_data):
+        print('Screenshot mode cannot import calendar files or standard input.', file=sys.stderr)
+        return 1
     app = FileOpeningApplication(sys.argv[:1])
+    app.setQuitOnLastWindowClosed(False)
     configure_application(app)
     profile = resolve_profile(args.profile, args.database)
     temporary = tempfile.TemporaryDirectory(prefix='debacal-demo-') if args.demo else None
     path = Path(temporary.name) / 'demo.sqlite3' if temporary else profile.database
     workspaces, coordinators = [], []
     window = None
+    exit_status = 1 if args.screenshot else 0
 
-    def deliver_request(request):
-        if window is None or window._closed:
-            return
-        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
-        window.show()
-        target = QApplication.activeModalWidget() or window
-        target.raise_()
-        target.activateWindow()
-        if isinstance(request, ImportRequest):
-            sources = [ImportSource.from_path(path) for path in request.files]
-            sources.append(ImportSource.from_data(request.stdin_data))
-            window.import_sources(sources)
-        elif request:
-            window.import_files(request)
+    def workspace_closed(workspace):
+        if workspace is window:
+            app.exit(exit_status)
 
     def claim_workspace(database, files=(), *, stdin_data=None):
-        if args.new_instance:
+        if args.new_instance or args.screenshot:
             return None, True
         coordinator = InstanceCoordinator(database, parent=app)
-        coordinator.admission_check = lambda requests, size: (
-            window is None or window.can_accept_import(size, requests=requests))
         primary = coordinator.start(files, stdin_data=stdin_data) if stdin_data is not None else coordinator.start(files)
         if primary:
-            coordinator.request_received.connect(deliver_request)
             coordinators.append(coordinator)
         else:
             coordinator.close()
         return coordinator, primary
 
-    def create_workspace(database, *, demo=False):
+    def create_workspace(database, coordinator, *, demo=False):
         store = Store(database)
         try:
             if demo:
                 seed_demo(store)
             workspace = MainWindow(store, enable_sync=not demo, demo_mode=demo,
                                    profile_label=profile.label if profile.name != 'default' else '',
-                                   credential_namespace=profile.credential_namespace)
+                                   credential_namespace=profile.credential_namespace,
+                                   delivery_allowed=delivery_allowed and not demo and not args.screenshot,
+                                   reminder_factory=reminder_factory, imports_allowed=not args.screenshot)
+            if coordinator is not None:
+                workspace.bind_instance(coordinator)
+            workspace.workspaceClosed.connect(lambda: workspace_closed(workspace))
         except Exception:
             store.close()
             raise
@@ -230,68 +231,86 @@ def main(argv=None):
         return workspace
 
     def open_persistent_workspace():
+        """Called once the demo is safe to retire. A failed switch keeps it open."""
         nonlocal window
-        if not window.demo_mode:
-            return
-        old_window = window
         persistent_coordinator = None
         try:
             persistent_coordinator, primary = claim_workspace(profile.database)
-            if not primary:
-                old_window.close()
-                return
-            window = create_workspace(profile.database)
-            window.show()
-            old_window.close()
-            if persistent_coordinator:
-                QTimer.singleShot(0, persistent_coordinator.enable_requests)
+            if primary:
+                replacement = create_workspace(profile.database, persistent_coordinator)
+                window = replacement
+                window.restore_workspace()
+                if persistent_coordinator:
+                    QTimer.singleShot(0, persistent_coordinator.enable_requests)
+            return True
         except (InstanceError, OSError, ValueError, sqlite3.Error) as exc:
             if persistent_coordinator in coordinators:
                 persistent_coordinator.close()
                 coordinators.remove(persistent_coordinator)
-            old_window.report_error('Could not open the workspace: ' + str(exc), title='Could not open workspace')
+            window.report_error('Could not open the workspace: ' + str(exc), title='Could not open workspace')
+            return False
 
     try:
         coordinator, primary = claim_workspace(path, args.files, stdin_data=stdin_data)
         if not primary:
             return 0
-        window = create_workspace(path, demo=args.demo)
+        window = create_workspace(path, coordinator, demo=args.demo)
+        app.quit_workspace = lambda: window.request_quit(force=True)
         if args.demo_conflict:
             from .conflict_demo import DemoConflictEngine
             window.engine = DemoConflictEngine(window.store)
             window.anchor = window.engine.conflicts[0].local.start.date()
             window.refresh()
             window.poll()
-        window.real_workspace_requested.connect(open_persistent_workspace)
-        app.file_open_requested.connect(lambda path: deliver_request([path]))
-        window.show()
-        QTimer.singleShot(0, app.enable_file_requests)
+        if args.demo and not args.screenshot:
+            demo = window
+            demo.real_workspace_requested.connect(lambda: demo.retire_for_replacement(open_persistent_workspace))
+        def native_open(path):
+            if not window.receive_file_open(path):
+                print('Debacal could not accept the open-file request.', file=sys.stderr)
+        app.file_open_requested.connect(native_open)
         if coordinator:
             QTimer.singleShot(0, coordinator.enable_requests)
-        elif stdin_data is not None:
-            request = ImportRequest(tuple(str(path) for path in args.files), stdin_data)
-            QTimer.singleShot(0, lambda value=request: deliver_request(value))
-            del request
-        elif args.files:
-            QTimer.singleShot(0, lambda: window.import_files(args.files))
+        elif args.files or stdin_data:
+            sources = [ImportSource.from_path(path) for path in args.files]
+            if stdin_data:
+                sources.append(ImportSource.from_data(stdin_data))
+            if not window.import_sources(sources):
+                raise InstanceError('The workspace could not accept these calendar inputs.')
+            del sources
         stdin_data = None
+        window.restore_workspace()
+        QTimer.singleShot(0, app.enable_file_requests)
         if args.screenshot:
             def capture():
-                args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-                saved = window.grab().save(str(args.screenshot))
+                nonlocal exit_status
+                try:
+                    args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                    saved = window.grab().save(str(args.screenshot))
+                except OSError:
+                    saved = False
                 if not saved:
                     print('Could not save screenshot.', file=sys.stderr)
-                window.close()
-                app.exit(0 if saved else 1)
+                exit_status = 0 if saved else 1
+                window.request_quit(force=True)
             QTimer.singleShot(350, capture)
-        return app.exec()
+        # An external Qt quit can also end exec(). Keep the event loop available
+        # if accepted work needs a writer callback or a human review.
+        while not window._closed:
+            result = app.exec()
+            if not window._closed:
+                if not args.screenshot:
+                    exit_status = result
+                window.request_quit(force=True)
+        return exit_status
     except (InstanceError, OSError, ValueError, sqlite3.Error) as exc:
         print('Could not start Debacal: ' + str(exc), file=sys.stderr)
         return 1
     finally:
+        app.quit_workspace = None
         for workspace_store, workspace_window in reversed(workspaces):
             if not workspace_window._closed:
-                workspace_window.close()
+                workspace_window.request_quit(force=True)
             workspace_store.close()
         for coordinator in coordinators:
             coordinator.close()

@@ -108,7 +108,7 @@ class ImportSelectionSnapshot:
                 recurrence_overrides={key: value for key, value in master.recurrence_overrides.items()
                                       if key in included}, series_id='', recurrence_id=''))
         identity = _partial_identity(master, keys)
-        result = reidentify_series(result, identity, identity)
+        result = reidentify_series(result, identity, identity, copy_alarms=True)
         # Clear old native resource identities and unused detached templates.
         # Destination remapping then gives this finite partial resource its own
         # ID rather than preserving the full original series' native ID.

@@ -13,7 +13,8 @@ from math import gcd
 
 from dateutil.rrule import DAILY, HOURLY, MINUTELY, MONTHLY, WEEKLY, YEARLY, _iterinfo, weekday
 
-from .event_duration import add_elapsed, elapsed_duration, parse_duration_spec
+from .event_duration import add_elapsed, elapsed_duration, occurrence_end_zone, parse_duration_spec
+from .alarm_series import relative_alarms
 from .models import Event, copy_event
 from .recurrence import (
     RecurrenceRangeError, _floating_master, _recurrence_set,
@@ -448,14 +449,19 @@ class PreparedSeries:
         self._explicit_ends = tuple(ends)
         self.rule_bounds = self._bounds()
 
-    def _explicit(self):
-        master = self.master
+    def initial_start(self):
+        """Canonical explicit DTSTART, including the RRULE-owned fold."""
         initial = self.generation_master.start.astimezone(self.zone)
         if initial.fold and self.rule is not None:
             # DTSTART's nominal fold is owned by the rule when it matches.
             anchor = self.rule.before(initial, inc=True)
             if anchor is not None and anchor.replace(tzinfo=None) == initial.replace(tzinfo=None):
                 initial = anchor
+        return initial
+
+    def _explicit(self):
+        master = self.master
+        initial = self.initial_start()
         starts = {recurrence_key(initial, master.all_day, floating_time=master.floating_time): initial}
         starts.update((key, key_datetime(key, self.generation_master)) for key in master.recurrence_dates)
         result = {}
@@ -653,7 +659,7 @@ class PreparedSeries:
                 if end.timestamp() > boundary.timestamp():
                     end = boundary
                     duration_spec = ''
-        return end, duration_spec
+        return occurrence_end_zone(self.master, end), duration_spec
 
     def _project_values(self, start, key, end, duration_spec):
         # The master and projected range have already been validated/prepared.
@@ -661,7 +667,7 @@ class PreparedSeries:
         fields = {'id': occurrence_id(self.master.id, key), 'start': start, 'end': end,
                   'series_id': self.master.id, 'recurrence_id': key, 'recurrence_rule': '',
                   'recurrence_dates': (), 'excluded_dates': (), 'recurrence_overrides': {}, 'raw_ics': '',
-                  'range_policy': '', 'duration_spec': duration_spec}
+                  'range_policy': '', 'duration_spec': duration_spec, 'alarms': relative_alarms(self.master.alarms)}
         return copy_event(self.master, fields)
 
     def finite_rule_occurrences(self, maximum):

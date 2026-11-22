@@ -1,0 +1,139 @@
+"""Resumable nominal rank lookup when the prepared iterator exceeds its view budget."""
+from bisect import bisect_left
+from datetime import date, datetime, time, timedelta, timezone
+from types import SimpleNamespace
+
+from dateutil.rrule import DAILY, HOURLY, MONTHLY, WEEKLY, YEARLY, _iterinfo
+
+from .prepared_recurrence import _CalendarSeek
+from .reminder_compilation import DAY_US, MAX_US, instant, micros
+
+
+def _following(start, rule):
+    stride = rule._interval
+    if rule._freq == YEARLY:
+        return datetime(start.year + stride, 1, 1)
+    if rule._freq == MONTHLY:
+        year, month = divmod(start.year * 12 + start.month - 1 + stride, 12)
+        return datetime(year, month + 1, 1)
+    if rule._freq == WEEKLY:
+        days = 7 * stride - (start.weekday() - rule._wkst) % 7
+        return datetime.combine(start.date() + timedelta(days=days), time.min)
+    if rule._freq == DAILY:
+        return datetime.combine(start.date() + timedelta(days=stride), time.min)
+    return start.replace(minute=0, second=0) + timedelta(hours=stride)
+
+
+def _rank(days, clocks, bound):
+    """First Cartesian (day,clock) position at/after this naive civil clock."""
+    ordinal = bound.toordinal()
+    day = bisect_left(days, ordinal)
+    position = day * len(clocks)
+    if clocks and day < len(days) and days[day] == ordinal:
+        # The prepared timeset uses one tzinfo throughout. Compare its civil
+        # fields directly without rebuilding every binary-search midpoint.
+        position += bisect_left(clocks, bound.time().replace(tzinfo=clocks[0].tzinfo))
+    return position
+
+
+def seek_slice(series, lower, upper, checkpoint, *, exact_wall=False, nominal=None, info=None):
+    """Return (earliest start, continuation). A completed empty probe covers [lower, upper]."""
+    rule, zone = series.rule, series.zone
+    fixed = exact_wall or isinstance(zone, timezone) or getattr(zone, 'key', '') in ('UTC', 'Etc/UTC', 'GMT')
+    # UTC = nominal wall coordinate - originating offset, including a gap.
+    # With variable offsets no distant endpoint comparison proves monotonicity.
+    offset = None
+    if nominal is not None:
+        low_wall = nominal.replace(tzinfo=None)
+    else:
+        if fixed:
+            offset = instant(lower).astimezone(zone).utcoffset() // timedelta(microseconds=1)
+        low_wall = instant(lower + (offset if fixed else -DAY_US)).replace(tzinfo=None)
+    if checkpoint is None:
+        sought = series.seek.seek(nominal if nominal is not None else instant(lower if fixed else lower - 2*DAY_US))
+        if sought is None:
+            return None, None
+        start, count = sought
+        start, position, best = start.replace(tzinfo=None), 0, None
+    else:
+        text, count, position, best = checkpoint
+        start = datetime.fromisoformat(text)
+    masks = SimpleNamespace(rule=rule, frequency=rule._freq)
+    if info is None:
+        info = _iterinfo(rule)
+    until = micros(rule._until) if rule._until else MAX_US
+    budget = 256
+    while budget and (count is None or count > 0):
+        high = min(upper, until, best if best is not None else MAX_US)
+        high_wall = low_wall if nominal is not None else instant(high + (offset if fixed else DAY_US)).replace(tzinfo=None)
+        if start > high_wall:
+            break
+        if nominal is not None and count is None:
+            # The general seek starts one period early. Exact, uncounted
+            # nominal probes can skip whole preceding periods without ranking.
+            try:
+                following = _following(start, rule)
+            except (ValueError, OverflowError):
+                following = None
+            if following is not None and following <= low_wall:
+                start, position = following, 0
+                budget -= 1
+                continue
+        y, m, d = start.year, start.month, start.day
+        frequency = DAILY if rule._freq == HOURLY else rule._freq
+        days = _CalendarSeek._days(masks, info, y, m, d, frequency=frequency)
+        clocks = rule._timeset
+        if rule._freq == HOURLY:
+            if rule._byhour and start.hour not in rule._byhour:
+                days = []
+            clocks = info.htimeset(start.hour, start.minute, start.second)
+        positions = _CalendarSeek._positions(masks, len(days)*len(clocks))
+        first = bisect_left(positions, _rank(days, clocks, start))
+        end = len(positions) if count is None else min(len(positions), first+count)
+        position = max(position, first, bisect_left(positions, _rank(days, clocks, low_wall)))
+        while position < end and budget:
+            day_index, clock_index = divmod(positions[position], len(clocks))
+            wall = datetime.combine(date.fromordinal(days[day_index]), clocks[clock_index]).replace(tzinfo=None)
+            if wall > high_wall:
+                return (instant(best).astimezone(zone) if best is not None else None), None
+            candidate = micros(wall.replace(tzinfo=zone, fold=0))
+            if lower <= candidate <= high:
+                best = high = candidate
+                if fixed:
+                    return instant(best).astimezone(zone), None
+                high_wall = instant(high+DAY_US).replace(tzinfo=None)
+            position += 1
+            budget -= 1
+        if position < end:
+            break
+        if count is not None:
+            count -= end-first
+        try:
+            start = _following(start, rule)
+        except (ValueError, OverflowError):
+            break
+        position = 0
+        budget = max(0, budget-1)
+    if budget == 0:
+        return None, [start.isoformat(), count, position, best]
+    return (instant(best).astimezone(zone) if best is not None else None), None
+
+
+def membership_slice(series, target, state):
+    """Check one membership slice. An unfinished check returns durable progress."""
+    expected = micros(target)
+    if series._finite_values is not None:
+        value = next(series._regular(target, target), None)
+        return value is not None and micros(value) == expected, None
+    direct, checkpoint = state if state else (True, None)
+    value, following = seek_slice(series, expected, expected, checkpoint, exact_wall=direct)
+    if value is not None:
+        return True, None
+    if following is not None:
+        return False, (direct, following)
+    zone = series.zone
+    if direct and not (isinstance(zone, timezone) or getattr(zone, 'key', '') in ('UTC', 'Etc/UTC', 'GMT')):
+        # A missing nominal clock can still have been generated by a gap clock
+        # with a different originating offset. Check that window in later slices.
+        return False, (False, None)
+    return False, None

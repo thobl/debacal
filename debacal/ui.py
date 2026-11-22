@@ -2,28 +2,37 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 from queue import SimpleQueue, Empty
+from uuid import uuid4
 from collections import deque, OrderedDict
 import calendar as monthlib
 import math
 import sqlite3
 
-from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
+from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, Slot, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QLineEdit, QMenu, QDialog, QFileDialog, QScrollArea, QFrame, QAbstractButton, QAbstractItemView,
-    QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
+    QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit,
 )
 
+from shiboken6 import isValid
+
 from .calendar_widgets import at
+from .event_dialog import EditorFamilies
 from .dialogs import EventDialog, CalendarDialog, HistoryDialog
-from .store import Store
+from .store import Store, open_editor_reader, resolve_indexed_occurrence
+from .reminder_preferences import load_reminder_preferences
 from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
+from .import_request import ImportRequest
+from .tray import TrayController
+from .import_preparation import AcceptedImportSource
 from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
 from .conflict_demo import DemoConflictEngine
@@ -59,22 +68,87 @@ DEFAULT_BINDINGS = {
 EVENT_MIME = 'application/x-debacal-events+json'
 
 
+def _read_editor_families(reader, refs):
+    with reader.read_snapshot():
+        return selection_roots(reader, refs, 'group')
+
+
+def _prepare_editor(families, event, refs, occurrence_refs):
+    """Bind every selected occurrence to the exact canonical family that will be reviewed on Save."""
+    from .alarm_ics import hydrate_alarms
+    from .event_range_index import EventRangeIndex
+    masters = {value.id: hydrate_alarms(value) for value in families}
+    records = {}
+    def resolve(reference):
+        master = masters.get(reference.series_id or reference.id)
+        value = master
+        if master is not None and reference.series_id:
+            if master.id not in records:
+                records[master.id] = EventRangeIndex.prepare(master)
+            value = resolve_indexed_occurrence(records[master.id], reference.id, reference.recurrence_id)
+        if value is None:
+            raise ValueError('The selected event changed. Open it again to edit it.')
+        return value
+    return (resolve(event), tuple(map(resolve, refs)), tuple(map(resolve, occurrence_refs)), tuple(masters.values()))
+
+
+def _read_file_editor(path, event, refs, occurrence_refs):
+    with open_editor_reader(path) as reader:
+        families = _read_editor_families(reader, refs)
+    return _prepare_editor(families, event, refs, occurrence_refs)
+
+
+def _write_import(writer, *, report, calendar_id, accepted):
+    if accepted is not None:
+        target = writer.get_calendar(calendar_id)
+        if target is None or not target.enabled or target.read_only or target.kind == 'ics':
+            raise ValueError('The selected import calendar is no longer writable.')
+        if writer.path != ':memory:':
+            report = accepted.transform(report)
+    return writer.import_report(report, calendar_id=calendar_id)
+
+
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
+    workspaceClosed = Signal()
+    _editorReadReady = Signal(object)
 
-    def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace=''):
+    def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace='',
+                 delivery_allowed=False, reminder_factory=None, imports_allowed=True):
         super().__init__()
         install_button_focus(QApplication.instance())
         self.store = store
         self._closed = False
+        self._editor_request = 0
+        self._editor_active = False
+        self._editor_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-editor')
+        self._editor_future = self._reminder_future = None
+        self._reminder_request = 0
+        self._editorReadReady.connect(self._finish_editor_read, Qt.ConnectionType.QueuedConnection)
         self.occurrence_picker = None
         self.demo_mode = demo_mode
         self.profile_label = profile_label
+        self.reminder_preferences = load_reminder_preferences(store)
+        self._delivery_allowed = bool(delivery_allowed and not demo_mode)
+        self._reminder_main_file = None
+        if store.path != ':memory:':
+            stat = Path(store.path).stat()
+            self._reminder_main_file = stat.st_dev, stat.st_ino
+        self._reminder_factory = reminder_factory
+        self.reminder_controller = self._reminder_dialog = self._reminder_issue = None
+        self._reminder_preferences_dialog = None
         self._import_requests = deque()
         self._import_memory_bytes = 0
         self._import_dialog_active = False
+        self._failed_review_issue = None
         self._import_jobs = set()
-        self._close_after_import = False
+        self._failed_imports: dict[str, tuple[AcceptedImportSource, StatusIssue]] = {}
+        self._imports_allowed = imports_allowed
+        self._instance = None
+        self._quit_attempt = None
+        self._force_close = False
+        self._open_replacement = None
+        self._hidden_to_tray = False
         self._import_timer = QTimer(self)
         self._import_timer.setSingleShot(True)
         self._import_timer.timeout.connect(self._process_import_request)
@@ -88,7 +162,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._issue_sequence = 0
         self._last_sync = None
         self._notified_conflicts = {}
-        self.tray_icon = None
+        self.tray = TrayController(self, profile_label=profile_label)
+        self.tray.showRequested.connect(self.restore_workspace)
+        self.tray.quitRequested.connect(lambda: self.request_quit(force=True))
+        self.tray.availabilityChanged.connect(self._tray_availability_changed)
+        self.tray.conflictRequested.connect(self._open_tray_conflict)
         self.preferences = Preferences.load(store)
         self.anchor = now().date()
         self._clock_day = self.anchor
@@ -104,6 +182,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._paste_mouse_origin = None
         self._drag_preview_events = []
         self._drag_preview_request = None
+        self._drag_placement = None
+        self._drag_selection = None
         self.full_day = bool(store.get_setting('show_full_day', False))
         self._search_index = None
         self._events_revision = None
@@ -167,6 +247,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.install_mode_shortcuts()
         self.database_commands = DatabaseCommands(self.store, self, on_change=self.refresh,
                                                   on_error=self.report_error)
+        self.database_commands.write_failed.connect(self._cancel_quit)
         self.history_availability = HistoryAvailability(self.store, self, self.update_history_buttons,
                                                         self.report_error)
         self.database_commands.pending_changed.connect(lambda _count: self.update_sync_status())
@@ -183,6 +264,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
         QTimer.singleShot(1500, self.startup_sync)
+        if self._delivery_allowed or reminder_factory:
+            self._start_reminders()
 
     @property
     def event_surfaces(self):
@@ -206,7 +289,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._drag_preview_request, tuple(calendar.id for calendar in calendars if calendar.visible),
                 destination.id if destination else None)
 
-    def write_database(self, operation, on_success=None, on_error=None, *, preserve_context=True):
+    def write_database(self, operation, on_success=None, on_error=None, *, preserve_context=True, force_async=False):
         """Persist a captured action without waiting for the sync writer on Qt."""
         context = self._database_context()
         def completed(result):
@@ -224,7 +307,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     on_error(error)
                 else:
                     self.report_error(str(error))
-        return self.database_commands.write(operation, on_success=completed, on_error=failed)
+        return self.database_commands.write(operation, on_success=completed, on_error=failed, force_async=force_async)
 
     def update_creation_target(self):
         calendar = (self.store.get_calendar(self.occurrence_picker.master.calendar_id)
@@ -376,22 +459,107 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search.setToolTip('Search titles, places, and notes (' + key('search') + ')')
         self.search_header.update_preferences(self.preferences, self.bindings.get('search', ''))
 
-    def show_preferences(self, category=None):
+    def _start_reminders(self):
+        if self.reminder_controller is None:
+            from .reminder_controller import create_reminder_controller
+            factory = self._reminder_factory or create_reminder_controller
+            controller = self.reminder_controller = factory(
+                self.store.path, delivery_allowed=self._delivery_allowed, profile_label=self.profile_label)
+            controller.preferencesChanged.connect(self._reminder_settings_changed)
+            controller.inboxChanged.connect(self._reminder_badge)
+            controller.unreadCountChanged.connect(self._reminder_badge)
+            controller.issueChanged.connect(self._reminder_problem)
+            controller.desktopAvailabilityChanged.connect(self._reminder_availability)
+            controller.native_open_gate = self._admit_native_open
+            controller.actionIssue.connect(lambda message: self.report_error(message, title='Reminders'))
+            controller.activate.connect(self._activate_reminder)
+            controller.start()
+        return self.reminder_controller
+
+    def _reminder_badge(self, *_):
+        count = (self.reminder_controller.unread_count if self.reminder_preferences.enabled
+                 and self.reminder_preferences.delivery != 'desktop' and self.reminder_controller else 0)
+        self.tray.set_unread(count)
+        title = f'Reminders · {count} unread' if count else 'Reminders'
+        button = self.reminder_button
+        button.setAccessibleName(title)
+        button.setToolTip(title)
+        button.setProperty('statusTitle', title)
+        name = 'reminders_unread' if count else 'reminders'
+        if name != button.property('iconName'):
+            from .icons import icon
+            button.setProperty('iconName', name)
+            button.setIcon(icon(name, button.property('interfaceIconColor')))
+
+    def _reminder_problem(self, message):
+        previous = self._reminder_issue
+        self._reminder_issue = self.report_error(message, title='Event notifications',
+                                                action_label='Notification settings…',
+                                                action=lambda: self.show_preferences('notifications')) if message else None
+        if previous and previous != self._reminder_issue:
+            self.dismiss_error(previous)
+
+    def _reminder_availability(self, *_):
+        if self._reminder_preferences_dialog:
+            desktop = self.reminder_controller.desktop_available if self.reminder_controller else None
+            self._reminder_preferences_dialog.set_reminder_availability(desktop, self.tray.available())
+
+    def apply_reminder_preferences(self, value):
+        self._reminder_settings_changed(value)
+        if self.reminder_controller:
+            self.reminder_controller.reload_settings()
+
+    def _reminder_settings_changed(self, value):
+        self.reminder_preferences = value
+        self._reminder_badge()
+
+    def show_reminders(self):
+        from .reminder_dialog import ReminderDialog
+        if self._reminder_dialog is None:
+            dialog = self._reminder_dialog = ReminderDialog(self._start_reminders(), self)
+            def closed():
+                self._reminder_dialog = None
+                dialog.deleteLater()
+            dialog.finished.connect(closed)
+        self._reminder_dialog.show()
+        self._reminder_dialog.raise_()
+        self._reminder_dialog.activateWindow()
+
+    def show_preferences(self, category=None, *, calendar_id=None):
         if self.occurrence_picker:
             return
         dialog = PreferencesDialog(self.preferences, self,
                                    bindings=self.bindings, default_bindings=DEFAULT_BINDINGS,
                                    store=self.store, credentials=self.credentials, executor=self.executor,
-                                   allow_remote=not self.demo_mode)
+                                   allow_remote=not self.demo_mode,
+                                   reminder_preferences=load_reminder_preferences(self.store),
+                                   reminder_clock=self.reminder_controller.now if self.reminder_controller else now)
+        self._reminder_preferences_dialog = dialog
+        self._reminder_availability()
+        dialog.remindersApplied.connect(self.apply_reminder_preferences)
+        def test_reminder(draft):
+            controller = self._start_reminders()
+            if not self._delivery_allowed:
+                page = dialog.notification_page
+                page.test_result.setText('Test delivery is disabled in this workspace.')
+                page.test_result.show()
+                return
+            controller.test_notification(draft)
+        dialog.reminderTestRequested.connect(test_reminder)
+        if self.reminder_controller:
+            self.reminder_controller.testNotificationShown.connect(dialog.show_test_reminder)
         dialog.applied.connect(self.apply_preferences)
         dialog.calendars_changed.connect(self.preferences_sources_changed)
         dialog.credential_requested.connect(self.save_source_credentials)
         if category:
             dialog.set_category(category)
+        if calendar_id is not None:
+            dialog.source_editor.select_calendar(calendar_id)
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
         finally:
+            self._reminder_preferences_dialog = None
             dialog.finish_sources()
             dialog.deleteLater()
 
@@ -473,6 +641,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             default = self.store.get_default_calendar()
             action.setChecked(bool(default and default.id == calendar.id))
         menu.addAction('Edit calendar…', lambda: self.add_calendar(calendar))
+        menu.addAction('Reminder settings…', lambda: self.show_preferences('sources', calendar_id=calendar.id))
         menu.addSeparator()
         if calendar.kind != 'ics' and not calendar.read_only:
             menu.addAction('Import .ics here…', lambda: self.import_ics(calendar.id))
@@ -592,7 +761,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     @property
     def local_issues(self):
-        return tuple(self._local_issues.values())
+        review = (self._failed_review_issue,) if self._failed_review_issue else ()
+        return (*review, *self._local_issues.values(), *(issue for _, issue in self._failed_imports.values()))
+
+    @property
+    def _local_issue_count(self):
+        return len(self._local_issues) + len(self._failed_imports) + bool(self._failed_review_issue)
 
     def report_error(self, message, *, title='Action failed', action_label='', action=None, close_on_action=True):
         if not message:
@@ -624,9 +798,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             end = end or start + timedelta(days=1)
         elif end is None:
             end = add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes))
+        self._editor_request += 1
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
-                             default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
+                             default_calendar_id=default.id if default else None, scope_bindings=self.bindings,
+                             reminder_preferences=load_reminder_preferences(self.store))
         try:
             dialog.all_day.setChecked(all_day)
             if self.exec_event_dialog(dialog) == QDialog.DialogCode.Accepted:
@@ -811,20 +987,99 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         scope = scope or (('group' if group else 'single') if group is not None else self.operation_scope())
         dialog_scope = ('group' if self._search_selection_active and self.selection.primary
                         and self.selection.primary.recurring and not self.selection.primary.series_id else scope)
-        series = self.store.get_event(event.series_id) if event.series_id else None
+        self._request_editor(event, refs, scope, dialog_scope)
+
+    def _request_editor(self, event, refs, scope, dialog_scope, *, guard=None, occurrence_refs=None,
+                        inspect_read_only=False):
+        """Load an explicit event selection, also supporting a canonical All-scope root."""
+        if self._closed or self.occurrence_picker or self._editor_active:
+            return
+        self._editor_request += 1
+        if self._editor_future is not None:
+            self._editor_future.cancel()
+        request = self._editor_request
+        context = self._database_context()
+        refs = tuple(refs)
+        occurrences = occurrence_refs if occurrence_refs is not None else tuple(value for ref in refs if (value := (
+            self.search_result_event(ref.id) if ref.recurring and not ref.series_id else ref)) is not None)
+        args = event, refs, occurrences
+        def ready(read_snapshot):
+            if inspect_read_only and guard is not None and self._reminder_busy() and not self._closed:
+                self._after_reminder_interaction(lambda: ready(read_snapshot), self._reminder_request)
+                return
+            if (request != self._editor_request or self._closed or self.occurrence_picker or self._editor_active
+                    or self._database_context() != context or QApplication.activeModalWidget() is not None
+                    or guard is not None and not guard(self.store)):
+                return
+            self._editor_active = True
+            try:
+                self._open_editor(scope, dialog_scope, *read_snapshot(), inspect_read_only=inspect_read_only, guard=guard)
+            finally:
+                self._editor_active = False
+        if self.store.path == ':memory:':
+            families = _read_editor_families(self.store, refs)
+            if all(v.alarms is not None and all(p.get('alarms') is not None for p in v.recurrence_overrides.values())
+                   for v in families):
+                try:
+                    ready(lambda: _prepare_editor(families, *args))
+                except (ValueError, KeyError, OverflowError) as error:
+                    self.report_error(str(error))
+                return
+            future = self._editor_executor.submit(_prepare_editor, families, *args)
+        else:
+            future = self._editor_executor.submit(_read_file_editor, self.store.path, *args)
+        self._watch_editor_read(future, ready, reminder=inspect_read_only and guard is not None)
+
+    def _watch_editor_read(self, future, ready, *, reminder=False):
+        if reminder:
+            self._reminder_future = future
+        else:
+            self._editor_future = future
+        future.editor_ready = ready
+        future.add_done_callback(self._publish_editor_read)
+
+    def _publish_editor_read(self, future):
+        if not self._closed and isValid(self):
+            try:
+                self._editorReadReady.emit(future)
+            except RuntimeError:
+                if isValid(self):
+                    raise
+
+    @Slot(object)
+    def _finish_editor_read(self, future):
+        if self._closed:
+            return
+        if future is self._reminder_future:
+            self._reminder_future = None
+        elif future is self._editor_future:
+            self._editor_future = None
+        else:
+            return
+        try:
+            # The GUI rechecks the request context before consuming either outcome.
+            future.editor_ready(future.result)
+        except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+            self.report_error(str(error))
+
+    def _open_editor(self, scope, dialog_scope, event, refs, occurrences, expected, *, inspect_read_only=False, guard=None):
+        families = EditorFamilies(expected)
+        series = families.get_event(event.series_id)
         dialog = None
         try:
-            # Scope can change while the editor is open. Snapshot its complete
-            # families to review those changes, without loading unrelated data.
-            families = selection_roots(self.store, refs, 'group')
-            expected = self.store.get_events(value.series_id or value.id for value in families)
-            members = selection_roots(self.store, refs, scope)
-            if any(not self.event_writable(member) for member in members):
+            members = selection_roots(families, refs, scope)
+            read_only = any(not self.event_writable(member) for member in members)
+            if read_only and not inspect_read_only:
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
             dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
                                  preferences=self.preferences, edit_scope=dialog_scope, series=series,
-                                 scope_bindings=self.bindings,
+                                 scope_bindings=self.bindings, reminder_preferences=load_reminder_preferences(self.store),
+                                 selected_refs=refs, selected_families=families, occurrence_refs=occurrences,
                                  common_fields_only=len({value.series_id or value.id for value in refs}) > 1)
+            if read_only:
+                from .dialogs import inspect_read_only_event
+                inspect_read_only_event(dialog)
+                return
             mode_changes = []
             def change_editor_mode(value):
                 mode_changes.append(value)
@@ -834,17 +1089,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 dialog.setWindowTitle(f'Edit {len(refs)} selections')
             if self.exec_event_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
+            if guard is not None and not guard(self.store):
+                return
             if mode_changes:
                 scope = dialog.scope.currentData()
-                if scope != 'group':
-                    refs = tuple(value for reference in refs
-                                 if (value := (self.search_result_event(reference.id)
-                                               if reference.recurring and not reference.series_id else reference)) is not None)
+                if scope not in ('group', dialog_scope):
+                    refs = occurrences
                 self.set_selection_mode(scope)
             edited = dialog.result_events[0]
             reference = dialog.edit_reference
-            expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited)
+            expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited, families=families)
                                if not dialog.schedule_replacement else {})
+            alarm_edit = dialog.alarm_edit()
             replacement = dialog.schedule_replacement
             calendar_changed = bool(getattr(dialog, 'calendar_change_requested', False))
             calendar_id = dialog.calendar.currentData() if calendar_changed else None
@@ -857,17 +1113,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             target = (event_start.replace(tzinfo=None) + shift).replace(tzinfo=edited_start.tzinfo, fold=edited_start.fold)
             target = expected_starts.get(event.id, target)
             def save(writer):
-                previous_ids = writer.event_ids()
-                writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
-                                      calendar_id=calendar_id, expected_masters=expected)
-                return previous_ids
-            def saved(previous_ids):
+                if guard is not None and not guard(writer):
+                    raise ValueError('This reminder belongs to an earlier version of the event.')
+                operation = writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
+                                                  calendar_id=calendar_id, expected_masters=expected, alarm_edit=alarm_edit)
+                return writer.created_event_ids(operation)
+            def saved(created_ids):
                 destination = self.store.get_calendar(edited.calendar_id)
                 if destination and not destination.visible and (edited.calendar_id != reference.calendar_id or calendar_changed):
                     self.store.set_calendar_visible(destination.id, True)
-                self.reselect_after_operation(refs, target, previous_ids, shift,
+                self.reselect_after_operation(refs, target, created_ids, shift,
                                              expected_starts=expected_starts, all_day=edited.all_day)
-            self.write_database(save, on_success=saved)
+            self.write_database(save, on_success=saved, force_async=self.store.path != ':memory:')
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
         finally:
@@ -918,7 +1175,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                                        floating_time=reference.floating_time)
         return key_datetime(mapping[key], master) if mapping is not None and key in mapping else target
 
-    def reanchored_selection_starts(self, refs, scope, reference, edited):
+    def reanchored_selection_starts(self, refs, scope, reference, edited, *, families=None):
         """Resolve selected logical slots before their source resources change."""
         from .recurrence import event_zone
         from .event_clipboard import calendar_day_delta
@@ -927,9 +1184,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         result = ({item.id: item.start + timedelta(days=calendar_day_delta(reference, edited.start))
                    for item in refs if item.all_day or reference.all_day}
                   if reference.all_day == edited.all_day else {})
-        for root in selection_roots(self.store, refs, scope):
+        families = families or self.store
+        for root in selection_roots(families, refs, scope):
             root_scope = 'group' if is_whole_root(root) else scope
-            master = self.store.get_event(root.series_id or root.id)
+            master = families.get_event(root.series_id or root.id)
             if root_scope == 'single' or master is None or reference.all_day != edited.all_day:
                 continue
             if root_scope == 'future' and master.recurring:
@@ -948,14 +1206,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 result[item.id] = self.reanchored_reference_start(master, item, target)
         return result
 
-    def reselect_after_operation(self, refs, target, previous_ids, shift=None, *, expected_starts=None, all_day=None):
+    def reselect_after_operation(self, refs, target, created_ids, shift=None, *, expected_starts=None, all_day=None):
         self.selection.clear()
         self.selected_id = None
         all_day = refs[-1].all_day if all_day is None and refs else bool(all_day)
         self.anchor = self.selected_day = target.date() if all_day else target.astimezone(local_zone()).date()
         self.refresh()
-        current_ids = self.store.event_ids()
-        allowed = (current_ids - previous_ids) | {value.series_id or value.id for value in refs}
+        allowed = created_ids | {value.series_id or value.id for value in refs}
         choices = self.visible_events_for_sources(allowed)
         selected = []
         for reference in refs:
@@ -1026,11 +1283,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             else:
                 shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
                 def move(writer):
-                    previous_ids = writer.event_ids()
-                    writer.move_selection(refs, scope, event, start, end)
-                    return previous_ids
-                def moved(previous_ids):
-                    self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
+                    operation = writer.move_selection(refs, scope, event, start, end)
+                    return writer.created_event_ids(operation)
+                def moved(created_ids):
+                    self.reselect_after_operation(refs, expected_starts.get(event.id, start), created_ids, shift,
                                                  expected_starts=expected_starts, all_day=event.all_day)
                 self.write_database(move, on_success=moved)
         except (ValueError, KeyError, OverflowError) as exc:
@@ -1041,17 +1297,30 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self.occurrence_picker:
             self.occurrence_picker.drag_preview(event_id, start, end)
             return
-        event = self.event_by_id(event_id)
-        if event is None:
-            return
-        self._drag_preview_request = event_id, start, end, modifiers
+        scope = self.operation_scope()
+        selection_state = self.selection.refs, self._events_revision
         try:
-            prepared = self.store.move_selection(self.operation_references(event), self.operation_scope(),
-                                                  event, start, end, copy=True,
-                                                  preserve_calendars=not bool(modifiers & Qt.KeyboardModifier.ControlModifier))
-            from .recurrence import expand_events
+            if (self._drag_selection != selection_state or self._drag_preview_request is None or self._drag_preview_request[0] != event_id
+                    or self._drag_placement is None or self._drag_placement.scope != scope):
+                event = self.event_by_id(event_id)
+                if event is None:
+                    return
+                selection = self.capture_events(event, scope)
+                self._drag_placement = PastePlacement(selection, event.calendar_id, start, scope)
+                self._drag_selection = selection_state
+            placement = self._drag_placement
+            self._drag_preview_request = event_id, start, end, modifiers
+            copying = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            if copying:
+                calendar = self.store.get_default_calendar()
+                if calendar is None or calendar.read_only or calendar.kind == 'ics':
+                    raise ValueError('Choose a writable calendar for the copied events.')
+                placement.calendar_id = calendar.id
+            placement.update(start, preserve_calendars=not copying)
+            if placement.error:
+                raise ValueError(placement.error)
             days = self.dates()
-            self._drag_preview_events = expand_events(prepared, at(days[0]), at(days[-1] + timedelta(days=1)))
+            self._drag_preview_events = placement.visible(at(days[0]), at(days[-1] + timedelta(days=1)))
             self.render_placement()
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
@@ -1061,6 +1330,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.occurrence_picker.preview = []
         self._drag_preview_events = []
         self._drag_preview_request = None
+        self._drag_placement = None
+        self._drag_selection = None
         self.render_placement()
 
     def reject_drag(self, message):
@@ -1238,7 +1509,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error('The destination calendar is no longer writable.', title='Cannot paste events',
                               action_label='Edit calendar…', action=lambda: self.add_calendar(calendar) if calendar else self.add_calendar())
             return
-        events, target = pending.events, pending.target
+        target = pending.target
+        try:
+            events = pending.clipboard.instantiate(pending.scope, target, pending.calendar_id)
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.report_error(str(exc), title='Cannot paste events')
+            return
         captured = pending.clipboard
         master = next((item for item in captured.masters
                        if item.id == (captured.reference.series_id or captured.reference.id)), None)
@@ -1464,6 +1740,87 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         start = rules.after(master.start, inc=True) or rules.before(master.start, inc=True)
         return occurrence(master, start) if start is not None else None
 
+    def _reveal_event_day(self, event):
+        calendar = self.store.get_calendar(event.calendar_id)
+        if calendar is None or not calendar.enabled:
+            return None
+        day = event_day(event, local_zone())
+        if not calendar.visible:
+            self.store.set_calendar_visible(calendar.id, True)
+        if not calendar.visible or self.visible_event_by_id(event.id) is None or day not in self.dates():
+            self.anchor = day
+            self.refresh(calendars=not calendar.visible)
+        return day
+
+    def _reminder_busy(self):
+        return bool(self._editor_active or self.occurrence_picker or QApplication.activeModalWidget()
+                    or self._editor_future is not None)
+
+    def _admit_native_open(self):
+        if self._closed:
+            return False
+        if self._reminder_busy():
+            self.restore_workspace()
+            return False
+        return True
+
+    def _after_reminder_interaction(self, callback, request):
+        if self._closed or request != self._reminder_request:
+            return
+        if self._reminder_busy():
+            QTimer.singleShot(100, self, lambda: self._after_reminder_interaction(callback, request))
+        else:
+            try:
+                callback()
+            except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+                self.report_error(str(error), title='Reminders')
+
+    def _activate_reminder(self, due):
+        from .reminder_reveal import reminder_target
+        activation = self.reminder_controller.activation_context
+        if self._closed or activation is None or activation.main_file != self._reminder_main_file:
+            return
+        self._reminder_request += 1
+        request = self._reminder_request
+        context = self._database_context()
+
+        def current(reader):
+            return (request == self._reminder_request and activation.current_partition(reader.path)
+                    and activation.current_source(reader, due))
+
+        def publish(read_target):
+            if self._database_context() != context or not current(self.store):
+                return
+            result = read_target()
+            if not result:
+                return
+            master, event, series_wide = result
+            calendar = self.store.get_calendar(master.calendar_id)
+            if calendar is None or not calendar.enabled:
+                return
+            self.restore_workspace()
+            if event is not None:
+                query = self.search.text().strip()
+                if query and self.filter_search.isChecked() and not event_matches_query(event, query, master):
+                    self.search.clear()
+                day = self._reveal_event_day(event)
+                if day is None:
+                    return
+                if self._events_revision != self.store.events_revision():
+                    self.refresh()
+                self.select_event(event.id, day=day)
+                self.ensure_event_visible(event.id)
+            if series_wide:
+                target = event or master
+                self._request_editor(target, (target,), 'group', 'group', guard=current,
+                                     occurrence_refs=(event,) if event else (), inspect_read_only=True)
+
+        def ready(read_target):
+            self._after_reminder_interaction(lambda: publish(read_target), request)
+
+        future = self._editor_executor.submit(reminder_target, self.store.path, due, activation)
+        self._watch_editor_read(future, ready, reminder=True)
+
     def reveal_search_result(self, item, modifiers=Qt.KeyboardModifier.NoModifier):
         event_id = item if isinstance(item, str) else (item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None)
         if not event_id or self._revealing_search_result:
@@ -1475,17 +1832,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return False
         if event is None:
             return False
-        calendar = self.store.get_calendar(event.calendar_id)
-        if calendar is None:
-            return False
-        day = event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
         self._revealing_search_result = True
         try:
-            if not calendar.visible:
-                self.store.set_calendar_visible(calendar.id, True)
-            if not calendar.visible or self.visible_event_by_id(event.id) is None or day not in self.dates():
-                self.anchor = day
-                self.refresh(calendars=not calendar.visible)
+            day = self._reveal_event_day(event)
+            if day is None:
+                return False
             if self.results.agenda_mode:
                 self.select_event(event.id, day=day, additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier))
                 self.ensure_event_visible(event.id)
@@ -1625,15 +1976,60 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def import_data(self, data, *, label='Standard input', calendar_id=None):
         return self.import_sources((ImportSource.from_data(data, label),), calendar_id=calendar_id)
 
-    def can_accept_import(self, memory_bytes=0, *, requests=1):
-        """Check capacity without reading sources or changing queue state."""
-        return (not self._closed and memory_bytes >= 0 and requests >= 1
-                and len(self._import_requests) + requests <= MAX_PENDING_IMPORT_REQUESTS
+    def bind_instance(self, coordinator):
+        self._instance = coordinator
+        coordinator.admission_check = self._fits_import_budget
+        coordinator.shutting_down = lambda: self._quit_attempt is not None or self._closed
+        coordinator.take_request = self._take_instance_request
+        coordinator.request_received.connect(self.restore_workspace)
+        self.workspaceClosed.connect(coordinator.close)
+
+    def _take_instance_request(self, request):
+        """Move a reserved request to the review queue without calling into the UI."""
+        if self._closed:
+            return False
+        if request:
+            if isinstance(request, ImportRequest):
+                sources = tuple(ImportSource.from_path(path) for path in request.files)
+                sources += (ImportSource.from_data(request.stdin_data),)
+            else:
+                sources = tuple(ImportSource.from_path(path) for path in request)
+            self._enqueue_import(sources, None)
+        return True
+
+    def receive_file_open(self, path):
+        if self._closed or not self._imports_allowed:
+            return False
+        self._cancel_quit(restore=False)
+        try:
+            accepted = self.import_files([path])
+        except ValueError as error:
+            self.report_error(str(error), title='Could not open calendar file')
+            accepted = False
+        self.restore_workspace()
+        return accepted
+
+    def _peer_reservations(self):
+        return self._instance.pending_imports if self._instance is not None else (0, 0)
+
+    def _fits_import_budget(self, requests, memory_bytes):
+        waiting = len(self._import_requests) - int(self._import_dialog_active)
+        return (waiting + requests <= MAX_PENDING_IMPORT_REQUESTS
                 and self._import_memory_bytes + memory_bytes <= MAX_PENDING_IMPORT_BYTES)
+
+    def can_accept_import(self, memory_bytes=0, *, requests=1):
+        """Include undelivered peer reservations without probing any source."""
+        peers, peer_bytes = self._peer_reservations()
+        return (self._imports_allowed and not self._closed and self._quit_attempt is None
+                and memory_bytes >= 0 and requests >= 1
+                and self._fits_import_budget(peers + requests, peer_bytes + memory_bytes))
 
     def import_sources(self, sources, *, calendar_id=None):
         """Queue a reviewed import, including contents received during another dialog."""
         if self._closed:
+            return False
+        if not self._imports_allowed or self._quit_attempt is not None:
+            self.report_error('This workspace is not accepting calendar imports.', title='Import unavailable')
             return False
         sources = tuple(sources)
         if any(not isinstance(source, ImportSource) for source in sources):
@@ -1643,54 +2039,111 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error('Too many calendar imports are waiting. Finish or cancel current imports before sending more.',
                               title='Import queue is full')
             return False
-        self._import_memory_bytes += memory_bytes
-        self._import_requests.append((sources, calendar_id))
-        if not self._import_dialog_active:
-            self._import_timer.start(0)
+        self._enqueue_import(sources, calendar_id)
         return True
 
+    def _enqueue_import(self, sources, calendar_id):
+        self._import_memory_bytes += sum(len(source.data) for source in sources if source.data is not None)
+        self._import_requests.append((sources, calendar_id))
+        if not self._import_dialog_active and self._failed_review_issue is None:
+            self._import_timer.start(0)
+
+    def _recover_import_review(self, key, *, discard=False):
+        issue = self._failed_review_issue
+        if issue is None or issue.key != key:
+            return
+        if discard:
+            sources, _calendar_id = self._import_requests.popleft()
+            self._import_memory_bytes -= sum(len(source.data) for source in sources if source.data is not None)
+        self._failed_review_issue = None
+        if self._import_requests:
+            self._import_timer.start(0)
+        self.update_sync_status()
+
     def _process_import_request(self):
-        if self._closed or self._import_dialog_active or not self._import_requests:
+        if self._closed or self._import_dialog_active or self._failed_review_issue or not self._import_requests:
             return
         if self.occurrence_picker or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             self._import_timer.start(100)
             return
-        sources, calendar_id = self._import_requests.popleft()
-        calendar = self.store.get_default_calendar()
+        sources, calendar_id = self._import_requests[0]
         self._import_dialog_active = True
         memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
-        submitted_bytes = 0
+        reserved_bytes = memory_bytes
+
+        def reserve_import(prepared):
+            nonlocal reserved_bytes
+            wire_bytes = sum(item.wire_bytes for item in prepared.items)
+            additional = wire_bytes - reserved_bytes
+            _, peer_bytes = self._peer_reservations()
+            if self._import_memory_bytes + peer_bytes + additional > MAX_PENDING_IMPORT_BYTES:
+                return False
+            self._import_memory_bytes += additional
+            reserved_bytes = wire_bytes
+            return True
+
+        def finish_review(result):
+            submitted_bytes = 0
+            try:
+                if result == QDialog.DialogCode.Accepted and not self._closed:
+                    if dialog.selected_prepared is None:
+                        self.report_error('Wait for the calendar preview before importing.', title='Import preview is not ready')
+                    else:
+                        prepared = dialog.selected_prepared
+                        for item in prepared.items:
+                            accepted = AcceptedImportSource('import:' + uuid4().hex, item, dialog.selected_calendar_id,
+                                                            prepared.reminder_mode, prepared.reminder_alarms,
+                                                            dialog.selected_sources[item.index].path)
+                            self._submit_import(accepted)
+                            submitted_bytes += item.wire_bytes
+            finally:
+                self._import_requests.popleft()
+                self._import_memory_bytes -= reserved_bytes - submitted_bytes
+                dialog.deleteLater()
+                self._import_dialog_active = False
+                if self._import_requests and not self._closed:
+                    self._import_timer.start(0)
+
         dialog = None
         try:
+            if self._hidden_to_tray:
+                self.restore_workspace()
+            calendar = self.store.get_default_calendar()
             dialog = ImportDialog(self.store.list_calendars(), sources=sources,
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
-                                  preferences=self.preferences, executor=self.executor)
-            if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
-                target = self.store.get_calendar(dialog.selected_calendar_id)
-                if target is None or target.read_only or target.kind == 'ics':
-                    self.report_error('Choose a writable calendar for the import.', title='Import needs a writable calendar',
-                                      action_label='Add calendar…', action=self.add_calendar)
-                elif dialog.selected_prepared is None:
-                    self.report_error('Wait for the calendar preview before importing.', title='Import preview is not ready')
-                else:
-                    for item in dialog.selected_prepared.items:
-                        source = dialog.selected_sources[item.index]
-                        future = self.executor.submit(item.remap, target.id)
-                        future.calendar_id = target.id
-                        future.source_path = str(source.path) if source.path is not None else ''
-                        future.source_label = item.label
-                        future.retry_source = source
-                        future.import_memory_bytes = len(source.data) if source.data is not None else 0
-                        self._import_jobs.add(future)
-                        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
-                        submitted_bytes += future.import_memory_bytes
-        finally:
-            self._import_memory_bytes -= memory_bytes - submitted_bytes
+                                  preferences=self.preferences, executor=self.executor, reserve_import=reserve_import,
+                                  reminder_preferences=load_reminder_preferences(self.store))
+            result = dialog.exec()
+        except Exception as error:
+            # Until the user decides, the original request still owns its
+            # place and its initial reservation, including on a failed open.
+            self._import_memory_bytes -= reserved_bytes - memory_bytes
+            self._import_dialog_active = False
             if dialog is not None:
                 dialog.deleteLater()
-            self._import_dialog_active = False
-            if self._import_requests and not self._closed:
-                self._import_timer.start(0)
+            key = 'import-review:' + uuid4().hex
+            self._failed_review_issue = StatusIssue(
+                key, 'Could not open import review', str(error), 'Retry review…',
+                partial(self._recover_import_review, key), subtitle=', '.join(source.label for source in sources),
+                extra_actions=(IssueAction('Discard import', partial(self._recover_import_review, key, discard=True),
+                                           close_on_action=True),))
+            self.update_sync_status()
+            return
+        if result == ImportDialog.INTERRUPTED:
+            # The outer Qt loop will resume. Keep the same review, draft,
+            # original inputs and charge until its actual Import/Cancel.
+            dialog.finished.connect(finish_review, Qt.ConnectionType.SingleShotConnection)
+            dialog.open()
+        else:
+            finish_review(result)
+
+    def _submit_import(self, accepted):
+        future = self.executor.submit(accepted.prepare, self.store.path == ':memory:')
+        future.accepted_import = accepted
+        future.calendar_id = accepted.calendar_id
+        future.import_memory_bytes = accepted.item.wire_bytes
+        self._import_jobs.add(future)
+        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
     def export_ics(self, calendar_id=None):
         calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar()
@@ -1761,8 +2214,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = f'{len(self._view_issues)} series unavailable in this view · open details'
         elif self.results.agenda_mode and self.results.agenda_issues:
             value = f'{len(self.results.agenda_issues)} series unavailable in upcoming events · open details'
-        elif self._local_issues:
-            value = f'{len(self._local_issues)} issue(s) · open details'
+        elif self._local_issue_count:
+            value = f'{self._local_issue_count} issue(s) · open details'
         elif self._last_sync:
             value = 'Last synced ' + self.preferences.format_time(self._last_sync)
         else:
@@ -1793,7 +2246,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                     'resource ' + resource_id + ':' in message
                                     for resource_id in resource_ids.get(calendar_id, ())))
                             for calendar_id, message in warnings)
-        count = (len(self._local_issues) + len(resources) + len(projections)
+        count = (self._local_issue_count + len(resources) + len(projections)
                  + len(self._sync_errors) + warning_count
                  + bool(self.engine and self.engine.conflicts))
         return count, len(resources)
@@ -1899,7 +2352,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.show_sync_status(show_issues=True)
 
     def show_sync_status(self, show_issues=False):
-        dialog = StatusDialog(self.status_issues, self.synchronization_details, self, show_issues=show_issues,
+        issues, details = self.status_issues, self.synchronization_details
+        if self._failed_review_issue:
+            # Both status tabs normally read the same store that failed to
+            # open this review. Its in-memory recovery must stay reachable.
+            def read_status(supplier, fallback):
+                try:
+                    return supplier()
+                except (sqlite3.Error, OSError, ValueError) as error:
+                    return fallback(error)
+            issues = partial(read_status, issues, lambda _: self.local_issues)
+            details = partial(read_status, details, lambda error: f'Could not read calendar status: {error}')
+        dialog = StatusDialog(issues, details, self, show_issues=show_issues,
                               retry_sync=self.sync_now if self.engine else None,
                               preferences=self.show_preferences, action_error=self.report_error)
         try:
@@ -1939,23 +2403,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self._notified_conflicts[conflict_id] = comparison
         mode = self.preferences.conflict_notifications
-        desktop_available = QSystemTrayIcon.isSystemTrayAvailable() and QSystemTrayIcon.supportsMessages()
         if not self.engine or not self.engine.conflicts:
             self.report_error(message.message, title='Calendar conflict')
         self.update_sync_status()
-        if mode in ('desktop', 'both') and desktop_available:
-            if self.tray_icon is None:
-                self.tray_icon = QSystemTrayIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation), self)
-                self.tray_icon.setToolTip('Debacal · calendar conflicts')
-                self.tray_icon.messageClicked.connect(self.show_conflicts)
-                self.tray_icon.show()
-            self.tray_icon.showMessage('Calendar conflict', message.message, QSystemTrayIcon.MessageIcon.Information)
+        if mode in ('desktop', 'both'):
+            self.tray.notify_conflict(message.message)
 
-    def _finish_import_job(self, future):
+    def _open_tray_conflict(self):
+        self.restore_workspace()
+        self.show_conflicts()
+
+    def _finish_import_job(self, future, *, retained=False):
         self._import_jobs.discard(future)
-        self._import_memory_bytes = max(0, self._import_memory_bytes - getattr(future, 'import_memory_bytes', 0))
-        if self._close_after_import and not self._import_jobs:
-            QTimer.singleShot(0, self.close)
+        if not retained:
+            self._import_memory_bytes -= getattr(future, 'import_memory_bytes', 0)
+        if self._quit_attempt is not None and not self._import_jobs:
+            QTimer.singleShot(0, self, partial(self._resume_quit, self._quit_attempt))
 
     def _import_succeeded(self, report, future):
         try:
@@ -1975,18 +2438,45 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._finish_import_job(future)
 
     def _import_failed(self, error, future):
-        self._close_after_import = False
+        self._cancel_quit()
+        accepted = getattr(future, 'accepted_import', None)
+        source = accepted.source_path if accepted else getattr(future, 'source_path', '')
+        label = accepted.item.label if accepted else getattr(future, 'source_label', Path(source).name if source else '')
+        detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(error)
+        self._sync_messages.append(detail)
+        retained = accepted is not None and accepted.item.report is not None
         try:
-            source = getattr(future, 'source_path', '')
-            label = getattr(future, 'source_label', Path(source).name if source else '')
-            detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(error)
-            self._sync_messages.append(detail)
-            retry_source = getattr(future, 'retry_source', None)
-            retry_path = retry_source.path if retry_source is not None else source or None
-            self.report_error(detail, title='Import failed', action_label='Retry file import…' if retry_path else '',
-                              action=(lambda path=retry_path: self.import_files((path,))) if retry_path else None)
+            if retained:
+                key = accepted.key
+                events = accepted.item.report.events
+                subtitle = accepted.item.label + ' → ' + accepted.calendar_id
+                if events:
+                    subtitle += ' · ' + events[0].title
+                issue = StatusIssue(key, 'Import failed', detail, 'Retry import', lambda: self._retry_import(key),
+                                    subtitle=subtitle, extra_actions=(IssueAction('Discard import', lambda: self._discard_import(key)),))
+                self._failed_imports[key] = accepted, issue
+                self.update_sync_status()
+            else:
+                # No accepted components exist for an unreadable source. A file
+                # can be opened again for a fresh review at its original target.
+                calendar_id = getattr(future, 'calendar_id', None)
+                self.report_error(detail, title='Import failed', action_label='Retry file import…' if source else '',
+                                  action=(lambda: self.import_files((source,), calendar_id=calendar_id)) if source else None)
         finally:
-            self._finish_import_job(future)
+            self._finish_import_job(future, retained=retained)
+
+    def _retry_import(self, key):
+        entry = self._failed_imports.get(key)
+        if entry is not None:
+            self._submit_import(entry[0])
+            del self._failed_imports[key]
+            self.update_sync_status()
+
+    def _discard_import(self, key):
+        entry = self._failed_imports.pop(key, None)
+        if entry is not None:
+            self._import_memory_bytes -= entry[0].item.wire_bytes
+            self.update_sync_status()
 
     def poll(self):
         if self._closed:
@@ -2010,11 +2500,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._import_failed(exc, future)
                 continue
             calendar_id = getattr(future, 'calendar_id', None)
+            accepted = getattr(future, 'accepted_import', None)
+            file_import = accepted is not None and self.store.path != ':memory:'
             self.write_database(
-                lambda writer, prepared=prepared, calendar_id=calendar_id: writer.import_report(prepared, calendar_id=calendar_id),
+                partial(_write_import, report=prepared, calendar_id=calendar_id, accepted=accepted),
                 on_success=lambda report, future=future: self._import_succeeded(report, future),
                 on_error=lambda error, future=future: self._import_failed(error, future),
-                preserve_context=False)
+                preserve_context=False, force_async=file_import)
         if not self.engine:
             return
         updated = False
@@ -2261,15 +2753,79 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 return action
         return None
 
+    def restore_workspace(self) -> None:
+        if self._closed:
+            return
+        self._hidden_to_tray = False
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        target = QApplication.activeModalWidget() or self
+        target.raise_()
+        target.activateWindow()
+
+    def _tray_availability_changed(self, available):
+        if not available and self._hidden_to_tray:
+            self.restore_workspace()
+        self._reminder_availability()
+
+    def request_quit(self, *, force: bool = False) -> None:
+        if self._closed:
+            return
+        self._force_close = force
+        try:
+            self.close()
+        finally:
+            self._force_close = False
+
+    def retire_for_replacement(self, open_replacement):
+        self._open_replacement = open_replacement
+        self.request_quit(force=True)
+
+    def _resume_quit(self, attempt):
+        if attempt is self._quit_attempt and not self._closed:
+            self.request_quit(force=True)
+
+    def _cancel_quit(self, *, restore=True):
+        if self._quit_attempt is not None:
+            self._quit_attempt = None
+            self._open_replacement = None
+            if restore:
+                self.restore_workspace()
+
     def closeEvent(self, event):
-        if self._import_jobs:
-            self._close_after_import = True
+        if self._closed:
+            event.accept()
+            return
+        if (self._quit_attempt is None and not self._force_close
+                and self.reminder_preferences.close_behavior == 'tray' and self.tray.available()):
+            event.ignore()
+            if self.occurrence_picker or self._import_dialog_active or QApplication.activeModalWidget():
+                self.restore_workspace()
+            else:
+                self._hidden_to_tray = True
+                self.hide()
+            return
+
+        if self._quit_attempt is None:
+            self._quit_attempt = object()
+        if self._peer_reservations()[0] or self._import_requests or self._import_dialog_active or self._failed_imports:
+            self._cancel_quit()
             event.ignore()
             return
-        if hasattr(self, 'database_commands') and self.database_commands.request_close(self.close):
+        if self._import_jobs or self.database_commands.request_close(partial(self._resume_quit, self._quit_attempt)):
             event.ignore()
             return
+        if self._open_replacement is not None and not self._open_replacement():
+            self._cancel_quit()
+            event.ignore()
+            return
+        self._open_replacement = None
         self._closed = True
+        self._editor_request += 1
+        if self.reminder_controller:
+            self.reminder_controller.stop()
+        if self._reminder_dialog:
+            self._reminder_dialog.close()
         if self.occurrence_picker:
             self.occurrence_picker.abort()
         QApplication.instance().removeEventFilter(self)
@@ -2278,15 +2834,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.clock_timer.stop()
         self.search_timer.stop()
         self._import_timer.stop()
-        self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests
-                                         for source in sources if source.data is not None)
-        self._import_requests.clear()
         self._view_issues = ()
         if self.engine:
             self.engine.close()
-        if self.tray_icon:
-            self.tray_icon.hide()
+        self.tray.close()
         self.database_commands.shutdown()
         self.history_availability.shutdown()
+        self._editor_executor.shutdown(wait=False, cancel_futures=True)
         self.executor.shutdown(wait=False, cancel_futures=True)
         event.accept()
+        self.workspaceClosed.emit()

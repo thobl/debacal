@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 import dateutil
 from dateutil.rrule import rrule, weekday
 
+from .alarms import Alarm
 from .models import Event, copy_event
 from .prepared_recurrence import PreparedSeries, _CalendarSeek, _HourlySeek, _StaticSeek, _effective_arguments
 from .timezones import (
@@ -202,6 +203,12 @@ class StateWriter:
                 continue
             value = getattr(event, name)
             previous = getattr(base, name) if base is not None else _EVENT_DEFAULTS.get(name, MISSING)
+            if name == 'alarms':
+                # A missing top-level field in the original format means unhydrated.
+                # Occurrences with no delta continue to inherit the master.
+                if base is None or value != previous:
+                    values[name] = None if value is None else [alarm.to_dict() for alarm in value]
+                continue
             if value == previous:
                 continue
             values[name] = (self._payload(value, omit_transport) if name == 'recurrence_overrides'
@@ -367,14 +374,23 @@ class StateReader:
             result = object.__new__(Event)
             for item in _EVENT_FIELDS:
                 if item.name in _EVENT_DEFAULTS:
-                    default = _EVENT_DEFAULTS[item.name]
+                    default = None if item.name == 'alarms' else _EVENT_DEFAULTS[item.name]
                     object.__setattr__(result, item.name, default.copy() if isinstance(default, dict) else default)
         else:
             result = copy_event(base)
         for name, value in state['f'].items():
             if name not in _EVENT_NAMES:
                 raise PreparedStateError('Invalid prepared event field.')
-            object.__setattr__(result, name, self.value(value))
+            if name == 'alarms':
+                value = None if value is None else tuple(Alarm.from_dict(item) for item in value)
+            else:
+                value = self.value(value)
+            object.__setattr__(result, name, value)
+        if (base is not None and result.series_id and 'alarms' not in state['f'] and base.alarms
+                and result.recurrence_id not in base.recurrence_overrides):
+            # Older regular occurrence deltas inherited the entire master.
+            from .alarm_series import relative_alarms
+            object.__setattr__(result, 'alarms', relative_alarms(base.alarms))
         if result.floating_time:
             # Floating values carry civil clocks, not the writer's timezone or
             # fold. Decode them just like canonical floating JSON on this host.

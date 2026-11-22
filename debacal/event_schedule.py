@@ -12,7 +12,7 @@ from typing import Iterable
 
 from dateutil.rrule import rrulestr
 
-from .models import Event
+from .models import timing_event, timing_overrides, Event
 from .timezones import timezone_identifier
 from .event_duration import add_duration, add_elapsed, elapsed_duration, end_for, same_duration, parse_duration_spec
 from .coincident_occurrences import apply_occurrence_counts, multiplicities
@@ -558,6 +558,15 @@ class ScheduleDraft:
                 until=self.until if self.ending == 'until' else None,
                 overflow=self.overflow, range_span=self.range_span)
 
+    def timing_projection(self, prepared_source=None):
+        """Strip stored and graphically edited families before deriving or validating schedule fields."""
+        source = prepared_source or timing_event(self.source)
+        edited = timing_event(self._edited_master)
+        fields = self._edited_fields
+        if fields is not None:
+            fields = dict(fields, recurrence_overrides=timing_overrides(fields['recurrence_overrides']))
+        return replace(self, source=source, _edited_master=edited, _edited_fields=fields)
+
     def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
         """Return Event recurrence/authoring fields, preserving untouched data."""
         chosen_spec = prototype.duration_spec if prototype is not None else None
@@ -661,6 +670,10 @@ class ScheduleDraft:
         edited = replace(master, start=canonical_start, end=canonical_end, all_day=all_day,
                          floating_time=master.floating_time and not all_day,
                          duration_spec=master.duration_spec if duration_spec is None else duration_spec)
+        # Only schedule fields leave this draft. The scope projection on Save
+        # works from the original family and owns transport-template rewriting.
+        if master.raw_ics:
+            master = replace(master, raw_ics='')
         projected = updated_series(master, master, edited)
         return canonicalize_authored_primary(projected, primary_range=(start, end)) if phase_edit else projected
 

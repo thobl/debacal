@@ -1,8 +1,8 @@
 """A paste remains a prepared snapshot until the user places it."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from .event_clipboard import EventClipboard
+from .event_clipboard import EventClipboard, relocated_event
 from .models import Event
 from .recurrence import expand_events
 from .timeutil import local_zone
@@ -31,12 +31,23 @@ class PastePlacement:
     error: str = ''
 
     def __post_init__(self):
-        self.update(self.target)
+        try:
+            self._geometry = self.clipboard.placement_geometry(self.scope)
+            self.update(self.target)
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self._geometry = ()
+            self.error = str(exc)
 
-    def update(self, target):
+    def update(self, target, *, preserve_calendars=False):
         self.target = target
         try:
-            self.events = self.clipboard.instantiate(self.scope, target, self.calendar_id)
+            if not self._geometry:
+                return
+            if target.tzinfo is None or target.utcoffset() is None:
+                raise ValueError("The paste target must include a timezone.")
+            self.events = [replace(relocated_event(event, self.clipboard.reference, target),
+                                   calendar_id=event.calendar_id if preserve_calendars else self.calendar_id)
+                           for event in self._geometry]
             self.error = ''
         except (ValueError, TypeError, KeyError, OverflowError) as exc:
             self.events = []
