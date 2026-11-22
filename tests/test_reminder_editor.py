@@ -5,9 +5,9 @@ from threading import current_thread, main_thread
 from zoneinfo import ZoneInfo
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from alarm_support import BASE, alarm_event, wait_for
@@ -35,6 +35,74 @@ def release_widget(widget):
     widget.deleteLater()
     QCoreApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete)
     assert not isValid(widget)
+
+
+@pytest.mark.parametrize('templates_only,alarm', [
+    (False, None), (True, None), (False, REL), (True, REL), (False, ABS),
+], ids=['add-event', 'add-default', 'edit-relative', 'edit-default', 'edit-absolute'])
+def test_reminder_dialog_has_no_temporary_windows_and_is_transient_from_first_show(templates_only, alarm):
+    from debacal.reminder_editor import ReminderEditor, _AlarmDialog
+
+    parent = QDialog()
+    editor = ReminderEditor(templates_only=templates_only, parent=parent)
+    QVBoxLayout(parent).addWidget(editor)
+    parent.show()
+    APP.processEvents()
+    shown = []
+
+    class Observer(QObject):
+        def eventFilter(self, widget, event):
+            if isinstance(widget, QWidget) and widget.isWindow() and event.type() == QEvent.Type.Show:
+                shown.append((widget, widget.windowType(), widget.windowModality(),
+                              widget.windowHandle().transientParent()))
+            return False
+
+    observer = Observer()
+    APP.installEventFilter(observer)
+    try:
+        form = _AlarmDialog(alarm, editor)
+        assert shown == []
+        assert form.windowType() == Qt.WindowType.Dialog
+        assert form.windowModality() == Qt.WindowModality.WindowModal
+        for opening in range(2):
+            form.open()
+            APP.processEvents()
+            assert shown[-1] == (form, Qt.WindowType.Dialog, Qt.WindowModality.WindowModal,
+                                 parent.windowHandle())
+            assert len(shown) == opening + 1
+            form.reject()
+            APP.processEvents()
+    finally:
+        APP.removeEventFilter(observer)
+        release_widget(parent)
+
+
+def test_updating_reminder_rows_never_shows_temporary_top_level_buttons():
+    from debacal.reminder_editor import ReminderEditor
+
+    editor = ReminderEditor()
+    editor.show()
+    APP.processEvents()
+    shown = []
+
+    class Observer(QObject):
+        def eventFilter(self, widget, event):
+            if isinstance(widget, QWidget) and widget.isWindow() and event.type() == QEvent.Type.Show:
+                shown.append(widget)
+            return False
+
+    observer = Observer()
+    APP.installEventFilter(observer)
+    try:
+        editor.set_alarms((REL, DAY, REMOTE))
+        assert shown == []
+        editor.remove_buttons[0].click()
+        editor.set_alarms((REL,))
+        APP.processEvents()
+        assert shown == []
+    finally:
+        APP.removeEventFilter(observer)
+        release_widget(editor)
 
 
 def test_notes_reminders_scope_and_default_lifetime():

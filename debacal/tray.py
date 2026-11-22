@@ -11,8 +11,10 @@ class TrayController(QObject):
     availabilityChanged = Signal(bool)
     conflictRequested = Signal()
 
-    def __init__(self, window: QWidget, *, profile_label: str):
+    def __init__(self, window: QWidget, *, profile_label: str, enabled: bool = False):
         super().__init__(window)
+        self._enabled = enabled
+        self._visible = False
         self._title = 'Debacal' + (f' · {profile_label}' if profile_label else '')
         self._icon = QSystemTrayIcon(window)
         self._menu = QMenu(window)
@@ -23,8 +25,7 @@ class TrayController(QObject):
         self._icon.messageClicked.connect(self.conflictRequested)
         self.set_unread(0)
         self._available = QSystemTrayIcon.isSystemTrayAvailable()
-        if self._available:
-            self._icon.show()
+        self._update_visibility()
         # Qt exposes a capability query, but no tray-host availability signal.
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.available)
@@ -34,14 +35,27 @@ class TrayController(QObject):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
             self.showRequested.emit()
 
+    def set_enabled(self, enabled: bool):
+        self._enabled = enabled
+        self.available()
+        self._update_visibility()
+
+    def _update_visibility(self):
+        visible = self._enabled and self._available
+        if visible != self._visible:
+            self._visible = visible
+            if visible:
+                self._icon.show()
+            else:
+                self._icon.hide()
+
     def available(self) -> bool:
         # Sample synchronously for close-to-tray as well. A short-lived host
         # can appear at close time and vanish before the next timer turn.
         available = QSystemTrayIcon.isSystemTrayAvailable()
         if available != self._available:
             self._available = available
-            if available:
-                self._icon.show()
+            self._update_visibility()
             self.availabilityChanged.emit(available)
         return available
 
@@ -55,4 +69,5 @@ class TrayController(QObject):
 
     def close(self):
         self._timer.stop()
-        self._icon.hide()
+        self._enabled = False
+        self._update_visibility()

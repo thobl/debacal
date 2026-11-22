@@ -1,5 +1,6 @@
 """Workspace ownership across tray hiding, import review and graceful exit."""
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import json
 import tempfile
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon
 from PySide6.QtNetwork import QLocalSocket
 
 from debacal.import_dialog import ImportDialog
+from debacal.reminder_preferences import ReminderPreferences, save_reminder_preferences
 from debacal.single_instance import InstanceCoordinator, InstanceError, _request_bytes
 from debacal.store import Store
 from debacal.ui import MainWindow
@@ -20,15 +22,28 @@ from test_ui_database_actions import held_writer, until
 
 
 @pytest.fixture
-def workspace(tmp_path, monkeypatch):
-    app = QApplication.instance() or QApplication([])
+def tray_platform(monkeypatch):
     # Exercise the real tray menu, signal wiring and visibility policy, without
     # registering anything on the desktop or sending real notifications.
-    for method in ('show', 'hide', 'showMessage'):
-        monkeypatch.setattr(QSystemTrayIcon, method, lambda *_: None)
+    platform = SimpleNamespace(visible={}, shown=[], messages=[])
+    def show(icon):
+        platform.visible[icon] = True
+        platform.shown.append(icon)
+    monkeypatch.setattr(QSystemTrayIcon, 'show', show)
+    monkeypatch.setattr(QSystemTrayIcon, 'hide', lambda icon: platform.visible.update({icon: False}))
+    monkeypatch.setattr(QSystemTrayIcon, 'showMessage', lambda *args: platform.messages.append(args))
     monkeypatch.setattr(QSystemTrayIcon, 'isSystemTrayAvailable', lambda: True)
     monkeypatch.setattr(QSystemTrayIcon, 'supportsMessages', lambda: True)
+    return platform
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch, tray_platform, request):
+    app = QApplication.instance() or QApplication([])
     with Store(tmp_path / 'calendar.sqlite3') as store:
+        if getattr(request, 'param', None) is not None:
+            save_reminder_preferences(store, ReminderPreferences(close_behavior=request.param),
+                                      now=datetime.now(timezone.utc))
         window = MainWindow(store, enable_sync=False, profile_label='Testing')
         window.show()
         app.processEvents()
@@ -52,6 +67,88 @@ def workspace(tmp_path, monkeypatch):
 
 def use_tray(window):
     window.apply_reminder_preferences(replace(window.reminder_preferences, close_behavior='tray'))
+
+
+@pytest.mark.parametrize('workspace', [None, 'quit', 'tray'], indirect=True)
+def test_tray_initial_visibility_matches_saved_close_behavior(workspace, tray_platform):
+    icon = workspace.findChild(QSystemTrayIcon)
+    assert tray_platform.visible.get(icon, False) == (workspace.reminder_preferences.close_behavior == 'tray')
+
+
+def test_close_behavior_updates_tray_immediately_and_restores_hidden_workspace(workspace, tray_platform):
+    window = workspace
+    icon = window.findChild(QSystemTrayIcon)
+    assert not tray_platform.shown
+    use_tray(window)
+    assert tray_platform.visible[icon]
+    window.close()
+    assert not window.isVisible() and not window._closed
+    window.apply_reminder_preferences(replace(window.reminder_preferences, close_behavior='quit'))
+    assert not tray_platform.visible[icon]
+    assert window.isVisible() and not window._hidden_to_tray and not window._closed
+    use_tray(window)
+    assert tray_platform.visible[icon]
+    window.request_quit(force=True)
+    assert window._closed and not tray_platform.visible[icon]
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_tray_host_recovery_respects_close_behavior(workspace, monkeypatch, tray_platform, enabled):
+    window = workspace
+    icon = window.findChild(QSystemTrayIcon)
+    if enabled:
+        use_tray(window)
+    monkeypatch.setattr(QSystemTrayIcon, 'isSystemTrayAvailable', lambda: False)
+    assert not window.tray.available()
+    assert not tray_platform.visible.get(icon, False)
+    monkeypatch.setattr(QSystemTrayIcon, 'isSystemTrayAvailable', lambda: True)
+    assert window.tray.available()
+    assert tray_platform.visible.get(icon, False) == enabled
+    if not enabled:
+        assert not tray_platform.shown
+
+
+def test_conflict_notification_keeps_disabled_tray_hidden(workspace, monkeypatch, tray_platform):
+    from debacal.sync import SyncMessage
+    window = workspace
+    clicked = []
+    monkeypatch.setattr(window, 'show_conflicts', lambda: clicked.append(window.isVisible()))
+    window.preferences = replace(window.preferences, conflict_notifications='desktop')
+    window.notify_conflict(SyncMessage('conflict', 'Synthetic conflict with tray disabled'))
+    assert len(tray_platform.messages) == 1 and not tray_platform.shown
+    assert window.local_issues[-1].details == 'Synthetic conflict with tray disabled'
+    window.findChild(QSystemTrayIcon).messageClicked.emit()
+    assert clicked == [True]
+
+
+def test_native_reminders_deliver_with_tray_disabled(tmp_path, tray_platform):
+    from alarm_support import BASE, FakeClock, FakeTransport, alarm_event
+    from debacal.alarms import Alarm
+    from debacal.models import Calendar
+    from debacal.reminder_controller import ReminderController
+
+    app = QApplication.instance() or QApplication([])
+    clock = FakeClock(BASE - timedelta(minutes=1))
+    transport = FakeTransport()
+    def factory(database, **options):
+        return ReminderController(database, clock=clock, transport=transport, **options)
+    with Store(tmp_path / 'reminders.sqlite3') as store:
+        store.save_calendar(Calendar('c', 'Appointments', '#112233'))
+        store.apply_remote([alarm_event(alarms=(Alarm('alarm', 'DISPLAY', 'PT0S'),))])
+        save_reminder_preferences(store, ReminderPreferences(enabled=True, delivery='desktop'), now=clock.now())
+        window = MainWindow(store, enable_sync=False, delivery_allowed=True, reminder_factory=factory)
+        try:
+            until(lambda: transport.started)
+            clock.time = BASE
+            window.reminder_controller.reload_settings()
+            until(lambda: transport.sent)
+            assert transport.sent[0][0].title == 'Example' and not tray_platform.shown
+        finally:
+            window.request_quit(force=True)
+            assert not transport.started
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
 
 
 def test_hidden_quit_waits_for_reviewed_writes_but_restores_unreviewed_stdin(workspace, monkeypatch):

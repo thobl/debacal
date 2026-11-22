@@ -162,7 +162,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._issue_sequence = 0
         self._last_sync = None
         self._notified_conflicts = {}
-        self.tray = TrayController(self, profile_label=profile_label)
+        self.tray = TrayController(self, profile_label=profile_label,
+                                   enabled=self.reminder_preferences.close_behavior == 'tray')
         self.tray.showRequested.connect(self.restore_workspace)
         self.tray.quitRequested.connect(lambda: self.request_quit(force=True))
         self.tray.availabilityChanged.connect(self._tray_availability_changed)
@@ -511,6 +512,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def _reminder_settings_changed(self, value):
         self.reminder_preferences = value
+        if value.close_behavior != 'tray' and self._hidden_to_tray:
+            self.restore_workspace()
+        self.tray.set_enabled(value.close_behavior == 'tray')
         self._reminder_badge()
 
     def show_reminders(self):

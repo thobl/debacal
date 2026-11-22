@@ -48,7 +48,8 @@ def _summary(alarm, preferences, all_day):
 
 class _AlarmDialog(FormDialog):
     def __init__(self, alarm, editor):
-        super().__init__(editor)
+        super().__init__(editor, Qt.WindowType.Dialog)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.original = alarm
         self.preferences = editor.preferences
         self.setWindowTitle('Edit reminder' if alarm else 'Add reminder')
@@ -56,7 +57,7 @@ class _AlarmDialog(FormDialog):
         options = [('Relative', 'relative')]
         if not editor.templates_only:
             options.append(('Date and time', 'absolute'))
-        self.kind = ChoiceControl(options, self.preferences)
+        self.kind = ChoiceControl(options, self.preferences, parent=self)
         self.kind.setVisible(len(options) > 1)
         layout.addWidget(self.kind)
         stack = QStackedWidget()
@@ -230,7 +231,7 @@ class ReminderEditor(QWidget):
             label.setWordWrap(True)
             label.setTextFormat(Qt.TextFormat.PlainText)
             row.addWidget(label, 1)
-            edit = action_button('Edit', lambda i=index: self._edit(i))
+            edit = action_button('Edit', lambda i=index: self._edit(i), parent=item)
             edit.setAccessibleName('Edit ' + caption)
             edit.setVisible(alarm.action in ('DISPLAY', 'AUDIO') and not alarm.issue and bool(alarm.trigger))
             remove = action_button('Remove', lambda i=index: self._change(self._alarms[:i] + self._alarms[i + 1:]))
