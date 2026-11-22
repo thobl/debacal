@@ -638,7 +638,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         calendar = self.store.get_calendar(calendar_id)
         if calendar is None:
             return
-        menu = QMenu(self)
+        row = self.calendar_rows.get(calendar_id)
+        popup = self.calendar_list.popup
+        # Keep overflow actions in the panel's Qt ownership chain, including
+        # the menu's separate popup window and any submenus it may contain.
+        parent = popup if popup.isVisible() and row is not None and popup.isAncestorOf(row) else self
+        menu = QMenu(parent)
         if calendar.kind != 'ics' and not calendar.read_only:
             action = menu.addAction('Create events in this calendar', lambda: self.set_creation_calendar(calendar.id))
             action.setCheckable(True)

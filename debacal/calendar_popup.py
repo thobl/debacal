@@ -8,6 +8,15 @@ from PySide6.QtWidgets import (
 from .theme import corner_radius, scheme_for
 
 
+def _owned_by(widget, owner):
+    """Follow Qt ownership through menus/dialogs, where isAncestorOf stops."""
+    while widget is not None:
+        if widget is owner:
+            return True
+        widget = widget.parentWidget()
+    return False
+
+
 class MoreButton(QPushButton):
     """The calendar heading's overflow button is also a drag destination."""
 
@@ -224,7 +233,25 @@ class CalendarPopup(QFrame):
             self.controller.set_expanded(False)
         elif kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel) and isinstance(watched, QWidget):
             button = self.controller.more_button
-            inside = watched is self or self.isAncestorOf(watched) or watched is button or button.isAncestorOf(watched)
+            modal = QApplication.instance().activeModalWidget()
+            # A calendar action may open a main-window-owned modal dialog.
+            # Its own input and dismissal must not dismiss the source panel.
+            if modal is not None and _owned_by(watched, modal):
+                return False
+            # Unhandled right presses propagate from a name button to the
+            # main window. Test their position rather than treating each
+            # receiver as a new outside click. Owned menu windows also grab
+            # clicks outside themselves, so only their actual bounds count.
+            if kind == QEvent.Type.Wheel:
+                inside = _owned_by(watched, self) or _owned_by(watched, button)
+            else:
+                point = event.globalPosition().toPoint()
+                surfaces = [self, button]
+                window = QWidget.window(watched)
+                if _owned_by(window, self):
+                    surfaces.append(window)
+                inside = any(surface.isVisible() and surface.rect().contains(surface.mapFromGlobal(point))
+                             for surface in surfaces)
             if not inside:
                 self.controller.set_expanded(False)
         return False

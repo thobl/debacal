@@ -32,6 +32,9 @@ class CalendarRow(QWidget):
         self.choice.setProperty('focusFrame', False)
         self.choice.setCheckable(True)
         self.choice.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        # Disabled buttons discard native context-menu events in QWidget.event.
+        # Intercept those requests without enabling creation in locked sources.
+        self.choice.installEventFilter(self)
         self.choice.clicked.connect(lambda: self.creation_requested.emit(self.calendar.id))
         layout.addWidget(self.choice, 1)
         self.lock = QLabel()
@@ -50,6 +53,13 @@ class CalendarRow(QWidget):
             target.customContextMenuRequested.connect(lambda point, source=target:
                 self.context_requested.emit(self.calendar.id, source.mapToGlobal(point)))
         self.set_calendar(calendar)
+
+    def eventFilter(self, watched, event):
+        if (watched is self.choice and not self.choice.isEnabled()
+                and event.type() == QEvent.Type.ContextMenu):
+            self.context_requested.emit(self.calendar.id, self.choice.mapToGlobal(event.pos()))
+            return True
+        return super().eventFilter(watched, event)
 
     def set_preferences(self, preferences):
         """Update per-row colors and scale without changing its source selection."""
@@ -103,6 +113,7 @@ class CalendarRow(QWidget):
         self.setMinimumHeight(round(32 * factor))
         self.layout().setSpacing(round(8 * factor))
         self.choice.setEnabled(writable)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus if writable else Qt.FocusPolicy.StrongFocus)
         self.choice.setAccessibleName('Create events in ' + calendar.name if writable else calendar.name + ' (read only)')
         self.choice.setToolTip(('Create new events in ' + calendar.name + ('. Current creation calendar.' if current else '.')
                                if writable else calendar.name + ' is read only.') + '\nRight-click for calendar actions.')
@@ -305,7 +316,7 @@ class CalendarList(QWidget):
             if not self._dragging:
                 rows = self.display_rows(False)
                 if rows:
-                    (rows[0].choice if rows[0].choice.isEnabled() else rows[0].eye).setFocus()
+                    (rows[0].choice if rows[0].choice.isEnabled() else rows[0]).setFocus()
         else:
             self.popup.hide()
             self._popup_session = False
