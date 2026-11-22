@@ -294,3 +294,59 @@ def test_sync_and_subscription_keep_remote_alarms_under_remove_import_default(tm
     finally:
         engine.close()
         store.close()
+
+
+@pytest.mark.parametrize('subset', [False, True])
+def test_identical_duplicate_owned_by_last_source_in_accepted_selection(subset):
+    from test_import_preparation import calendar, event
+    shared = event('shared', extra='X-DEBACAL-ID:native-shared\r\nX-DEBACAL-CALENDAR:destination')
+    prepared = prepare_sources((
+        ImportSource.from_data(calendar(shared, event('unique'), event('omitted')), 'Earlier'),
+        ImportSource.from_data(calendar(shared), 'Later')))
+    selection = ImportSelection()
+    if subset:
+        selection.toggle(next(e for e in prepared.events if e.ical_uid == 'omitted'))
+    accepted = prepared.with_selection(selection.snapshot(masters=prepared.events))
+    earlier, later = (item.remap('destination') for item in accepted.items)
+    assert [e.ical_uid for e in earlier.events] == (['unique'] if subset else ['unique', 'omitted'])
+    assert [(e.ical_uid, e.id) for e in later.events] == [('shared', 'native-shared')]
+
+
+def test_retry_recovers_unique_resource_and_diagnostic_without_overwriting_later_uid(desktop, monkeypatch):
+    from test_import_preparation import calendar, event
+    app, window, store = desktop
+    older = ImportSource.from_data(calendar(
+        event('shared', 'Older'), event('unique', 'Recover this'),
+        event('bad', dates='DTSTART:20261106T140000Z\r\nDTEND:20261106T110000Z')), 'Earlier')
+    reviewed = ImportSource.from_data(calendar(event('shared', 'Reviewed', extra=(
+        'BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT5M\r\nDESCRIPTION:Reviewed alarm\r\nEND:VALARM'))), 'Later')
+    def review(dialog):
+        wait_for(app, lambda: dialog.preview_ready)
+        assert '1 of 2' in dialog.reminder_summary.text()
+        return accept_request(dialog)
+    monkeypatch.setattr(ImportDialog, 'exec', review)
+    original_write = Store.import_report
+    failed = False
+    def fail_earlier_once(writer, report, **kwargs):
+        nonlocal failed
+        if not failed and any(e.ical_uid == 'unique' for e in report.events):
+            failed = True
+            raise ValueError('First source failed temporarily')
+        return original_write(writer, report, **kwargs)
+    monkeypatch.setattr(Store, 'import_report', fail_earlier_once)
+    assert window.import_sources((older, reviewed))
+    window._process_import_request()
+    finish_parsing(window)
+    later, = store.list_events()
+    assert later.title == 'Reviewed' and later.alarms[0].trigger == '-PT5M'
+    update = replace(later, title='Edited after review', alarms=(TEMPLATE,))
+    store.apply('Independent edit', [update])
+    failure, = window.local_issues
+    failure.action()
+    finish_parsing(window)
+    assert store.get_event(later.id) == update
+    assert {e.ical_uid for e in store.list_events()} == {'shared', 'unique'}
+    diagnostic, = store.list_quarantined_resources()
+    assert 'UID:bad' in diagnostic['raw_ics']
+    assert any('unsupported event resource' in issue.details for issue in window.local_issues)
+    assert window._import_memory_bytes == 0

@@ -168,6 +168,25 @@ class PreparedSource:
         return remap_calendar(self.report, calendar_id)
 
 
+def _last_source_versions(items: tuple[PreparedSource, ...]) -> tuple[PreparedSource, ...]:
+    """Keep each UID in its last source while preserving every source's diagnostics."""
+    if len(items) < 2:
+        return items
+    later_uids = set()
+    effective = None
+    for index in reversed(range(len(items))):
+        item = items[index]
+        if item.report is None:
+            continue
+        events = tuple(event for event in item.report.events if event.ical_uid not in later_uids)
+        later_uids.update(event.ical_uid for event in events)
+        if len(events) != len(item.report.events):
+            if effective is None:
+                effective = list(items)
+            effective[index] = replace(item, report=replace(item.report, events=events))
+    return tuple(effective) if effective is not None else items
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptedImportSource:
     """One reviewed source, shared by its initial submission and every retry."""
@@ -202,17 +221,19 @@ class PreparedImport:
     items: tuple[PreparedSource, ...]
     reminder_mode: str = 'keep'
     reminder_alarms: tuple[Alarm, ...] = ()
+    _effective_items: tuple[PreparedSource, ...] = field(init=False, repr=False, compare=False)
     reminder_counts: tuple[int, int] = field(init=False)
     events: tuple[Event, ...] = field(init=False)
     warnings: tuple[str, ...] = field(init=False)
 
     def __post_init__(self):
         object.__setattr__(self, 'reminder_alarms', _reviewed_templates(self.reminder_mode, self.reminder_alarms))
-        # Matching UIDs imported into one calendar replace each other. Preview
-        # the final version, retaining individual source reports for undo.
-        by_id = {event.id: event for item in self.items if item.report is not None
-                 for event in item.report.events}
-        object.__setattr__(self, 'events', tuple(sorted(by_id.values(), key=lambda event: (event.start.timestamp(), event.id))))
+        # The last source owns a repeated UID in this review. Retain the
+        # original reports for diagnostics and direct destination remapping.
+        effective = _last_source_versions(self.items)
+        object.__setattr__(self, '_effective_items', effective)
+        events = (event for item in effective if item.report is not None for event in item.report.events)
+        object.__setattr__(self, 'events', tuple(sorted(events, key=lambda event: (event.start.timestamp(), event.id))))
         object.__setattr__(self, 'reminder_counts', count_reminder_sources(ParseReport(self.events)))
         warnings = []
         count = 0
@@ -245,9 +266,14 @@ class PreparedImport:
     def with_selection(self, selection) -> PreparedImport:
         """Filter reviewed reports on a worker without reading their sources again."""
         if selection.all_selected and not selection.choices:
-            return self
+            if self.items is self._effective_items:
+                return self
+            # The worker already computed this choice and its projections.
+            reviewed = copy(self)
+            object.__setattr__(reviewed, 'items', self._effective_items)
+            return reviewed
         items = tuple(replace(item, report=selection.filter_report(item.report))
-                      if item.report is not None else item for item in self.items)
+                      if item.report is not None else item for item in self._effective_items)
         return replace(self, items=items)
 
     def initial_month(self, preferences: Preferences, today: date | None = None) -> date:

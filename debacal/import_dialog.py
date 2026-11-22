@@ -425,7 +425,7 @@ class ImportDialog(FormDialog):
         if self.prepared_import is not None:
             snapshot = self.selection.snapshot(masters=self.prepared_import.events)
             if snapshot.all_selected and not snapshot.choices:
-                self._import_choice = self.prepared_import
+                self._import_choice = self.prepared_import.with_selection(snapshot)
                 self.preview_ready = self._page is not None
             else:
                 self._selection_future = self._executor.submit(self.prepared_import.with_selection, snapshot)
