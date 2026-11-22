@@ -38,7 +38,10 @@ def workspace(tmp_path, monkeypatch):
             if not window._closed:
                 monkeypatch.setattr(ImportDialog, 'exec', lambda _: QDialog.DialogCode.Rejected)
                 while window._import_requests:
-                    window._process_import_request()
+                    if window._failed_review_issue:
+                        window._failed_review_issue.extra_actions[0].callback()
+                    else:
+                        window._process_import_request()
                 for key in list(window._failed_imports):
                     window._discard_import(key)
                 window.reminder_preferences = replace(window.reminder_preferences, close_behavior='quit')
@@ -490,3 +493,122 @@ print(json.dumps(result))
 ''', interrupt, decision)
     titles = ['Reviewed after exit'] if decision == 'import' else []
     assert result == {'code': 0, 'ack': True, 'resumed': True, 'titles': titles, 'remaining': 0}
+
+
+@pytest.mark.parametrize(('operation', 'failed_read'), [('retry', 'list_calendars'), ('discard', 'get_default_calendar')])
+def test_failed_review_keeps_recovery_until_retry_or_discard(workspace, monkeypatch, operation, failed_read):
+    from sqlite3 import OperationalError
+    from debacal.status_dialog import StatusDialog
+    from PySide6.QtWidgets import QPushButton
+
+    window = workspace
+    first = calendar_contents('first', 'First invitation')
+    second = calendar_contents('second', 'Second invitation')
+    charge = len(first) + len(second)
+    monkeypatch.setattr('debacal.ui.MAX_PENDING_IMPORT_BYTES', charge)
+    assert window.import_data(first, label='First invitation')
+    assert window.import_data(second, label='Second invitation')
+    window._import_timer.stop()
+    read = getattr(window.store, failed_read)
+    def fail_once(*args, **kwargs):
+        monkeypatch.setattr(window.store, failed_read, read)
+        raise OperationalError('Synthetic temporarily unavailable calendars')
+    monkeypatch.setattr(window.store, failed_read, fail_once)
+    window._process_import_request()
+
+    reviewed = []
+    def review(dialog):
+        reviewed.append(dialog._sources[0].label)
+        return accept_request(dialog)
+    monkeypatch.setattr(ImportDialog, 'exec', review)
+    status = StatusDialog(window.status_issues, parent=window)
+    try:
+        status.show()
+        QApplication.processEvents()
+        assert 'temporarily unavailable' in status.details.toPlainText()
+        status.dismiss_button.click()
+        window.request_quit(force=True)
+        assert window.isVisible() and not window._closed
+        assert status.list.count() == 1 and not status.dismiss_button.isVisible()
+        issue, = window.local_issues
+        for i in range(55):
+            window.report_error(f'Independent issue {i}')
+        # Remove all dismissible rows through the existing action API. An old
+        # caller trying to dismiss the pinned key must also leave it intact.
+        for current in window.local_issues:
+            window.dismiss_error(current.key)
+        status.refresh()
+        assert window.local_issues == (issue,) and window.warning_button.isVisible()
+        assert window.status_issue_counts()[0] == 1 and status.list.count() == 1
+        assert window._import_memory_bytes == charge and not window.can_accept_import(1)
+        assert 'First invitation' in status.list.currentItem().text()
+        discard, = issue.extra_actions
+        if operation == 'retry':
+            status.action_button.click()
+            assert window._import_memory_bytes == charge
+        else:
+            button, = [button for button in status.extra_actions.findChildren(QPushButton)
+                       if button.text() == 'Discard import']
+            button.click()
+            assert window._import_memory_bytes == len(second)
+        # Actions from an older status dialog cannot operate on the next head.
+        discard.callback()
+        issue.action()
+        until(lambda: not window._import_requests and not window._import_jobs)
+        assert window._import_memory_bytes == 0 and not window.local_issues
+        expected = ['First invitation', 'Second invitation'] if operation == 'retry' else ['Second invitation']
+        assert reviewed == expected
+        assert sorted(e.title for e in window.store.list_events()) == expected
+        window.request_quit(force=True)
+        assert window._closed
+    finally:
+        status.close()
+        status.deleteLater()
+
+
+def test_repeated_calendar_read_failure_still_allows_discard_in_calendar_status(workspace, monkeypatch):
+    from sqlite3 import OperationalError
+    from debacal.status_dialog import StatusDialog
+    from PySide6.QtWidgets import QPushButton
+
+    window = workspace
+    data = calendar_contents()
+    assert window.import_data(data)
+    window._import_timer.stop()
+    read = window.store.list_calendars
+    def unavailable(*_, **__):
+        raise OperationalError('Synthetic unreadable calendar list')
+    monkeypatch.setattr(window.store, 'list_calendars', unavailable)
+    window._process_import_request()
+    original, = window.local_issues
+
+    def retry(dialog):
+        assert 'Synthetic unreadable calendar list' in dialog.sync_details.toPlainText()
+        assert not dialog.dismiss_button.isVisible()
+        dialog.action_button.click()
+    monkeypatch.setattr(StatusDialog, 'exec', retry)
+    window.show_issues()
+    window._import_timer.stop()
+    window._process_import_request()
+    current, = window.local_issues
+    assert current.key != original.key
+    original.extra_actions[0].callback()
+    original.action()
+    assert window._import_memory_bytes == len(data) and window.local_issues == (current,)
+
+    def discard(dialog):
+        assert 'Synthetic unreadable calendar list' in dialog.details.toPlainText()
+        monkeypatch.setattr(window.store, 'list_calendars', read)
+        dialog.refresh()
+        assert 'cached event series' in dialog.sync_details.toPlainText()
+        monkeypatch.setattr(window.store, 'list_calendars', unavailable)
+        dialog.refresh()
+        button, = [button for button in dialog.extra_actions.findChildren(QPushButton)
+                   if button.text() == 'Discard import']
+        button.click()
+        assert dialog.list.count() == 0
+    monkeypatch.setattr(StatusDialog, 'exec', discard)
+    window.show_issues()
+    assert not window._import_requests and window._import_memory_bytes == 0
+    window.request_quit(force=True)
+    assert window._closed

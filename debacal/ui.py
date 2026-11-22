@@ -135,6 +135,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_requests = deque()
         self._import_memory_bytes = 0
         self._import_dialog_active = False
+        self._failed_review_issue = None
         self._import_jobs = set()
         self._failed_imports: dict[str, tuple[AcceptedImportSource, StatusIssue]] = {}
         self._imports_allowed = imports_allowed
@@ -751,7 +752,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     @property
     def local_issues(self):
-        return (*self._local_issues.values(), *(issue for _, issue in self._failed_imports.values()))
+        review = (self._failed_review_issue,) if self._failed_review_issue else ()
+        return (*review, *self._local_issues.values(), *(issue for _, issue in self._failed_imports.values()))
+
+    @property
+    def _local_issue_count(self):
+        return len(self._local_issues) + len(self._failed_imports) + bool(self._failed_review_issue)
 
     def report_error(self, message, *, title='Action failed', action_label='', action=None, close_on_action=True):
         if not message:
@@ -1956,17 +1962,28 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def _enqueue_import(self, sources, calendar_id):
         self._import_memory_bytes += sum(len(source.data) for source in sources if source.data is not None)
         self._import_requests.append((sources, calendar_id))
-        if not self._import_dialog_active:
+        if not self._import_dialog_active and self._failed_review_issue is None:
             self._import_timer.start(0)
 
+    def _recover_import_review(self, key, *, discard=False):
+        issue = self._failed_review_issue
+        if issue is None or issue.key != key:
+            return
+        if discard:
+            sources, _calendar_id = self._import_requests.popleft()
+            self._import_memory_bytes -= sum(len(source.data) for source in sources if source.data is not None)
+        self._failed_review_issue = None
+        if self._import_requests:
+            self._import_timer.start(0)
+        self.update_sync_status()
+
     def _process_import_request(self):
-        if self._closed or self._import_dialog_active or not self._import_requests:
+        if self._closed or self._import_dialog_active or self._failed_review_issue or not self._import_requests:
             return
         if self.occurrence_picker or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             self._import_timer.start(100)
             return
         sources, calendar_id = self._import_requests[0]
-        calendar = self.store.get_default_calendar()
         self._import_dialog_active = True
         memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
         reserved_bytes = memory_bytes
@@ -2008,6 +2025,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         try:
             if self._hidden_to_tray:
                 self.restore_workspace()
+            calendar = self.store.get_default_calendar()
             dialog = ImportDialog(self.store.list_calendars(), sources=sources,
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
                                   preferences=self.preferences, executor=self.executor, reserve_import=reserve_import,
@@ -2020,8 +2038,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._import_dialog_active = False
             if dialog is not None:
                 dialog.deleteLater()
-            self.report_error(str(error), title='Could not open import review', action_label='Retry review…',
-                              action=self._process_import_request)
+            key = 'import-review:' + uuid4().hex
+            self._failed_review_issue = StatusIssue(
+                key, 'Could not open import review', str(error), 'Retry review…',
+                partial(self._recover_import_review, key), subtitle=', '.join(source.label for source in sources),
+                extra_actions=(IssueAction('Discard import', partial(self._recover_import_review, key, discard=True),
+                                           close_on_action=True),))
+            self.update_sync_status()
             return
         if result == ImportDialog.INTERRUPTED:
             # The outer Qt loop will resume. Keep the same review, draft,
@@ -2108,8 +2131,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = f'{len(self._view_issues)} series unavailable in this view · open details'
         elif self.results.agenda_mode and self.results.agenda_issues:
             value = f'{len(self.results.agenda_issues)} series unavailable in upcoming events · open details'
-        elif self._local_issues or self._failed_imports:
-            value = f'{len(self._local_issues) + len(self._failed_imports)} issue(s) · open details'
+        elif self._local_issue_count:
+            value = f'{self._local_issue_count} issue(s) · open details'
         elif self._last_sync:
             value = 'Last synced ' + self.preferences.format_time(self._last_sync)
         else:
@@ -2140,7 +2163,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                     'resource ' + resource_id + ':' in message
                                     for resource_id in resource_ids.get(calendar_id, ())))
                             for calendar_id, message in warnings)
-        count = (len(self._local_issues) + len(self._failed_imports) + len(resources) + len(projections)
+        count = (self._local_issue_count + len(resources) + len(projections)
                  + len(self._sync_errors) + warning_count
                  + bool(self.engine and self.engine.conflicts))
         return count, len(resources)
@@ -2246,7 +2269,18 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.show_sync_status(show_issues=True)
 
     def show_sync_status(self, show_issues=False):
-        dialog = StatusDialog(self.status_issues, self.synchronization_details, self, show_issues=show_issues,
+        issues, details = self.status_issues, self.synchronization_details
+        if self._failed_review_issue:
+            # Both status tabs normally read the same store that failed to
+            # open this review. Its in-memory recovery must stay reachable.
+            def read_status(supplier, fallback):
+                try:
+                    return supplier()
+                except (sqlite3.Error, OSError, ValueError) as error:
+                    return fallback(error)
+            issues = partial(read_status, issues, lambda _: self.local_issues)
+            details = partial(read_status, details, lambda error: f'Could not read calendar status: {error}')
+        dialog = StatusDialog(issues, details, self, show_issues=show_issues,
                               retry_sync=self.sync_now if self.engine else None,
                               preferences=self.show_preferences, action_error=self.report_error)
         try:
