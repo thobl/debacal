@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QPoint, QPointF, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QPoint, QPointF, Qt, QVersionNumber, qVersion
 from PySide6.QtGui import QContextMenuEvent, QDrag, QDragEnterEvent, QDropEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QScrollArea
@@ -133,7 +133,9 @@ class Enter(QDragEnterEvent):
     def __init__(self, source, point):
         mime = QMimeData()
         mime.setData(CALENDAR_ORDER_MIME, source.calendar.id.encode())
-        super().__init__(QPointF(point), Qt.DropAction.MoveAction, mime,
+        # Qt 6.12 added floating-point positions and deprecated the integer overload.
+        point_type = QPointF if QVersionNumber.fromString(qVersion()) >= QVersionNumber(6, 12) else QPoint
+        super().__init__(point_type(point), Qt.DropAction.MoveAction, mime,
                          Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
         self._source, self._mime = source, mime
 
