@@ -368,10 +368,14 @@ def _staged_group(schedule, correspondence, component, key, encoded, coordinate,
             ack, moved)
 
 
+def same_geometry(schedule, previous):
+    return bool(previous and schedule and schedule.timing_key and previous.timing_key == schedule.timing_key
+                and previous.master.ical_uid == schedule.master.ical_uid)
+
+
 def stage_groups(db, source, schedule, previous):
     """Prepare bounded pages in connection-local storage. No canonical or sidecar cursor crosses a yield."""
-    if (previous and schedule and schedule.timing_key and previous.timing_key == schedule.timing_key
-            and previous.master.ical_uid == schedule.master.ical_uid and previous.components == schedule.components):
+    if same_geometry(schedule, previous) and previous.components == schedule.components:
         return 'metadata', {}
     after = None
     writer = StateWriter()
@@ -400,14 +404,16 @@ def stage_groups(db, source, schedule, previous):
 
 def reconcile(db, source, schedule, previous_schedule, now, stage, zones, ambiguous):
     """Publish the prepared geometry against the dispositions current in this transaction."""
-    if stage == 'metadata':
-        # The current alarm/anchor proof survives. An in-progress snooze check
-        # also retains its cursor across descriptive revisions and restart.
+    continuous = same_geometry(schedule, previous_schedule)
+    if continuous:
+        # The occurrence and source revision remain linked across changes to
+        # alarm inventory or eligibility, including descriptive edits in mute.
         db.executemany('INSERT INTO source_label VALUES(?,?,?,?,?) ON CONFLICT(source,component) '
                        'DO UPDATE SET revision=excluded.revision,title=excluded.title',
                        ((source, component, previous_schedule.revision, schedule.revision, title)
                         for component, title in schedule.titles.items()))
-        return
+        if stage == 'metadata':
+            return
     # Older experimental sidecars mixed UID-less and native cutoffs. Retain
     # any possible UID-less evidence for this source. Its moved cutoffs are
     # re-established from living correspondences below. Receipts stay intact.
@@ -432,11 +438,12 @@ def reconcile(db, source, schedule, previous_schedule, now, stage, zones, ambigu
                    ((key, now, source, component, predecessor) for key, component, predecessor in ambiguous))
     # Materialize the most recent displayed title once when a source retires
     # or changes its delivery semantics. Later inbox reads remain self-contained.
-    labels = db.execute('SELECT component,first_revision,revision,title FROM source_label WHERE source=?', (source,))
-    for component, first, revision, title in labels:
-        db.execute("UPDATE ledger SET payload=json_set(payload,'$[1]',?,'$[3]',?) WHERE source=? AND component=? "
-                   "AND json_extract(payload,'$[1]') BETWEEN ? AND ?", (revision, title, source, component, first, revision))
-    db.execute('DELETE FROM source_label WHERE source=?', (source,))
+    if not continuous:
+        labels = db.execute('SELECT component,first_revision,revision,title FROM source_label WHERE source=?', (source,))
+        for component, first, revision, title in labels:
+            db.execute("UPDATE ledger SET payload=json_set(payload,'$[1]',?,'$[3]',?) WHERE source=? AND component=? "
+                       "AND json_extract(payload,'$[1]') BETWEEN ? AND ?", (revision, title, source, component, first, revision))
+        db.execute('DELETE FROM source_label WHERE source=?', (source,))
     db.execute("UPDATE ledger SET status='uncertain',claim=NULL WHERE source=? AND status='pending'", (source,))
     db.execute('DELETE FROM snooze_probe WHERE source=?', (source,))
     if stage == 'empty':

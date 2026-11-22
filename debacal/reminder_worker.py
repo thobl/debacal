@@ -15,7 +15,7 @@ from .recurrence import RecurrenceRangeError, recurrence_key
 from .reminder_compilation import DAY_US, MAX_US, DeliveryKey, DueReminder, instant, micros
 from .reminder_rule_seek import seek_slice
 from .reminder_owner import ReminderOwner
-from .reminder_preferences import CalendarReminderPolicy, ReminderPolicySnapshot, read_reminder_policy
+from .reminder_preferences import CalendarReminderPolicy, ReminderPolicySnapshot, read_reminder_policy, scheduling_rule
 from .reminder_schedule import compile_schedule
 from .reminder_store import ReminderStore, StaleSourcePage
 from .timeutil import local_zone
@@ -283,12 +283,16 @@ class ReminderWorker(Thread):
             elif kind in ('dismiss', 'snooze'):
                 if kind == 'dismiss':
                     self.store.dismiss(key, partition=partition)
-                elif extra[0] > timedelta() and self.policy.preferences.enabled:
+                else:
+                    policy = read_reminder_policy(self.database)
+                    if extra[0] <= timedelta() or not policy.preferences.enabled:
+                        return
                     try:
                         deadline = self.clock.now() + extra[0]
                     except OverflowError:
                         return
-                    self.store.snooze(key, deadline, partition=partition)
+                    if not self.store.snooze(key, deadline, partition=partition, inbox_policy=policy):
+                        return
                 self.transport.forget(key)
                 self.submitted.pop(key, None)
             if native_action or kind in ('dismiss', 'snooze'):
@@ -333,13 +337,8 @@ class ReminderWorker(Thread):
         for cal in set(states) | set(policy.preferences.calendars) | set(policy.calendar_eligible_since):
             canonical = states.get(cal)
             local = policy.preferences.calendars.get(cal)
-            rule = None
-            if local and local.mode != 'event':
-                rule = {'mode': local.mode}
-                if local.mode == 'replace':
-                    rule['alarms'] = [alarm.to_dict() for alarm in local.alarms]
             since = policy.calendar_eligible_since.get(cal)
-            calendars[cal] = [rule, since.isoformat() if since else None,
+            calendars[cal] = [scheduling_rule(local), since.isoformat() if since else None,
                               list(canonical[:2]) if canonical else None]
         changed = {cal for cal in old.keys() | calendars.keys() if old.get(cal) != calendars.get(cal)}
         boundary = policy.eligible_since.isoformat() if policy.eligible_since else None
@@ -372,19 +371,25 @@ class ReminderWorker(Thread):
             if self.stopped.is_set():
                 return
             schedule = boundary = None
+            muted = False
             if change.event:
                 cal = change.event.calendar_id
                 policy = self.policy.preferences.calendars.get(cal, CalendarReminderPolicy())
                 boundaries = (self.policy.eligible_since, self.policy.calendar_eligible_since.get(cal))
                 boundary = max((x for x in boundaries if x), default=None)
-                try:
-                    schedule = compile_schedule(change, policy, zone=self.zone)
-                except DATA_ERRORS:
-                    pass
+                muted = policy.mode == 'mute'
+                if not muted or self.store.has_receipts(change.event_id):
+                    # For muted history track what is saved now. A later Add
+                    # can only align with a predecessor still in this inventory.
+                    inventory = CalendarReminderPolicy() if muted else policy
+                    try:
+                        schedule = compile_schedule(change, inventory, zone=self.zone)
+                    except DATA_ERRORS:
+                        pass
             cursor = (change.version, change.event_id) if journal else None
             try:
                 yield from self.store.put_source_steps(change, schedule, eligible_since=boundary,
-                                                       scanned=scanned, cursor=cursor)
+                                                       scanned=scanned, cursor=cursor, muted=muted)
             except DATA_ERRORS:
                 yield from self.store.put_source_steps(change, None, scanned=scanned, cursor=cursor)
 

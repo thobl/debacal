@@ -46,7 +46,7 @@ def semantics(alarm):
     return alarm.action, alarm.related, trigger, alarm.repeat, interval
 
 
-def _component_alarms(event, policy, component):
+def component_alarms(event, policy, component):
     if policy.mode == 'mute':
         return {}
     alarms = event.alarms or ()
@@ -115,6 +115,7 @@ class AlarmSchedule:
     prepared: object
     cut: bool
     timing_key: str = ''
+    observed_inventory: bool = False
     writer: StateWriter = field(default_factory=StateWriter, repr=False)
     reader: StateReader = field(init=False, repr=False)
 
@@ -138,18 +139,21 @@ class AlarmSchedule:
         state = [writer.event(self.master), self.revision, writer.zone(self.zone),
                  {c: [a.to_dict() for a in alarms.values()] for c, alarms in self.components.items()},
                  self.titles, points, writer.series(self.prepared) if self.prepared else None, self.cut, self.timing_key]
+        if self.observed_inventory:
+            state.append(True)
         return pack_state([state, writer.zones, writer.definitions])
 
     @classmethod
     def loads(cls, blob: bytes):
         state, zones, definitions = unpack_state(blob)
         reader = StateReader(zones, definitions)
-        event, rev, zone, alarms, titles, points, series, cut, *timing_key = state
+        event, rev, zone, alarms, titles, points, series, cut, *details = state
         master = reader.event(event)
         result = cls(master, rev, reader.zone(zone), {c: {a['key']: Alarm.from_dict(a) for a in items}
                                                      for c, items in alarms.items()}, titles,
                    {k: Point(c, k, reader.datetime(s), reader.datetime(e)) for c, k, s, e in points},
-                   reader.series(master, series) if series else None, cut, *timing_key)
+                   reader.series(master, series) if series else None, cut,
+                   timing_key=details[0] if details else '', observed_inventory=details[1:] == [True])
         result.writer.zones.update(zones)
         result.reader = reader
         return result
@@ -246,7 +250,7 @@ def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zo
     event, indexed = change.event, canonical_timing(change)
     master = copy_event(event, dict(raw_ics='', alarms=(), recurrence_overrides={}, description='', location='',
                                     schedule_expression='', expression_anchor=''))
-    components = {'': _component_alarms(event, policy, '')}
+    components = {'': component_alarms(event, policy, '')}
     titles = {'': event.title}
     native = indexed.error is None and any(key[2] for key, _ in indexed.entries)
     series = copy(indexed.prepared) if native else None
@@ -262,7 +266,7 @@ def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zo
         key = item.recurrence_id
         if key in event.recurrence_overrides:
             detached = Event.from_dict(event.recurrence_overrides[key])
-            components[key] = _component_alarms(detached, policy, key)
+            components[key] = component_alarms(detached, policy, key)
             titles[key] = detached.title
             start = _local_bound(detached, detached.start, zone)
             end = (_local_bound(detached, detached.end, zone) if detached.floating_time or detached.all_day

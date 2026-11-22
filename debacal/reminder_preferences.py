@@ -54,6 +54,15 @@ class CalendarReminderPolicy:
         object.__setattr__(self, 'alarms', relative_templates(self.alarms))
 
 
+def scheduling_rule(policy):
+    """Calendar override recorded with the owner's per-calendar scan progress."""
+    if policy is None or policy.mode == 'event':
+        return None
+    if policy.mode == 'mute':
+        return {'mode': 'mute'}
+    return {'mode': 'replace', 'alarms': [alarm.to_dict() for alarm in policy.alarms]}
+
+
 @dataclass(frozen=True, slots=True)
 class ReminderPreferences:
     enabled: bool = False
@@ -103,6 +112,10 @@ class ReminderPolicySnapshot:
 
     def __post_init__(self):
         object.__setattr__(self, 'calendar_eligible_since', MappingProxyType(dict(self.calendar_eligible_since)))
+
+    def snooze_eligibility(self, calendar):
+        return (self.preferences.enabled, self.preferences.calendars.get(calendar, CalendarReminderPolicy()),
+                self.eligible_since, self.calendar_eligible_since.get(calendar))
 
     def _to_dict(self) -> dict:
         value = self.preferences

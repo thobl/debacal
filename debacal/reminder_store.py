@@ -10,10 +10,11 @@ from typing import Iterable
 from uuid import uuid4
 
 from . import reminder_ledger as ledger
-from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminder, instant, micros
+from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminder, component_alarms, instant, micros, semantics
 from .reminder_ledger import InboxEntry
 from .reminder_partition import Partition
-from .models import copy_event
+from .models import Event, copy_event
+from .reminder_preferences import read_reminder_policy, scheduling_rule
 from .prepared_storage import StateWriter
 from .reminder_schedule import BACKFILL, FRONTIER_SQL, READY, RULE, head, initial_jobs, pop, step
 from .reminder_activation import ActivationContext
@@ -134,22 +135,24 @@ class ReminderStore:
         for _ in self.put_source_steps(change, schedule, cursor=cursor, eligible_since=eligible_since, scanned=scanned):
             pass
 
-    def _receipt_timing(self, schedule, previous):
+    def has_receipts(self, source):
+        return self._db.execute('SELECT 1 FROM delivery_context WHERE source=? LIMIT 1', (source,)).fetchone() is not None
+
+    def _receipt_timing(self, schedule):
         """Keep geometry and alignment inputs only for components with receipts."""
         source = schedule.master.id
-        if not self._db.execute('SELECT 1 FROM delivery_context WHERE source=? LIMIT 1', (source,)).fetchone():
+        if not self.has_receipts(source):
             return None
         components = {}
         for component, alarms in schedule.components.items():
             components[component] = {}
             if self._db.execute('SELECT 1 FROM delivery_context WHERE source=? AND component=? LIMIT 1',
                                 (source, component)).fetchone():
-                retained = alarms or (previous.components.get(component, {}) if previous else {})
-                components[component] = {key: replace(alarm, description='') for key, alarm in retained.items()}
+                components[component] = {key: replace(alarm, description='') for key, alarm in alarms.items()}
         master = copy_event(schedule.master, dict(title='Reminder source'))
-        return replace(schedule, master=master, components=components, titles={}).dumps(runtime=True)
+        return replace(schedule, master=master, components=components, titles={}, observed_inventory=True).dumps(runtime=True)
 
-    def put_source_steps(self, change, schedule, *, cursor=None, eligible_since=None, scanned=False):
+    def put_source_steps(self, change, schedule, *, cursor=None, eligible_since=None, scanned=False, muted=False):
         """Yield between history pages. Publication and cursor advancement remain one transaction."""
         self._refresh()
         floor = max(self._partition.get('boundary', 0),
@@ -176,7 +179,7 @@ class ReminderStore:
             self._observation_partition = token
         # Only interrupted or in-progress sources retain an entry. A replayed
         # page can publish earlier IDs without changing a later edit's cutoff.
-        intent = (change.event.ical_uid if change.event else None, enabled, generation, floor,
+        intent = (change.event.ical_uid if change.event else None, enabled, muted, generation, floor,
                   schedule.timing_key if schedule else None,
                   frozenset((component, key, alarm.uid, alarm.action, alarm.related, alarm.trigger,
                              alarm.repeat, alarm.repeat_interval, alarm.acknowledged)
@@ -190,10 +193,14 @@ class ReminderStore:
                                'SELECT schedule,1 FROM receipt_source WHERE id=? LIMIT 1',
                                (change.event_id, change.event_id)).fetchone()
         previous = AlarmSchedule.loads(row[0]) if row else None
-        ambiguous = ledger.align(schedule, previous) if schedule and previous else ()
+        # Legacy dormant projections sometimes retained deleted alarms. Their
+        # timing and historical UID evidence survive, but they cannot supply
+        # a before-list for aligning a newly added UID-less alarm.
+        current_inventory = previous is not None and (not row[1] or previous.observed_inventory)
+        ambiguous = ledger.align(schedule, previous) if schedule and current_inventory else ()
         stage, zones = yield from ledger.stage_groups(self._db, change.event_id, schedule, previous)
-        active = schedule is not None and enabled and any(schedule.components.values())
-        history_blob = (self._receipt_timing(schedule, previous)
+        active = schedule is not None and enabled and not muted and any(schedule.components.values())
+        history_blob = (self._receipt_timing(schedule)
                         if schedule and not active and stage != 'empty' else None)
         verify = stage == 'staged' or history_blob is not None
         if verify:
@@ -398,16 +405,80 @@ class ReminderStore:
                              "AND fingerprint=(SELECT fingerprint FROM ledger WHERE key=?)",
                              (*ledger.group(key), ledger.encode_key(key)))
 
-    def snooze(self, key: DeliveryKey, until: datetime, *, partition=None) -> None:
+    def _snooze_source(self, key):
+        return self._db.execute('SELECT s.calendar,s.generation,s.revision,s.changed,l.fingerprint FROM ledger l '
+                                'JOIN source s ON s.id=l.source JOIN delivery_context d USING(source,component,alarm,occurrence) '
+                                'WHERE l.key=? AND l.fingerprint=d.fingerprint', (ledger.encode_key(key),)).fetchone()
+
+    def _snooze_calendar(self, key, published, *, read_event):
+        evidence = self._partition.get('evidence')
+        if not evidence:
+            return None, None
+        calendar, generation, *_ = published
+        with closing(ReminderSources(self._partition.target, evidence=evidence)) as reader:
+            if reader.identity_evidence()[0] != tuple(evidence[0]):
+                return None, None
+            with reader.for_incarnation(evidence[2]):
+                return reader.snooze_source(key.source_id, calendar, generation, read_event=read_event)
+
+    def _policy_unpublished(self, key, calendar, policy):
+        # A secondary can observe replacement preferences before the owner
+        # reaches this source in its calendar scan.
+        state = self.controller_state()
+        recorded = state.get('calendars', {}).get(calendar)
+        scans = state.get('scans', {})
+        pending = calendar in scans and (scans[calendar] is None or key.source_id > scans[calendar])
+        return not recorded or recorded[0] != scheduling_rule(policy) or pending
+
+    def _matches_alarm(self, key, event, policy):
+        if key.component_key:
+            fields = event.recurrence_overrides.get(key.component_key)
+            if fields is None:
+                return False
+            event = Event.from_dict(fields)
+        current = component_alarms(event, policy, key.component_key).get(key.alarm_key)
+        if current is None:
+            return False
+        entry = self.entry(key)
+        return bool(entry and current.uid == entry.reminder.alarm.uid
+                    and semantics(current) == semantics(entry.reminder.alarm)
+                    and (current.acknowledged is None or current.acknowledged < key.trigger_utc))
+
+    def snooze(self, key: DeliveryKey, until: datetime, *, partition=None, inbox_policy=None) -> bool:
+        """Arm a published alarm. Inbox actions also verify the current calendar and policy."""
+        checked = verified_revision = None
+        if inbox_policy is not None:
+            checked = self._snooze_source(key)
+            if checked is None:
+                return False
+            eligibility = inbox_policy.snooze_eligibility(checked[0])
+            enabled, policy, *_ = eligibility
+            if not enabled or policy.mode == 'mute' or policy.mode == 'replace' and not policy.alarms:
+                return False
+            if self._policy_unpublished(key, checked[0], policy):
+                verified_revision, event = self._snooze_calendar(key, checked, read_event=True)
+                if event is None or not self._matches_alarm(key, event, policy):
+                    return False
         with self._write():
-            if partition is not None and self.partition_id != partition:
-                return
+            if self._partition.get('incoherent') or partition is not None and self.partition_id != partition:
+                return False
+            active = self._snooze_source(key)
+            if active is None or checked is not None and active != checked:
+                return False
+            if inbox_policy is not None:
+                revision, _ = self._snooze_calendar(key, active, read_event=False)
+                if revision is None or verified_revision is not None and revision != verified_revision:
+                    return False
+                current = read_reminder_policy(self._partition.target)
+                if current.snooze_eligibility(active[0]) != eligibility:
+                    return False
             self._db.execute("UPDATE ledger SET status='dismissed',until=NULL,unread=0,closed=1,claim=NULL "
                              "WHERE source=? AND component=? AND alarm=? AND occurrence=? AND status IN ('snoozed','pending') "
                              "AND fingerprint=(SELECT fingerprint FROM ledger WHERE key=?)",
                              (*ledger.group(key), ledger.encode_key(key)))
             self._db.execute("UPDATE ledger SET status='snoozed',until=?,closed=1,unread=0,claim=NULL WHERE key=?",
                              (micros(until), ledger.encode_key(key)))
+            return True
 
     def mute(self):
         """A deliberate global disable retires pending sends and cancels local snoozes."""

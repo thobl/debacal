@@ -582,3 +582,235 @@ def test_uid_bearing_moved_cutoff_overlaps_uidless_delivered_sibling(native_hist
                for row in worker.store.inbox())
     assert not worker.store._db.execute(
         "SELECT 1 FROM rank_suppression WHERE alarm=? AND kind='ambiguous'", (early.key,)).fetchone()
+
+
+def test_title_only_during_mute_opens_latest_stationary_receipt_after_restart(native_history):
+    from alarm_support import FakeTransport
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from debacal.reminder_reveal import reminder_target
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, worker, enable, drain, _ = native_history
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    source = event('daily', BASE, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    original, = worker.store.inbox()
+    save_reminder_preferences(writer, replace(prefs, calendars={'c': CalendarReminderPolicy('mute')}), now=clock.now())
+    drain()
+    writer.apply('Rename while muted', [replace(source, title='Renamed during mute')])
+    drain()
+    worker.release()
+    resumed = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        save_reminder_preferences(writer, prefs, now=clock.now())
+        for _ in range(100):
+            if resumed.tick() >= 1:
+                break
+        opened = resumed.store.open_entry(original.reminder.key, partition=resumed.store.partition_id)
+        assert opened is not None
+        assert reminder_target(writer.path, *opened)[1].title == 'Renamed during mute'
+        assert resumed.store.inbox()[0].reminder.title == 'Renamed during mute'
+    finally:
+        resumed.release()
+
+
+@pytest.mark.parametrize('actor', ['owner', 'secondary'])
+@pytest.mark.parametrize('block', ['calendar', 'mute', 'global'])
+@pytest.mark.parametrize('published', [False, True])
+def test_inbox_snooze_on_inactive_source_cannot_arm_after_reactivation(native_history, actor, block, published):
+    from alarm_support import FakeTransport
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, owner, enable, drain, _ = native_history
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    calendar = Calendar('c', 'Calendar', '#123456')
+    enable(event('daily', BASE, recurrence_rule='FREQ=DAILY'), BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = owner.store.inbox()
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        peer.tick()
+        assert peer.owner is None
+        action = owner if actor == 'owner' else peer
+        token = owner.store.partition_id
+        if block == 'calendar':
+            writer.save_calendar(replace(calendar, enabled=False))
+        else:
+            muted = (replace(prefs, enabled=False) if block == 'global'
+                     else replace(prefs, calendars={'c': CalendarReminderPolicy('mute')}))
+            save_reminder_preferences(writer, muted, now=clock.now())
+        if published:
+            drain()
+            peer.tick()
+        action.command('snooze', (token, entry.reminder.key, 5*MINUTE))
+        assert action.store.entry(entry.reminder.key).snoozed_until is None
+        if published and block != 'global':
+            assert owner.store.next_wakeup() is None
+        writer.save_calendar(calendar)
+        save_reminder_preferences(writer, prefs, now=clock.now())
+        drain()
+        clock.time = BASE+5*MINUTE
+        drain()
+        assert owner.store.entry(entry.reminder.key).status == 'delivered'
+        assert owner.store.entry(entry.reminder.key).snoozed_until is None
+    finally:
+        peer.release()
+
+
+@pytest.mark.parametrize('situation', ['active', 'muted', 'old_archive'])
+def test_observed_empty_alarm_inventory_breaks_uidless_alignment(native_history, situation):
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from test_reminder_controller import ALARM
+    writer, clock, worker, enable, drain, _ = native_history
+    during_mute = situation == 'muted'
+    original = replace(ALARM, key='original', uid=None)
+    added = replace(original, key='added', trigger='-PT1M')
+    source = event('daily', BASE, original, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-5*MINUTE)
+    clock.time = BASE
+    drain()
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    if during_mute:
+        save_reminder_preferences(writer, replace(prefs, calendars={'c': CalendarReminderPolicy('mute')}), now=clock.now())
+        drain()
+    writer.apply('Remove all alarms', [replace(source, alarms=())])
+    drain()
+    if situation == 'old_archive':
+        # The previous experimental format copied the old alarm into its
+        # receipt-only projection even though the source now has zero alarms.
+        from debacal.query_projection import pack_state, unpack_state
+        with worker.store._db as db:
+            blob, = db.execute('SELECT schedule FROM receipt_source WHERE id=?', (source.id,)).fetchone()
+            state, zones, definitions = unpack_state(blob)
+            state = state[:9]
+            state[3] = {'': [original.to_dict()]}
+            db.execute('UPDATE receipt_source SET schedule=? WHERE id=?', (pack_state([state, zones, definitions]), source.id))
+    writer.apply('Add a distinct alarm', [replace(source, alarms=(added,))])
+    drain()
+    if during_mute:
+        # Reactivation establishes an eligibility boundary. Use a later
+        # trigger to check identity independently of that catch-up policy.
+        added = replace(added, trigger='PT1M')
+        writer.apply('Future trigger', [replace(source, alarms=(added,))])
+        drain()
+        save_reminder_preferences(writer, prefs, now=clock.now())
+        clock.time = BASE+MINUTE
+        drain()
+    assert {(row.reminder.key.alarm_key, row.reminder.key.trigger_utc) for row in worker.store.inbox()} == {
+        ('original', BASE), ('added', BASE+MINUTE if during_mute else BASE-MINUTE)}
+
+
+def test_direct_uidless_alarm_edit_keeps_predecessor_without_intervening_removal(native_history):
+    from debacal.reminder_compilation import AlarmSchedule
+    from test_reminder_controller import ALARM
+    writer, clock, worker, enable, drain, _ = native_history
+    original = replace(ALARM, key='original', uid=None)
+    source = event('daily', BASE, original, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-5*MINUTE)
+    clock.time = BASE
+    drain()
+    writer.apply('Edit existing alarm', [replace(source, alarms=(replace(original, key='new-key', trigger='-PT1M'),))])
+    drain()
+    assert [entry.reminder.key.alarm_key for entry in worker.store.inbox()] == ['original']
+    blob, = worker.store._db.execute('SELECT schedule FROM source WHERE id=?', (source.id,)).fetchone()
+    assert set(AlarmSchedule.loads(blob).components['']) == {'original'}
+
+
+def test_secondary_inbox_snoozes_published_active_alarm(native_history):
+    from alarm_support import FakeTransport
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, worker, enable, drain, _ = native_history
+    enable(event('live', BASE), BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = worker.store.inbox()
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        peer.tick()
+        assert peer.owner is None
+        peer.command('snooze', (worker.store.partition_id, entry.reminder.key, MINUTE))
+        assert worker.store.entry(entry.reminder.key).snoozed_until == BASE+MINUTE
+        clock.time = BASE+MINUTE
+        drain()
+        assert worker.store.entry(entry.reminder.key).status == 'delivered'
+    finally:
+        peer.release()
+
+
+
+@pytest.mark.parametrize('transition', ['event_to_replace', 'replace_to_event', 'replace_to_replace', 'same_replacement', 'expanded_replacement'])
+@pytest.mark.parametrize('published', [False, True])
+def test_secondary_snooze_tracks_current_replacement_membership(native_history, transition, published, monkeypatch):
+    from alarm_support import FakeTransport
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from debacal.reminder_worker import ReminderWorker
+    from debacal.reminder_sources import ReminderSources
+    from test_reminder_controller import ALARM
+    writer, clock, owner, enable, drain, _ = native_history
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    first = CalendarReminderPolicy('replace', (replace(ALARM, key='one', uid='one'),))
+    second = CalendarReminderPolicy('replace', (replace(ALARM, key='two', uid='two'),))
+    enable(event('daily', BASE, recurrence_rule='FREQ=DAILY'), BASE-MINUTE)
+    if transition != 'event_to_replace':
+        save_reminder_preferences(writer, replace(prefs, calendars={'c': first}), now=clock.now())
+        drain()
+    clock.time = BASE
+    drain()
+    original, = owner.store.inbox()
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        peer.tick()
+        assert peer.owner is None
+        replacements = first if transition == 'same_replacement' else second
+        if transition == 'expanded_replacement':
+            replacements = CalendarReminderPolicy('replace', first.alarms+second.alarms)
+        current = prefs if transition == 'replace_to_event' else replace(prefs, calendars={'c': replacements})
+        save_reminder_preferences(writer, current, now=clock.now())
+        if published:
+            drain()
+        reads = []
+        source_read = ReminderSources.snooze_source
+        def observe(reader, *args, read_event):
+            reads.append(read_event)
+            return source_read(reader, *args, read_event=read_event)
+        monkeypatch.setattr(ReminderSources, 'snooze_source', observe)
+        peer.command('snooze', (owner.store.partition_id, original.reminder.key, 5*MINUTE))
+        deadline = owner.store.entry(original.reminder.key).snoozed_until
+        assert deadline == (BASE+5*MINUTE if transition in ('same_replacement', 'expanded_replacement') else None)
+        if not published:
+            expected = [False] if transition == 'same_replacement' else [True]
+            if transition == 'expanded_replacement':
+                expected.append(False)
+            assert reads == expected
+        elif reads:
+            assert reads == [False]
+    finally:
+        peer.release()
+
+
+def test_policy_change_during_secondary_snooze_proof_declines_the_write(native_history, monkeypatch):
+    from alarm_support import FakeTransport
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from debacal.reminder_sources import ReminderSources
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, owner, enable, drain, _ = native_history
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    enable(event('live', BASE), BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = owner.store.inbox()
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        peer.tick()
+        read = ReminderSources.snooze_source
+        def mute_after_read(reader, *args, **kwargs):
+            result = read(reader, *args, **kwargs)
+            save_reminder_preferences(writer, replace(prefs, calendars={'c': CalendarReminderPolicy('mute')}), now=clock.now())
+            return result
+        monkeypatch.setattr(ReminderSources, 'snooze_source', mute_after_read)
+        peer.command('snooze', (owner.store.partition_id, entry.reminder.key, MINUTE))
+        assert owner.store.entry(entry.reminder.key).snoozed_until is None
+    finally:
+        peer.release()
