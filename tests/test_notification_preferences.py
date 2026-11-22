@@ -156,3 +156,80 @@ def test_combined_source_enable_observes_local_policy_at_commit(tmp_path, monkey
         dialog.finish_sources()
         dialog.close()
         store._standalone_ui_commands.shutdown()
+
+
+def test_queued_unmute_skips_alarm_while_writer_is_locked(tmp_path):
+    import sqlite3
+    from alarm_support import FakeClock, wait_for
+    from test_reminder_controller import event, MINUTE
+    from test_reminder_dialog import workspace
+    from debacal.reminder_preferences import load_reminder_policy
+
+    path = tmp_path / 'calendar'
+    clock = FakeClock(BASE)
+    muted = ReminderPreferences(enabled=True, calendars={'c': CalendarReminderPolicy('mute')})
+    with Store(path) as store:
+        store.save_calendar(Calendar('c', 'Calendar', '#123456'))
+        store.apply_remote([event('while-muted', BASE + MINUTE), event('after-save', BASE + 3*MINUTE)])
+        save_reminder_preferences(store, muted, now=BASE - MINUTE)
+        with workspace(path, clock, store) as (window, transport, page):
+            assert not page()
+            dialog = PreferencesDialog(Preferences(), window, store=store, reminder_preferences=muted,
+                                       reminder_clock=clock.now)
+            dialog.remindersApplied.connect(window.apply_reminder_preferences)
+            try:
+                editor = dialog.source_editor
+                editor.select_calendar('c')
+                editor.alias.setText('Renamed')
+                editor.alias.textEdited.emit('Renamed')
+                editor.reminder_mode.setCurrentIndex(editor.reminder_mode.findData('event'))
+                with sqlite3.connect(path) as blocker:
+                    blocker.execute('BEGIN IMMEDIATE')
+                    assert not dialog.apply() and dialog._applying
+                    clock.time = BASE + 2*MINUTE
+                    assert load_reminder_preferences(store) == muted
+                    assert not page() and not transport.sent
+                wait_for(lambda: not dialog._applying)
+                assert store.get_calendar('c').name == 'Renamed'
+                assert not load_reminder_preferences(store).calendars
+                clock.time += MINUTE
+                window.reminder_controller.reload_settings()
+                wait_for(lambda: any(due.key.source_id == 'after-save' for due, *_ in transport.sent))
+                assert [due.key.source_id for due, *_ in transport.sent] == ['after-save']
+                assert [row.reminder.key.source_id for row in page()] == ['after-save']
+                assert load_reminder_policy(store).calendar_eligible_since['c'] == BASE + 2*MINUTE
+            finally:
+                dialog.finish_sources()
+                dialog.close()
+
+
+def test_global_enable_samples_clock_only_after_ui_settings_lock(tmp_path):
+    import sqlite3
+    from alarm_support import FakeClock
+    from test_reminder_controller import MINUTE
+    from debacal.reminder_preferences import load_reminder_policy
+    from debacal.ui_state import ui_state_path
+
+    path = tmp_path / 'calendar'
+    app = QApplication.instance() or QApplication([])
+    clock = FakeClock(BASE)
+    with Store(path) as store:
+        sampled = []
+        def clock_now():
+            sampled.append(store._ui_state.connection.in_transaction)
+            return clock.now()
+
+        dialog = PreferencesDialog(Preferences(), store=store, reminder_clock=clock_now)
+        try:
+            dialog.set_category('Notifications')
+            dialog.notification_page.enabled.setChecked(True)
+            with sqlite3.connect(ui_state_path(str(path))) as blocker:
+                blocker.execute('BEGIN IMMEDIATE')
+                assert not dialog.apply()
+                assert not load_reminder_preferences(store).enabled
+                assert sampled == []
+                clock.time += 2*MINUTE
+            assert dialog.apply() and sampled == [True]
+            assert load_reminder_policy(store).eligible_since == clock.now()
+        finally:
+            dialog.close()

@@ -176,7 +176,7 @@ def save_reminder_preferences(store: Store, value: ReminderPreferences, *, now: 
         store.set_setting(REMINDER_SETTINGS_KEY, updated._to_dict())
 
 
-def save_reminder_draft(store, original, draft, *, now):
+def save_reminder_draft(store, original, draft, *, clock_now):
     """Merge only edited fields and calendar IDs into the latest local settings."""
     changes = {f.name: getattr(draft, f.name) for f in fields(draft)
                if f.name != 'calendars' and getattr(draft, f.name) != getattr(original, f.name)}
@@ -190,5 +190,6 @@ def save_reminder_draft(store, original, draft, *, now):
                 else:
                     calendars.pop(key, None)
         value = replace(current, calendars=calendars, **changes)
-        save_reminder_preferences(store, value, now=now)
+        # An earlier trigger may have elapsed while the source or settings writer was busy.
+        save_reminder_preferences(store, value, now=clock_now())
         return value

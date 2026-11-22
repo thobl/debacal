@@ -549,10 +549,10 @@ class PreferencesDialog(QDialog):
         value = reminders
         persist = None
         if reminders != original and self._source_store:
-            when = self._reminder_clock()
+            clock_now = self._reminder_clock
             def persist(writer):
                 nonlocal value
-                value = save_reminder_draft(writer, original, reminders, now=when)
+                value = save_reminder_draft(writer, original, reminders, clock_now=clock_now)
 
         def saved(_changed=False):
             nonlocal completed
