@@ -11,13 +11,15 @@ import calendar as monthlib
 import math
 import sqlite3
 
-from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, QMimeData, QItemSelectionModel
+from PySide6.QtCore import Qt, QDate, QEvent, QTimer, Signal, Slot, QMimeData, QItemSelectionModel
 from PySide6.QtGui import QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QLineEdit, QMenu, QDialog, QFileDialog, QScrollArea, QFrame, QAbstractButton, QAbstractItemView,
     QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit,
 )
+
+from shiboken6 import isValid
 
 from .calendar_widgets import at
 from .event_dialog import EditorFamilies
@@ -109,6 +111,7 @@ def _write_import(writer, *, report, calendar_id, accepted):
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
     workspaceClosed = Signal()
+    _editorReadReady = Signal(object)
 
     def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace='',
                  delivery_allowed=False, reminder_factory=None, imports_allowed=True):
@@ -120,6 +123,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._editor_active = False
         self._editor_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-editor')
         self._editor_future = None
+        self._editorReadReady.connect(self._finish_editor_read, Qt.ConnectionType.QueuedConnection)
         self.occurrence_picker = None
         self.demo_mode = demo_mode
         self.profile_label = profile_label
@@ -1018,9 +1022,31 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             future = self._editor_executor.submit(_prepare_editor, families, *args)
         else:
             future = self._editor_executor.submit(_read_file_editor, self.store.path, *args)
+        self._watch_editor_read(future, ready)
+
+    def _watch_editor_read(self, future, ready):
         self._editor_future = future
         future.editor_ready = ready
-        future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
+        future.add_done_callback(self._publish_editor_read)
+
+    def _publish_editor_read(self, future):
+        if not self._closed and isValid(self):
+            try:
+                self._editorReadReady.emit(future)
+            except RuntimeError:
+                if isValid(self):
+                    raise
+
+    @Slot(object)
+    def _finish_editor_read(self, future):
+        if self._closed or future is not self._editor_future:
+            return
+        self._editor_future = None
+        try:
+            # The GUI rechecks the request context before consuming either outcome.
+            future.editor_ready(future.result)
+        except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+            self.report_error(str(error))
 
     def _open_editor(self, scope, dialog_scope, event, refs, occurrences, expected, *, inspect_read_only=False, guard=None):
         families = EditorFamilies(expected)
@@ -1753,9 +1779,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                      occurrence_refs=(event,) if event else (), inspect_read_only=True)
 
         future = self._editor_executor.submit(reminder_target, self.store.path, due, activation)
-        self._editor_future = future
-        future.editor_ready = ready
-        future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
+        self._watch_editor_read(future, ready)
 
     def reveal_search_result(self, item, modifiers=Qt.KeyboardModifier.NoModifier):
         event_id = item if isinstance(item, str) else (item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None)
@@ -2419,15 +2443,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         while not self.tasks.empty():
             kind, future = self.tasks.get()
-            if kind == 'editor':
-                if future is self._editor_future:
-                    self._editor_future = None
-                try:
-                    # Consume either outcome only after checking the editor's current context.
-                    future.editor_ready(future.result)
-                except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
-                    self.report_error(str(error))
-                continue
             if kind == 'account_credentials':
                 self._source_credential_saves.discard(future)
                 if self.engine and not self._source_credential_saves:

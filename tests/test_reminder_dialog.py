@@ -217,6 +217,7 @@ def test_queued_and_inflight_opens_revalidate_identity(tmp_path, monkeypatch):
                 release.wait(3)
                 return result
             monkeypatch.setattr(reveal, 'reminder_target', hold)
+            window.poll_timer.stop()
             controller.open_reminder(row.reminder.key)
             wait_for(ready.is_set)
             writer.apply_remote([event('one', BASE + MINUTE)])

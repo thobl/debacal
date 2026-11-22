@@ -500,6 +500,7 @@ def test_failed_editor_read_is_reported_only_in_its_requested_context(tmp_path, 
         source = alarm_event(calendar_id='local')
         store.apply_remote([source])
         window = ui.MainWindow(store, enable_sync=False)
+        window.poll_timer.stop()
         entered, release = Event(), Event()
         def failed(*args):
             entered.set()
@@ -517,3 +518,29 @@ def test_failed_editor_read_is_reported_only_in_its_requested_context(tmp_path, 
         finally:
             release.set()
             release_widget(window)
+
+def test_editor_reader_can_complete_after_its_window_is_destroyed(tmp_path, monkeypatch, caplog):
+    from threading import Event
+    from debacal import ui
+
+    entered, release, finished = Event(), Event(), Event()
+    with Store(tmp_path / 'db') as store:
+        source = alarm_event(calendar_id='local')
+        store.apply_remote([source])
+        window = ui.MainWindow(store, enable_sync=False)
+        def held(*_args):
+            entered.set()
+            assert release.wait(5)
+            raise ValueError('Retired reader')
+        monkeypatch.setattr(ui, '_read_file_editor', held)
+        window.edit_event(source.id)
+        try:
+            wait_for(entered.is_set)
+            future = window._editor_future
+            future.add_done_callback(lambda _: finished.set())
+            release_widget(window)
+        finally:
+            release.set()
+        wait_for(finished.is_set)
+        APP.processEvents()
+        assert 'exception calling callback' not in caplog.text
