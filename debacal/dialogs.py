@@ -5,12 +5,29 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPixmap, QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
-    QComboBox, QCheckBox, QLabel, QPushButton, QDialogButtonBox, QListWidget, QListWidgetItem,
+    QAbstractButton, QAbstractSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QTextEdit, QDialogButtonBox, QListWidget, QListWidgetItem,
     QWidget, QColorDialog)
 
 from .models import Calendar
 from .dialog_base import FormDialog, dialog_buttons, hint, install_dialog_keyboard
 from .event_dialog import EventDialog
+
+
+def inspect_read_only_event(dialog):
+    """Open the canonical editor for inspection with its Notes and Reminders tabs available."""
+    dialog.setWindowTitle('Event details · read-only')
+    for field in dialog.sidebar.findChildren(QLineEdit):
+        field.setReadOnly(True)
+    for field in dialog.sidebar.findChildren(QTextEdit):
+        field.setReadOnly(True)
+    switches = set(dialog.notes_choice.buttons.values())
+    for cls in (QAbstractButton, QComboBox, QAbstractSpinBox):
+        for control in dialog.sidebar.findChildren(cls):
+            if control not in switches:
+                control.setEnabled(False)
+    dialog.save_button.hide()
+    dialog.cancel_button.setText('Close')
+    dialog.exec()
 
 
 class CalendarDialog(FormDialog):

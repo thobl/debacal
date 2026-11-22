@@ -1,7 +1,7 @@
 """Profile-local reminder choices and reusable saved-alarm templates."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -174,3 +174,21 @@ def save_reminder_preferences(store: Store, value: ReminderPreferences, *, now: 
         updated = replace(snapshot, preferences=value, generation=snapshot.generation + 1,
                           eligible_since=boundary, calendar_eligible_since=calendars)
         store.set_setting(REMINDER_SETTINGS_KEY, updated._to_dict())
+
+
+def save_reminder_draft(store, original, draft, *, now):
+    """Merge only edited fields and calendar IDs into the latest local settings."""
+    changes = {f.name: getattr(draft, f.name) for f in fields(draft)
+               if f.name != 'calendars' and getattr(draft, f.name) != getattr(original, f.name)}
+    with store.ui_transaction():
+        current = load_reminder_preferences(store)
+        calendars = dict(current.calendars)
+        for key in draft.calendars.keys() | original.calendars.keys():
+            if draft.calendars.get(key) != original.calendars.get(key):
+                if key in draft.calendars:
+                    calendars[key] = draft.calendars[key]
+                else:
+                    calendars.pop(key, None)
+        value = replace(current, calendars=calendars, **changes)
+        save_reminder_preferences(store, value, now=now)
+        return value

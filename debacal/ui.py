@@ -107,7 +107,8 @@ def _write_import(writer, *, report, calendar_id, accepted):
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
 
-    def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace=''):
+    def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace='',
+                 delivery_allowed=False, reminder_factory=None):
         super().__init__()
         install_button_focus(QApplication.instance())
         self.store = store
@@ -119,6 +120,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.occurrence_picker = None
         self.demo_mode = demo_mode
         self.profile_label = profile_label
+        self.reminder_preferences = load_reminder_preferences(store)
+        self._delivery_allowed = bool(delivery_allowed and not demo_mode)
+        self._reminder_main_file = None
+        if store.path != ':memory:':
+            stat = Path(store.path).stat()
+            self._reminder_main_file = stat.st_dev, stat.st_ino
+        self._reminder_factory = reminder_factory
+        self.reminder_controller = self._reminder_dialog = self._reminder_issue = None
+        self._reminder_preferences_dialog = None
         self._import_requests = deque()
         self._import_memory_bytes = 0
         self._import_dialog_active = False
@@ -233,6 +243,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.fit_calendar)
         QTimer.singleShot(1500, self.startup_sync)
+        if self._delivery_allowed or reminder_factory:
+            self._start_reminders()
 
     @property
     def event_surfaces(self):
@@ -426,22 +438,104 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.search.setToolTip('Search titles, places, and notes (' + key('search') + ')')
         self.search_header.update_preferences(self.preferences, self.bindings.get('search', ''))
 
-    def show_preferences(self, category=None):
+    def _start_reminders(self):
+        if self.reminder_controller is None:
+            from .reminder_controller import create_reminder_controller
+            factory = self._reminder_factory or create_reminder_controller
+            controller = self.reminder_controller = factory(
+                self.store.path, delivery_allowed=self._delivery_allowed, profile_label=self.profile_label)
+            controller.preferencesChanged.connect(self._reminder_settings_changed)
+            controller.inboxChanged.connect(self._reminder_badge)
+            controller.unreadCountChanged.connect(self._reminder_badge)
+            controller.issueChanged.connect(self._reminder_problem)
+            controller.desktopAvailabilityChanged.connect(self._reminder_availability)
+            controller.activate.connect(self._activate_reminder)
+            controller.start()
+        return self.reminder_controller
+
+    def _reminder_badge(self, *_):
+        count = (self.reminder_controller.unread_count if self.reminder_preferences.enabled
+                 and self.reminder_preferences.delivery != 'desktop' and self.reminder_controller else 0)
+        title = f'Reminders · {count} unread' if count else 'Reminders'
+        button = self.reminder_button
+        button.setAccessibleName(title)
+        button.setToolTip(title)
+        button.setProperty('statusTitle', title)
+        name = 'reminders_unread' if count else 'reminders'
+        if name != button.property('iconName'):
+            from .icons import icon
+            button.setProperty('iconName', name)
+            button.setIcon(icon(name, button.property('interfaceIconColor')))
+
+    def _reminder_problem(self, message):
+        previous = self._reminder_issue
+        self._reminder_issue = self.report_error(message, title='Event notifications',
+                                                action_label='Notification settings…',
+                                                action=lambda: self.show_preferences('notifications')) if message else None
+        if previous and previous != self._reminder_issue:
+            self.dismiss_error(previous)
+
+    def _reminder_availability(self, *_):
+        if self._reminder_preferences_dialog:
+            desktop = self.reminder_controller.desktop_available if self.reminder_controller else None
+            self._reminder_preferences_dialog.set_reminder_availability(desktop, QSystemTrayIcon.isSystemTrayAvailable())
+
+    def apply_reminder_preferences(self, value):
+        self._reminder_settings_changed(value)
+        if self.reminder_controller:
+            self.reminder_controller.reload_settings()
+
+    def _reminder_settings_changed(self, value):
+        self.reminder_preferences = value
+        self._reminder_badge()
+
+    def show_reminders(self):
+        from .reminder_dialog import ReminderDialog
+        if self._reminder_dialog is None:
+            dialog = self._reminder_dialog = ReminderDialog(self._start_reminders(), self)
+            def closed():
+                self._reminder_dialog = None
+                dialog.deleteLater()
+            dialog.finished.connect(closed)
+        self._reminder_dialog.show()
+        self._reminder_dialog.raise_()
+        self._reminder_dialog.activateWindow()
+
+    def show_preferences(self, category=None, *, calendar_id=None):
         if self.occurrence_picker:
             return
         dialog = PreferencesDialog(self.preferences, self,
                                    bindings=self.bindings, default_bindings=DEFAULT_BINDINGS,
                                    store=self.store, credentials=self.credentials, executor=self.executor,
-                                   allow_remote=not self.demo_mode)
+                                   allow_remote=not self.demo_mode,
+                                   reminder_preferences=load_reminder_preferences(self.store),
+                                   reminder_clock=self.reminder_controller.now if self.reminder_controller else now)
+        self._reminder_preferences_dialog = dialog
+        self._reminder_availability()
+        dialog.remindersApplied.connect(self.apply_reminder_preferences)
+        def test_reminder(draft):
+            controller = self._start_reminders()
+            if not self._delivery_allowed:
+                page = dialog.notification_page
+                page.test_result.setText('Test delivery is disabled in this workspace.')
+                page.test_result.show()
+                return
+            controller.test_notification(draft)
+        dialog.reminderTestRequested.connect(test_reminder)
+        if self.reminder_controller:
+            self.reminder_controller.testNotificationShown.connect(dialog.show_test_reminder)
         dialog.applied.connect(self.apply_preferences)
         dialog.calendars_changed.connect(self.preferences_sources_changed)
         dialog.credential_requested.connect(self.save_source_credentials)
         if category:
             dialog.set_category(category)
+        if calendar_id is not None:
+            dialog.source_editor.select_calendar(calendar_id)
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.apply_preferences(dialog.result_preferences, dialog.result_bindings)
         finally:
+            self._reminder_preferences_dialog = None
             dialog.finish_sources()
             dialog.deleteLater()
 
@@ -523,6 +617,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             default = self.store.get_default_calendar()
             action.setChecked(bool(default and default.id == calendar.id))
         menu.addAction('Edit calendar…', lambda: self.add_calendar(calendar))
+        menu.addAction('Reminder settings…', lambda: self.show_preferences('sources', calendar_id=calendar.id))
         menu.addSeparator()
         if calendar.kind != 'ics' and not calendar.read_only:
             menu.addAction('Import .ics here…', lambda: self.import_ics(calendar.id))
@@ -865,7 +960,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                         and self.selection.primary.recurring and not self.selection.primary.series_id else scope)
         self._request_editor(event, refs, scope, dialog_scope)
 
-    def _request_editor(self, event, refs, scope, dialog_scope):
+    def _request_editor(self, event, refs, scope, dialog_scope, *, guard=None, occurrence_refs=None,
+                        inspect_read_only=False):
         """Load an explicit event selection, also supporting a canonical All-scope root."""
         if self._closed or self.occurrence_picker or self._editor_active:
             return
@@ -875,16 +971,17 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         request = self._editor_request
         context = self._database_context()
         refs = tuple(refs)
-        occurrences = tuple(value for ref in refs if (value := (
+        occurrences = occurrence_refs if occurrence_refs is not None else tuple(value for ref in refs if (value := (
             self.search_result_event(ref.id) if ref.recurring and not ref.series_id else ref)) is not None)
         args = event, refs, occurrences
         def ready(read_snapshot):
             if (request != self._editor_request or self._closed or self.occurrence_picker or self._editor_active
-                    or self._database_context() != context or QApplication.activeModalWidget() is not None):
+                    or self._database_context() != context or QApplication.activeModalWidget() is not None
+                    or guard is not None and not guard(self.store)):
                 return
             self._editor_active = True
             try:
-                self._open_editor(scope, dialog_scope, *read_snapshot())
+                self._open_editor(scope, dialog_scope, *read_snapshot(), inspect_read_only=inspect_read_only, guard=guard)
             finally:
                 self._editor_active = False
         if self.store.path == ':memory:':
@@ -903,19 +1000,24 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         future.editor_ready = ready
         future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
 
-    def _open_editor(self, scope, dialog_scope, event, refs, occurrences, expected):
+    def _open_editor(self, scope, dialog_scope, event, refs, occurrences, expected, *, inspect_read_only=False, guard=None):
         families = EditorFamilies(expected)
         series = families.get_event(event.series_id)
         dialog = None
         try:
             members = selection_roots(families, refs, scope)
-            if any(not self.event_writable(member) for member in members):
+            read_only = any(not self.event_writable(member) for member in members)
+            if read_only and not inspect_read_only:
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
             dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
                                  preferences=self.preferences, edit_scope=dialog_scope, series=series,
                                  scope_bindings=self.bindings, reminder_preferences=load_reminder_preferences(self.store),
                                  selected_refs=refs, selected_families=families, occurrence_refs=occurrences,
                                  common_fields_only=len({value.series_id or value.id for value in refs}) > 1)
+            if read_only:
+                from .dialogs import inspect_read_only_event
+                inspect_read_only_event(dialog)
+                return
             mode_changes = []
             def change_editor_mode(value):
                 mode_changes.append(value)
@@ -924,6 +1026,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             if len(refs) > 1:
                 dialog.setWindowTitle(f'Edit {len(refs)} selections')
             if self.exec_event_dialog(dialog) != QDialog.DialogCode.Accepted:
+                return
+            if guard is not None and not guard(self.store):
                 return
             if mode_changes:
                 scope = dialog.scope.currentData()
@@ -947,6 +1051,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             target = (event_start.replace(tzinfo=None) + shift).replace(tzinfo=edited_start.tzinfo, fold=edited_start.fold)
             target = expected_starts.get(event.id, target)
             def save(writer):
+                if guard is not None and not guard(writer):
+                    raise ValueError('This reminder belongs to an earlier version of the event.')
                 previous_ids = writer.event_ids()
                 writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
                                       calendar_id=calendar_id, expected_masters=expected, alarm_edit=alarm_edit)
@@ -1555,6 +1661,66 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         start = rules.after(master.start, inc=True) or rules.before(master.start, inc=True)
         return occurrence(master, start) if start is not None else None
 
+    def _reveal_event_day(self, event):
+        calendar = self.store.get_calendar(event.calendar_id)
+        if calendar is None or not calendar.enabled:
+            return None
+        day = event_day(event, local_zone())
+        if not calendar.visible:
+            self.store.set_calendar_visible(calendar.id, True)
+        if not calendar.visible or self.visible_event_by_id(event.id) is None or day not in self.dates():
+            self.anchor = day
+            self.refresh(calendars=not calendar.visible)
+        return day
+
+    def _activate_reminder(self, due):
+        from .reminder_reveal import reminder_target
+        if self._closed or self.occurrence_picker or self._editor_active or QApplication.activeModalWidget():
+            return
+        activation = self.reminder_controller.activation_context
+        if activation is None or activation.main_file != self._reminder_main_file:
+            return
+        self._editor_request += 1
+        request = self._editor_request
+        context = self._database_context()
+
+        def current(reader):
+            return activation.current_partition(reader.path) and activation.current_source(reader, due)
+
+        def ready(read_target):
+            if (request != self._editor_request or self._database_context() != context or not current(self.store)
+                    or self._editor_active or self.occurrence_picker or QApplication.activeModalWidget()):
+                return
+            result = read_target()
+            if not result:
+                return
+            master, event, series_wide = result
+            calendar = self.store.get_calendar(master.calendar_id)
+            if calendar is None or not calendar.enabled:
+                return
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            if event is not None:
+                query = self.search.text().strip()
+                if query and self.filter_search.isChecked() and not event_matches_query(event, query, master):
+                    self.search.clear()
+                day = self._reveal_event_day(event)
+                if day is None:
+                    return
+                self.select_event(event.id, day=day)
+                self.ensure_event_visible(event.id)
+            if series_wide:
+                target = event or master
+                self._request_editor(target, (target,), 'group', 'group', guard=current,
+                                     occurrence_refs=(event,) if event else (), inspect_read_only=True)
+
+        future = self._editor_executor.submit(reminder_target, self.store.path, due, activation)
+        self._editor_future = future
+        future.editor_ready = ready
+        future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
+
     def reveal_search_result(self, item, modifiers=Qt.KeyboardModifier.NoModifier):
         event_id = item if isinstance(item, str) else (item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None)
         if not event_id or self._revealing_search_result:
@@ -1566,17 +1732,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return False
         if event is None:
             return False
-        calendar = self.store.get_calendar(event.calendar_id)
-        if calendar is None:
-            return False
-        day = event.start.date() if event.all_day else event.start.astimezone(local_zone()).date()
         self._revealing_search_result = True
         try:
-            if not calendar.visible:
-                self.store.set_calendar_visible(calendar.id, True)
-            if not calendar.visible or self.visible_event_by_id(event.id) is None or day not in self.dates():
-                self.anchor = day
-                self.refresh(calendars=not calendar.visible)
+            day = self._reveal_event_day(event)
+            if day is None:
+                return False
             if self.results.agenda_mode:
                 self.select_event(event.id, day=day, additive=bool(modifiers & Qt.KeyboardModifier.ControlModifier))
                 self.ensure_event_visible(event.id)
@@ -2414,6 +2574,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             event.ignore()
             return
         self._closed = True
+        if self.reminder_controller:
+            self.reminder_controller.stop()
+        if self._reminder_dialog:
+            self._reminder_dialog.close()
         if self.occurrence_picker:
             self.occurrence_picker.abort()
         QApplication.instance().removeEventFilter(self)

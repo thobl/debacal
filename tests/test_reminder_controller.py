@@ -669,7 +669,7 @@ def test_secondary_page_binds_current_partition_and_rejects_retained_page(tmp_pa
 
 
 @pytest.mark.parametrize('operation,action', [('actionable','dismiss'), ('dismiss','dismiss'),
-                                             ('mark_read','open'), ('snooze','snooze')])
+                                             ('open_entry','open'), ('snooze','snooze')])
 def test_native_action_commit_retries_once(tmp_path, monkeypatch, operation, action):
     path = tmp_path/'profile'
     clock = FakeClock(BASE-MINUTE)

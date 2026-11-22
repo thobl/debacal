@@ -171,7 +171,7 @@ def configure_application(app):
     app.setApplicationDisplayName('Debacal')
 
 
-def main(argv=None):
+def main(argv=None, *, delivery_allowed=True, reminder_factory=None):
     args = parse_arguments(argv)
     try:
         stdin_data = read_standard_input(force=args.stdin)
@@ -222,7 +222,9 @@ def main(argv=None):
                 seed_demo(store)
             workspace = MainWindow(store, enable_sync=not demo, demo_mode=demo,
                                    profile_label=profile.label if profile.name != 'default' else '',
-                                   credential_namespace=profile.credential_namespace)
+                                   credential_namespace=profile.credential_namespace,
+                                   delivery_allowed=delivery_allowed and not demo and not args.screenshot,
+                                   reminder_factory=reminder_factory)
         except Exception:
             store.close()
             raise

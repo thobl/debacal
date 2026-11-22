@@ -13,6 +13,8 @@ class Clock:
 
 
 class ReminderController(QObject):
+    preferencesChanged = Signal(object)
+    inboxPageSnapshot = Signal(int, object, object)
     inboxChanged = Signal()
     issueChanged = Signal(object)
     activate = Signal(object)
@@ -27,6 +29,7 @@ class ReminderController(QObject):
         self._database, self._clock, self._transport = database, clock, transport
         self._allowed, self._profile = delivery_allowed, profile_label
         self._retiring = self._worker = self._partition = None
+        self.activation_context = None
         self.desktop_available = None
         self.unread_count = 0
         self._requests = count(1)
@@ -36,6 +39,9 @@ class ReminderController(QObject):
         transport.retired.connect(self._retired)
         transport.action.connect(self._action)
         transport.availabilityChanged.connect(self._availability)
+
+    def now(self):
+        return self._clock.now()
 
     def start(self):
         if self._worker is None:
@@ -47,6 +53,7 @@ class ReminderController(QObject):
     def stop(self):
         worker = self._worker
         self._worker = self._partition = None
+        self.activation_context = None
         self.desktop_available = None
         if worker:
             self._retiring = worker
@@ -60,11 +67,11 @@ class ReminderController(QObject):
     def reload_settings(self):
         self._queue('wake')
 
-    def request_inbox(self, *, limit=100, offset=0):
+    def request_inbox(self, *, limit=100, offset=0, active_only=False):
         if limit < 0 or offset < 0:
             raise ValueError('Inbox page limits must be nonnegative.')
         request = next(self._requests)
-        self._queue('page', request, limit, offset)
+        self._queue('page', request, limit, offset, active_only)
         return request
 
     @property
@@ -81,6 +88,8 @@ class ReminderController(QObject):
     def snooze(self, key, duration: timedelta, *, partition=None):
         if duration <= timedelta():
             raise ValueError('Choose a positive snooze duration.')
+        if duration > datetime.max.replace(tzinfo=timezone.utc) - self._clock.now():
+            raise ValueError('Choose a shorter snooze duration.')
         self._queue('snooze', partition or self._partition, key, duration)
 
     def open_reminder(self, key, *, partition=None):
@@ -113,12 +122,16 @@ class ReminderController(QObject):
     def _receive(self, worker, name, args):
         if worker is not self._worker:
             return
-        if name == 'inbox':
+        if name == 'preferences':
+            self.preferencesChanged.emit(*args)
+        elif name == 'inbox':
             self._partition, = args
             self.inboxChanged.emit()
         elif name == 'page':
-            request, entries, self._partition = args
+            request, entries, token = args
+            self._partition = token
             self.inboxPageReady.emit(request, entries)
+            self.inboxPageSnapshot.emit(request, entries, token)
         elif name == 'count':
             self.unread_count, = args
             self.unreadCountChanged.emit(self.unread_count)
@@ -126,8 +139,17 @@ class ReminderController(QObject):
             self.desktop_available, = args
             self.desktopAvailabilityChanged.emit(self.desktop_available)
         elif name == 'activate':
-            self.activate.emit(*args)
+            due, context = args
+            if context.current_partition(self._database):
+                self.activation_context = context
+                self.activate.emit(due)
         elif name == 'issue':
             self.issueChanged.emit(*args)
         elif name == 'preview':
             self.testNotificationShown.emit(*args)
+
+
+def create_reminder_controller(database, *, delivery_allowed, profile_label):
+    from .reminder_transport import NotificationTransport
+    return ReminderController(database, clock=Clock(), transport=NotificationTransport(),
+                              delivery_allowed=delivery_allowed, profile_label=profile_label)

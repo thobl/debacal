@@ -1,7 +1,7 @@
 """Transactional, worker-owned reminder queue and profile-local inbox."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -14,7 +14,8 @@ from .reminder_ledger import InboxEntry
 from .reminder_partition import Partition
 from .prepared_storage import StateWriter
 from .reminder_schedule import BACKFILL, FRONTIER_SQL, READY, RULE, head, initial_jobs, pop, step
-from .reminder_sources import SourceChange
+from .reminder_activation import ActivationContext
+from .reminder_sources import SourceChange, ReminderSources
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS source (
@@ -416,34 +417,62 @@ class ReminderStore:
                                      ((cal,) for cal in calendars))
             self._partition.set('controller', state)
 
-    def inbox(self, *, limit: int = 100, offset: int = 0) -> tuple[InboxEntry, ...]:
+    def inbox(self, *, limit: int = 100, offset: int = 0, active_only=False) -> tuple[InboxEntry, ...]:
         self._partition.check_target()
         if min(limit, offset) < 0:
             raise ValueError('Reminder inbox limits must be nonnegative.')
         rows = self._db.execute(
             'SELECT l.key,l.payload,l.status,l.unread,l.until,m.first_revision,m.revision,m.title '
             'FROM ledger l LEFT JOIN source_label m ON m.source=l.source AND m.component=l.component '
-            "WHERE l.status!='suppressed' "
-            'ORDER BY l.stamp DESC,l.key LIMIT ? OFFSET ?', (limit, offset))
+            "WHERE l.status!='suppressed' AND (?=0 OR l.status!='dismissed') "
+            'ORDER BY l.stamp DESC,l.key LIMIT ? OFFSET ?', (active_only, limit, offset))
         reader = ledger.inbox_reader(self._db)
         return tuple(InboxEntry(ledger.decode_due(reader, key, payload, label), status, bool(unread),
                                 instant(until) if status == 'snoozed' else None)
                      for key, payload, status, unread, until, *label in rows)
 
-    def inbox_page(self, *, limit=100, offset=0):
+    def inbox_page(self, *, limit=100, offset=0, active_only=False):
         """Read the partition and every inbox payload from one WAL snapshot."""
         self._db.execute('BEGIN')
         with self._db:
             token = self.partition_id
-            entries = self.inbox(limit=limit, offset=offset)
+            entries = self.inbox(limit=limit, offset=offset, active_only=active_only)
             self._partition.check_target()
             return token, entries
+
+    def open_entry(self, key, *, partition):
+        """Bind the read receipt, payload and canonical identity to one sidecar commit."""
+        with self._write():
+            if partition is None or self.partition_id != partition or self._partition.get('incoherent'):
+                return None
+            entry = self.entry(key)
+            evidence = self._partition.get('evidence')
+            if entry is None or not evidence:
+                return None
+            due = entry.reminder
+            context = ActivationContext(partition, tuple(evidence[0]), evidence[2])
+            with closing(ReminderSources(self._partition.target, evidence=evidence)) as reader:
+                if reader.identity_evidence()[0] != context.main_file:
+                    return None
+                with reader.for_incarnation(context.incarnation):
+                    if reader.source_stamp(key.source_id) != due.source_revision:
+                        return None
+                    state = reader.calendar_state(due.calendar_id)
+                    if not state or not state[0]:
+                        return None
+            self._db.execute('UPDATE ledger SET unread=0 WHERE key=?', (ledger.encode_key(key),))
+            return due, context
 
     def mark_read(self, keys: Iterable[DeliveryKey], *, partition=None) -> None:
         with self._write():
             if partition is not None and self.partition_id != partition:
                 return
             self._db.executemany('UPDATE ledger SET unread=0 WHERE key=?', ((ledger.encode_key(k),) for k in keys))
+
+    def external_revision(self):
+        """SQLite changes from other workspace connections, independent of local scheduling writes."""
+        self._partition.check_target()
+        return self._db.execute('PRAGMA data_version').fetchone()[0]
 
     def unread_count(self) -> int:
         self._partition.check_target()

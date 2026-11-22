@@ -121,6 +121,8 @@ class ReminderWorker(Thread):
         self.submitted = {}
         self.native_calendars = {}
         self.data_issue = self.desktop_issue = None
+        self.inbox_revision = None
+        self.next_inbox_check = 0
         self.count = None
         self.retry_probe = 0
 
@@ -148,6 +150,7 @@ class ReminderWorker(Thread):
             self.store.close()
         if self.owner:
             self.owner.release()
+        self.inbox_revision = None
         self.store = self.owner = self.partition = self.armed = None
         self.journal_target = None
         self.checked_zone = False
@@ -214,6 +217,17 @@ class ReminderWorker(Thread):
             self.partition = self.store.partition_id
         return self.store
 
+    def observe_inbox(self):
+        if self.store is None or monotonic() < self.next_inbox_check:
+            return
+        self.next_inbox_check = monotonic() + POLL
+        revision = self.store.external_revision()
+        if revision != self.inbox_revision:
+            self.inbox_revision = revision
+            if not self.owner:
+                self.partition = self.store.partition_id
+            self.changed()
+
     def command(self, kind, args):
         if kind == 'wake':
             return
@@ -233,8 +247,8 @@ class ReminderWorker(Thread):
             self.result(kind, *args)
             return
         if kind == 'page':
-            request, limit, offset = args
-            token, entries = self.store.inbox_page(limit=limit, offset=offset) if self.inbox_store() else (None, ())
+            request, limit, offset, active_only = args
+            token, entries = self.store.inbox_page(limit=limit, offset=offset, active_only=active_only) if self.inbox_store() else (None, ())
             if not self.owner:
                 self.partition = token
             self.post('page', request, entries, token)
@@ -261,13 +275,18 @@ class ReminderWorker(Thread):
                 kind = extra[0]
                 extra = [timedelta(minutes=5)]
             if kind == 'open':
-                self.store.mark_read((key,), partition=partition)
-                self.post('activate', entry.reminder)
+                opened = self.store.open_entry(key, partition=partition)
+                if opened is not None:
+                    self.post('activate', *opened)
             elif kind in ('dismiss', 'snooze'):
                 if kind == 'dismiss':
                     self.store.dismiss(key, partition=partition)
                 elif extra[0] > timedelta() and self.policy.preferences.enabled:
-                    self.store.snooze(key, self.clock.now() + extra[0], partition=partition)
+                    try:
+                        deadline = self.clock.now() + extra[0]
+                    except OverflowError:
+                        return
+                    self.store.snooze(key, deadline, partition=partition)
                 self.transport.forget(key)
                 self.submitted.pop(key, None)
             if native_action or kind in ('dismiss', 'snooze'):
@@ -407,11 +426,15 @@ class ReminderWorker(Thread):
 
     def tick(self):
         now = self.clock.now()
+        previous = self.policy
         self.policy = read_reminder_policy(self.database)
         prefs = self.policy.preferences
+        if previous is None or previous.preferences != prefs:
+            self.post('preferences', prefs)
         if self.last_time and not timedelta() <= now - self.last_time <= JITTER:
             self.armed = None
         self.last_time = now
+        self.observe_inbox()
         if not self.allowed or not prefs.enabled:
             if self.owner:
                 self.store.mute()
@@ -422,6 +445,8 @@ class ReminderWorker(Thread):
             self.test_tick()
             return POLL
         if not self.ensure_owner(now):
+            self.inbox_store()
+            self.observe_inbox()
             self.test_tick()
             return POLL
         states = self.store.read_sources('calendar_states')

@@ -1,6 +1,7 @@
 """Categorized display, synchronization, and keyboard preferences."""
 from datetime import date, datetime, timedelta
 from dataclasses import replace
+import sqlite3
 
 from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtWidgets import (
@@ -10,6 +11,8 @@ from PySide6.QtWidgets import (
 
 from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
+from .reminder_preferences import ReminderPreferences, save_reminder_draft
+from .timeutil import now
 from .preferences import Preferences, _system_language_locale
 from .appearance_preferences import AppearanceEditor
 from .shortcuts import KeyboardShortcutsEditor, normalize_bindings, validate_bindings
@@ -22,11 +25,14 @@ from .dialog_base import dialog_buttons, install_dialog_keyboard
 
 class PreferencesDialog(QDialog):
     applied = Signal(object, object)
+    remindersApplied = Signal(object)
+    reminderTestRequested = Signal(object)
     calendars_changed = Signal()
     credential_requested = Signal(str, str, bool)
 
     def __init__(self, preferences: Preferences, parent=None, bindings=None, default_bindings=None,
-                 *, store=None, credentials=None, executor=None, allow_remote=True):
+                 *, store=None, credentials=None, executor=None, allow_remote=True, reminder_preferences=None,
+                 reminder_clock=now):
         super().__init__(parent)
         install_button_focus(QApplication.instance())
         self.setPalette(widget_palette(preferences))
@@ -42,6 +48,10 @@ class PreferencesDialog(QDialog):
         self._source_store = store or getattr(parent, 'store', None)
         self._source_options = dict(credentials=credentials, executor=executor, allow_remote=allow_remote)
         self._sources_finished = False
+        self.result_reminders = self._draft_reminders = reminder_preferences or ReminderPreferences()
+        self._reminder_clock = reminder_clock
+        self.notification_page = None
+        self._desktop_available = self._tray_available = None
         self._shortcut_defaults = normalize_bindings(default_bindings if default_bindings is not None else bindings)
         self.result_bindings = self._shortcut_defaults | normalize_bindings(bindings)
         self._draft_bindings = dict(self.result_bindings)
@@ -169,7 +179,7 @@ class PreferencesDialog(QDialog):
         calendar_layout.addStretch()
 
         for name, scrollable in (('Appearance', False), ('Calendar sources', True),
-                                 ('Sync', True), ('Keyboard shortcuts', False)):
+                                 ('Notifications', True), ('Sync', True), ('Keyboard shortcuts', False)):
             self._lazy_pages[name.casefold()] = self.category(name, scrollable=scrollable)
         footer = QWidget()
         footer_layout = QVBoxLayout(footer)
@@ -222,10 +232,18 @@ class PreferencesDialog(QDialog):
             else:
                 from .calendar_sources import CalendarSourcesEditor
                 self._source_editor = CalendarSourcesEditor(self._source_store, self._draft_preferences, self,
+                                                            reminder_policies=self._draft_reminders.calendars,
                                                             **self._source_options)
                 self._source_editor.changed.connect(self.calendars_changed.emit)
                 self._source_editor.credential_requested.connect(self.credential_requested.emit)
                 layout.addWidget(self._source_editor)
+        elif name == 'notifications':
+            from .notification_preferences import NotificationPreferencesPage
+            self.notification_page = NotificationPreferencesPage(self._draft_reminders, self)
+            self.notification_page.set_availability(self._desktop_available, self._tray_available)
+            self.notification_page.testRequested.connect(self._test_reminder)
+            layout.addWidget(self.notification_page)
+            layout.addStretch()
         elif name == 'keyboard shortcuts':
             self._shortcut_editor = KeyboardShortcutsEditor(self._draft_bindings, self._shortcut_defaults)
             layout.addWidget(self._shortcut_editor)
@@ -431,7 +449,28 @@ class PreferencesDialog(QDialog):
         if self._appearance_editor is not None:
             self._appearance_editor.set_context(preferences)
 
+    def set_reminder_availability(self, desktop, tray):
+        self._desktop_available, self._tray_available = desktop, tray
+        if self.notification_page:
+            self.notification_page.set_availability(desktop, tray)
+
+    def reminder_draft(self):
+        value = self.notification_page.value() if self.notification_page else self._draft_reminders
+        policies = getattr(self._source_editor, 'reminder_policies', value.calendars)
+        return replace(value, calendars=policies)
+
+    def _test_reminder(self):
+        self.reminderTestRequested.emit(self.reminder_draft())
+
+    def show_test_reminder(self, due):
+        if self.notification_page:
+            self.notification_page.test_result.setText(due.title)
+            self.notification_page.test_result.show()
+
     def restore_defaults(self):
+        self._draft_reminders = ReminderPreferences(calendars=self.result_reminders.calendars)
+        if self.notification_page:
+            self.notification_page.set_value(self._draft_reminders)
         defaults = Preferences()
         self._draft_preferences = defaults
         for field in (self.locale, self.week_start, self.date_format, self.time_format):
@@ -497,11 +536,35 @@ class PreferencesDialog(QDialog):
             self.error.show()
             return False
         bindings = dict(bindings)
+        try:
+            reminders = self.reminder_draft()
+        except ValueError as error:
+            self.set_category('Notifications')
+            self.error.setText(str(error))
+            self.error.show()
+            return False
         completed = False
+
+        original = self.result_reminders
+        value = reminders
+        persist = None
+        if reminders != original and self._source_store:
+            when = self._reminder_clock()
+            def persist(writer):
+                nonlocal value
+                value = save_reminder_draft(writer, original, reminders, now=when)
 
         def saved(_changed=False):
             nonlocal completed
             self._set_applying(False)
+            if reminders != original:
+                self._draft_reminders = self.result_reminders = value
+                if self.notification_page:
+                    self.notification_page.set_value(value)
+                if self._source_editor is not None:
+                    self._source_editor.reminder_policies = dict(value.calendars)
+                    self._source_editor._selection_changed(self._source_editor.sources.currentItem())
+                self.remindersApplied.emit(value)
             self._finish_apply(preferences, bindings)
             completed = True
             if close_after:
@@ -509,7 +572,7 @@ class PreferencesDialog(QDialog):
 
         def failed(error):
             self._set_applying(False)
-            self.set_category('sources')
+            self.set_category('sources' if self._source_editor is not None else 'Notifications')
             self.error.setText(str(error))
             self.error.show()
 
@@ -517,15 +580,18 @@ class PreferencesDialog(QDialog):
         # Guard reentrancy immediately, but only disable the large control
         # tree if a source operation remains pending after submission.
         self._applying = True
-        if self._source_editor is not None:
-            try:
-                self._source_editor.apply(on_success=saved, on_error=failed)
-            except ValueError as error:
-                failed(error)
-            if self._applying:
-                self._set_applying(True)
-        else:
-            saved()
+        try:
+            if self._source_editor is not None:
+                options = {'save_reminders': persist} if persist else {}
+                self._source_editor.apply(on_success=saved, on_error=failed, **options)
+                if self._applying:
+                    self._set_applying(True)
+            else:
+                if persist:
+                    persist(self._source_store)
+                saved()
+        except (ValueError, sqlite3.Error, OSError) as error:
+            failed(error)
         return completed
 
     def _set_applying(self, applying):

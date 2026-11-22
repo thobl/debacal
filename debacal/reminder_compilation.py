@@ -227,7 +227,8 @@ def _local_bound(event, value, zone):
     return value.astimezone(event_timezone(event))
 
 
-def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zone: tzinfo) -> AlarmSchedule:
+def canonical_timing(change: SourceChange):
+    """Use the hydrated event zone when a legacy projection lost its civil clock."""
     event, indexed = change.event, change.indexed
     if event is None or indexed is None:
         raise ValueError('A live canonical event and prepared timing are required.')
@@ -238,6 +239,11 @@ def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zo
         if old_zone is not new_zone and StateWriter().zone(old_zone) != StateWriter().zone(new_zone):
             from .event_range_index import EventRangeIndex
             indexed = EventRangeIndex.prepare(event)
+    return indexed
+
+
+def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zone: tzinfo) -> AlarmSchedule:
+    event, indexed = change.event, canonical_timing(change)
     master = copy_event(event, dict(raw_ics='', alarms=(), recurrence_overrides={}, description='', location='',
                                     schedule_expression='', expression_anchor=''))
     components = {'': _component_alarms(event, policy, '')}
