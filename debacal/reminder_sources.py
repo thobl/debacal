@@ -36,15 +36,24 @@ def _incarnation(db) -> str:
 
 
 class ReminderSources:
-    def __init__(self, database: str):
+    def __init__(self, database: str, *, evidence=None):
         if database == ':memory:':
             raise ValueError('A reminder reader requires a file-backed canonical database.')
         self._path = Path(database).absolute()
         self._connection = None
         self._main_id = self._wal_id = None
         self._marker = self._expected = None
+        self._expected_main = None
+        if evidence is not None:
+            main, wal, self._marker = evidence
+            self._main_id = tuple(main)
+            self._wal_id = tuple(wal) if wal is not None else None
         self._closed = False
         self.incarnation()
+
+    def identity_evidence(self):
+        """Last coherent observed file set, suitable for a persisted restart guard."""
+        return self._main_id, self._wal_id, self._marker
 
     def _checked_wal(self, target, main_id):
         try:
@@ -66,10 +75,13 @@ class ReminderSources:
         previous = self._expected
         if previous is not None and previous != token:
             raise ValueError('A nested reminder read requires the same incarnation.')
+        previous_main = self._expected_main
+        self._expected_main = previous_main or (self._main_id if token == self._marker else None)
         self._expected = token
         try:
             yield self
         finally:
+            self._expected_main = previous_main
             self._expected = previous
 
     @contextmanager
@@ -87,6 +99,8 @@ class ReminderSources:
             db.execute('BEGIN')
             marker = _incarnation(db)  # Pins the identity and all subsequent rows to one WAL snapshot.
             wal_id = self._checked_wal(target, main_id)
+            if self._expected_main is not None and main_id != self._expected_main:
+                raise sqlite3.OperationalError('The calendar database incarnation changed physical file.')
             if self._expected is not None and marker != self._expected:
                 raise sqlite3.OperationalError('The calendar database incarnation differs from the expected profile.')
             if main_id != self._main_id or marker != self._marker:
@@ -136,6 +150,13 @@ class ReminderSources:
             sql += ' WHERE ' + ' AND '.join(conditions)
         return self._batch(sql + ' ORDER BY e.id LIMIT ?', params, limit)
 
+    def selected(self, identities):
+        """Read the worker-selected page (e.g. floating sources after a zone change)."""
+        placeholders = ','.join('?' for _ in identities)
+        return self._batch('SELECT e.id,e.calendar_id,e.data,COALESCE(c.version,0) AS version '
+                           'FROM events AS e LEFT JOIN event_query_changes AS c ON c.event_id=e.id '
+                           f'WHERE e.id IN ({placeholders}) ORDER BY e.id LIMIT ?', tuple(identities), len(identities))
+
     def changes(self, after: tuple[int, str], *, limit: int = 128) -> tuple[SourceChange, ...]:
         return self._batch(
             'SELECT c.event_id AS id,e.calendar_id,e.data,c.version FROM event_query_changes AS c '
@@ -175,6 +196,12 @@ class ReminderSources:
                              'LEFT JOIN event_query_changes AS c ON c.event_id=e.id WHERE e.id=?',
                              (event_id,)).fetchone()
             return row[0] if row is not None else None
+
+    def calendar_state(self, calendar_id: str):
+        with self._snapshot() as db:
+            row = db.execute('SELECT enabled,generation,changed_at FROM calendar_enable_transitions '
+                             'WHERE calendar_id=? AND enabled IS NOT NULL', (calendar_id,)).fetchone()
+            return (bool(row[0]), row[1], datetime.fromisoformat(row[2])) if row else None
 
     def calendar_states(self) -> dict[str, tuple[bool, int, datetime]]:
         with self._snapshot() as db:
