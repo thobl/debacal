@@ -432,8 +432,8 @@ class ReminderWorker(Thread):
             self.source_work = None
         self.source_context = None
 
-    def source_slice(self, state, states):
-        context = (self.partition, self.policy.generation, self.zone, states)
+    def source_slice(self, state):
+        context = (self.partition, self.zone, state['boundary'], state['calendars'])
         if context != self.source_context:
             self.cancel_source_work()
         if self.source_work is None:
@@ -496,7 +496,7 @@ class ReminderWorker(Thread):
             self.zone = zone
             self.checked_zone = False
         state = self.settings(states)
-        more = self.source_slice(state, states)
+        more = self.source_slice(state)
         self.set_native(prefs.delivery != 'in_app' or self.test is not None)
         self.test_tick()
         if self.native:

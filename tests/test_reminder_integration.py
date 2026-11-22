@@ -285,3 +285,161 @@ def test_date_only_all_move_keeps_independent_hourly_slots(tmp_path, rule):
                 assert current.start == key.trigger_utc-shift
         finally:
             worker.release()
+
+
+@pytest.fixture
+def native_history(tmp_path):
+    from alarm_support import FakeTransport
+    from debacal.reminder_worker import ReminderWorker
+
+    path = str(tmp_path / 'calendar')
+    clock = FakeClock(BASE)
+    worker = ReminderWorker(path, clock, FakeTransport(), True, 'Example', lambda *_: None)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Calendar', '#123456'))
+
+        def enable(master, now):
+            clock.time = now
+            writer.apply_remote([master])
+            save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app'), now=now)
+            drain()
+
+        def drain():
+            for _ in range(1000):
+                if worker.tick() >= 1:
+                    return
+            pytest.fail('Reminder worker did not settle')
+
+        def move(master, target):
+            root = occurrence(master, master.start)
+            writer.move_selection([root], 'group', root, target, target + (root.end - root.start))
+
+        try:
+            yield writer, clock, worker, enable, drain, move
+        finally:
+            worker.release()
+
+
+@pytest.mark.parametrize('frequency', ['daily', 'finite_daily', 'finite_minutely'])
+@pytest.mark.parametrize('ambiguous', [False, True])
+def test_native_spring_gap_move_uses_original_nominal_member(native_history, ambiguous, frequency):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from debacal.reminder_reveal import reminder_target
+    writer, clock, worker, enable, drain, move = native_history
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026, 3, 26, 2, 30, tzinfo=zone)
+    rule = 'FREQ=DAILY;BYHOUR=2,3' if ambiguous else 'FREQ=DAILY'
+    if frequency == 'finite_daily':
+        rule += ';COUNT=12'
+    elif frequency == 'finite_minutely':
+        rule = 'FREQ=MINUTELY;INTERVAL=60;COUNT=150' if ambiguous else 'FREQ=MINUTELY;INTERVAL=1440;COUNT=12'
+    master = event('gap', start, recurrence_rule=rule, timezone_id=zone.key)
+    due = datetime(2026, 3, 29, 3, 30, tzinfo=zone)
+    enable(master, due - MINUTE)
+    clock.time = due
+    drain()
+    receipt, = worker.store.inbox()
+    move(master, start + timedelta(days=1))
+    drain()
+    opened = worker.store.open_entry(receipt.reminder.key, partition=worker.store.partition_id)
+    if ambiguous:
+        assert opened is None
+    else:
+        assert opened is not None
+        target = reminder_target(writer.path, *opened)
+        assert target is not None
+        assert target[1].start == datetime(2026, 3, 30, 2, 30, tzinfo=zone)
+
+
+@pytest.mark.parametrize('prior_move', ['none', 'native', 'legacy'])
+def test_removed_native_receipt_cannot_claim_or_open_a_new_monthly_root(native_history, prior_move):
+    from datetime import datetime, timezone
+    from test_reminder_controller import ALARM
+    writer, clock, worker, enable, drain, move = native_history
+    start = datetime(2026, 11, 1, 8, tzinfo=timezone.utc)
+    master = replace(event('series', start, replace(ALARM, uid=''), recurrence_rule='FREQ=DAILY'), end=start+60*MINUTE)
+    due = start+timedelta(days=1)
+    enable(master, due-60*MINUTE)
+    clock.time = due
+    drain()
+    original, = worker.store.inbox()
+    if prior_move != 'none':
+        move(master, start-10*MINUTE)
+        drain()
+    if prior_move == 'legacy':
+        # Install the previous sidecar format, including an independent
+        # ambiguous UID-less rank recorded at the original delivered point.
+        with worker.store._db as db:
+            db.execute("INSERT INTO suppressed SELECT source,component,alarm,occurrence,rank,through "
+                       "FROM rank_suppression WHERE kind='native'")
+            db.execute("DELETE FROM rank_suppression")
+            db.execute("INSERT INTO suppressed SELECT source,component,'ambiguous',occurrence,rank,stamp FROM ledger")
+    changed = replace(writer.get_event(master.id), recurrence_rule='FREQ=MONTHLY')
+    writer.apply('Monthly', [changed])
+    drain()
+    assert not writer.query_occurrences(due, due+MINUTE)
+    move(writer.get_event(master.id), due-10*MINUTE)
+    drain()
+    if prior_move == 'legacy':
+        assert worker.store._db.execute("SELECT alarm,kind FROM rank_suppression").fetchall() == [
+            ('ambiguous', 'ambiguous')]
+    keys = {entry.reminder.key for entry in worker.store.inbox()}
+    assert {key.trigger_utc for key in keys} == {due, due-10*MINUTE}
+    assert worker.store.open_entry(original.reminder.key, partition=worker.store.partition_id) is None
+    if prior_move == 'none':
+        # A new receipt can earn a later alarm on the very same original
+        # coordinate, without reviving the retired receipt that first used it.
+        move(writer.get_event(master.id), due)
+        drain()
+        current = writer.get_event(master.id)
+        writer.apply('Later alarm', [replace(current, alarms=(replace(current.alarms[0], trigger='PT10M'),))])
+        drain()
+        clock.time = due+10*MINUTE
+        drain()
+        latest, = [row.reminder.key for row in worker.store.inbox() if row.reminder.key.trigger_utc == clock.time]
+        assert latest.occurrence_key == original.reminder.key.occurrence_key
+        assert worker.store.open_entry(latest, partition=worker.store.partition_id) is not None
+        assert worker.store.open_entry(original.reminder.key, partition=worker.store.partition_id) is None
+
+
+@pytest.mark.parametrize('interruption', ['clock', 'busy', 'preferences', 'metadata', 'new_geometry'])
+def test_future_at_observation_rearms_after_staging_pages(native_history, interruption):
+    import sqlite3
+    from test_reminder_controller import ALARM
+    writer, clock, worker, enable, drain, move = native_history
+    alarms = [replace(ALARM, key=str(i), uid=str(i)) for i in range(40)]
+    master = event('series', BASE, *alarms, recurrence_rule='FREQ=DAILY')
+    enable(master, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    assert len(worker.store.inbox()) == 40
+    move(master, BASE+MINUTE)
+    assert worker.tick() < 1
+    assert worker.store._db.execute('SELECT count(*) FROM temp.staged_group').fetchone() == (32,)
+    clock.time = BASE+MINUTE+timedelta(seconds=1)
+    if interruption == 'preferences':
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app', sound='silent'),
+                                  now=clock.now())
+    if interruption in ('metadata', 'new_geometry'):
+        current = writer.get_event(master.id)
+        if interruption == 'metadata':
+            writer.apply('Rename', [replace(current, title='Later description')])
+        else:
+            move(current, BASE+timedelta(seconds=30))
+    if interruption == 'busy':
+        assert worker.tick() < 1
+        database = worker.store._db.execute('PRAGMA database_list').fetchone()[2]
+        peer = sqlite3.connect(database)
+        try:
+            peer.execute('BEGIN IMMEDIATE')
+            with pytest.raises(sqlite3.OperationalError, match='locked|busy'):
+                worker.tick()
+        finally:
+            peer.close()
+    drain()
+    if interruption == 'new_geometry':
+        assert len(worker.store.inbox()) == 40
+    else:
+        assert {entry.reminder.key.alarm_key for entry in worker.store.inbox()
+                if entry.reminder.key.trigger_utc == BASE+MINUTE} == {alarm.key for alarm in alarms}

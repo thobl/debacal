@@ -701,9 +701,13 @@ def test_source_edits_do_not_run_dense_membership_for_delivered_history(monkeypa
         assert len(deliveries) == 5
         for due in deliveries:
             store.record_delivery(due.key, desktop_id=None)
-        def no_membership(*_args, **_kwargs):
-            raise AssertionError('Source reconciliation searched dense recurrence history')
-        monkeypatch.setattr(reminder_rule_seek, 'seek_slice', no_membership)
+        seek = reminder_rule_seek.seek_slice
+        def only_nominal_rank(series, low, high, cursor, *, exact_wall=False, nominal=None, info=None):
+            assert nominal is not None and exact_wall and low == high
+            result, more = seek(series, low, high, cursor, exact_wall=exact_wall, nominal=nominal, info=info)
+            assert more is None
+            return result, more
+        monkeypatch.setattr(reminder_rule_seek, 'seek_slice', only_nominal_rank)
         update(dense, 2)
         import sqlite3
         def preserve_history(action, table, column, *_):

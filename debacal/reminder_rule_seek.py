@@ -29,21 +29,28 @@ def _rank(days, clocks, bound):
     ordinal = bound.toordinal()
     day = bisect_left(days, ordinal)
     position = day * len(clocks)
-    if day < len(days) and days[day] == ordinal:
-        position += bisect_left(clocks, bound.time(), key=lambda t: t.replace(tzinfo=None))
+    if clocks and day < len(days) and days[day] == ordinal:
+        # The prepared timeset uses one tzinfo throughout. Compare its civil
+        # fields directly without rebuilding every binary-search midpoint.
+        position += bisect_left(clocks, bound.time().replace(tzinfo=clocks[0].tzinfo))
     return position
 
 
-def seek_slice(series, lower, upper, checkpoint, *, exact_wall=False):
+def seek_slice(series, lower, upper, checkpoint, *, exact_wall=False, nominal=None, info=None):
     """Return (earliest start, continuation). A completed empty probe covers [lower, upper]."""
     rule, zone = series.rule, series.zone
     fixed = exact_wall or isinstance(zone, timezone) or getattr(zone, 'key', '') in ('UTC', 'Etc/UTC', 'GMT')
     # UTC = nominal wall coordinate - originating offset, including a gap.
     # With variable offsets no distant endpoint comparison proves monotonicity.
-    offset = int(instant(lower).astimezone(zone).utcoffset() // timedelta(microseconds=1)) if fixed else None
-    low_wall = instant(lower + (offset if fixed else -DAY_US)).replace(tzinfo=None)
+    offset = None
+    if nominal is not None:
+        low_wall = nominal.replace(tzinfo=None)
+    else:
+        if fixed:
+            offset = instant(lower).astimezone(zone).utcoffset() // timedelta(microseconds=1)
+        low_wall = instant(lower + (offset if fixed else -DAY_US)).replace(tzinfo=None)
     if checkpoint is None:
-        sought = series.seek.seek(instant(lower if fixed else lower - 2*DAY_US))
+        sought = series.seek.seek(nominal if nominal is not None else instant(lower if fixed else lower - 2*DAY_US))
         if sought is None:
             return None, None
         start, count = sought
@@ -52,14 +59,26 @@ def seek_slice(series, lower, upper, checkpoint, *, exact_wall=False):
         text, count, position, best = checkpoint
         start = datetime.fromisoformat(text)
     masks = SimpleNamespace(rule=rule, frequency=rule._freq)
-    info = _iterinfo(rule)
+    if info is None:
+        info = _iterinfo(rule)
     until = micros(rule._until) if rule._until else MAX_US
     budget = 256
     while budget and (count is None or count > 0):
         high = min(upper, until, best if best is not None else MAX_US)
-        high_wall = instant(high + (offset if fixed else DAY_US)).replace(tzinfo=None)
+        high_wall = low_wall if nominal is not None else instant(high + (offset if fixed else DAY_US)).replace(tzinfo=None)
         if start > high_wall:
             break
+        if nominal is not None and count is None:
+            # The general seek starts one period early. Exact, uncounted
+            # nominal probes can skip whole preceding periods without ranking.
+            try:
+                following = _following(start, rule)
+            except (ValueError, OverflowError):
+                following = None
+            if following is not None and following <= low_wall:
+                start, position = following, 0
+                budget -= 1
+                continue
         y, m, d = start.year, start.month, start.day
         frequency = DAILY if rule._freq == HOURLY else rule._freq
         days = _CalendarSeek._days(masks, info, y, m, d, frequency=frequency)

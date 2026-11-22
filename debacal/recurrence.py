@@ -91,8 +91,8 @@ def normalize_recurrence_stream(values, *, all_day=False):
         yield from (ordered[key] for key in sorted(ordered))
 
 
-def _exclusion_walls(value: datetime):
-    """Match a normalized exclusion against dateutil's nominal gap clocks.
+def nominal_recurrence_walls(value: datetime):
+    """Recover the nominal clocks that can represent a normalized recurrence instant.
 
     Exclusions use UTC identities in storage. Dateutil compares values sharing
     a timezone by wall clock, so a real 03:30 exclusion would otherwise leave
@@ -100,12 +100,16 @@ def _exclusion_walls(value: datetime):
     including whole-day timezone jumps, rather than scanning recurrence history.
     """
     yield value
-    offsets = set()
-    for days in (-2, -1, 1, 2):
-        try:
-            offsets.add((value + timedelta(days=days)).utcoffset())
-        except (OverflowError, ValueError):
-            continue
+    # A resource-local VTIMEZONE can declare several transitions in one
+    # day. Check all its bounded observance offsets, including short eras.
+    offsets = getattr(value.tzinfo, 'observance_offsets', None)
+    if not offsets:
+        offsets = set()
+        for days in (-2, -1, 1, 2):
+            try:
+                offsets.add((value + timedelta(days=days)).utcoffset())
+            except (OverflowError, ValueError):
+                continue
     for offset in offsets:
         if offset is None or offset == value.utcoffset():
             continue
@@ -484,7 +488,7 @@ def _recurrence_set(master: Event, *, after: datetime | None = None, include_dat
             rules.rdate(key_datetime(key, master))
     for key in master.excluded_dates:
         excluded = key_datetime(key, master)
-        for value in (excluded,) if master.all_day else _exclusion_walls(excluded):
+        for value in (excluded,) if master.all_day else nominal_recurrence_walls(excluded):
             rules.exdate(value)
     return rules
 
