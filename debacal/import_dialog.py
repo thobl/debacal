@@ -11,7 +11,7 @@ from threading import Lock
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QVBoxLayout, QSizePolicy,
     QAbstractItemView, QWidget, QFrame, QScrollArea,
 )
@@ -29,6 +29,8 @@ from .models import Event
 from .preferences import Preferences
 from .preview_navigation import PreviewNavigation
 from .recurrence import key_datetime
+from .reminder_editor import ReminderEditor
+from .reminder_preferences import ReminderPreferences
 from .resource_diagnostics import resource_details, resource_diagnostics, resource_when
 from .status_dialog import IssueAction, ResourceSourceDialog, StatusDialog, StatusIssue
 from .timeutil import local_zone
@@ -94,10 +96,11 @@ class ImportDialog(FormDialog):
     """Preview immutable import snapshots without changing calendar storage."""
 
     def __init__(self, calendars, paths=(), calendar_id=None, parent=None, *, sources=None,
-                 preferences=None, executor=None):
+                 preferences=None, executor=None, reminder_preferences=None, reserve_import=None):
         super().__init__(parent)
         self.setWindowTitle('Import calendar files')
         self.preferences = preferences or Preferences()
+        self._reserve_import = reserve_import
         self.setLocale(self.preferences.qt_locale())
         self.setPalette(widget_palette(self.preferences))
         self.setStyleSheet(stylesheet(self.preferences.font_scale, self.preferences))
@@ -219,6 +222,30 @@ class ImportDialog(FormDialog):
         self.issues_button.setSizePolicy(policy)
         self.issues_button.hide()
         selection.addWidget(self.issues_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._divider(sections)
+        self.reminder_section, reminders = self._section(sections)
+        label = QLabel('Saved &reminders')
+        label.setObjectName('sidebarSectionHeading')
+        reminders.addWidget(label)
+        self.reminder_summary = QLabel()
+        self.reminder_summary.setProperty('muted', True)
+        self.reminder_summary.setWordWrap(True)
+        reminders.addWidget(self.reminder_summary)
+        self.reminder_mode = QComboBox()
+        self.reminder_mode.setAccessibleName('Saved reminders on imported events')
+        label.setBuddy(self.reminder_mode)
+        for title, mode in (('Keep', 'keep'), ('Remove', 'remove'), ('Add when missing', 'add_missing'),
+                            ('Replace', 'replace')):
+            self.reminder_mode.addItem(title, mode)
+        defaults = reminder_preferences or ReminderPreferences()
+        self.reminder_mode.setCurrentIndex(self.reminder_mode.findData(defaults.import_mode))
+        reminders.addWidget(self.reminder_mode)
+        self.reminder_editor = ReminderEditor(templates_only=True, parent=self)
+        self.reminder_editor.setMinimumHeight(round(100 * scale))
+        self.reminder_editor.set_alarms(defaults.import_alarms)
+        reminders.addWidget(self.reminder_editor)
+        self.reminder_mode.currentIndexChanged.connect(self._show_reminder_editor)
+        self._show_reminder_editor()
         sections.addStretch()
 
         footer = QWidget()
@@ -249,9 +276,11 @@ class ImportDialog(FormDialog):
                            self.preview.first_button, self.preview.previous_occurrence_button,
                            self.preview.next_occurrence_button, self.preview.last_button]
         self.configure_keyboard([self.browse_button, self.files, self.calendar, self.preview.all_button,
-                                 self.preview.none_button, self.preview.month_button, *preview_actions,
-                                 self.issues_button],
+                                 self.preview.none_button, self.preview.month_button, self.issues_button,
+                                 self.reminder_mode, self.reminder_editor.add_button, *preview_actions],
                                 [self.import_button, self.cancel_button], self.save)
+        self.reminder_editor.next_focus_widget = self.preview.previous_button
+        self.reminder_editor.arrange_focus()
         self.setTabOrder(self.preview.next_button, self.preview.canvas)
         self.setTabOrder(self.preview.canvas, self.preview.first_button)
         if sources is None:
@@ -333,6 +362,7 @@ class ImportDialog(FormDialog):
         self._pages.clear()
         self._warnings = ()
         self.issues_button.hide()
+        self.reminder_summary.clear()
         self.import_button.setEnabled(False)
         self.preview.set_first_date(None)
         if not self._sources:
@@ -403,12 +433,18 @@ class ImportDialog(FormDialog):
         self._update_summary()
         self._update_import_button()
 
+    def _show_reminder_editor(self):
+        self.reminder_editor.setVisible(self.reminder_mode.currentData() in ('add_missing', 'replace'))
+
     def _update_summary(self):
         if self._page is None:
             return
         if self._import_choice is None:
+            self.reminder_summary.clear()
             self.summary.setText('Updating selected dates…')
             return
+        with_alarms, total = self._import_choice.reminder_counts
+        self.reminder_summary.setText(f'{with_alarms} of {total} selected events and exceptions have reminders.')
         included = sum(self.selection.is_selected(event) for event in self._page.events)
         count = self._import_choice.event_count
         if not self.prepared_import.event_count:
@@ -637,9 +673,16 @@ class ImportDialog(FormDialog):
         if self._import_choice is None or not self._import_choice.event_count:
             self.show_error('Select at least one event or date to import.')
             return
+        mode = self.reminder_mode.currentData()
+        alarms = self.reminder_editor.alarms() if mode in ('add_missing', 'replace') else ()
+        reviewed = self._import_choice.with_reminders(mode, alarms)
+        if self._reserve_import is not None and not self._reserve_import(reviewed):
+            self.show_error('There is too much calendar data waiting. Choose fewer files, or cancel and '
+                            'retry or discard an earlier import in Calendar status.')
+            return
         self.selected_paths = self._paths
         self.selected_sources = self._sources
         self.selected_calendar_id = self.calendar.currentData()
-        self.selected_prepared = self._import_choice
+        self.selected_prepared = reviewed
         self.selected_selection = self.selection.snapshot(masters=self.prepared_import.events)
         self.accept()

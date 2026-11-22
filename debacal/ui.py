@@ -2,8 +2,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 from queue import SimpleQueue, Empty
+from uuid import uuid4
 from collections import deque, OrderedDict
 import calendar as monthlib
 import math
@@ -26,6 +28,7 @@ from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
+from .import_preparation import AcceptedImportSource
 from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
 from .conflict_demo import DemoConflictEngine
@@ -91,6 +94,16 @@ def _read_file_editor(path, event, refs, occurrence_refs):
     return _prepare_editor(families, event, refs, occurrence_refs)
 
 
+def _write_import(writer, *, report, calendar_id, accepted):
+    if accepted is not None:
+        target = writer.get_calendar(calendar_id)
+        if target is None or not target.enabled or target.read_only or target.kind == 'ics':
+            raise ValueError('The selected import calendar is no longer writable.')
+        if writer.path != ':memory:':
+            report = accepted.transform(report)
+    return writer.import_report(report, calendar_id=calendar_id)
+
+
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
 
@@ -110,6 +123,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_memory_bytes = 0
         self._import_dialog_active = False
         self._import_jobs = set()
+        self._failed_imports: dict[str, tuple[AcceptedImportSource, StatusIssue]] = {}
         self._close_after_import = False
         self._import_timer = QTimer(self)
         self._import_timer.setSingleShot(True)
@@ -628,7 +642,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     @property
     def local_issues(self):
-        return tuple(self._local_issues.values())
+        return (*self._local_issues.values(), *(issue for _, issue in self._failed_imports.values()))
 
     def report_error(self, message, *, title='Action failed', action_label='', action=None, close_on_action=True):
         if not message:
@@ -1736,38 +1750,51 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         calendar = self.store.get_default_calendar()
         self._import_dialog_active = True
         memory_bytes = sum(len(source.data) for source in sources if source.data is not None)
+        reserved_bytes = memory_bytes
         submitted_bytes = 0
+
+        def reserve_import(prepared):
+            nonlocal reserved_bytes
+            wire_bytes = sum(item.wire_bytes for item in prepared.items)
+            additional = wire_bytes - reserved_bytes
+            if self._import_memory_bytes + additional > MAX_PENDING_IMPORT_BYTES:
+                return False
+            self._import_memory_bytes += additional
+            reserved_bytes = wire_bytes
+            return True
+
         dialog = None
         try:
             dialog = ImportDialog(self.store.list_calendars(), sources=sources,
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
-                                  preferences=self.preferences, executor=self.executor)
+                                  preferences=self.preferences, executor=self.executor, reserve_import=reserve_import,
+                                  reminder_preferences=load_reminder_preferences(self.store))
             if dialog.exec() == QDialog.DialogCode.Accepted and not self._closed:
-                target = self.store.get_calendar(dialog.selected_calendar_id)
-                if target is None or target.read_only or target.kind == 'ics':
-                    self.report_error('Choose a writable calendar for the import.', title='Import needs a writable calendar',
-                                      action_label='Add calendar…', action=self.add_calendar)
-                elif dialog.selected_prepared is None:
+                if dialog.selected_prepared is None:
                     self.report_error('Wait for the calendar preview before importing.', title='Import preview is not ready')
                 else:
-                    for item in dialog.selected_prepared.items:
-                        source = dialog.selected_sources[item.index]
-                        future = self.executor.submit(item.remap, target.id)
-                        future.calendar_id = target.id
-                        future.source_path = str(source.path) if source.path is not None else ''
-                        future.source_label = item.label
-                        future.retry_source = source
-                        future.import_memory_bytes = len(source.data) if source.data is not None else 0
-                        self._import_jobs.add(future)
-                        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
-                        submitted_bytes += future.import_memory_bytes
+                    prepared = dialog.selected_prepared
+                    for item in prepared.items:
+                        accepted = AcceptedImportSource('import:' + uuid4().hex, item, dialog.selected_calendar_id,
+                                                        prepared.reminder_mode, prepared.reminder_alarms,
+                                                        dialog.selected_sources[item.index].path)
+                        self._submit_import(accepted)
+                        submitted_bytes += item.wire_bytes
         finally:
-            self._import_memory_bytes -= memory_bytes - submitted_bytes
+            self._import_memory_bytes -= reserved_bytes - submitted_bytes
             if dialog is not None:
                 dialog.deleteLater()
             self._import_dialog_active = False
             if self._import_requests and not self._closed:
                 self._import_timer.start(0)
+
+    def _submit_import(self, accepted):
+        future = self.executor.submit(accepted.prepare, self.store.path == ':memory:')
+        future.accepted_import = accepted
+        future.calendar_id = accepted.calendar_id
+        future.import_memory_bytes = accepted.item.wire_bytes
+        self._import_jobs.add(future)
+        future.add_done_callback(lambda result: self.tasks.put(('import', result)))
 
     def export_ics(self, calendar_id=None):
         calendar = self.store.get_calendar(calendar_id) if calendar_id else self.choose_calendar()
@@ -1838,8 +1865,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             value = f'{len(self._view_issues)} series unavailable in this view · open details'
         elif self.results.agenda_mode and self.results.agenda_issues:
             value = f'{len(self.results.agenda_issues)} series unavailable in upcoming events · open details'
-        elif self._local_issues:
-            value = f'{len(self._local_issues)} issue(s) · open details'
+        elif self._local_issues or self._failed_imports:
+            value = f'{len(self._local_issues) + len(self._failed_imports)} issue(s) · open details'
         elif self._last_sync:
             value = 'Last synced ' + self.preferences.format_time(self._last_sync)
         else:
@@ -1870,7 +1897,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                     'resource ' + resource_id + ':' in message
                                     for resource_id in resource_ids.get(calendar_id, ())))
                             for calendar_id, message in warnings)
-        count = (len(self._local_issues) + len(resources) + len(projections)
+        count = (len(self._local_issues) + len(self._failed_imports) + len(resources) + len(projections)
                  + len(self._sync_errors) + warning_count
                  + bool(self.engine and self.engine.conflicts))
         return count, len(resources)
@@ -2028,9 +2055,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self.tray_icon.show()
             self.tray_icon.showMessage('Calendar conflict', message.message, QSystemTrayIcon.MessageIcon.Information)
 
-    def _finish_import_job(self, future):
+    def _finish_import_job(self, future, *, retained=False):
         self._import_jobs.discard(future)
-        self._import_memory_bytes = max(0, self._import_memory_bytes - getattr(future, 'import_memory_bytes', 0))
+        if not retained:
+            self._import_memory_bytes -= getattr(future, 'import_memory_bytes', 0)
         if self._close_after_import and not self._import_jobs:
             QTimer.singleShot(0, self.close)
 
@@ -2053,17 +2081,44 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     def _import_failed(self, error, future):
         self._close_after_import = False
+        accepted = getattr(future, 'accepted_import', None)
+        source = accepted.source_path if accepted else getattr(future, 'source_path', '')
+        label = accepted.item.label if accepted else getattr(future, 'source_label', Path(source).name if source else '')
+        detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(error)
+        self._sync_messages.append(detail)
+        retained = accepted is not None and accepted.item.report is not None
         try:
-            source = getattr(future, 'source_path', '')
-            label = getattr(future, 'source_label', Path(source).name if source else '')
-            detail = 'Import failed' + (' for ' + label if label else '') + ': ' + str(error)
-            self._sync_messages.append(detail)
-            retry_source = getattr(future, 'retry_source', None)
-            retry_path = retry_source.path if retry_source is not None else source or None
-            self.report_error(detail, title='Import failed', action_label='Retry file import…' if retry_path else '',
-                              action=(lambda path=retry_path: self.import_files((path,))) if retry_path else None)
+            if retained:
+                key = accepted.key
+                events = accepted.item.report.events
+                subtitle = accepted.item.label + ' → ' + accepted.calendar_id
+                if events:
+                    subtitle += ' · ' + events[0].title
+                issue = StatusIssue(key, 'Import failed', detail, 'Retry import', lambda: self._retry_import(key),
+                                    subtitle=subtitle, extra_actions=(IssueAction('Discard import', lambda: self._discard_import(key)),))
+                self._failed_imports[key] = accepted, issue
+                self.update_sync_status()
+            else:
+                # No accepted components exist for an unreadable source. A file
+                # can be opened again for a fresh review at its original target.
+                calendar_id = getattr(future, 'calendar_id', None)
+                self.report_error(detail, title='Import failed', action_label='Retry file import…' if source else '',
+                                  action=(lambda: self.import_files((source,), calendar_id=calendar_id)) if source else None)
         finally:
-            self._finish_import_job(future)
+            self._finish_import_job(future, retained=retained)
+
+    def _retry_import(self, key):
+        entry = self._failed_imports.get(key)
+        if entry is not None:
+            self._submit_import(entry[0])
+            del self._failed_imports[key]
+            self.update_sync_status()
+
+    def _discard_import(self, key):
+        entry = self._failed_imports.pop(key, None)
+        if entry is not None:
+            self._import_memory_bytes -= entry[0].item.wire_bytes
+            self.update_sync_status()
 
     def poll(self):
         if self._closed:
@@ -2096,11 +2151,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._import_failed(exc, future)
                 continue
             calendar_id = getattr(future, 'calendar_id', None)
+            accepted = getattr(future, 'accepted_import', None)
+            file_import = accepted is not None and self.store.path != ':memory:'
             self.write_database(
-                lambda writer, prepared=prepared, calendar_id=calendar_id: writer.import_report(prepared, calendar_id=calendar_id),
+                partial(_write_import, report=prepared, calendar_id=calendar_id, accepted=accepted),
                 on_success=lambda report, future=future: self._import_succeeded(report, future),
                 on_error=lambda error, future=future: self._import_failed(error, future),
-                preserve_context=False)
+                preserve_context=False, force_async=file_import)
         if not self.engine:
             return
         updated = False
@@ -2368,6 +2425,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests
                                          for source in sources if source.data is not None)
         self._import_requests.clear()
+        self._import_memory_bytes -= sum(job.item.wire_bytes for job, _ in self._failed_imports.values())
+        self._failed_imports.clear()
         self._view_issues = ()
         if self.engine:
             self.engine.close()
