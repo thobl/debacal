@@ -30,6 +30,7 @@ def database_busy(error):
 class DatabaseCommands(QObject):
     completed = Signal(object)
     pending_changed = Signal(int)
+    write_failed = Signal()
 
     def __init__(self, store, parent=None, *, on_change=None, on_error=None):
         super().__init__(parent)
@@ -124,7 +125,6 @@ class DatabaseCommands(QObject):
         if error is None:
             self._succeeded(value, success)
         else:
-            self._close_callback = None
             self._failed(error, failure)
         self.pending_changed.emit(self.pending)
         if not self.pending and self._close_callback is not None:
@@ -138,10 +138,11 @@ class DatabaseCommands(QObject):
             else:
                 self.on_change()
         except Exception as error:
-            self._close_callback = None
-            self.on_error(error)
+            self._failed(error, None)
 
     def _failed(self, error, callback):
+        self._close_callback = None
+        self.write_failed.emit()
         if callback is not None:
             callback(error)
         else:

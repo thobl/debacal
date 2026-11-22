@@ -16,7 +16,7 @@ from PySide6.QtGui import QCursor, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QLineEdit, QMenu, QDialog, QFileDialog, QScrollArea, QFrame, QAbstractButton, QAbstractItemView,
-    QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QSystemTrayIcon, QStyle,
+    QTextEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit,
 )
 
 from .calendar_widgets import at
@@ -28,6 +28,8 @@ from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
 from .import_dialog import ImportDialog
+from .import_request import ImportRequest
+from .tray import TrayController
 from .import_preparation import AcceptedImportSource
 from .import_sources import ImportSource, MAX_PENDING_IMPORT_BYTES, MAX_PENDING_IMPORT_REQUESTS
 from .conflict_dialog import ConflictDialog
@@ -106,9 +108,10 @@ def _write_import(writer, *, report, calendar_id, accepted):
 
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
+    workspaceClosed = Signal()
 
     def __init__(self, store: Store, enable_sync=True, demo_mode=False, *, profile_label='', credential_namespace='',
-                 delivery_allowed=False, reminder_factory=None):
+                 delivery_allowed=False, reminder_factory=None, imports_allowed=True):
         super().__init__()
         install_button_focus(QApplication.instance())
         self.store = store
@@ -134,7 +137,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._import_dialog_active = False
         self._import_jobs = set()
         self._failed_imports: dict[str, tuple[AcceptedImportSource, StatusIssue]] = {}
-        self._close_after_import = False
+        self._imports_allowed = imports_allowed
+        self._instance = None
+        self._quit_attempt = None
+        self._force_close = False
+        self._open_replacement = None
+        self._hidden_to_tray = False
         self._import_timer = QTimer(self)
         self._import_timer.setSingleShot(True)
         self._import_timer.timeout.connect(self._process_import_request)
@@ -148,7 +156,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._issue_sequence = 0
         self._last_sync = None
         self._notified_conflicts = {}
-        self.tray_icon = None
+        self.tray = TrayController(self, profile_label=profile_label)
+        self.tray.showRequested.connect(self.restore_workspace)
+        self.tray.quitRequested.connect(lambda: self.request_quit(force=True))
+        self.tray.availabilityChanged.connect(self._tray_availability_changed)
+        self.tray.conflictRequested.connect(self._open_tray_conflict)
         self.preferences = Preferences.load(store)
         self.anchor = now().date()
         self._clock_day = self.anchor
@@ -227,6 +239,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.install_mode_shortcuts()
         self.database_commands = DatabaseCommands(self.store, self, on_change=self.refresh,
                                                   on_error=self.report_error)
+        self.database_commands.write_failed.connect(self._cancel_quit)
         self.history_availability = HistoryAvailability(self.store, self, self.update_history_buttons,
                                                         self.report_error)
         self.database_commands.pending_changed.connect(lambda _count: self.update_sync_status())
@@ -456,6 +469,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def _reminder_badge(self, *_):
         count = (self.reminder_controller.unread_count if self.reminder_preferences.enabled
                  and self.reminder_preferences.delivery != 'desktop' and self.reminder_controller else 0)
+        self.tray.set_unread(count)
         title = f'Reminders · {count} unread' if count else 'Reminders'
         button = self.reminder_button
         button.setAccessibleName(title)
@@ -478,7 +492,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def _reminder_availability(self, *_):
         if self._reminder_preferences_dialog:
             desktop = self.reminder_controller.desktop_available if self.reminder_controller else None
-            self._reminder_preferences_dialog.set_reminder_availability(desktop, QSystemTrayIcon.isSystemTrayAvailable())
+            self._reminder_preferences_dialog.set_reminder_availability(desktop, self.tray.available())
 
     def apply_reminder_preferences(self, value):
         self._reminder_settings_changed(value)
@@ -1698,10 +1712,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             calendar = self.store.get_calendar(master.calendar_id)
             if calendar is None or not calendar.enabled:
                 return
-            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self.restore_workspace()
             if event is not None:
                 query = self.search.text().strip()
                 if query and self.filter_search.isChecked() and not event_matches_query(event, query, master):
@@ -1876,15 +1887,59 @@ class MainWindow(WorkspaceChrome, QMainWindow):
     def import_data(self, data, *, label='Standard input', calendar_id=None):
         return self.import_sources((ImportSource.from_data(data, label),), calendar_id=calendar_id)
 
-    def can_accept_import(self, memory_bytes=0, *, requests=1):
-        """Check capacity without reading sources or changing queue state."""
-        return (not self._closed and memory_bytes >= 0 and requests >= 1
-                and len(self._import_requests) + requests <= MAX_PENDING_IMPORT_REQUESTS
+    def bind_instance(self, coordinator):
+        self._instance = coordinator
+        coordinator.admission_check = self._fits_import_budget
+        coordinator.shutting_down = lambda: self._quit_attempt is not None or self._closed
+        coordinator.take_request = self._take_instance_request
+        coordinator.request_received.connect(self.restore_workspace)
+        self.workspaceClosed.connect(coordinator.close)
+
+    def _take_instance_request(self, request):
+        """Move a reserved request to the review queue without calling into the UI."""
+        if self._closed:
+            return False
+        if request:
+            if isinstance(request, ImportRequest):
+                sources = tuple(ImportSource.from_path(path) for path in request.files)
+                sources += (ImportSource.from_data(request.stdin_data),)
+            else:
+                sources = tuple(ImportSource.from_path(path) for path in request)
+            self._enqueue_import(sources, None)
+        return True
+
+    def receive_file_open(self, path):
+        if self._closed:
+            return False
+        self._cancel_quit(restore=False)
+        try:
+            accepted = self.import_files([path])
+        except ValueError as error:
+            self.report_error(str(error), title='Could not open calendar file')
+            accepted = False
+        self.restore_workspace()
+        return accepted
+
+    def _peer_reservations(self):
+        return self._instance.pending_imports if self._instance is not None else (0, 0)
+
+    def _fits_import_budget(self, requests, memory_bytes):
+        return (len(self._import_requests) + requests <= MAX_PENDING_IMPORT_REQUESTS
                 and self._import_memory_bytes + memory_bytes <= MAX_PENDING_IMPORT_BYTES)
+
+    def can_accept_import(self, memory_bytes=0, *, requests=1):
+        """Include undelivered peer reservations without probing any source."""
+        peers, peer_bytes = self._peer_reservations()
+        return (self._imports_allowed and not self._closed and self._quit_attempt is None
+                and memory_bytes >= 0 and requests >= 1
+                and self._fits_import_budget(peers + requests, peer_bytes + memory_bytes))
 
     def import_sources(self, sources, *, calendar_id=None):
         """Queue a reviewed import, including contents received during another dialog."""
         if self._closed:
+            return False
+        if not self._imports_allowed or self._quit_attempt is not None:
+            self.report_error('This workspace is not accepting calendar imports.', title='Import unavailable')
             return False
         sources = tuple(sources)
         if any(not isinstance(source, ImportSource) for source in sources):
@@ -1894,11 +1949,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error('Too many calendar imports are waiting. Finish or cancel current imports before sending more.',
                               title='Import queue is full')
             return False
-        self._import_memory_bytes += memory_bytes
+        self._enqueue_import(sources, calendar_id)
+        return True
+
+    def _enqueue_import(self, sources, calendar_id):
+        self._import_memory_bytes += sum(len(source.data) for source in sources if source.data is not None)
         self._import_requests.append((sources, calendar_id))
         if not self._import_dialog_active:
             self._import_timer.start(0)
-        return True
 
     def _process_import_request(self):
         if self._closed or self._import_dialog_active or not self._import_requests:
@@ -1917,7 +1975,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             nonlocal reserved_bytes
             wire_bytes = sum(item.wire_bytes for item in prepared.items)
             additional = wire_bytes - reserved_bytes
-            if self._import_memory_bytes + additional > MAX_PENDING_IMPORT_BYTES:
+            _, peer_bytes = self._peer_reservations()
+            if self._import_memory_bytes + peer_bytes + additional > MAX_PENDING_IMPORT_BYTES:
                 return False
             self._import_memory_bytes += additional
             reserved_bytes = wire_bytes
@@ -1925,6 +1984,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
         dialog = None
         try:
+            if self._hidden_to_tray:
+                self.restore_workspace()
             dialog = ImportDialog(self.store.list_calendars(), sources=sources,
                                   calendar_id=calendar_id or (calendar.id if calendar else None), parent=self,
                                   preferences=self.preferences, executor=self.executor, reserve_import=reserve_import,
@@ -2203,24 +2264,22 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         self._notified_conflicts[conflict_id] = comparison
         mode = self.preferences.conflict_notifications
-        desktop_available = QSystemTrayIcon.isSystemTrayAvailable() and QSystemTrayIcon.supportsMessages()
         if not self.engine or not self.engine.conflicts:
             self.report_error(message.message, title='Calendar conflict')
         self.update_sync_status()
-        if mode in ('desktop', 'both') and desktop_available:
-            if self.tray_icon is None:
-                self.tray_icon = QSystemTrayIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation), self)
-                self.tray_icon.setToolTip('Debacal · calendar conflicts')
-                self.tray_icon.messageClicked.connect(self.show_conflicts)
-                self.tray_icon.show()
-            self.tray_icon.showMessage('Calendar conflict', message.message, QSystemTrayIcon.MessageIcon.Information)
+        if mode in ('desktop', 'both'):
+            self.tray.notify_conflict(message.message)
+
+    def _open_tray_conflict(self):
+        self.restore_workspace()
+        self.show_conflicts()
 
     def _finish_import_job(self, future, *, retained=False):
         self._import_jobs.discard(future)
         if not retained:
             self._import_memory_bytes -= getattr(future, 'import_memory_bytes', 0)
-        if self._close_after_import and not self._import_jobs:
-            QTimer.singleShot(0, self.close)
+        if self._quit_attempt is not None and not self._import_jobs:
+            QTimer.singleShot(0, self, partial(self._resume_quit, self._quit_attempt))
 
     def _import_succeeded(self, report, future):
         try:
@@ -2240,7 +2299,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self._finish_import_job(future)
 
     def _import_failed(self, error, future):
-        self._close_after_import = False
+        self._cancel_quit()
         accepted = getattr(future, 'accepted_import', None)
         source = accepted.source_path if accepted else getattr(future, 'source_path', '')
         label = accepted.item.label if accepted else getattr(future, 'source_label', Path(source).name if source else '')
@@ -2564,16 +2623,75 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 return action
         return None
 
+    def restore_workspace(self) -> None:
+        if self._closed:
+            return
+        self._hidden_to_tray = False
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        target = QApplication.activeModalWidget() or self
+        target.raise_()
+        target.activateWindow()
+
+    def _tray_availability_changed(self, available):
+        if not available and self._hidden_to_tray:
+            self.restore_workspace()
+        self._reminder_availability()
+
+    def request_quit(self, *, force: bool = False) -> None:
+        if self._closed:
+            return
+        self._force_close = force
+        try:
+            self.close()
+        finally:
+            self._force_close = False
+
+    def retire_for_replacement(self, open_replacement):
+        self._open_replacement = open_replacement
+        self.request_quit(force=True)
+
+    def _resume_quit(self, attempt):
+        if attempt is self._quit_attempt and not self._closed:
+            self.request_quit(force=True)
+
+    def _cancel_quit(self, *, restore=True):
+        if self._quit_attempt is not None:
+            self._quit_attempt = None
+            self._open_replacement = None
+            if restore:
+                self.restore_workspace()
+
     def closeEvent(self, event):
-        self._editor_request += 1
-        if self._import_jobs:
-            self._close_after_import = True
+        if self._closed:
+            event.accept()
+            return
+        if (self._quit_attempt is None and not self._force_close
+                and self.reminder_preferences.close_behavior == 'tray' and self.tray.available()):
+            event.ignore()
+            if self.occurrence_picker or self._import_dialog_active or QApplication.activeModalWidget():
+                self.restore_workspace()
+            else:
+                self._hidden_to_tray = True
+                self.hide()
+            return
+
+        if self._quit_attempt is None:
+            self._quit_attempt = object()
+        if self._peer_reservations()[0] or self._import_requests or self._import_dialog_active or self._failed_imports:
+            self._cancel_quit()
             event.ignore()
             return
-        if hasattr(self, 'database_commands') and self.database_commands.request_close(self.close):
+        if self._import_jobs or self.database_commands.request_close(partial(self._resume_quit, self._quit_attempt)):
             event.ignore()
             return
+        if self._open_replacement is not None and not self._open_replacement():
+            self._cancel_quit()
+            event.ignore()
+            return
+        self._open_replacement = None
         self._closed = True
+        self._editor_request += 1
         if self.reminder_controller:
             self.reminder_controller.stop()
         if self._reminder_dialog:
@@ -2586,18 +2704,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self.clock_timer.stop()
         self.search_timer.stop()
         self._import_timer.stop()
-        self._import_memory_bytes -= sum(len(source.data) for sources, _calendar in self._import_requests
-                                         for source in sources if source.data is not None)
-        self._import_requests.clear()
-        self._import_memory_bytes -= sum(job.item.wire_bytes for job, _ in self._failed_imports.values())
-        self._failed_imports.clear()
         self._view_issues = ()
         if self.engine:
             self.engine.close()
-        if self.tray_icon:
-            self.tray_icon.hide()
+        self.tray.close()
         self.database_commands.shutdown()
         self.history_availability.shutdown()
         self._editor_executor.shutdown(wait=False, cancel_futures=True)
         self.executor.shutdown(wait=False, cancel_futures=True)
         event.accept()
+        self.workspaceClosed.emit()

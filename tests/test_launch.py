@@ -69,6 +69,7 @@ opened, imports, claims = [], [], []
 
 class Window(QWidget):
     real_workspace_requested = Signal()
+    workspaceClosed = Signal()
 
     def __init__(self, store, **options):
         super().__init__()
@@ -77,12 +78,23 @@ class Window(QWidget):
         opened.append({'database': str(store.path), **options})
         QTimer.singleShot(60, QApplication.instance().quit)
 
-    def import_files(self, files):
-        imports.append([str(path) for path in files])
+    def restore_workspace(self):
+        self.show()
+
+    def bind_instance(self, coordinator):
+        coordinator.request_received.connect(lambda files: imports.append(list(files)) if files else None)
+
+    def import_sources(self, sources):
+        imports.append([str(source.path) for source in sources])
+        return True
+
+    def request_quit(self, *, force=False):
+        self.close()
 
     def closeEvent(self, event):
         self._closed = True
         super().closeEvent(event)
+        self.workspaceClosed.emit()
 
 launch.MainWindow = Window
 

@@ -106,7 +106,7 @@ def test_sync_status_includes_actionable_error_details(workspace):
 def test_desktop_conflicts_fall_back_to_in_app_when_unavailable(workspace):
     window, _ = workspace
     window.preferences = replace(window.preferences, conflict_notifications='desktop')
-    with patch('debacal.ui.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
+    with patch('debacal.tray.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
         window.notify_conflict(SyncMessage('conflict', 'An event changed on both sides.'))
     assert 'changed on both sides' in window.local_issues[-1].details
     assert not window.warning_button.isHidden()
