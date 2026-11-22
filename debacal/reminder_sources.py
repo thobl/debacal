@@ -1,7 +1,7 @@
 """Worker-owned, read-only snapshots of incremental reminder inputs."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import chain
@@ -28,6 +28,13 @@ def _file_id(path):
     return stat.st_dev, stat.st_ino
 
 
+def _incarnation(db) -> str:
+    row = db.execute('SELECT token FROM database_incarnation WHERE id=1').fetchone()
+    if row is None or not isinstance(row[0], str) or not row[0]:
+        raise sqlite3.OperationalError('The calendar database incarnation is unavailable.')
+    return row[0]
+
+
 class ReminderSources:
     def __init__(self, database: str):
         if database == ':memory:':
@@ -35,9 +42,9 @@ class ReminderSources:
         self._path = Path(database).absolute()
         self._connection = None
         self._main_id = self._wal_id = None
+        self._marker = self._expected = None
         self._closed = False
-        with self._snapshot():
-            pass
+        self.incarnation()
 
     def _checked_wal(self, target, main_id):
         try:
@@ -52,7 +59,21 @@ class ReminderSources:
         return wal_id
 
     @contextmanager
-    def _snapshot(self):
+    def for_incarnation(self, token: str):
+        """Require this durable identity inside every SQLite snapshot in the scope."""
+        if not isinstance(token, str) or not token:
+            raise ValueError('A nonempty calendar database incarnation is required.')
+        previous = self._expected
+        if previous is not None and previous != token:
+            raise ValueError('A nested reminder read requires the same incarnation.')
+        self._expected = token
+        try:
+            yield self
+        finally:
+            self._expected = previous
+
+    @contextmanager
+    def _snapshot(self, *, refresh_identity=False):
         if self._closed:
             raise sqlite3.ProgrammingError('The reminder source reader is closed.')
         target = self._path.resolve(strict=True)
@@ -64,8 +85,19 @@ class ReminderSources:
         try:
             db.row_factory = sqlite3.Row
             db.execute('BEGIN')
-            db.execute('PRAGMA schema_version').fetchone()  # Pin the snapshot, including its WAL.
+            marker = _incarnation(db)  # Pins the identity and all subsequent rows to one WAL snapshot.
             wal_id = self._checked_wal(target, main_id)
+            if self._expected is not None and marker != self._expected:
+                raise sqlite3.OperationalError('The calendar database incarnation differs from the expected profile.')
+            if main_id != self._main_id or marker != self._marker:
+                if main_id == self._main_id and not refresh_identity:
+                    raise sqlite3.OperationalError('The calendar database incarnation changed. Refresh the profile identity.')
+                # A directory can move away and back between two successful stat
+                # checks. Confirm a new inode/token pairing through the selected
+                # name after the primary connection has pinned its own marker.
+                with closing(sqlite3.connect(target.as_uri() + '?mode=ro', uri=True)) as selected:
+                    if _incarnation(selected) != marker:
+                        raise sqlite3.OperationalError('The pinned calendar incarnation differs from the selected profile.')
             yield db
             if self._checked_wal(target, main_id) != wal_id:
                 raise sqlite3.OperationalError('The calendar WAL changed during a read. Retry the profile.')
@@ -78,11 +110,12 @@ class ReminderSources:
         if self._connection is not None:
             self._connection.close()
         self._connection = db
-        self._main_id, self._wal_id = main_id, wal_id
+        self._main_id, self._wal_id, self._marker = main_id, wal_id, marker
 
     def incarnation(self) -> str:
-        with self._snapshot() as db:
-            return db.execute('SELECT token FROM database_incarnation WHERE id=1').fetchone()[0]
+        with self._snapshot(refresh_identity=True):
+            pass
+        return self._marker
 
     def revision(self) -> int:
         with self._snapshot() as db:

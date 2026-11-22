@@ -315,3 +315,74 @@ def test_replaced_main_with_retained_wal_suspends_all_reads_until_coherent(tmp_p
             restored_marker = restored.connection.execute('SELECT token FROM database_incarnation').fetchone()[0]
         assert reader.incarnation() == restored_marker
         assert [source.event_id for source in reader.scan()] == ['restored']
+
+
+@pytest.mark.parametrize('known_profile', [True, False])
+@pytest.mark.parametrize('read', ['scan', 'incarnation'])
+def test_directory_swap_while_pinning_cannot_misattribute_a_batch(tmp_path, known_profile, read):
+    active, other, staged = (tmp_path / name for name in ('active', 'other', 'staged'))
+    for directory in (active, other, staged):
+        with Store(directory / 'main', query_index=False) as store:
+            store.apply_remote([event(directory.name)])
+    with closing(ReminderSources(str(active / 'main'))) as reader:
+        if not known_profile:
+            active.rename(tmp_path / 'initial')
+            staged.rename(active)
+        parked = tmp_path / 'parked'
+        check = reader._checked_wal
+        calls = 0
+
+        def swap_only_while_sqlite_opens(target, main_id):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                result = check(target, main_id)
+                active.rename(parked)
+                other.rename(active)
+                return result
+            if calls == 2:
+                active.rename(other)
+                parked.rename(active)
+            return check(target, main_id)
+
+        with patch.object(reader, '_checked_wal', swap_only_while_sqlite_opens):
+            with pytest.raises(sqlite3.OperationalError, match='incarnation'):
+                getattr(reader, read)()
+        with closing(ReminderSources(str(active / 'main'))) as independent:
+            assert reader.incarnation() == independent.incarnation()
+        assert [change.event_id for change in reader.scan()] == ['active' if known_profile else 'staged']
+
+
+def test_expected_incarnation_guards_entire_batch_and_empty_scalar_reads(tmp_path):
+    active, other = tmp_path / 'active', tmp_path / 'other'
+    for directory in (active, other):
+        with Store(directory / 'main', query_index=False) as store:
+            store.apply_remote([event(directory.name)])
+    with closing(ReminderSources(str(active / 'main'))) as reader:
+        original = reader.incarnation()
+        with reader.for_incarnation(original):
+            assert reader.revision() == 1
+            active.rename(tmp_path / 'original')
+            other.rename(active)
+            for read in (reader.scan, reader.incarnation, reader.revision, reader.calendar_states,
+                         lambda: reader.changes((10, '')), lambda: reader.source_stamp('absent')):
+                with pytest.raises(sqlite3.OperationalError, match='incarnation'):
+                    read()
+        assert reader.incarnation() != original
+        assert reader.scan()[0].event_id == 'other'
+
+
+def test_same_inode_token_change_can_rebootstrap_after_identity_refresh(tmp_path):
+    path = tmp_path / 'main'
+    with Store(path, query_index=False) as writer, closing(ReminderSources(str(path))) as reader:
+        previous = reader.incarnation()
+        writer.connection.execute('UPDATE database_incarnation SET token=lower(hex(randomblob(16)))')
+        writer.connection.commit()
+        with reader.for_incarnation(previous), pytest.raises(sqlite3.OperationalError, match='incarnation'):
+            reader.scan()
+        with pytest.raises(sqlite3.OperationalError, match='Refresh'):
+            reader.scan()
+        current = reader.incarnation()
+        assert current != previous
+        with reader.for_incarnation(current):
+            assert reader.scan() == ()
