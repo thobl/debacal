@@ -451,14 +451,22 @@ class ReminderStore:
             checked = self._snooze_source(key)
             if checked is None:
                 return False
-            eligibility = inbox_policy.snooze_eligibility(checked[0])
+            calendar, _, published_revision, *_ = checked
+            eligibility = inbox_policy.snooze_eligibility(calendar)
             enabled, policy, *_ = eligibility
             if not enabled or policy.mode == 'mute' or policy.mode == 'replace' and not policy.alarms:
                 return False
-            if self._policy_unpublished(key, checked[0], policy):
-                verified_revision, event = self._snooze_calendar(key, checked, read_event=True)
-                if event is None or not self._matches_alarm(key, event, policy):
+            unpublished_policy = self._policy_unpublished(key, calendar, policy)
+            verified_revision, event = self._snooze_calendar(key, checked, read_event=unpublished_policy)
+            if verified_revision is None:
+                return False
+            if not unpublished_policy and verified_revision != published_revision:
+                # The journal can coalesce an alarm removal and restoration before the owner polls.
+                content_revision, event = self._snooze_calendar(key, checked, read_event=True)
+                if content_revision != verified_revision:
                     return False
+            if event is not None and not self._matches_alarm(key, event, policy):
+                return False
         with self._write():
             if self._partition.get('incoherent') or partition is not None and self.partition_id != partition:
                 return False
@@ -467,7 +475,7 @@ class ReminderStore:
                 return False
             if inbox_policy is not None:
                 revision, _ = self._snooze_calendar(key, active, read_event=False)
-                if revision is None or verified_revision is not None and revision != verified_revision:
+                if revision != verified_revision:
                     return False
                 current = read_reminder_policy(self._partition.target)
                 if current.snooze_eligibility(active[0]) != eligibility:

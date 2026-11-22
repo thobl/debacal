@@ -739,6 +739,85 @@ def test_secondary_inbox_snoozes_published_active_alarm(native_history):
         peer.release()
 
 
+@pytest.fixture(params=['owner', 'secondary'])
+def daily_inbox_action(native_history, request):
+    from alarm_support import FakeTransport
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, owner, enable, drain, _ = native_history
+    source = event('daily', BASE, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = owner.store.inbox()
+    assert entry.status == 'delivered'
+    key = entry.reminder.key
+    owner.store.mark_read((key,), partition=owner.store.partition_id)
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        peer.tick()
+        assert peer.owner is None
+        action = owner if request.param == 'owner' else peer
+        yield writer, clock, drain, source, key, action
+    finally:
+        peer.release()
+
+
+@pytest.mark.parametrize('edit', ['remove', 'key', 'uid', 'trigger', 'description'])
+def test_inbox_snooze_qualifies_pending_event_alarm_edit(daily_inbox_action, edit, monkeypatch):
+    from debacal.reminder_sources import ReminderSources
+    writer, clock, drain, source, key, action = daily_inbox_action
+    alarm, = source.alarms
+    edited = source
+    if edit in ('description', 'key'):
+        # A local key alone is excluded from the Store's semantic edit comparison.
+        edited = replace(source, description='Revised notes')
+    if edit == 'remove':
+        edited = replace(edited, alarms=())
+    elif edit != 'description':
+        changes = {'key': 'different-key', 'uid': 'different-uid', 'trigger': '-PT1M'}
+        edited = replace(edited, alarms=(replace(alarm, **{edit: changes[edit]}),))
+    assert writer.apply('Edit event', [edited]) is not None
+    assert writer.get_event(source.id).alarms == edited.alarms
+    content_reads = []
+    read_source = ReminderSources.snooze_source
+
+    def observe(reader, source_id, *args, read_event):
+        if read_event:
+            content_reads.append((source_id, action.store._db.in_transaction))
+        return read_source(reader, source_id, *args, read_event=read_event)
+
+    monkeypatch.setattr(ReminderSources, 'snooze_source', observe)
+    action.command('snooze', (action.store.partition_id, key, 5*MINUTE))
+    action_deadline = action.store.entry(key).snoozed_until
+    if edit != 'description':
+        # The owner's next journal read sees only this final, restored alarm.
+        writer.apply('Restore alarm', [source])
+    drain()
+    reconciled_deadline = action.store.entry(key).snoozed_until
+    clock.time = BASE+5*MINUTE
+    drain()
+    receipt = action.store.entry(key)
+    deadline = BASE+5*MINUTE if edit == 'description' else None
+    assert (action_deadline, reconciled_deadline, receipt.status, receipt.unread) == (
+        deadline, deadline, 'delivered', edit == 'description')
+    assert content_reads == [(source.id, False)]
+
+
+def test_inbox_snooze_rechecks_stable_event_revision_in_writer(daily_inbox_action, monkeypatch):
+    writer, _, _, source, key, action = daily_inbox_action
+    begin_write = action.store._write
+
+    def edit_before_write():
+        writer.apply('Change description during Snooze', [replace(source, description='New revision')])
+        return begin_write()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(action.store, '_write', edit_before_write)
+        action.command('snooze', (action.store.partition_id, key, 5*MINUTE))
+    assert action.store.entry(key).snoozed_until is None
+    action.command('snooze', (action.store.partition_id, key, 5*MINUTE))
+    assert action.store.entry(key).snoozed_until == BASE+5*MINUTE
+
 
 @pytest.mark.parametrize('transition', ['event_to_replace', 'replace_to_event', 'replace_to_replace', 'same_replacement', 'expanded_replacement'])
 @pytest.mark.parametrize('published', [False, True])
@@ -780,12 +859,12 @@ def test_secondary_snooze_tracks_current_replacement_membership(native_history, 
         deadline = owner.store.entry(original.reminder.key).snoozed_until
         assert deadline == (BASE+5*MINUTE if transition in ('same_replacement', 'expanded_replacement') else None)
         if not published:
-            expected = [False] if transition == 'same_replacement' else [True]
+            expected = [False, False] if transition == 'same_replacement' else [True]
             if transition == 'expanded_replacement':
                 expected.append(False)
             assert reads == expected
         elif reads:
-            assert reads == [False]
+            assert reads == [False, False]
     finally:
         peer.release()
 

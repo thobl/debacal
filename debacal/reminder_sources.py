@@ -207,7 +207,7 @@ class ReminderSources:
             return row[0] if row is not None else None
 
     def snooze_source(self, event_id, calendar_id, generation, *, read_event):
-        """Verify one enabled source. Only a policy transition needs its alarm content."""
+        """Return the enabled source's revision and any requested alarm content from one snapshot."""
         projection = ',e.data' if read_event else ''
         with self._snapshot() as db:
             row = db.execute('SELECT coalesce(ch.version,0)'+projection+' FROM events e LEFT JOIN event_query_changes ch '

@@ -90,6 +90,8 @@ def test_alarmed_placement_hovers_only_move_geometry(gesture, legacy):
             child, = map(Event.from_dict, result.recurrence_overrides.values())
             assert child.alarms[0].trigger == '20261230T110000Z'
         finally:
+            if gesture == 'paste':
+                app.clipboard().clear()
             release_widget(window)
 
 
