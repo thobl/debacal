@@ -151,6 +151,8 @@ def test_queued_editor_uses_snapshot_after_dialog_is_deleted(tmp_path, monkeypat
                 self.mode_changed = Signal()
                 self.deleted = False
                 instances.append(self)
+            def alarm_edit(self):
+                return None
             def exec(self):
                 return QDialog.DialogCode.Accepted
             def deleteLater(self):
@@ -163,7 +165,7 @@ def test_queued_editor_uses_snapshot_after_dialog_is_deleted(tmp_path, monkeypat
                 begin = monotonic()
                 window.edit_event(original.id)
                 assert monotonic() - begin < .2
-                assert instances[0].deleted
+                until(lambda: instances and instances[0].deleted)
                 assert window.database_commands.pending == 1
             until(lambda: window.database_commands.pending == 0)
             assert store.get_event(original.id).title == 'Saved snapshot'

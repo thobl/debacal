@@ -91,17 +91,14 @@ class CalendarOccurrencePicker(QObject):
         self.rebuild()
 
     def rebuild(self):
-        self.master = self.dialog.calendar_occurrence_master()
+        before, self.master = self.dialog.calendar_occurrence_preview()
         self.index = EventRangeIndex()
         if self.master is not None:
             self.index.upsert(self.master)
-        if self.dialog.series is not None and self.dialog.scope.currentData() == 'future':
-            from .series_operations import reidentify_series, updated_future
-            before, _after = updated_future(self.dialog.series, self.dialog.original,
-                                            self.dialog.build_events()[0], self.dialog.schedule_replacement)
-            if before is not None:
-                identity = 'occurrence-context:' + before.id
-                self.index.upsert(reidentify_series(before, identity, identity))
+        if before is not None:
+            from .series_operations import reidentify_series
+            identity = 'occurrence-context:' + before.id
+            self.index.upsert(reidentify_series(before, identity, identity))
 
     def changed(self):
         self.rebuild()

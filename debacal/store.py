@@ -45,7 +45,91 @@ class EventOwnershipConflict(ValueError):
     """A resource claims an ID or UID already owned by another resource."""
 
 
-class Store:
+def resolve_indexed_occurrence(record, event_id, key):
+    """Resolve one explicit or rule-generated identity from a prepared family."""
+    if record is None or record.error is not None:
+        return None
+    item = record.occurrences.get(event_id)
+    if item is not None:
+        from .event_range_index import _local_floating
+        return _local_floating(item)
+    if record.prepared is None:
+        return None  # A fully indexed finite schedule has no other IDs.
+    master = record.master
+    if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
+        return None
+    try:
+        # Selection refresh uses the same prepared seek plan. It must
+        # not reparse a large master merely to confirm membership.
+        from .timeutil import local_zone
+        return record.prepared.occurrence_at(
+            key, floating_zone=local_zone() if master.floating_time else None)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+class _CanonicalEventReader:
+    """Named-resource reads shared by the workspace and independent editor snapshots."""
+    @contextmanager
+    def read_snapshot(self):
+        """Read a consistent WAL snapshot without claiming the writer slot."""
+        with self._lock:
+            own = not self.connection.in_transaction
+            if own:
+                self.connection.execute('BEGIN')
+            try:
+                yield
+            finally:
+                if own:
+                    self.connection.rollback()
+
+    def get_event(self, event_id: str) -> Event | None:
+        with self._lock:
+            row = self.connection.execute("SELECT data FROM events WHERE id=?", (event_id,)).fetchone()
+            return Event.from_dict(json.loads(row[0])) if row else None
+
+    def get_events(self, event_ids: Iterable[str]) -> list[Event]:
+        """Fetch only requested resources; missing IDs are omitted."""
+        keys = list(dict.fromkeys(event_ids))
+        result = []
+        with self._lock:
+            for offset in range(0, len(keys), 500):
+                chunk = keys[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                result.extend(Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                    f"SELECT data FROM events WHERE id IN ({placeholders})", chunk,
+                ))
+        return result
+
+    def get_events_with_alarms(self, identities: Iterable[str]) -> list[Event]:
+        """Read the named canonical families and resolve their retained reminders."""
+        return [alarm_ics.hydrate_alarms(event) for event in self.get_events(identities)]
+
+    def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
+        """Load a legacy group without decoding unrelated calendar resources."""
+        if not group_id:
+            return []
+        with self._lock:
+            return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
+                "SELECT data FROM events WHERE calendar_id=? AND group_id=? ORDER BY start,end,id",
+                (calendar_id, group_id),
+            )]
+
+
+@contextmanager
+def open_editor_reader(path):
+    """Pin a read-only WAL connection without initializing any workspace services."""
+    reader = _CanonicalEventReader()
+    reader._lock = threading.RLock()
+    reader.connection = sqlite3.connect(Path(path).absolute().as_uri() + '?mode=ro', uri=True)
+    try:
+        with reader.read_snapshot():
+            yield reader
+    finally:
+        reader.connection.close()
+
+
+class Store(_CanonicalEventReader):
     def __init__(self, path: str | Path, *, query_index: bool = True):
         self.path = str(path)
         legacy_profile = self.path != ':memory:' and Path(self.path).is_file() and Path(self.path).stat().st_size > 0
@@ -331,19 +415,6 @@ class Store:
         with self._lock:
             with self._ui_state.transaction():
                 yield
-
-    @contextmanager
-    def read_snapshot(self):
-        """Read a consistent WAL snapshot without claiming the writer slot."""
-        with self._lock:
-            own = not self.connection.in_transaction
-            if own:
-                self.connection.execute('BEGIN')
-            try:
-                yield
-            finally:
-                if own:
-                    self.connection.rollback()
 
     def configure_ui_access(self, maintenance_callback, mutation_callback=None):
         """Make foreground reads fail-fast and delegate derived-data repairs.
@@ -650,28 +721,6 @@ class Store:
         with self._transaction():
             self.connection.execute('DELETE FROM quarantined_resources WHERE calendar_id=? AND resource_id=?',
                                     (calendar_id, resource_id))
-
-    def get_event(self, event_id: str) -> Event | None:
-        with self._lock:
-            row = self.connection.execute("SELECT data FROM events WHERE id=?", (event_id,)).fetchone()
-            return Event.from_dict(json.loads(row[0])) if row else None
-
-    def get_events(self, event_ids: Iterable[str]) -> list[Event]:
-        """Fetch only requested resources; missing IDs are omitted."""
-        keys = list(dict.fromkeys(event_ids))
-        result = []
-        with self._lock:
-            for offset in range(0, len(keys), 500):
-                chunk = keys[offset:offset + 500]
-                placeholders = ",".join("?" for _ in chunk)
-                result.extend(Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
-                    f"SELECT data FROM events WHERE id IN ({placeholders})", chunk,
-                ))
-        return result
-
-    def get_events_with_alarms(self, identities: Iterable[str]) -> list[Event]:
-        """Read the named canonical families and resolve their retained reminders."""
-        return [alarm_ics.hydrate_alarms(event) for event in self.get_events(identities)]
 
     def get_events_by_uid(self, calendar_id: str, uids: Iterable[str]) -> list[Event]:
         """Find matching resource owners without decoding a whole calendar.
@@ -1029,16 +1078,6 @@ class Store:
                     cls._floating_timestamp(event.end.date().isoformat(), zone), event.id)
         return event.start.timestamp(), event.end.timestamp(), event.id
 
-    def list_group_events(self, calendar_id: str, group_id: str) -> list[Event]:
-        """Load a legacy group without decoding unrelated calendar resources."""
-        if not group_id:
-            return []
-        with self._lock:
-            return [Event.from_dict(json.loads(row[0])) for row in self.connection.execute(
-                "SELECT data FROM events WHERE calendar_id=? AND group_id=? ORDER BY start,end,id",
-                (calendar_id, group_id),
-            )]
-
     def query_occurrences(self, start: datetime, end: datetime, calendar_ids: Iterable[str] | None = None,
                           *, issues: list | None = None) -> list[Event]:
         """Project a view; optionally isolate and report over-budget sources.
@@ -1176,25 +1215,7 @@ class Store:
                 from .event_range_index import EventRangeIndex
                 master = self.get_event(master_id)
                 record = EventRangeIndex.prepare(master) if master is not None else None
-            if record is None or record.error is not None:
-                return None
-            item = record.occurrences.get(event_id)
-            if item is not None:
-                from .event_range_index import _local_floating
-                return _local_floating(item)
-            if record.prepared is None:
-                return None  # A fully indexed finite schedule has no other IDs.
-            master = record.master
-            if not master.recurring or key in record.prepared.excluded or key in record.prepared.override_keys:
-                return None
-            try:
-                # Selection refresh uses the same prepared seek plan. It must
-                # not reparse a large master merely to confirm membership.
-                from .timeutil import local_zone
-                return record.prepared.occurrence_at(
-                    key, floating_zone=local_zone() if master.floating_time else None)
-            except (ValueError, TypeError, OverflowError):
-                return None
+            return resolve_indexed_occurrence(record, event_id, key)
 
     @staticmethod
     def _family_alarm_fields(item, master):

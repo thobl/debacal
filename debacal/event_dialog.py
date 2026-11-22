@@ -14,6 +14,11 @@ from PySide6.QtWidgets import (
     QSizePolicy, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from .alarm_series import is_relative, materialize_alarms
+from .alarms import AlarmEdit
+from .reminder_editor import ReminderEditor
+from .reminder_preferences import ReminderPreferences, instantiate_reminder_templates
+from .selection import selection_roots
 from .appearance import stylesheet, widget_palette
 from .button_focus import install_button_focus
 from .buttons import action_button, icon_button
@@ -40,6 +45,26 @@ from .shortcuts import shortcut_keys, shortcut_label, shortcut_sequences
 
 
 REGULAR_KINDS = ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')
+
+
+def _timing_event(event):
+    """Keep recurrence and authored content while leaving wire metadata outside visual projections."""
+    if event is None:
+        return None
+    overrides = {key: dict(payload, raw_ics='', alarms=[]) for key, payload in event.recurrence_overrides.items()}
+    return replace(event, raw_ics='', alarms=(), recurrence_overrides=overrides)
+
+
+class EditorFamilies:
+    """The reviewed resources used for all selection scopes in one editor."""
+    def __init__(self, events):
+        self.events = {event.id: event for event in events}
+
+    def get_event(self, identity):
+        return self.events.get(identity)
+
+    def list_group_events(self, calendar_id, group_id):
+        return [event for event in self.events.values() if event.calendar_id == calendar_id and event.group_id == group_id]
 
 
 class RangeFields(QWidget):
@@ -195,7 +220,8 @@ class EventDialog(FormDialog):
 
     def __init__(self, calendars, start, end=None, event=None, parent=None,
                  preferences=None, edit_scope='single', series=None, default_calendar_id=None,
-                 scope_bindings=None, common_fields_only=False):
+                 scope_bindings=None, common_fields_only=False, reminder_preferences=None,
+                 selected_refs=(), selected_families=None, occurrence_refs=()):
         super().__init__(parent)
         self.preferences = preferences or Preferences()
         self.setPalette(widget_palette(self.preferences))
@@ -204,6 +230,11 @@ class EventDialog(FormDialog):
         self.setWindowTitle('Edit event' if event else 'Create event')
         install_button_focus(QApplication.instance())
         self.original, self.series = event, series
+        self._timing_series = _timing_event(series)
+        self.reminder_preferences = reminder_preferences or ReminderPreferences()
+        self._selected_refs = tuple(selected_refs) or ((event,) if event else ())
+        self._occurrence_refs = occurrence_refs
+        self._selected_families = selected_families or EditorFamilies([series or event] if event else [])
         self.calendars = list(calendars)
         self.common_fields_only = bool(common_fields_only)
         self.has_group = bool((series and series.recurring)
@@ -216,6 +247,7 @@ class EventDialog(FormDialog):
         self._validation_field = None
         self._schedule_error = None
         self._scope_sources, self._scope_values = {}, {}
+        self._initial_scope = edit_scope
         self._scope_name = edit_scope if self._scope_available and edit_scope in ('single', 'group', 'future') else 'single'
         self._repeat_draft = None
         self._custom_draft = None
@@ -417,11 +449,21 @@ class EventDialog(FormDialog):
         scheduling.addWidget(self.recurrence_details)
         self._divider(sections)
         self.notes_section, notes = self._section(sections)
-        notes.addWidget(self._heading('Notes'))
+        self.notes_choice = ChoiceControl([('Notes', 'notes'), ('Reminders', 'reminders')], self.preferences)
+        notes.addWidget(self.notes_choice)
+        self.notes_pages = QStackedWidget()
+        self.notes_pages.setMinimumHeight(round(96 * scale))
         self.description = QTextEdit()
         self.description.setMinimumHeight(round(96 * scale))
         self.description.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        notes.addWidget(self.description, 1)
+        self.notes_pages.addWidget(self.description)
+        self.reminders = ReminderEditor(parent=self)
+        self.reminders.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.notes_pages.addWidget(self.reminders)
+        self.notes_choice.currentIndexChanged.connect(self.notes_pages.setCurrentIndex)
+        self.reminders.series_requested.connect(lambda: self.scope.setCurrentData('group'))
+        self.reminders.changed.connect(self._update_preview)
+        notes.addWidget(self.notes_pages, 1)
         sections.setStretch(sections.indexOf(self.notes_section), 1)
         outer.addWidget(self.sidebar)
         self.preview_column = QWidget()
@@ -457,11 +499,13 @@ class EventDialog(FormDialog):
             self.all_day, self.start.lineEdit(), self.end.lineEdit(), self.duration, *self.schedule_mode.buttons.values(),
             *self.repeat.buttons.values(), self.interval, self.repeat_count, self.repeat_until.lineEdit(),
             *self.overflow_policy.buttons.values(), self.pattern, self.add_occurrence_button,
-            self.add_occurrences_button, self.description,
+            self.add_occurrences_button, *self.notes_choice.buttons.values(), self.description, self.reminders.add_button,
             self.preview.previous_button, self.preview.today_button, self.preview.next_button, self.preview.first_button,
             self.preview.previous_occurrence_button, self.preview.next_occurrence_button, self.preview.last_button],
             [self.save_button, self.cancel_button], self.save,
             [self.scope_bindings[action] for action in MODE_ACTIONS if self.scope_bindings.get(action)] if self._scope_available else ())
+        self.reminders.next_focus_widget = self.preview.previous_button
+        self.reminders.arrange_focus()
         self.mode_shortcuts = {}
         for action, scope in MODE_ACTIONS.items():
             binding = self.scope_bindings.get(action, '')
@@ -542,6 +586,10 @@ class EventDialog(FormDialog):
         self.preview.occurrence_edit_requested.connect(self.edit_occurrence)
 
     def _calendar_selected(self, *_):
+        policy = self.reminder_preferences.calendars.get(self.calendar.currentData())
+        label = {'mute': 'Delivery muted locally', 'replace': 'Local reminders replace saved reminders'}
+        self.reminders.policy_hint.setText(label.get(policy.mode, '') if policy else '')
+        self.reminders.policy_hint.setVisible(bool(self.reminders.policy_hint.text()))
         if not self._loading and self.original is not None:
             self.calendar_change_requested = True
 
@@ -566,7 +614,7 @@ class EventDialog(FormDialog):
         return (event_zone(source) if source and (source.timezone_definitions or
                 source.schedule_expression and source.schedule_syntax == 2) else local_zone())
 
-    def _load_scope(self, scope, start=None, end=None):
+    def _load_scope(self, scope, start=None, end=None, *, reminder_state=None):
         self._schedule_error = None
         reference = self.edit_reference
         source = self.schedule_source(scope)
@@ -589,6 +637,7 @@ class EventDialog(FormDialog):
         self._timed_range = None
         self._timed_duration = None
         self._set_range(start, end)
+        self._load_reminders(scope, reminder_state)
         self.title.setText(reference.title if reference else '')
         self.location.setText(reference.location if reference else '')
         self.description.setPlainText(reference.description if reference else '')
@@ -606,6 +655,52 @@ class EventDialog(FormDialog):
         self.schedule_mode.setCurrentData('alternatives' if reference and reference.candidate else
                                           'repeat' if source and source.recurring else 'single')
         self.selected_preview_event = None
+
+    def alarm_edit(self) -> AlarmEdit:
+        return self.reminders.alarms() if self.reminders.is_modified() else None
+
+    def _new_reminders(self):
+        templates = (self.reminder_preferences.new_all_day if self.all_day.isChecked()
+                     else self.reminder_preferences.new_timed)
+        self.reminders.set_alarms(instantiate_reminder_templates(templates, calendar_id=self.calendar.currentData() or 'local',
+                                                                 event_uid=self._new_id))
+
+    def _load_reminders(self, scope, state):
+        self.reminders.series_alarms = ()
+        self.reminders.all_day = self.all_day.isChecked()
+        self.reminders.reference_time = self._last_start
+        self._calendar_selected()
+        if not self.original:
+            self._new_reminders()
+            return
+        alarms, mixed, self.reminders.series_alarms = state or self._scope_reminders(scope)
+        self.reminders.set_alarms(alarms, mixed=mixed)
+
+    def _scope_reminders(self, scope):
+        refs = self._selected_refs
+        if scope not in ('group', self._initial_scope) and self._occurrence_refs:
+            refs = self._occurrence_refs
+        roots = selection_roots(self._selected_families, refs, scope)
+        lists = []
+        context = []
+        for root in roots:
+            master = self._selected_families.get_event(root.series_id or root.id)
+            if scope == 'single' and root.series_id:
+                if master is not None:
+                    context.extend(a for a in master.alarms or () if not is_relative(a))
+                lists.append(root.alarms or ())
+                continue
+            if scope == 'future' and root.series_id:
+                from .series_operations import partition_series
+                if master is self.series and root is self.original:
+                    master = self.schedule_source(scope)
+                else:
+                    _, master = partition_series(master, root)
+            if master:
+                lists.append(master.alarms or ())
+                lists.extend(Event.from_dict(value).alarms or () for value in master.recurrence_overrides.values())
+        first = lists[0] if lists else ()
+        return first, any(value != first for value in lists), tuple(dict.fromkeys(context))
 
     def _duration_caption(self):
         if self._range_needs_repair:
@@ -741,6 +836,11 @@ class EventDialog(FormDialog):
     def _all_day_changed(self, enabled):
         if self._loading:
             return
+        self.reminders.all_day = enabled
+        if not self.original and not self.reminders.is_modified():
+            self._new_reminders()
+        else:
+            self.reminders.restore(self.reminders.alarms(), self.reminders.mixed, self.reminders.is_modified())
         def change():
             if enabled:
                 self._timed_range = self._last_start, self._last_end
@@ -1199,7 +1299,7 @@ class EventDialog(FormDialog):
         return sorted({value.date() if self.all_day.isChecked() else value.astimezone(local_zone()).date()
                        for value in self.sequence_starts()})
 
-    def build_events(self):
+    def build_events(self, *, timing_only=False):
         start, end = self.value(self.start), self.value(self.end)
         duration_spec, duration_zone = self.duration_spec, self.duration_zone
         point = (self.original and range_duration(self.original.start, self.original.end,
@@ -1240,6 +1340,12 @@ class EventDialog(FormDialog):
         stored_start, stored_end = ((start, end) if single else
                                    draft.primary_range(start, end, all_day=self.all_day.isChecked(),
                                                        duration_spec=duration_spec))
+        reference = self.edit_reference
+        preserve_zones = (reference and not self.all_day.isChecked() and not reference.all_day
+                          and not reference.floating_time and (single or not draft.configuration_changed))
+        if preserve_zones:
+            stored_start = stored_start.astimezone(event_zone(reference))
+            stored_end = stored_end.astimezone(reference.end.tzinfo)
         if duration_spec:
             stored_start, stored_end = stored_start.astimezone(duration_zone), stored_end.astimezone(duration_zone)
         values = dict(id=self.original.id if self.original else self._new_id,
@@ -1252,8 +1358,15 @@ class EventDialog(FormDialog):
             values['timezone_definitions'] = source.timezone_definitions
             if single or source.timezone_definitions:
                 values['timezone_id'] = source.timezone_id
+        if preserve_zones:
+            values['timezone_id'] = reference.timezone_id
         if duration_spec:
             values['timezone_id'] = timezone_identifier(duration_zone)
+        values['alarms'] = () if timing_only else self.reminders.alarms()
+        if timing_only:
+            values['raw_ics'] = ''
+            values['recurrence_overrides'] = {key: dict(payload, raw_ics='', alarms=[])
+                                              for key, payload in values.get('recurrence_overrides', {}).items()}
         event = replace(self.original, **values) if self.original else Event(**values)
         if self.original is None and self.series is None and event.recurrence_overrides:
             # A new draft has shared content controls and individual ranges.
@@ -1261,11 +1374,11 @@ class EventDialog(FormDialog):
             overrides = {}
             for key, payload in event.recurrence_overrides.items():
                 item = Event.from_dict(payload)
-                overrides[key] = replace(item, id=occurrence_id(event.id, key),
+                overrides[key] = materialize_alarms(event, replace(item, id=occurrence_id(event.id, key),
                     calendar_id=event.calendar_id, ical_uid=event.ical_uid,
                     series_id=event.id, recurrence_id=key, title=event.title,
                     location=event.location, description=event.description,
-                    candidate=event.candidate).to_dict()
+                    candidate=event.candidate)).to_dict()
             event = replace(event, recurrence_overrides=overrides)
         if self.original is None:
             event = canonicalize_authored_primary(event)
@@ -1277,15 +1390,27 @@ class EventDialog(FormDialog):
                     validate_datetime(end_for(event, value), all_day=event.all_day, floating_time=event.floating_time)
         return [event]
 
-    def _project_preview(self, event):
-        projected = event
-        if self.series and self.scope.currentData() == 'group':
-            projected = updated_series(self.series, self.edit_reference, event, replace_schedule=self.schedule_replacement)
-        elif self.series and self.scope.currentData() == 'future':
+    def _project_scope(self, event, *, timing_only=False):
+        series = self._timing_series if timing_only else self.series
+        alarm_edit = None if timing_only else self.alarm_edit()
+        before, projected = None, event
+        if series and self.scope.currentData() == 'group':
+            projected = updated_series(series, series, event, replace_schedule=self.schedule_replacement,
+                                       alarm_edit=alarm_edit)
+        elif series and self.scope.currentData() == 'future':
             from .series_operations import updated_future
-            _, projected = updated_future(self.series, self.original, event, self.schedule_replacement)
-        return (replace(projected, calendar_id=event.calendar_id)
-                if projected is not None and projected.calendar_id != event.calendar_id else projected)
+            before, projected = updated_future(series, self.original, event, self.schedule_replacement,
+                                               alarm_edit=alarm_edit)
+        if projected is not None and projected.calendar_id != event.calendar_id:
+            projected = replace(projected, calendar_id=event.calendar_id)
+        return before, projected
+
+    def _project_preview(self, event):
+        """A content-bearing draft for an explicit graphical edit."""
+        return self._project_scope(event)[1]
+
+    def calendar_occurrence_preview(self):
+        return self._project_scope(self.build_events(timing_only=True)[0], timing_only=True)
 
     def _update_preview(self, *_):
         if self._loading:
@@ -1318,8 +1443,8 @@ class EventDialog(FormDialog):
             self.preview.enable_date_editing(False)
 
     def _refresh_preview(self):
-        event = self.build_events()[0]
-        projected = self._project_preview(event)
+        event = self.build_events(timing_only=True)[0]
+        _, projected = self._project_scope(event, timing_only=True)
         self.preview.set_events([projected] if projected else [], self.preferences, self.calendars)
         primary = replace(event, start=self.value(self.start), end=self.value(self.end))
         if projected and self.series and self.scope.currentData() == 'future' and self.original.recurrence_id:
@@ -1452,7 +1577,7 @@ class EventDialog(FormDialog):
                 self._schedule_error = None
                 self._sync_schedule_controls()
                 self._remember_custom()
-            self.calendar_occurrence_master()
+            self.calendar_occurrence_preview()
 
         if not self._report(prepare):
             self.show_error(self.error.text())
@@ -1535,7 +1660,8 @@ class EventDialog(FormDialog):
             return
         try:
             self.schedule_source(scope)
-        except ValueError as exc:
+            reminder_state = self._scope_reminders(scope) if scope not in self._scope_values else None
+        except (ValueError, OverflowError) as exc:
             self.scope.blockSignals(True)
             self.scope.setCurrentData(self._scope_name)
             self.scope.blockSignals(False)
@@ -1549,7 +1675,7 @@ class EventDialog(FormDialog):
             if scope in self._scope_values:
                 self._report(lambda: self._restore(self._scope_values[scope]))
             else:
-                self._load_scope(scope)
+                self._load_scope(scope, reminder_state=reminder_state)
         finally:
             self._loading = False
         self._update_preview()
@@ -1557,6 +1683,8 @@ class EventDialog(FormDialog):
 
     def _snapshot(self):
         return dict(start=self._last_start, end=self._last_end, duration=self._duration,
+            reminders=(self.reminders.alarms(), self.reminders.mixed, self.reminders.is_modified()),
+            series_alarms=self.reminders.series_alarms,
             duration_spec=self.duration_spec, duration_zone=self.duration_zone, timed_duration=self._timed_duration,
             calendar_id=self.calendar.currentData(), calendar_change_requested=self.calendar_change_requested,
             start_text=self.start.text(), end_text=self.end.text(), title=self.title.text(), location=self.location.text(),
@@ -1575,6 +1703,11 @@ class EventDialog(FormDialog):
         self._timed_duration = state['timed_duration']
         self.duration_spec, self.duration_zone = state['duration_spec'], state['duration_zone']
         self._set_range(state['start'], state['end'])
+        self.reminders.reference_time = state['start']
+        self.reminders.series_alarms = state['series_alarms']
+        self.reminders.all_day = state['all_day']
+        self.reminders.restore(*state['reminders'])
+        self._calendar_selected()
         self.start.setText(state['start_text'])
         self.end.setText(state['end_text'])
         self.title.setText(state['title'])

@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from .calendar_widgets import at
+from .event_dialog import EditorFamilies
 from .dialogs import EventDialog, CalendarDialog, HistoryDialog
-from .store import Store
+from .store import Store, open_editor_reader, resolve_indexed_occurrence
+from .reminder_preferences import load_reminder_preferences
 from .timeutil import now, local_zone
 from .preferences import Preferences
 from .preferences_dialog import PreferencesDialog
@@ -59,6 +61,36 @@ DEFAULT_BINDINGS = {
 EVENT_MIME = 'application/x-debacal-events+json'
 
 
+def _read_editor_families(reader, refs):
+    with reader.read_snapshot():
+        return selection_roots(reader, refs, 'group')
+
+
+def _prepare_editor(families, event, refs, occurrence_refs):
+    """Bind every selected occurrence to the exact canonical family that will be reviewed on Save."""
+    from .alarm_ics import hydrate_alarms
+    from .event_range_index import EventRangeIndex
+    masters = {value.id: hydrate_alarms(value) for value in families}
+    records = {}
+    def resolve(reference):
+        master = masters.get(reference.series_id or reference.id)
+        value = master
+        if master is not None and reference.series_id:
+            if master.id not in records:
+                records[master.id] = EventRangeIndex.prepare(master)
+            value = resolve_indexed_occurrence(records[master.id], reference.id, reference.recurrence_id)
+        if value is None:
+            raise ValueError('The selected event changed. Open it again to edit it.')
+        return value
+    return (resolve(event), tuple(map(resolve, refs)), tuple(map(resolve, occurrence_refs)), tuple(masters.values()))
+
+
+def _read_file_editor(path, event, refs, occurrence_refs):
+    with open_editor_reader(path) as reader:
+        families = _read_editor_families(reader, refs)
+    return _prepare_editor(families, event, refs, occurrence_refs)
+
+
 class MainWindow(WorkspaceChrome, QMainWindow):
     real_workspace_requested = Signal()
 
@@ -67,6 +99,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         install_button_focus(QApplication.instance())
         self.store = store
         self._closed = False
+        self._editor_request = 0
+        self._editor_active = False
+        self._editor_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-editor')
+        self._editor_future = None
         self.occurrence_picker = None
         self.demo_mode = demo_mode
         self.profile_label = profile_label
@@ -206,7 +242,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._drag_preview_request, tuple(calendar.id for calendar in calendars if calendar.visible),
                 destination.id if destination else None)
 
-    def write_database(self, operation, on_success=None, on_error=None, *, preserve_context=True):
+    def write_database(self, operation, on_success=None, on_error=None, *, preserve_context=True, force_async=False):
         """Persist a captured action without waiting for the sync writer on Qt."""
         context = self._database_context()
         def completed(result):
@@ -224,7 +260,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     on_error(error)
                 else:
                     self.report_error(str(error))
-        return self.database_commands.write(operation, on_success=completed, on_error=failed)
+        return self.database_commands.write(operation, on_success=completed, on_error=failed, force_async=force_async)
 
     def update_creation_target(self):
         calendar = (self.store.get_calendar(self.occurrence_picker.master.calendar_id)
@@ -624,9 +660,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             end = end or start + timedelta(days=1)
         elif end is None:
             end = add_elapsed(start, timedelta(minutes=self.preferences.default_event_duration_minutes))
+        self._editor_request += 1
         default = self.store.get_default_calendar()
         dialog = EventDialog(self.store.list_calendars(), start, end, parent=self, preferences=self.preferences,
-                             default_calendar_id=default.id if default else None, scope_bindings=self.bindings)
+                             default_calendar_id=default.id if default else None, scope_bindings=self.bindings,
+                             reminder_preferences=load_reminder_preferences(self.store))
         try:
             dialog.all_day.setChecked(all_day)
             if self.exec_event_dialog(dialog) == QDialog.DialogCode.Accepted:
@@ -811,19 +849,59 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         scope = scope or (('group' if group else 'single') if group is not None else self.operation_scope())
         dialog_scope = ('group' if self._search_selection_active and self.selection.primary
                         and self.selection.primary.recurring and not self.selection.primary.series_id else scope)
-        series = self.store.get_event(event.series_id) if event.series_id else None
+        self._request_editor(event, refs, scope, dialog_scope)
+
+    def _request_editor(self, event, refs, scope, dialog_scope):
+        """Load an explicit event selection, also supporting a canonical All-scope root."""
+        if self._closed or self.occurrence_picker or self._editor_active:
+            return
+        self._editor_request += 1
+        if self._editor_future is not None:
+            self._editor_future.cancel()
+        request = self._editor_request
+        context = self._database_context()
+        refs = tuple(refs)
+        occurrences = tuple(value for ref in refs if (value := (
+            self.search_result_event(ref.id) if ref.recurring and not ref.series_id else ref)) is not None)
+        args = event, refs, occurrences
+        def ready(snapshot):
+            if (request != self._editor_request or self._closed or self.occurrence_picker or self._editor_active
+                    or self._database_context() != context or QApplication.activeModalWidget() is not None):
+                return
+            self._editor_active = True
+            try:
+                self._open_editor(scope, dialog_scope, *snapshot)
+            finally:
+                self._editor_active = False
+        if self.store.path == ':memory:':
+            families = _read_editor_families(self.store, refs)
+            if all(v.alarms is not None and all(p.get('alarms') is not None for p in v.recurrence_overrides.values())
+                   for v in families):
+                try:
+                    ready(_prepare_editor(families, *args))
+                except (ValueError, KeyError, OverflowError) as error:
+                    self.report_error(str(error))
+                return
+            future = self._editor_executor.submit(_prepare_editor, families, *args)
+        else:
+            future = self._editor_executor.submit(_read_file_editor, self.store.path, *args)
+        self._editor_future = future
+        future.editor_request = request
+        future.editor_ready = ready
+        future.add_done_callback(lambda result: self.tasks.put(('editor', result)))
+
+    def _open_editor(self, scope, dialog_scope, event, refs, occurrences, expected):
+        families = EditorFamilies(expected)
+        series = families.get_event(event.series_id)
         dialog = None
         try:
-            # Scope can change while the editor is open. Snapshot its complete
-            # families to review those changes, without loading unrelated data.
-            families = selection_roots(self.store, refs, 'group')
-            expected = self.store.get_events(value.series_id or value.id for value in families)
-            members = selection_roots(self.store, refs, scope)
+            members = selection_roots(families, refs, scope)
             if any(not self.event_writable(member) for member in members):
                 raise ValueError('This selection contains a read-only event. Copy it into a writable calendar to edit it.')
             dialog = EventDialog(self.store.list_calendars(), event.start, event.end, event, self,
                                  preferences=self.preferences, edit_scope=dialog_scope, series=series,
-                                 scope_bindings=self.bindings,
+                                 scope_bindings=self.bindings, reminder_preferences=load_reminder_preferences(self.store),
+                                 selected_refs=refs, selected_families=families, occurrence_refs=occurrences,
                                  common_fields_only=len({value.series_id or value.id for value in refs}) > 1)
             mode_changes = []
             def change_editor_mode(value):
@@ -836,15 +914,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 return
             if mode_changes:
                 scope = dialog.scope.currentData()
-                if scope != 'group':
-                    refs = tuple(value for reference in refs
-                                 if (value := (self.search_result_event(reference.id)
-                                               if reference.recurring and not reference.series_id else reference)) is not None)
+                if scope not in ('group', dialog_scope):
+                    refs = occurrences
                 self.set_selection_mode(scope)
             edited = dialog.result_events[0]
             reference = dialog.edit_reference
-            expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited)
+            expected_starts = (self.reanchored_selection_starts(refs, scope, reference, edited, families=families)
                                if not dialog.schedule_replacement else {})
+            alarm_edit = dialog.alarm_edit()
             replacement = dialog.schedule_replacement
             calendar_changed = bool(getattr(dialog, 'calendar_change_requested', False))
             calendar_id = dialog.calendar.currentData() if calendar_changed else None
@@ -859,7 +936,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             def save(writer):
                 previous_ids = writer.event_ids()
                 writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
-                                      calendar_id=calendar_id, expected_masters=expected)
+                                      calendar_id=calendar_id, expected_masters=expected, alarm_edit=alarm_edit)
                 return previous_ids
             def saved(previous_ids):
                 destination = self.store.get_calendar(edited.calendar_id)
@@ -867,7 +944,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                     self.store.set_calendar_visible(destination.id, True)
                 self.reselect_after_operation(refs, target, previous_ids, shift,
                                              expected_starts=expected_starts, all_day=edited.all_day)
-            self.write_database(save, on_success=saved)
+            self.write_database(save, on_success=saved, force_async=self.store.path != ':memory:')
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
         finally:
@@ -918,7 +995,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                                                        floating_time=reference.floating_time)
         return key_datetime(mapping[key], master) if mapping is not None and key in mapping else target
 
-    def reanchored_selection_starts(self, refs, scope, reference, edited):
+    def reanchored_selection_starts(self, refs, scope, reference, edited, *, families=None):
         """Resolve selected logical slots before their source resources change."""
         from .recurrence import event_zone
         from .event_clipboard import calendar_day_delta
@@ -927,9 +1004,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         result = ({item.id: item.start + timedelta(days=calendar_day_delta(reference, edited.start))
                    for item in refs if item.all_day or reference.all_day}
                   if reference.all_day == edited.all_day else {})
-        for root in selection_roots(self.store, refs, scope):
+        families = families or self.store
+        for root in selection_roots(families, refs, scope):
             root_scope = 'group' if is_whole_root(root) else scope
-            master = self.store.get_event(root.series_id or root.id)
+            master = families.get_event(root.series_id or root.id)
             if root_scope == 'single' or master is None or reference.all_day != edited.all_day:
                 continue
             if root_scope == 'future' and master.recurring:
@@ -1993,6 +2071,15 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             return
         while not self.tasks.empty():
             kind, future = self.tasks.get()
+            if kind == 'editor':
+                if future is self._editor_future:
+                    self._editor_future = None
+                if future.editor_request == self._editor_request and not self._closed:
+                    try:
+                        future.editor_ready(future.result())
+                    except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+                        self.report_error(str(error))
+                continue
             if kind == 'account_credentials':
                 self._source_credential_saves.discard(future)
                 if self.engine and not self._source_credential_saves:
@@ -2262,6 +2349,7 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         return None
 
     def closeEvent(self, event):
+        self._editor_request += 1
         if self._import_jobs:
             self._close_after_import = True
             event.ignore()
@@ -2288,5 +2376,6 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.tray_icon.hide()
         self.database_commands.shutdown()
         self.history_availability.shutdown()
+        self._editor_executor.shutdown(wait=False, cancel_futures=True)
         self.executor.shutdown(wait=False, cancel_futures=True)
         event.accept()
