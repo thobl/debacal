@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta, timezone
+from datetime import timezone
 from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal
@@ -13,21 +13,14 @@ from .alarm_series import is_relative
 from .alarms import Alarm, signed_duration, utc_stamp
 from .buttons import action_button
 from .choice_control import ChoiceControl
-from .date_time_fields import DateTimeField, format_duration, parse_event_duration
+from .date_time_fields import DateTimeField, parse_event_duration
 from .date_time_picker import DateTimeRangePicker
 from .dialog_base import FormDialog, dialog_buttons, hint
 from .preferences import Preferences
+from .reminder_format import offset_magnitude
 from .reminder_preferences import relative_templates
 from .theme import scheme_for
 from .timeutil import local_zone, now
-
-
-def _magnitude(trigger):
-    days, seconds = map(abs, signed_duration(trigger))
-    parts = [f'{days}d'] if days else []
-    if seconds:
-        parts.append(format_duration(timedelta(seconds=seconds), elapsed=True))
-    return ' '.join(parts) or '0min'
 
 
 def _summary(alarm, preferences, all_day):
@@ -35,7 +28,7 @@ def _summary(alarm, preferences, all_day):
         if is_relative(alarm):
             bound = alarm.related.lower() + (' of day' if all_day else '')
             direction = 'before' if alarm.trigger.startswith('-') else 'after'
-            when = f'{_magnitude(alarm.trigger)} {direction} {bound}'
+            when = f'{offset_magnitude(alarm.trigger)} {direction} {bound}'
         else:
             value = utc_stamp(alarm.trigger or '').astimezone(local_zone())
             when = f'{preferences.format_date(value.date())} {preferences.format_time(value)}'
@@ -72,7 +65,7 @@ class _AlarmDialog(FormDialog):
         row = QHBoxLayout(relative)
         row.setContentsMargins(0, 0, 0, 0)
         trigger = alarm.trigger if alarm and is_relative(alarm) else '-PT5M'
-        self.duration = QLineEdit(_magnitude(trigger))
+        self.duration = QLineEdit(offset_magnitude(trigger))
         self.duration.setAccessibleName('Reminder offset')
         self.duration.setPlaceholderText('5min, 24h, 1d')
         row.addWidget(self.duration)

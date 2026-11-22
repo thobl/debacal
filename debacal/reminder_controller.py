@@ -18,6 +18,8 @@ class ReminderController(QObject):
     inboxChanged = Signal()
     issueChanged = Signal(object)
     activate = Signal(object)
+    actionFinished = Signal(int, object, object, str, object)
+    actionIssue = Signal(str)
     inboxPageReady = Signal(int, object)
     unreadCountChanged = Signal(int)
     desktopAvailabilityChanged = Signal(bool)
@@ -30,6 +32,8 @@ class ReminderController(QObject):
         self._allowed, self._profile = delivery_allowed, profile_label
         self._retiring = self._worker = self._partition = None
         self.activation_context = None
+        self.native_open_gate = None
+        self.preferences = None
         self.desktop_available = None
         self.unread_count = 0
         self._requests = count(1)
@@ -90,10 +94,15 @@ class ReminderController(QObject):
             raise ValueError('Choose a positive snooze duration.')
         if duration > datetime.max.replace(tzinfo=timezone.utc) - self._clock.now():
             raise ValueError('Choose a shorter snooze duration.')
-        self._queue('snooze', partition or self._partition, key, duration)
+        return self._request_action('snooze', partition, key, duration)
 
     def open_reminder(self, key, *, partition=None):
-        self._queue('open', partition or self._partition, key)
+        return self._request_action('open', partition, key)
+
+    def _request_action(self, action, partition, key, *args):
+        request = next(self._requests)
+        self._queue('request', request, action, partition or self._partition, key, *args)
+        return request
 
     def test_notification(self, draft):
         self._queue('preview', draft)
@@ -112,7 +121,8 @@ class ReminderController(QObject):
 
     @Slot(object, str)
     def _action(self, key, action):
-        self._queue('native', self._partition, key, action)
+        command = 'nativeOffer' if action == 'open' and self.native_open_gate else 'native'
+        self._queue(command, self._partition, key, action)
 
     @Slot(bool)
     def _availability(self, value):
@@ -123,6 +133,7 @@ class ReminderController(QObject):
         if worker is not self._worker:
             return
         if name == 'preferences':
+            self.preferences, = args
             self.preferencesChanged.emit(*args)
         elif name == 'inbox':
             self._partition, = args
@@ -143,6 +154,17 @@ class ReminderController(QObject):
             if context.current_partition(self._database):
                 self.activation_context = context
                 self.activate.emit(due)
+        elif name == 'nativeOffer':
+            partition, key = args
+            if partition == self._partition and self.native_open_gate:
+                if self.native_open_gate():
+                    self._queue('native', partition, key, 'open')
+                else:
+                    self.actionIssue.emit('Finish the current interaction, then open the event from Reminders.')
+        elif name == 'actionResult':
+            self.actionFinished.emit(*args)
+        elif name == 'actionIssue':
+            self.actionIssue.emit(*args)
         elif name == 'issue':
             self.issueChanged.emit(*args)
         elif name == 'preview':

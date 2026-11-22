@@ -342,6 +342,16 @@ class _NativeCorrespondence:
         return prior if member is not None else ''
 
 
+def current_native_coordinate(previous, current, key):
+    """Resolve one explicit Open through the same All-move proof as journal reconciliation."""
+    proof = _NativeCorrespondence(previous, current).coordinate('', '1'+key.occurrence_key, None)
+    while True:
+        try:
+            next(proof)
+        except StopIteration as done:
+            return done.value
+
+
 def _staged_group(schedule, correspondence, component, key, encoded, coordinate, writer):
     alarm = schedule.components.get(component, {}).get(key) if schedule else None
     try:

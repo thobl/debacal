@@ -10,11 +10,12 @@ from typing import Iterable
 from uuid import uuid4
 
 from . import reminder_ledger as ledger
-from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminder, component_alarms, instant, micros, semantics
+from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminder, compile_schedule, instant, micros
 from .reminder_ledger import InboxEntry
 from .reminder_partition import Partition
-from .models import Event, copy_event
-from .reminder_preferences import read_reminder_policy, scheduling_rule
+from .models import copy_event
+from .reminder_preferences import CalendarReminderPolicy, read_reminder_policy, scheduling_rule
+from .timeutil import local_zone
 from .prepared_storage import StateWriter
 from .reminder_schedule import BACKFILL, FRONTIER_SQL, READY, RULE, head, initial_jobs, pop, step
 from .reminder_activation import ActivationContext
@@ -111,14 +112,21 @@ class ReminderStore:
             self._partition.latch(error)
             raise
 
+    def _outdated_zone_ids(self, zone, after_id, limit):
+        rows = self._db.execute('SELECT id FROM source WHERE zone IS NOT NULL AND zone!=? AND id>? '
+                                'ORDER BY id LIMIT ?', (StateWriter().zone(zone), after_id, limit))
+        return tuple(row[0] for row in rows)
+
+    def bootstrap_zone_is_current(self, zone):
+        """Check the retained civil projections once when resuming a partial first scan."""
+        return not self._outdated_zone_ids(zone, '', 1)
+
     def rebind_sources(self, zone, *, after_id='', limit=128, partition=None):
         """Page civil schedules bound to an earlier local timezone."""
         if limit < 0:
             raise ValueError('Reminder batch size must be nonnegative.')
         self._refresh()
-        rows = self._db.execute('SELECT id FROM source WHERE zone IS NOT NULL AND zone!=? AND id>? '
-                                'ORDER BY id LIMIT ?', (StateWriter().zone(zone), after_id, limit))
-        return self.read_sources('selected', tuple(row[0] for row in rows), partition=partition)
+        return self.read_sources('selected', self._outdated_zone_ids(zone, after_id, limit), partition=partition)
 
     def finish_bootstrap(self):
         self._refresh()
@@ -252,6 +260,11 @@ class ReminderStore:
             return True
         state = reader.calendar_state(calendar)
         return bool(state and state[0] and state[1] == generation and reader.source_stamp(source) == revision)
+
+    def observed_before(self, due, trigger):
+        """An indexed source first seen after its trigger is eligible only for catch-up."""
+        return self._db.execute('SELECT 1 FROM source WHERE id=? AND revision=? AND changed<?',
+                                (due.key.source_id, due.source_revision, micros(trigger))).fetchone() is not None
 
     def next_wakeup(self) -> datetime | None:
         self._partition.check_target()
@@ -405,10 +418,12 @@ class ReminderStore:
                              "AND fingerprint=(SELECT fingerprint FROM ledger WHERE key=?)",
                              (*ledger.group(key), ledger.encode_key(key)))
 
-    def _snooze_source(self, key):
-        return self._db.execute('SELECT s.calendar,s.generation,s.revision,s.changed,l.fingerprint FROM ledger l '
+    def _snooze_source(self, key, *, inbox):
+        return self._db.execute('SELECT s.calendar,s.generation,s.revision,s.changed,l.fingerprint,s.zone FROM ledger l '
                                 'JOIN source s ON s.id=l.source JOIN delivery_context d USING(source,component,alarm,occurrence) '
-                                'WHERE l.key=? AND l.fingerprint=d.fingerprint', (ledger.encode_key(key),)).fetchone()
+                                'WHERE l.key=? AND l.fingerprint=d.fingerprint '
+                                'AND (?=0 OR NOT EXISTS (SELECT 1 FROM retired_native r WHERE r.key=l.key))',
+                                (ledger.encode_key(key), inbox)).fetchone()
 
     def _snooze_calendar(self, key, published, *, read_event):
         evidence = self._partition.get('evidence')
@@ -430,25 +445,29 @@ class ReminderStore:
         pending = calendar in scans and (scans[calendar] is None or key.source_id > scans[calendar])
         return not recorded or recorded[0] != scheduling_rule(policy) or pending
 
-    def _matches_alarm(self, key, event, policy):
-        if key.component_key:
-            fields = event.recurrence_overrides.get(key.component_key)
-            if fields is None:
-                return False
-            event = Event.from_dict(fields)
-        current = component_alarms(event, policy, key.component_key).get(key.alarm_key)
-        if current is None:
+    def _published_schedule(self, source):
+        row = self._db.execute('SELECT schedule FROM source WHERE id=? UNION ALL '
+                               'SELECT schedule FROM receipt_source WHERE id=? LIMIT 1', (source, source)).fetchone()
+        return AlarmSchedule.loads(row[0]) if row else None
+
+    def _matches_alarm(self, key, change, policy, zone):
+        previous = self._published_schedule(key.source_id)
+        if previous is None or previous.master.ical_uid != change.event.ical_uid:
             return False
+        schedule = compile_schedule(change, policy, zone=zone)
+        alarm = schedule.components.get(key.component_key, {}).get(key.alarm_key)
         entry = self.entry(key)
-        return bool(entry and current.uid == entry.reminder.alarm.uid
-                    and semantics(current) == semantics(entry.reminder.alarm)
-                    and (current.acknowledged is None or current.acknowledged < key.trigger_utc))
+        if (not alarm or not entry or alarm.uid != entry.reminder.alarm.uid
+                or alarm.acknowledged and alarm.acknowledged >= key.trigger_utc):
+            return False
+        point = schedule.selected_point(key)
+        return bool(point and schedule.fingerprint(point, alarm) == entry.reminder.anchor_fingerprint)
 
     def snooze(self, key: DeliveryKey, until: datetime, *, partition=None, inbox_policy=None) -> bool:
         """Arm a published alarm. Inbox actions also verify the current calendar and policy."""
         checked = verified_revision = None
         if inbox_policy is not None:
-            checked = self._snooze_source(key)
+            checked = self._snooze_source(key, inbox=True)
             if checked is None:
                 return False
             calendar, _, published_revision, *_ = checked
@@ -456,26 +475,30 @@ class ReminderStore:
             enabled, policy, *_ = eligibility
             if not enabled or policy.mode == 'mute' or policy.mode == 'replace' and not policy.alarms:
                 return False
-            unpublished_policy = self._policy_unpublished(key, calendar, policy)
-            verified_revision, event = self._snooze_calendar(key, checked, read_event=unpublished_policy)
+            zone = local_zone()
+            zone_changed = checked[-1] is not None and checked[-1] != StateWriter().zone(zone)
+            needs_content = zone_changed or self._policy_unpublished(key, calendar, policy)
+            verified_revision, change = self._snooze_calendar(key, checked, read_event=needs_content)
             if verified_revision is None:
                 return False
-            if not unpublished_policy and verified_revision != published_revision:
+            if not needs_content and verified_revision != published_revision:
                 # The journal can coalesce an alarm removal and restoration before the owner polls.
-                content_revision, event = self._snooze_calendar(key, checked, read_event=True)
+                content_revision, change = self._snooze_calendar(key, checked, read_event=True)
                 if content_revision != verified_revision:
                     return False
-            if event is not None and not self._matches_alarm(key, event, policy):
+            if change is not None and not self._matches_alarm(key, change, policy, zone):
                 return False
         with self._write():
             if self._partition.get('incoherent') or partition is not None and self.partition_id != partition:
                 return False
-            active = self._snooze_source(key)
+            active = self._snooze_source(key, inbox=inbox_policy is not None)
             if active is None or checked is not None and active != checked:
                 return False
             if inbox_policy is not None:
                 revision, _ = self._snooze_calendar(key, active, read_event=False)
                 if revision != verified_revision:
+                    return False
+                if active[-1] is not None and StateWriter().zone(local_zone()) != StateWriter().zone(zone):
                     return False
                 current = read_reminder_policy(self._partition.target)
                 if current.snooze_eligibility(active[0]) != eligibility:
@@ -594,39 +617,66 @@ class ReminderStore:
             self._partition.check_target()
             return token, entries
 
+    def _open_selection(self, key, partition):
+        if partition is None or self.partition_id != partition or self._partition.get('incoherent'):
+            return None
+        entry = self.entry(key)
+        evidence = self._partition.get('evidence')
+        if entry is None or not evidence:
+            return None
+        due = entry.reminder
+        movement = self._db.execute(
+            'SELECT coordinate,coalesce(s.calendar,h.calendar),coalesce(s.revision,h.revision) '
+            'FROM native_movement m LEFT JOIN source s ON s.id=m.source LEFT JOIN receipt_source h ON h.id=m.source '
+            'WHERE m.source=? AND component=? AND alarm=? AND occurrence=? AND (s.id IS NOT NULL OR h.id IS NOT NULL)',
+            ledger.group(key)).fetchone()
+        if self._db.execute('SELECT 1 FROM retired_native WHERE key=?', (ledger.encode_key(key),)).fetchone():
+            return None
+        if movement:
+            coordinate, calendar, revision = movement
+            if not coordinate:
+                return None
+            due = replace(due, key=replace(key, occurrence_key=coordinate[1:]),
+                          calendar_id=calendar, source_revision=revision)
+        return due, evidence
+
     def open_entry(self, key, *, partition):
-        """Bind the read receipt, payload and canonical identity to one sidecar commit."""
-        with self._write():
-            if partition is None or self.partition_id != partition or self._partition.get('incoherent'):
+        """Resolve one selected resource outside the writer, then fence its read receipt."""
+        selected = self._open_selection(key, partition)
+        if not selected:
+            return None
+        due, evidence = selected
+        context = ActivationContext(partition, tuple(evidence[0]), evidence[2])
+        with closing(ReminderSources(self._partition.target, evidence=evidence)) as reader:
+            if reader.identity_evidence()[0] != context.main_file:
                 return None
-            entry = self.entry(key)
-            evidence = self._partition.get('evidence')
-            if entry is None or not evidence:
-                return None
-            due = entry.reminder
-            movement = self._db.execute(
-                'SELECT coordinate,coalesce(s.calendar,h.calendar),coalesce(s.revision,h.revision) '
-                'FROM native_movement m LEFT JOIN source s ON s.id=m.source LEFT JOIN receipt_source h ON h.id=m.source '
-                'WHERE m.source=? AND component=? AND alarm=? AND occurrence=? AND (s.id IS NOT NULL OR h.id IS NOT NULL)',
-                ledger.group(key)).fetchone()
-            if self._db.execute('SELECT 1 FROM retired_native WHERE key=?', (ledger.encode_key(key),)).fetchone():
-                return None
-            if movement:
-                coordinate, calendar, revision = movement
-                due = replace(due, key=replace(key, occurrence_key=coordinate[1:]),
-                              calendar_id=calendar, source_revision=revision)
-            context = ActivationContext(partition, tuple(evidence[0]), evidence[2])
-            with closing(ReminderSources(self._partition.target, evidence=evidence)) as reader:
-                if reader.identity_evidence()[0] != context.main_file:
+            with reader.for_incarnation(context.incarnation):
+                changes = reader.selected((key.source_id,))
+                if not changes or not changes[0].event or changes[0].event.calendar_id != due.calendar_id:
                     return None
-                with reader.for_incarnation(context.incarnation):
-                    if reader.source_stamp(key.source_id) != due.source_revision:
+                change = changes[0]
+                previous = self._published_schedule(key.source_id)
+                if not previous or previous.revision != due.source_revision or previous.master.ical_uid != change.event.ical_uid:
+                    return None
+                schedule = compile_schedule(change, CalendarReminderPolicy(), zone=local_zone())
+                if change.version != previous.revision and due.key.occurrence_key and not due.key.component_key:
+                    # An unprocessed All move may reuse the old clock for a different logical member.
+                    coordinate = ledger.current_native_coordinate(previous, schedule, due.key)
+                    if coordinate == '':
+                        return None
+                    if coordinate:
+                        due = replace(due, key=replace(due.key, occurrence_key=coordinate[1:]))
+                if schedule.selected_point(due.key) is None:
+                    return None
+                due = replace(due, source_revision=change.version, title=schedule.titles[due.key.component_key])
+                with self._write():
+                    if self._open_selection(key, partition) != selected:
                         return None
                     state = reader.calendar_state(due.calendar_id)
-                    if not state or not state[0]:
+                    if not state or not state[0] or reader.source_stamp(key.source_id) != change.version:
                         return None
-            self._db.execute('UPDATE ledger SET unread=0 WHERE key=?', (ledger.encode_key(key),))
-            return due, context
+                    self._db.execute('UPDATE ledger SET unread=0 WHERE key=?', (ledger.encode_key(key),))
+                    return due, context
 
     def mark_read(self, keys: Iterable[DeliveryKey], *, partition=None) -> None:
         with self._write():

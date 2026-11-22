@@ -122,7 +122,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._editor_request = 0
         self._editor_active = False
         self._editor_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='debacal-editor')
-        self._editor_future = None
+        self._editor_future = self._reminder_future = None
+        self._reminder_request = 0
         self._editorReadReady.connect(self._finish_editor_read, Qt.ConnectionType.QueuedConnection)
         self.occurrence_picker = None
         self.demo_mode = demo_mode
@@ -469,6 +470,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             controller.unreadCountChanged.connect(self._reminder_badge)
             controller.issueChanged.connect(self._reminder_problem)
             controller.desktopAvailabilityChanged.connect(self._reminder_availability)
+            controller.native_open_gate = self._admit_native_open
+            controller.actionIssue.connect(lambda message: self.report_error(message, title='Reminders'))
             controller.activate.connect(self._activate_reminder)
             controller.start()
         return self.reminder_controller
@@ -1001,6 +1004,9 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.search_result_event(ref.id) if ref.recurring and not ref.series_id else ref)) is not None)
         args = event, refs, occurrences
         def ready(read_snapshot):
+            if inspect_read_only and guard is not None and self._reminder_busy() and not self._closed:
+                self._after_reminder_interaction(lambda: ready(read_snapshot), self._reminder_request)
+                return
             if (request != self._editor_request or self._closed or self.occurrence_picker or self._editor_active
                     or self._database_context() != context or QApplication.activeModalWidget() is not None
                     or guard is not None and not guard(self.store)):
@@ -1022,10 +1028,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             future = self._editor_executor.submit(_prepare_editor, families, *args)
         else:
             future = self._editor_executor.submit(_read_file_editor, self.store.path, *args)
-        self._watch_editor_read(future, ready)
+        self._watch_editor_read(future, ready, reminder=inspect_read_only and guard is not None)
 
-    def _watch_editor_read(self, future, ready):
-        self._editor_future = future
+    def _watch_editor_read(self, future, ready, *, reminder=False):
+        if reminder:
+            self._reminder_future = future
+        else:
+            self._editor_future = future
         future.editor_ready = ready
         future.add_done_callback(self._publish_editor_read)
 
@@ -1039,9 +1048,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
 
     @Slot(object)
     def _finish_editor_read(self, future):
-        if self._closed or future is not self._editor_future:
+        if self._closed:
             return
-        self._editor_future = None
+        if future is self._reminder_future:
+            self._reminder_future = None
+        elif future is self._editor_future:
+            self._editor_future = None
+        else:
+            return
         try:
             # The GUI rechecks the request context before consuming either outcome.
             future.editor_ready(future.result)
@@ -1738,23 +1752,44 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.refresh(calendars=not calendar.visible)
         return day
 
+    def _reminder_busy(self):
+        return bool(self._editor_active or self.occurrence_picker or QApplication.activeModalWidget()
+                    or self._editor_future is not None)
+
+    def _admit_native_open(self):
+        if self._closed:
+            return False
+        if self._reminder_busy():
+            self.restore_workspace()
+            return False
+        return True
+
+    def _after_reminder_interaction(self, callback, request):
+        if self._closed or request != self._reminder_request:
+            return
+        if self._reminder_busy():
+            QTimer.singleShot(100, self, lambda: self._after_reminder_interaction(callback, request))
+        else:
+            try:
+                callback()
+            except (ValueError, KeyError, OverflowError, sqlite3.Error, OSError) as error:
+                self.report_error(str(error), title='Reminders')
+
     def _activate_reminder(self, due):
         from .reminder_reveal import reminder_target
-        if self._closed or self.occurrence_picker or self._editor_active or QApplication.activeModalWidget():
-            return
         activation = self.reminder_controller.activation_context
-        if activation is None or activation.main_file != self._reminder_main_file:
+        if self._closed or activation is None or activation.main_file != self._reminder_main_file:
             return
-        self._editor_request += 1
-        request = self._editor_request
+        self._reminder_request += 1
+        request = self._reminder_request
         context = self._database_context()
 
         def current(reader):
-            return activation.current_partition(reader.path) and activation.current_source(reader, due)
+            return (request == self._reminder_request and activation.current_partition(reader.path)
+                    and activation.current_source(reader, due))
 
-        def ready(read_target):
-            if (request != self._editor_request or self._database_context() != context or not current(self.store)
-                    or self._editor_active or self.occurrence_picker or QApplication.activeModalWidget()):
+        def publish(read_target):
+            if self._database_context() != context or not current(self.store):
                 return
             result = read_target()
             if not result:
@@ -1771,6 +1806,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 day = self._reveal_event_day(event)
                 if day is None:
                     return
+                if self._events_revision != self.store.events_revision():
+                    self.refresh()
                 self.select_event(event.id, day=day)
                 self.ensure_event_visible(event.id)
             if series_wide:
@@ -1778,8 +1815,11 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 self._request_editor(target, (target,), 'group', 'group', guard=current,
                                      occurrence_refs=(event,) if event else (), inspect_read_only=True)
 
+        def ready(read_target):
+            self._after_reminder_interaction(lambda: publish(read_target), request)
+
         future = self._editor_executor.submit(reminder_target, self.store.path, due, activation)
-        self._watch_editor_read(future, ready)
+        self._watch_editor_read(future, ready, reminder=True)
 
     def reveal_search_result(self, item, modifiers=Qt.KeyboardModifier.NoModifier):
         event_id = item if isinstance(item, str) else (item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None)

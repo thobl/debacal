@@ -208,21 +208,17 @@ class ReminderSources:
 
     def snooze_source(self, event_id, calendar_id, generation, *, read_event):
         """Return the enabled source's revision and any requested alarm content from one snapshot."""
-        projection = ',e.data' if read_event else ''
+        fields = ',e.id,e.calendar_id,e.data' if read_event else ''
         with self._snapshot() as db:
-            row = db.execute('SELECT coalesce(ch.version,0)'+projection+' FROM events e LEFT JOIN event_query_changes ch '
+            row = db.execute('SELECT coalesce(ch.version,0) AS version'+fields+' FROM events e LEFT JOIN event_query_changes ch '
                              'ON ch.event_id=e.id JOIN calendar_enable_transitions c '
                              'ON c.calendar_id=e.calendar_id WHERE e.id=? AND e.calendar_id=? AND c.enabled=1 '
                              'AND c.generation=?', (event_id, calendar_id, generation)).fetchone()
-        if row is None or not read_event:
-            return row[0] if row is not None else None, None
-        try:
-            event = alarm_ics.hydrate_alarms(Event.from_dict(json.loads(row[1])))
-            if event.id == event_id and event.calendar_id == calendar_id:
-                return row[0], event
-        except (ValueError, TypeError, LookupError, OverflowError, AttributeError, RecursionError):
-            pass
-        return None, None
+            if row is None or not read_event:
+                return row[0] if row is not None else None, None
+            storage = ProjectionStorage(db)
+            change = self._change(row, storage, storage.source_reader())
+            return (change.version, change) if change.event else (None, None)
 
     def calendar_name(self, calendar_id: str) -> str:
         with self._snapshot() as db:

@@ -893,3 +893,218 @@ def test_policy_change_during_secondary_snooze_proof_declines_the_write(native_h
         assert owner.store.entry(entry.reminder.key).snoozed_until is None
     finally:
         peer.release()
+
+
+@pytest.mark.parametrize('actor', ['owner', 'secondary'])
+@pytest.mark.parametrize('edit', ['start', 'exdate', 'rule', 'end', 'detached_end', 'uid', 'description'])
+def test_pending_snooze_proves_selected_occurrence_and_anchor(native_history, actor, edit):
+    from alarm_support import FakeTransport
+    from debacal.recurrence import recurrence_key
+    from debacal.reminder_worker import ReminderWorker
+    from test_reminder_controller import ALARM
+    writer, clock, owner, enable, drain, _ = native_history
+    day = timedelta(days=1)
+    alarm = replace(ALARM, related='END', trigger='-PT5M') if 'end' in edit else ALARM
+    source = event('series', BASE - day, alarm, recurrence_rule='FREQ=DAILY')
+    coordinate = recurrence_key(BASE)
+    if edit == 'start':
+        source = event('single', BASE)
+    if edit == 'detached_end':
+        detached = event('child', BASE, alarm, recurrence_id=coordinate)
+        source = replace(source, recurrence_overrides={coordinate: detached.to_dict()})
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = owner.store.inbox()
+    key = entry.reminder.key
+    token = owner.partition
+    owner.store.mark_read((key,), partition=token)
+    peer = ReminderWorker(str(writer.path), clock, FakeTransport(), True, '', lambda *_: None)
+    try:
+        peer.tick()
+        if edit == 'start':
+            changed = replace(source, start=BASE+MINUTE)
+        elif edit == 'exdate':
+            changed = replace(source, excluded_dates=(coordinate,))
+        elif edit == 'rule':
+            changed = replace(source, recurrence_rule='FREQ=WEEKLY')
+        elif edit == 'end':
+            changed = replace(source, end=source.end+MINUTE)
+        elif edit == 'detached_end':
+            changed = replace(source, recurrence_overrides={coordinate: replace(detached, end=detached.end+MINUTE).to_dict()})
+        elif edit == 'uid':
+            changed = replace(source, ical_uid='replacement')
+        else:
+            changed = replace(source, description='Edited notes')
+        if edit == 'uid':
+            writer.apply_remote(delete_ids=[source.id], calendar_id='c')
+        writer.apply_remote([changed])
+        action = owner if actor == 'owner' else peer
+        action.command('snooze', (token, key, 5*MINUTE))
+        action_deadline = owner.store.entry(key).snoozed_until
+        if edit == 'uid':
+            writer.apply_remote(delete_ids=[source.id], calendar_id='c')
+        writer.apply_remote([source])
+        drain()
+        clock.time = BASE+5*MINUTE
+        drain()
+        assert (action_deadline, owner.store.entry(key).unread) == (
+            (BASE+5*MINUTE, True) if edit == 'description' else (None, False))
+    finally:
+        peer.release()
+
+
+@pytest.mark.parametrize('edit', ['title', 'exdate', 'uid', 'delete', 'partition'])
+def test_off_open_proves_only_the_selected_current_target(native_history, edit, monkeypatch):
+    from debacal.reminder_sources import ReminderSources
+    from debacal.reminder_reveal import reminder_target
+    writer, clock, worker, enable, drain, _ = native_history
+    source = event('series', BASE, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    entry, = worker.store.inbox()
+    token, key = worker.partition, entry.reminder.key
+    save_reminder_preferences(writer, ReminderPreferences(enabled=False), now=clock.now())
+    drain()
+    assert worker.owner is None
+    def unexpected_scan(*args, **kwargs):
+        pytest.fail('Explicit Open scanned the calendar')
+    monkeypatch.setattr(ReminderSources, 'scan', unexpected_scan)
+    monkeypatch.setattr(ReminderSources, 'changes', unexpected_scan)
+    if edit == 'delete':
+        writer.apply('Delete', delete_ids=[source.id])
+    elif edit == 'partition':
+        token = 'retired-partition'
+    else:
+        fields = {'title': {'title': 'Current title'}, 'exdate': {'excluded_dates': (key.occurrence_key,)},
+                  'uid': {'ical_uid': 'replacement'}}
+        if edit == 'uid':
+            writer.apply_remote(delete_ids=[source.id], calendar_id='c')
+        writer.apply_remote([replace(source, **fields[edit])])
+    writes = writer.connection.total_changes
+    opened = worker.store.open_entry(key, partition=token)
+    assert worker.store.entry(key).unread == (edit != 'title')
+    if edit == 'title':
+        assert reminder_target(writer.path, *opened)[1].title == 'Current title'
+    else:
+        assert opened is None
+    assert worker.owner is None and writer.connection.total_changes == writes
+
+
+@pytest.mark.parametrize('missed,gap,delivered', [('none', False, {'a'}), ('all', False, {'a', 'z'}), ('none', True, set())])
+def test_bootstrap_known_future_and_late_discovery(native_history, missed, gap, delivered):
+    writer, clock, worker, _, _, _ = native_history
+    clock.time = BASE-timedelta(milliseconds=100)
+    filler = [replace(event(f'm{i:02}', BASE), alarms=()) for i in range(65)]
+    writer.apply_remote([event('a', BASE), *filler, event('z', BASE)])
+    save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app', missed=missed),
+                              now=clock.now())
+    worker.tick()
+    assert worker.store.next_wakeup() == BASE and worker.store.bootstrap is not None
+    if gap:
+        clock.time += 5*MINUTE
+    for step in range(30):
+        clock.time += timedelta(milliseconds=850)
+        delay = worker.tick()
+        if step == 0:
+            assert worker.store.bootstrap is not None
+            assert {entry.reminder.key.source_id for entry in worker.store.inbox()} == (set() if gap else {'a'})
+        if delay >= 1:
+            break
+    assert worker.store.bootstrap is None
+    assert {entry.reminder.key.source_id for entry in worker.store.inbox()} == delivered
+
+
+@pytest.mark.parametrize('pending_event_edit', [False, True])
+def test_snooze_floating_receipt_proves_current_scheduling_zone(native_history, monkeypatch, pending_event_edit):
+    writer, clock, worker, enable, drain, _ = native_history
+    monkeypatch.setenv('TZ', 'UTC')
+    source = event('floating', BASE, floating_time=True)
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    receipt, = worker.store.inbox()
+    worker.store.mark_read((receipt.reminder.key,), partition=worker.partition)
+    if pending_event_edit:
+        writer.apply('Edit notes', [replace(source, description='Current notes')])
+    monkeypatch.setenv('TZ', 'Europe/Berlin')
+    worker.command('snooze', (worker.partition, receipt.reminder.key, 5*MINUTE))
+    deadline = worker.store.entry(receipt.reminder.key).snoozed_until
+    monkeypatch.setenv('TZ', 'UTC')
+    clock.time += 5*MINUTE
+    drain()
+    assert deadline is None and not worker.store.entry(receipt.reminder.key).unread
+
+
+def test_off_open_rechecks_revision_after_the_selected_proof(native_history, monkeypatch):
+    writer, clock, worker, enable, drain, _ = native_history
+    source = event('one', BASE)
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    receipt, = worker.store.inbox()
+    save_reminder_preferences(writer, ReminderPreferences(enabled=False), now=clock.now())
+    drain()
+    writer.apply('Rename', [replace(source, title='Current title')])
+    store = worker.store
+    begin = store._write
+    def remove_before_write():
+        writer.apply('Remove', delete_ids=[source.id])
+        return begin()
+    monkeypatch.setattr(store, '_write', remove_before_write)
+    assert store.open_entry(receipt.reminder.key, partition=store.partition_id) is None
+    assert store.entry(receipt.reminder.key).unread
+
+
+def test_restart_before_due_services_known_partial_bootstrap(native_history):
+    from alarm_support import FakeTransport
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, first, _, _, _ = native_history
+    clock.time = BASE-timedelta(seconds=1)
+    filler = [replace(event(f'm{i:02}', BASE), alarms=()) for i in range(45)]
+    writer.apply_remote([event('a', BASE), *filler])
+    save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app', missed='none'),
+                              now=clock.now())
+    first.tick()
+    assert first.store.next_wakeup() == BASE
+    first.release()
+    second = ReminderWorker(str(writer.path), clock, FakeTransport(), True, '', lambda *_: None)
+    try:
+        clock.time += timedelta(milliseconds=500)
+        second.tick()
+        clock.time += timedelta(milliseconds=750)
+        second.tick()
+        assert second.store.bootstrap is not None
+        assert [entry.reminder.key.source_id for entry in second.store.inbox()] == ['a']
+    finally:
+        second.release()
+
+
+@pytest.mark.parametrize('action', ['snooze', 'native'])
+@pytest.mark.parametrize('published', [False, True])
+def test_user_snooze_declines_a_retired_native_member(native_history, action, published):
+    writer, clock, worker, enable, drain, _ = native_history
+    source = event('series', BASE-timedelta(days=1), recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-MINUTE)
+    save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+    drain()
+    clock.time = BASE
+    drain()
+    due, *_ = worker.transport.sent[0]
+    key = due.key
+    worker.command('delivered', (key, 7))
+    assert worker.store.entry(key).status == 'delivered'
+    worker.store.mark_read((key,), partition=worker.partition)
+    writer.apply('Change series', [replace(source, recurrence_rule='FREQ=WEEKLY')])
+    if published:
+        drain()
+    assert key in worker.native_calendars
+    worker.command(action, (worker.partition, key, 'snooze' if action == 'native' else 5*MINUTE))
+    deadline = worker.store.entry(key).snoozed_until
+    writer.apply('Restore series', [source])
+    drain()
+    clock.time += 5*MINUTE
+    drain()
+    assert deadline is None and not worker.store.entry(key).unread
+    assert len(worker.transport.sent) == 1

@@ -110,10 +110,10 @@ class ReminderWorker(Thread):
         self.commands = Queue()
         self.stopped = Event()
         self.store = self.owner = self.policy = self.partition = None
-        self.armed = self.zone = self.issue = self.test = None
+        self.continuous_since = self.bootstrap_context = None
+        self.zone = self.issue = self.test = None
         self.journal_target = None
         self.checked_zone = False
-        self.armed_revision = -1
         self.last_time = None
         self.native = False
         self.unsent = deque()
@@ -153,7 +153,8 @@ class ReminderWorker(Thread):
         if self.owner:
             self.owner.release()
         self.inbox_revision = None
-        self.store = self.owner = self.partition = self.armed = None
+        self.store = self.owner = self.partition = None
+        self.continuous_since = self.bootstrap_context = None
         self.journal_target = None
         self.checked_zone = False
 
@@ -189,6 +190,9 @@ class ReminderWorker(Thread):
                     delay = POLL
                     if pending and pending[0] == 'page':
                         self.post('page', pending[1][0], (), None)
+                    if pending and pending[0] == 'request':
+                        request, action, partition, key, *_ = pending[1]
+                        self.post('actionResult', request, partition, key, action, 'Could not read the current reminder. Try again.')
                     pending = None
         finally:
             self.release()
@@ -256,48 +260,64 @@ class ReminderWorker(Thread):
             self.post('page', request, entries, token)
             self.count_unread()
             return
-        if not self.inbox_store():
-            return
-        partition, key, *extra = args
-        if partition != self.store.partition_id:
-            return
+        if kind == 'request':
+            request, action, partition, key, *extra = args
+            error, opened = self.action(action, partition, key, extra)
+            self.post('actionResult', request, partition, key, action, error)
+        else:
+            partition, key, *extra = args
+            error, opened = self.action(kind, partition, key, extra)
+            if error and kind == 'native':
+                self.post('actionIssue', error)
+        if opened:
+            self.post('activate', *opened)
+        if not error and kind != 'nativeOffer':
+            self.changed()
+
+    def action(self, kind, partition, key, extra):
+        if not self.inbox_store() or partition != self.store.partition_id:
+            return 'This reminder list has changed. Select the reminder again.', None
         if kind == 'read':
             self.store.mark_read(key, partition=partition)
-        else:
-            entry = self.store.entry(key)
-            if not entry:
-                return
-            native_action = kind == 'native'
-            if native_action:
-                if (key not in self.native_calendars or not self.owner or not self.native
-                        or entry.status != 'delivered'
-                        or not self.store.actionable(entry.reminder)):
-                    self.native_calendars.pop(key, None)
-                    return
-                kind = extra[0]
-                extra = [timedelta(minutes=5)]
-            if kind == 'open':
-                opened = self.store.open_entry(key, partition=partition)
-                if opened is not None:
-                    self.post('activate', *opened)
-            elif kind in ('dismiss', 'snooze'):
-                if kind == 'dismiss':
-                    self.store.dismiss(key, partition=partition)
-                else:
-                    policy = read_reminder_policy(self.database)
-                    if extra[0] <= timedelta() or not policy.preferences.enabled:
-                        return
-                    try:
-                        deadline = self.clock.now() + extra[0]
-                    except OverflowError:
-                        return
-                    if not self.store.snooze(key, deadline, partition=partition, inbox_policy=policy):
-                        return
-                self.transport.forget(key)
-                self.submitted.pop(key, None)
-            if native_action or kind in ('dismiss', 'snooze'):
+            return None, None
+        entry = self.store.entry(key)
+        if not entry:
+            return 'This reminder is no longer available.', None
+        native_action = kind in ('native', 'nativeOffer')
+        if native_action:
+            if (key not in self.native_calendars or not self.owner or not self.native
+                    or entry.status != 'delivered' or not self.store.actionable(entry.reminder)):
                 self.native_calendars.pop(key, None)
-        self.changed()
+                return 'This desktop reminder has changed. Select its current entry in Reminders.', None
+            if kind == 'nativeOffer':
+                self.post('nativeOffer', partition, key)
+                return None, None
+            kind, extra = extra[0], [timedelta(minutes=5)]
+        opened = None
+        if kind == 'open':
+            opened = self.store.open_entry(key, partition=partition)
+            if not opened:
+                return 'The event or occurrence is no longer available in its calendar.', None
+        elif kind in ('dismiss', 'snooze'):
+            if kind == 'dismiss':
+                self.store.dismiss(key, partition=partition)
+            else:
+                policy = read_reminder_policy(self.database)
+                if not policy.preferences.enabled:
+                    return 'Turn on event notifications to snooze this reminder.', None
+                if policy.preferences.calendars.get(entry.reminder.calendar_id, CalendarReminderPolicy()).mode == 'mute':
+                    return 'Unmute this calendar to snooze its reminders.', None
+                try:
+                    deadline = self.clock.now() + extra[0]
+                except OverflowError:
+                    return 'Choose a shorter snooze duration.', None
+                if extra[0] <= timedelta() or not self.store.snooze(key, deadline, partition=partition, inbox_policy=policy):
+                    return 'The reminder or its calendar has changed. Check the current entry and try again.', None
+            self.transport.forget(key)
+            self.submitted.pop(key, None)
+        if native_action or kind in ('dismiss', 'snooze'):
+            self.native_calendars.pop(key, None)
+        return None, opened
 
     def ensure_owner(self, now):
         if self.owner is None:
@@ -465,7 +485,7 @@ class ReminderWorker(Thread):
         if previous is None or previous.preferences != prefs:
             self.post('preferences', prefs)
         if self.last_time and not timedelta() <= now - self.last_time <= JITTER:
-            self.armed = None
+            self.continuous_since = now
         self.last_time = now
         self.observe_inbox()
         if not self.allowed or not prefs.enabled:
@@ -482,6 +502,8 @@ class ReminderWorker(Thread):
             self.observe_inbox()
             self.test_tick()
             return POLL
+        if self.continuous_since is None:
+            self.continuous_since = now
         states = self.store.read_sources('calendar_states')
         if self.partition != self.store.partition_id:
             self.unsent.clear()
@@ -495,12 +517,19 @@ class ReminderWorker(Thread):
                 self.transport.stop()
                 self.native = False
             self.partition = self.store.partition_id
+            self.continuous_since = now
+            self.bootstrap_context = None
             self.changed()
         zone = local_zone()
         if self.zone != zone:
             self.zone = zone
             self.checked_zone = False
         state = self.settings(states)
+        bootstrap = self.store.bootstrap
+        context = self.partition, zone, state['boundary'], state['calendars']
+        if bootstrap and self.bootstrap_context is None:
+            current = bootstrap[1] is None or self.store.bootstrap_zone_is_current(zone)
+            self.bootstrap_context = context if current else False
         more = self.source_slice(state)
         self.set_native(prefs.delivery != 'in_app' or self.test is not None)
         self.test_tick()
@@ -511,7 +540,9 @@ class ReminderWorker(Thread):
                 self.transport.probe()
             if available is False:
                 self.report(DESKTOP_ISSUE)
-        if more:
+        # Service the published frontier only while its bootstrap context remains current.
+        # Policy scans, zone rebinds and interrupted source preparation finish before dispatch.
+        if more and (not bootstrap or self.source_work or state['scans'] or self.bootstrap_context != context):
             return .001
         wake = self.store.next_wakeup()
         if wake and wake <= now and not self.qualifying and len(self.unsent) < PAGE:
@@ -535,12 +566,12 @@ class ReminderWorker(Thread):
         if resolved:
             self.changed()
         self.dispatch()
+        if more:
+            return .001
         if self.qualifying or self.review:
             return .01
         wake = self.store.next_wakeup()
         if wake and wake > now:
-            self.armed = wake
-            self.armed_revision = self.store.cursor[0]
             return min(POLL, (wake - now).total_seconds())
         if wake and len(self.unsent) < PAGE:
             return .01
@@ -554,8 +585,8 @@ class ReminderWorker(Thread):
         if any(value and trigger <= value for value in (policy.eligible_since, boundary)):
             claim.result = False
             return
-        if trigger == now or (self.armed and self.armed <= trigger and now - self.armed <= JITTER
-                              and (snooze_wake or due.source_revision <= self.armed_revision)):
+        if trigger == now or (self.continuous_since is not None and self.continuous_since < trigger
+                              and (snooze_wake or self.store.observed_before(due, trigger))):
             claim.result = True
             claim.group_repeats = False
             return

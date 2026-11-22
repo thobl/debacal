@@ -211,6 +211,23 @@ class AlarmSchedule:
                 end, clipped = bound, True
         return Point('', key, start, occurrence_end_zone(event, end)), clipped
 
+    def selected_point(self, key):
+        """Prove exactly one selected component and occurrence, including native rule membership."""
+        coordinate = key.occurrence_key
+        point = self.master_point() if coordinate is None else self.explicit.get(coordinate)
+        if point is None and not key.component_key:
+            start = self.native_coordinate(coordinate)
+            if start is not None:
+                from .reminder_rule_seek import membership_slice
+                progress = None
+                while True:
+                    member, progress = membership_slice(self.prepared, start, progress)
+                    if progress is None:
+                        break
+                if member:
+                    point, _ = self.point(start, coordinate)
+        return point if point and point.component == key.component_key else None
+
     def fingerprint(self, point, alarm):
         anchor = point.end if alarm.related == 'END' else point.start
         context = self.writer.datetime(anchor) if relative(alarm) else None
