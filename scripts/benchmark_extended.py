@@ -862,9 +862,12 @@ def desktop_worker(database, config, mode, profile_path=None):
                 assert editor.result() == QDialog.DialogCode.Accepted
                 draft = editor.result_events[0]
                 replacement, alarm_edit = editor.schedule_replacement, editor.alarm_edit()
-                measure('reminder_editor_commit', lambda: live.write_database(lambda writer:
-                    writer.edit_series(ref, draft, replace_schedule=replacement,
-                                       alarm_edit=alarm_edit)), predicate=lambda: not live.database_commands.pending)
+                def commit_editor(writer):
+                    operation = writer.edit_selection((ref,), 'group', ref, draft, replace_schedule=replacement,
+                                                      expected_masters=(master,), alarm_edit=alarm_edit)
+                    return writer.created_event_ids(operation)
+                measure('reminder_editor_commit', lambda: live.write_database(commit_editor, force_async=True),
+                        predicate=lambda: not live.database_commands.pending)
                 assert len(local.get_event(master.id).alarms) == len(alarms)-1
                 dispose(editor)
                 wire = export_ics([replace(due, id='incoming', ical_uid='incoming')])
