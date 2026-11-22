@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
@@ -130,6 +131,25 @@ def test_existing_remote_edit_keeps_name_locked_identity_and_read_only_metadata(
     assert (result.kind, result.url, result.username, result.read_only, result.server_color) == (
         original.kind, original.url, original.username, original.read_only, original.server_color,
     )
+
+
+def test_custom_calendar_color_can_be_selected_and_server_color_restored(dialogs):
+    original = Calendar('remote', 'Read-only source', '#123456', kind='caldav',
+        url='https://cloud.example.test/shared/', read_only=True, server_color='#446677')
+    dialog = dialogs(original)
+    assert dialog.color.currentData() == '#446677'
+    dialog.use_server_color.setChecked(False)
+    with patch('debacal.calendar_color_choice.QColorDialog.getColor', return_value=QColor('#a14fe7')):
+        QTest.keyClick(dialog, Qt.Key.Key_L, Qt.KeyboardModifier.AltModifier)
+        QTest.qWait(120)
+    assert dialog.color.currentData() == '#a14fe7'
+    assert dialog.color.currentText() == '#a14fe7'
+    dialog.use_server_color.setChecked(True)
+    assert dialog.color.currentData() == '#446677'
+    assert not dialog.color.isEnabled() and not dialog.choose_color_button.isEnabled()
+    dialog.save()
+    assert dialog.result_calendar.color == '#446677'
+    assert dialog.result_calendar.use_server_color and dialog.result_calendar.read_only
 
 
 @pytest.mark.parametrize('kind', ['local', 'ics'])

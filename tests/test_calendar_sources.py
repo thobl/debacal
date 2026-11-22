@@ -8,14 +8,18 @@ from threading import Event as ThreadEvent, get_ident
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest, QSignalSpy
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionComboBox
 
 from debacal.calendar_sources import CalendarSourcesEditor
+from debacal.calendar_color_choice import CALENDAR_COLORS, CalendarColorChoice
+from debacal.dialogs import CalendarDialog
 from debacal.discovery import DiscoveredCalendar
 from debacal.models import Calendar, Event
 from debacal.preferences import Preferences
+from debacal.preferences_dialog import PreferencesDialog
 from debacal.search_panel import SearchPanel
 from debacal.store import Store
 from debacal.sync import SyncEngine
@@ -125,6 +129,175 @@ def test_alias_manual_color_and_server_reset_are_applied_together(desktop):
     saved = store.get_calendar('work')
     assert saved.name == 'Work' and saved.name_alias == ''
     assert saved.color == saved.server_color == '#446677'
+
+
+def test_color_chooser_is_shared_with_calendar_dialog_and_preserves_current_color(desktop):
+    _, store, create, _ = desktop
+    source = remote(color='#a1B2c3', use_server_color=False, read_only=True)
+    store.save_calendar(source)
+    editor = create()
+    editor.select_calendar(source.id)
+    editor.set_preferences(replace(Preferences(), font_scale=130))
+    dialog = CalendarDialog(source, parent=editor)
+    try:
+        assert isinstance(editor.color_choice, CalendarColorChoice)
+        assert isinstance(dialog.color_row, CalendarColorChoice)
+        assert editor.color.currentData() == dialog.color.currentData() == '#a1B2c3'
+        assert editor.color.isEnabled() and editor.color_button.isEnabled()
+        assert editor.color_button.text() == dialog.choose_color_button.text()
+        assert editor.color.iconSize() == dialog.color.iconSize()
+        for index, (name, value) in enumerate(CALENDAR_COLORS):
+            for combo in (editor.color, dialog.color):
+                assert (combo.itemText(index), combo.itemData(index)) == (name, value)
+                swatch = combo.itemIcon(index).pixmap(16, 16).toImage()
+                assert swatch.pixelColor(swatch.width() // 2, swatch.height() // 2) == QColor(value)
+        assert editor._drafts[source.id] == source
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_preset_and_server_color_choices_are_drafts_and_reload_without_overrides(desktop):
+    _, store, create, _ = desktop
+    source = remote(read_only=True)
+    store.save_calendar(source)
+    editor = create()
+    editor.select_calendar(source.id)
+    changes = QSignalSpy(editor.color_choice.changed)
+    editor.color.setCurrentIndex(editor.color.findData('#30978c'))
+    assert changes.count() == 1
+    assert editor._drafts[source.id].color == '#30978c'
+    assert not editor._drafts[source.id].use_server_color
+    assert store.get_calendar(source.id) == source
+    assert editor.apply()
+    assert store.get_calendar(source.id).color == '#30978c'
+    editor.server_color_button.click()
+    assert changes.count() == 1
+    assert editor.color.currentData() == source.server_color
+    assert editor._drafts[source.id].use_server_color
+    assert store.get_calendar(source.id).color == '#30978c'
+    assert editor.apply()
+    assert store.get_calendar(source.id).color == source.server_color
+    assert store.get_calendar(source.id).use_server_color
+    editor.select_calendar('local')
+    editor.select_calendar(source.id)
+    assert changes.count() == 1
+    assert editor._drafts[source.id].use_server_color
+
+
+def test_custom_color_and_picker_cancel_remain_local_until_apply(desktop):
+    _, store, create, _ = desktop
+    source = remote()
+    store.save_calendar(source)
+    editor = create()
+    editor.select_calendar(source.id)
+    with patch('debacal.calendar_color_choice.QColorDialog.getColor', return_value=QColor('#a14fe7')) as picker:
+        editor.color_button.click()
+    assert picker.call_count == 1
+    initial, parent, _title = picker.call_args.args
+    assert initial == QColor(source.color) and parent is editor.color_choice
+    assert editor.color.currentData() == '#a14fe7'
+    assert editor.color.currentText() == '#a14fe7'
+    assert editor._drafts[source.id].color == '#a14fe7'
+    before = dict(editor._drafts)
+    with patch('debacal.calendar_color_choice.QColorDialog.getColor', return_value=QColor()):
+        editor.choose_color()
+    assert editor._drafts == before and editor.color.currentData() == '#a14fe7'
+    editor.finish()
+    assert store.get_calendar(source.id) == source
+
+
+def test_explicit_custom_choice_of_current_server_color_still_creates_override(desktop):
+    _, store, create, _ = desktop
+    source = remote()
+    store.save_calendar(source)
+    editor = create()
+    editor.select_calendar(source.id)
+    with patch('debacal.calendar_color_choice.QColorDialog.getColor', return_value=QColor(source.color)):
+        editor.color_button.click()
+    assert editor._drafts[source.id].color == source.color
+    assert not editor._drafts[source.id].use_server_color
+    assert store.get_calendar(source.id).use_server_color
+
+
+def test_source_color_keyboard_order_reaches_combo_custom_picker_and_server_reset(desktop):
+    app, store, create, _ = desktop
+    store.save_calendar(remote())
+    editor = create()
+    editor.select_calendar('work')
+    editor.activateWindow()
+    app.processEvents()
+    editor.alias.setFocus()
+    for field in (editor.color, editor.color_button, editor.server_color_button, editor.in_main_list):
+        QTest.keyClick(editor.focusWidget(), Qt.Key.Key_Tab)
+        assert field.hasFocus()
+
+
+@pytest.mark.parametrize('width', [800, 580])
+def test_source_colors_fit_constrained_preferences_at_large_font_and_work_from_keyboard(desktop, width):
+    app, store, _, _ = desktop
+    source = remote(read_only=True)
+    store.save_calendar(source)
+    dialog = PreferencesDialog(Preferences(font_scale=140), store=store)
+    try:
+        dialog.resize(width, 650)
+        dialog.set_category('sources')
+        editor = dialog.source_editor
+        editor.select_calendar(source.id)
+        dialog.show()
+        dialog.activateWindow()
+        for _ in range(5):
+            app.processEvents()
+        assert dialog.width() <= max(width, 640)
+        viewport = dialog.pages.currentWidget().viewport()
+        assert dialog.pages.currentWidget().horizontalScrollBar().maximum() == 0
+        controls = (editor.color, editor.color_button, editor.server_color_button)
+        for control in controls:
+            assert control.isVisible() and control.isEnabled()
+            assert viewport.rect().contains(control.mapTo(viewport, QPoint(0, 0)))
+            assert viewport.rect().contains(control.mapTo(viewport, control.rect().bottomRight()))
+        assert editor.server_color_button.accessibleName() == 'Use server color'
+        assert editor.server_color_button.toolTip() == 'Use server color'
+        assert editor.color_button.accessibleName() == 'Choose calendar color'
+        assert editor.color_button.shortcut().toString() == 'Alt+L'
+
+        def assert_color_text_fits():
+            option = QStyleOptionComboBox()
+            editor.color.initStyleOption(option)
+            content = editor.color.style().subControlRect(QStyle.ComplexControl.CC_ComboBox,
+                option, QStyle.SubControl.SC_ComboBoxEditField, editor.color)
+            available = content.width() - editor.color.iconSize().width() - 4
+            assert editor.color.fontMetrics().horizontalAdvance(editor.color.currentText()) <= available
+
+        assert editor.color.currentText() == source.server_color
+        assert_color_text_fits()
+        editor.color.setCurrentIndex(editor.color.findData('#bd775a'))
+        assert editor.color.currentText() == 'Terracotta'
+        assert_color_text_fits()
+        editor.reset_server_color()
+
+        editor.alias.setFocus()
+        QTest.keyClick(editor.alias, Qt.Key.Key_Tab)
+        assert editor.color.hasFocus()
+        QTest.keyClick(editor.color, Qt.Key.Key_Up)
+        assert not editor._drafts[source.id].use_server_color
+        QTest.keyClick(editor.color, Qt.Key.Key_Tab)
+        assert editor.color_button.hasFocus()
+        with patch('debacal.calendar_color_choice.QColorDialog.getColor', return_value=QColor('#a14fe7')):
+            QTest.keyClick(editor.color_button, Qt.Key.Key_Return)
+        assert editor.color.currentData() == '#a14fe7'
+        assert editor.color.toolTip() == '#a14fe7'
+        assert_color_text_fits()
+        QTest.keyClick(editor.color_button, Qt.Key.Key_Tab)
+        assert editor.server_color_button.hasFocus()
+        QTest.keyClick(editor.server_color_button, Qt.Key.Key_Return)
+        assert editor.color.currentData() == source.server_color
+        assert editor._drafts[source.id].use_server_color
+        assert dialog.isVisible()
+        assert store.get_calendar(source.id) == source
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
 
 
 def test_main_list_choice_is_editable_for_read_only_calendars_and_staged_until_apply(desktop):

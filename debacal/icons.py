@@ -34,6 +34,7 @@ _SHAPES = {
     'reminders_unread': '<path d="M3 14h14l-2-3V9M10 3a5 5 0 0 0-5 5v3Zm-2 14a2 2 0 0 0 4 0"/><circle cx="15.5" cy="4.5" r="2.5" stroke-width="3"/>',
     'history': '<path d="M3 8a7 7 0 1 1 0 5M3 3v5h5M10 6v5l3 2"/>',
     'undo': '<path d="M3 8h8a6 6 0 0 1 6 6v2M7 4 3 8l4 4"/>',
+    'palette': '<path d="M10 2a8 8 0 1 0 0 16h1a2 2 0 0 0 1.3-3.5.9.9 0 0 1 .6-1.6H15a3 3 0 0 0 3-3C18 5.6 14.4 2 10 2Z"/><circle cx="6" cy="7" r=".8"/><circle cx="10" cy="5.5" r=".8"/><circle cx="14" cy="7" r=".8"/><circle cx="5" cy="11" r=".8"/>',
     'redo': '<path d="M17 8H9a6 6 0 0 0-6 6v2M13 4l4 4-4 4"/>',
     'filter': '<path d="M2 3h16l-6 7v6l-4 2v-8Z"/>',
     'sync': '<path d="M16 8a6.5 6.5 0 0 0-11-3L3 7m0-4v4h4M4 12a6.5 6.5 0 0 0 11 3l2-2m0 4v-4h-4"/>',

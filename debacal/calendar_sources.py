@@ -7,17 +7,19 @@ from dataclasses import replace
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, QSize, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QHeaderView, QStackedWidget, QSizePolicy,
 )
 
-from .buttons import action_button
+from .buttons import action_button, icon_button
 from .calendar_choice import calendar_color_icon
+from .calendar_color_choice import CalendarColorChoice
 from .credentials import account_key
 from .discovery import discover_calendars
+from .icons import icon
 from .models import Calendar
 from .preferences import Preferences
 from .notification_preferences import choice
@@ -141,6 +143,7 @@ class CalendarSourcesEditor(QWidget):
         self.details = QWidget()
         form = self.calendar_form = QFormLayout(self.details)
         form.setContentsMargins(0, 0, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.alias = QLineEdit()
         self.alias.setAccessibleName('Calendar name in Debacal')
         self.alias.textEdited.connect(self._name_changed)
@@ -150,13 +153,19 @@ class CalendarSourcesEditor(QWidget):
         self.alias_label = QLabel('Name')
         form.addRow(self.alias_label, self.alias)
         form.addRow('Source name', self.server_name)
-        colors = QHBoxLayout()
-        self.color_button = action_button('Choose color…', self.choose_color)
-        self.server_color_button = action_button('Use server color', self.reset_server_color)
-        colors.addWidget(self.color_button)
+        color_row = QWidget(self.details)
+        colors = QHBoxLayout(color_row)
+        colors.setContentsMargins(0, 0, 0, 0)
+        self.color_choice = CalendarColorChoice(parent=color_row, preferences=self.preferences)
+        self.color = self.color_choice.color
+        self.color_button = self.choose_color_button = self.color_choice.choose_color_button
+        self.color_choice.changed.connect(self._color_changed)
+        self.server_color_button = icon_button('undo', 'Use server color', self.reset_server_color,
+            parent=color_row, preferences=self.preferences)
+        colors.addWidget(self.color_choice, 1)
         colors.addWidget(self.server_color_button)
-        colors.addStretch()
-        form.addRow('Color', colors)
+        form.addRow('&Color', color_row)
+        form.labelForField(color_row).setBuddy(self.color)
         self.in_main_list = QCheckBox('Keep in main list')
         self.in_main_list.setToolTip('Uncheck to keep this calendar in the … menu. '
                                     'It stays in the main list while selected. '
@@ -318,8 +327,7 @@ class CalendarSourcesEditor(QWidget):
                 self.reminder_mode.setCurrentIndex(self.reminder_mode.findData(policy.mode))
                 self.reminder_alarms.set_alarms(policy.alarms)
                 self.calendar_form.setRowVisible(self.reminder_alarms, policy.mode == 'replace')
-                self.color_button.setIcon(calendar_color_icon(calendar.color, self.preferences))
-                self.color_button.setToolTip(calendar.color)
+                self.color_choice.set_color(calendar.color)
                 if calendar.kind == 'ics':
                     access = 'Read-only subscription'
                 elif calendar.kind == 'caldav':
@@ -387,12 +395,12 @@ class CalendarSourcesEditor(QWidget):
             self._drafts[self._selected] = replace(self._drafts[self._selected], in_main_list=checked)
 
     def choose_color(self):
-        calendar = self._drafts.get(self._selected)
-        if calendar is None:
-            return
-        color = QColorDialog.getColor(QColor(calendar.color), self, 'Choose calendar color')
-        if color.isValid():
-            self.set_color(calendar.id, color.name())
+        if self._selected in self._drafts:
+            self.color_choice.choose_color()
+
+    def _color_changed(self, color):
+        if not self._loading and self._selected in self._drafts:
+            self.set_color(self._selected, color)
 
     def set_color(self, calendar_id, color):
         if not QColor(color).isValid():
@@ -586,8 +594,11 @@ class CalendarSourcesEditor(QWidget):
         # swatches need refreshing; keep the tree, selection and editor intact.
         for identity, item in self._items.items():
             item.setIcon(0, calendar_color_icon(self._drafts[identity].color, preferences))
-        if self._selected in self._drafts:
-            self.color_button.setIcon(calendar_color_icon(self._drafts[self._selected].color, preferences))
+        self.color_choice.set_preferences(preferences)
+        scale = preferences.font_scale / 100
+        self.server_color_button.setIcon(icon('undo', scheme_for(preferences).accent))
+        self.server_color_button.setIconSize(QSize(round(18 * scale), round(18 * scale)))
+        self.server_color_button.setFixedSize(round(30 * scale), round(30 * scale))
 
     def finish(self):
         self._active = False

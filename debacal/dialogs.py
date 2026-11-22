@@ -3,12 +3,12 @@ from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QPixmap, QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
     QAbstractButton, QAbstractSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QTextEdit, QDialogButtonBox, QListWidget, QListWidgetItem,
     QWidget, QColorDialog)
 
 from .models import Calendar
+from .calendar_color_choice import CalendarColorChoice
 from .dialog_base import FormDialog, dialog_buttons, hint, install_dialog_keyboard
 from .event_dialog import EventDialog
 
@@ -48,23 +48,10 @@ class CalendarDialog(FormDialog):
             self.kind.addItem('ICS subscription (read only)', 'ics')
             self.kind.addItem('CalDAV / Nextcloud account', 'caldav')
         self.kind.setCurrentIndex(self.kind.findData(calendar.kind) if calendar else 0)
-        self.color = QComboBox()
-        for name, color in [('Fern', '#5c8267'), ('Blue', '#5a7fa2'), ('Terracotta', '#bd775a'), ('Violet', '#8d79a8'), ('Gold', '#b4994f'),
-                ('Red', '#c74444'), ('Rose', '#ce6989'), ('Orange', '#e28832'), ('Lemon', '#c4b939'), ('Lime', '#8eaa39'),
-                ('Teal', '#30978c'), ('Cyan', '#35a8bf'), ('Sky', '#438ed0'), ('Indigo', '#5e67b1'), ('Purple', '#9556ad'),
-                ('Plum', '#934970'), ('Brown', '#8d6651'), ('Slate', '#6e7f8b'), ('Graphite', '#515963'), ('Black', '#292c32')]:
-            self.add_color(name, color)
-        if calendar:
-            if self.color.findData(calendar.color) < 0:
-                self.add_color('Current · ' + calendar.color, calendar.color)
-            self.color.setCurrentIndex(self.color.findData(calendar.color))
-        self.color_row = color_row = QWidget()
-        colors = QHBoxLayout(color_row)
-        colors.setContentsMargins(0, 0, 0, 0)
-        colors.addWidget(self.color, 1)
-        self.choose_color_button = QPushButton('Choose co&lor…')
-        self.choose_color_button.clicked.connect(self.choose_color)
-        colors.addWidget(self.choose_color_button)
+        self.color_row = color_row = CalendarColorChoice(calendar.color if calendar else None, self,
+            preferences=getattr(parent, 'preferences', None))
+        self.color = color_row.color
+        self.choose_color_button = color_row.choose_color_button
         self.use_server_color = QCheckBox('Use ser&ver color')
         self.use_server_color.setChecked(calendar.use_server_color if calendar else True)
         self.url = QLineEdit(calendar.url if calendar else '')
@@ -135,19 +122,10 @@ class CalendarDialog(FormDialog):
         self.name.selectAll()
 
     def add_color(self, name, value):
-        swatch = QPixmap(16, 16)
-        swatch.fill(QColor(value))
-        icon = QIcon(swatch)
-        icon.addPixmap(swatch, QIcon.Mode.Disabled)
-        self.color.addItem(icon, name, value)
+        self.color_row.add_color(name, value)
 
     def choose_color(self):
-        color = QColorDialog.getColor(QColor(self.color.currentData()), self, 'Choose calendar color')
-        if color.isValid():
-            value = color.name()
-            if self.color.findData(value) < 0:
-                self.add_color('Custom · ' + value, value)
-            self.color.setCurrentIndex(self.color.findData(value))
+        self.color_row.choose_color()
 
     def update_source_fields(self, *_):
         kind = self.kind.currentData()
@@ -166,6 +144,8 @@ class CalendarDialog(FormDialog):
         self.username.setEnabled(kind == 'caldav')
         self.password.setEnabled(kind == 'caldav')
         manual_color = kind != 'caldav' or not self.use_server_color.isChecked()
+        if not manual_color and self.original:
+            self.color_row.set_color(self.original.server_color or self.original.color)
         self.color.setEnabled(manual_color)
         self.choose_color_button.setEnabled(manual_color)
         self.source_hint.setVisible(kind != 'local' or not self.allow_remote)
