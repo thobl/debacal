@@ -36,7 +36,7 @@ class SearchResultDelegate(QStyledItemDelegate):
         widget = option.widget or self.parent()
         scheme = scheme_for(widget)
         scale = self._scale(widget)
-        colors = event_colors(index.data(self.color_role) or scheme.accent, scheme)
+        colors = event_colors(index.data(self.color_role) or scheme.accent, widget)
         selected = bool(styled.state & QStyle.StateFlag.State_Selected)
         identity = index.data(Qt.ItemDataRole.UserRole)
         primary = selected and (not hasattr(widget, 'is_primary_selected') or widget.is_primary_selected(identity))

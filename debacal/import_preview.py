@@ -105,7 +105,7 @@ class _ImportMonth(MonthCanvas):
         if not included:
             calendar = self.calendars.get(item.calendar_id)
             scheme = scheme_for(self)
-            ink = QColor(event_colors(calendar.color, scheme).selected_outline if calendar else scheme.muted)
+            ink = QColor(event_colors(calendar.color, self).selected_outline if calendar else scheme.muted)
             ink.setAlpha(115)
             painter.setPen(QPen(ink, 1))
             painter.drawLine(QPointF(rect.left() + 5, rect.center().y()), QPointF(rect.right() - 5, rect.center().y()))

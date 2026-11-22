@@ -2,6 +2,7 @@
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPen
 
+from .event_style import event_color_options, event_colors
 from .fonts import ui_font
 from .theme import corner_radius
 
@@ -34,14 +35,22 @@ def paint_day_presence(painter, rect, source_colors, preferences, colors, *, sty
     painter.save()
     painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
     if style == 'tints':
+        options = event_color_options(preferences)
+        customized = options != ('uniform', 0, 100)
         area = rect.adjusted(1.5 * scale, 1.5 * scale, -1.5 * scale, -1.5 * scale)
         visible = sources[:4] if len(sources) <= 4 else sources[:3]
         overflow = len(sources) - len(visible)
         count = len(visible) + bool(overflow)
         for index, source in enumerate(visible):
             segment = QRectF(area.x() + index * area.width() / count, area.y(), area.width() / count, area.height())
-            tint = QColor(source)
-            tint.setAlpha(58 if preferences.appearance_mode == 'dark' else 43)
+            alpha = 58 if preferences.appearance_mode == 'dark' else 43
+            if customized:
+                tint = event_colors(source, preferences, alpha=alpha).fill
+            else:
+                # Retain the existing translucent year tint, including the
+                # panel and weekend shading beneath it, at default settings.
+                tint = QColor(source)
+                tint.setAlpha(alpha)
             _fill(painter, segment, tint, preferences, 1, scale)
             _fill(painter, QRectF(segment.x(), segment.bottom() - 3 * scale, segment.width(), 3 * scale),
                   source, preferences, .5, scale)
@@ -53,6 +62,13 @@ def paint_day_presence(painter, rect, source_colors, preferences, colors, *, sty
             badge = QRectF(area.right() - 16 * scale, area.bottom() - 12 * scale, 16 * scale, 9 * scale)
             _overflow(painter, badge, overflow, preferences, colors, scale)
         number = area.adjusted(0, -2 * scale, 0, (-9 if overflow else -3) * scale)
+        if customized and sources:
+            # A date can straddle several literal fills with opposite text
+            # contrast. Keep its small label readable in every combination.
+            width, height = min(number.width(), 22 * scale), min(number.height(), 15 * scale)
+            label = QRectF(number.center().x() - width / 2, number.center().y() - height / 2,
+                           width, height)
+            _fill(painter, label, colors.panel, preferences, 1, scale)
     else:
         # Reserve a complete two-digit label, including the selected bold
         # weight. The caller fits numbers instead of replacing them with ….

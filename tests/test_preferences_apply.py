@@ -3,7 +3,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QScrollAr
 
 from debacal.preferences import Preferences
 from debacal.preferences_dialog import PreferencesDialog
+from debacal.models import Event
 from debacal.store import Store
 from debacal.ui import MainWindow
 
@@ -84,6 +85,32 @@ def test_apply_keeps_dialog_open_and_save_reuses_the_applied_value(desktop):
     click(dialog, QDialogButtonBox.StandardButton.Save)
     assert dialog.result() == QDialog.DialogCode.Accepted and not dialog.isVisible()
     assert len(applied) == 1
+
+
+@pytest.mark.parametrize('options', [
+    {'event_color_mode': 'calendar'},
+    {'event_color_brightness': -20, 'event_color_intensity': 180},
+])
+def test_event_color_apply_repaints_without_event_queries_or_canonical_writes(workspace, options):
+    app, store, window = workspace
+    calendar = store.get_default_calendar()
+    store.save_calendar(replace(calendar, color='#f2d04c'))
+    store.apply('Create event', [Event('color-example', calendar.id, 'Planning', NOW, NOW + timedelta(hours=1))])
+    window.refresh(calendars=True)
+    settle(app)
+    before = window.canvas.grab().toImage()
+    index, revision = store._query_index, store._query_revision
+    writes = store.connection.total_changes
+    updated = replace(window.preferences, **options)
+    with patch.object(store, 'query_occurrences', side_effect=AssertionError('Appearance queried events')), \
+            patch.object(store, 'query_year_presence', side_effect=AssertionError('Appearance queried year events')):
+        assert window.apply_preferences(updated, window.bindings)
+        settle(app)
+        assert window.canvas.grab().toImage() != before
+    assert window.preferences == Preferences.load(store) == updated
+    assert store._query_index is index and store._query_revision == revision
+    assert store.connection.total_changes == writes
+    assert store.get_calendar(calendar.id).color == '#f2d04c'
 
 
 def test_compact_preferences_sidebar_keeps_its_title_and_categories_readable(desktop):

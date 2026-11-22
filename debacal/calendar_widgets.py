@@ -1452,7 +1452,7 @@ class MonthCanvas(QWidget):
                            muted=False, record_confirmation=True):
         color = self.calendars[item.calendar_id].color if item.calendar_id in self.calendars else scheme_for(self).accent
         selected = not preview and (item.id in self.selected_ids or item.id == self.selected_id)
-        muted = muted and not selected and not preview
+        muted = muted and not selected and not preview and self.preferences.event_color_mode != 'calendar'
         colors = paint_colors(self)
         if muted:
             color = colors.muted.name()

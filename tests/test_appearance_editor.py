@@ -5,7 +5,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from dataclasses import replace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QTabWidget
 
@@ -62,6 +63,10 @@ def test_visual_options_are_real_clickable_and_keyboard_operable_controls(deskto
     assert editor.section_widgets['Font'].isAncestorOf(item.font_family)
     assert not editor.findChildren(QTabWidget)
     assert editor.section_widgets['Colors'].isAncestorOf(item.weekend_style)
+    assert editor.section_widgets['Colors'].isAncestorOf(item.event_color_mode)
+    assert item.event_color_mode.currentData() == 'uniform'
+    assert item.event_color_brightness.value() == 0
+    assert item.event_color_intensity.value() == 100
     assert editor.section_widgets['Year view'].isAncestorOf(item.year_view_style)
     assert isinstance(item.year_view_style, VisualChoice)
     assert [option[1] for option in item.year_view_style.options] == ['tracks', 'tints']
@@ -97,6 +102,9 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
         item.custom_accent.setColor('#2854b9')
         item.custom_surface.setColor('#6c7288')
         item.custom_weekend.setColor('#a82a64')
+        item.event_color_brightness.setValue(12)
+        item.event_color_intensity.setValue(150)
+        choose(item.event_color_mode, 'calendar')
         item.weekend_style.setCurrentIndex(item.weekend_style.findData('background'))
         item.year_view_style.setCurrentIndex(item.year_view_style.findData('tints'))
         item.show_sidebar_title.setChecked(False)
@@ -106,6 +114,8 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
         assert pending.appearance_mode == 'dark' and pending.custom_accent == '#2854b9'
         assert pending.weekend_style == 'background' and not pending.show_sidebar_title
         assert pending.year_view_style == 'tints'
+        assert pending.event_color_mode == 'calendar'
+        assert pending.event_color_brightness == 12 and pending.event_color_intensity == 150
         assert Preferences.load(store) == window.preferences == original
         QTest.mouseClick(item.buttons.button(QDialogButtonBox.StandardButton.Apply), Qt.MouseButton.LeftButton)
         settle(app)
@@ -113,6 +123,7 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
         assert window.preferences == Preferences.load(store) == replace(
             original, appearance_mode='dark', color_scheme='custom', custom_accent='#2854b9',
             custom_surface='#6c7288', custom_weekend='#a82a64', weekend_style='background',
+            event_color_mode='calendar', event_color_brightness=12, event_color_intensity=150,
             year_view_style='tints', show_sidebar_title=False, sidebar_title='Work calendar')
         assert window.year.preferences.year_view_style == 'tints'
         item.reject()
@@ -126,6 +137,7 @@ def test_pending_palette_and_layout_preview_never_write_to_the_workspace(desktop
     ('font_scale', 140), ('week_numbers', False), ('visible_start', 6), ('visible_end', 22),
     ('show_sidebar_title', False), ('sidebar_title', 'My calendar'), ('corner_style', 'square'),
     ('corner_style', 'rounded'),
+    ('event_color_mode', 'calendar'), ('event_color_brightness', 20), ('event_color_intensity', 250),
 ])
 def test_each_appearance_control_changes_the_live_sample(desktop, field, value):
     app, _ = desktop
@@ -143,6 +155,42 @@ def test_each_appearance_control_changes_the_live_sample(desktop, field, value):
         control.setText(value)
     settle(app)
     assert preview.grab().toImage() != before
+
+
+def test_event_color_modes_keep_uniform_adjustments_and_cancel_discards_draft(desktop):
+    app, _ = desktop
+    original = Preferences(event_color_brightness=-12, event_color_intensity=175)
+    item = dialog(desktop, original)
+    assert item.event_color_brightness.value() == -12
+    assert item.event_color_intensity.value() == 175
+    choose(item.event_color_mode, 'calendar')
+    settle(app)
+    assert not item.event_color_brightness.isEnabled()
+    assert not item.event_color_intensity.isEnabled()
+    assert item.value() == replace(original, event_color_mode='calendar')
+    choose(item.event_color_mode, 'uniform')
+    assert item.event_color_brightness.isEnabled() and item.event_color_intensity.isEnabled()
+    assert item.event_color_brightness.value() == -12 and item.event_color_intensity.value() == 175
+    item.event_color_brightness.setValue(20)
+    item.reject()
+    assert item.result_preferences == original
+
+
+@pytest.mark.parametrize('field', ['event_color_brightness', 'event_color_intensity'])
+def test_scrolling_over_event_color_adjustments_does_not_change_them(desktop, field):
+    app, _ = desktop
+    item = dialog(desktop)
+    slider = getattr(item, field)
+    item.appearance_editor.controls_scroll.ensureWidgetVisible(slider)
+    settle(app)
+    slider.setFocus(Qt.FocusReason.TabFocusReason)
+    before = slider.value()
+    point = slider.rect().center()
+    event = QWheelEvent(QPointF(point), QPointF(slider.mapToGlobal(point)), QPoint(), QPoint(0, 120),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(slider, event)
+    assert slider.value() == before
 
 
 def test_custom_colors_validate_before_apply_and_presets_keep_usable_values(desktop):
@@ -178,6 +226,7 @@ def test_narrow_appearance_layout_reflows_choices_and_keeps_preview_and_apply_re
         scroll.ensureWidgetVisible(section)
         settle(app)
         assert not scroll.horizontalScrollBar().isVisible()
+        assert scroll.horizontalScrollBar().maximum() == 0
         assert editor.preview.isVisible() and editor.preview.geometry() == preview_rect
         for choice in section.findChildren(VisualChoice):
             assert all(button.width() > 40 for button in choice.buttons)

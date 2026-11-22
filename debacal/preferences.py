@@ -60,6 +60,9 @@ class Preferences:
     font_family: str = DEFAULT_FONT_FAMILY
     default_event_duration_minutes: int = 60
     year_view_style: str = 'tracks'
+    event_color_mode: str = 'uniform'
+    event_color_brightness: int = 0
+    event_color_intensity: int = 100
 
     def __post_init__(self):
         if self.start_weekday != 'system' and (
@@ -97,6 +100,12 @@ class Preferences:
             raise ValueError('Choose event cards, cards grouped by day, or a day timeline.')
         if not isinstance(self.year_view_style, str) or self.year_view_style not in ('tracks', 'tints'):
             raise ValueError('Choose calendar tracks or tinted day cells for Year view.')
+        if self.event_color_mode not in ('uniform', 'calendar'):
+            raise ValueError('Choose uniform event colors or original calendar colors.')
+        if type(self.event_color_brightness) is not int or not -50 <= self.event_color_brightness <= 50:
+            raise ValueError('Event brightness must be between -50 and 50.')
+        if type(self.event_color_intensity) is not int or not 0 <= self.event_color_intensity <= 300:
+            raise ValueError('Event color intensity must be between 0 and 300 percent.')
         if not isinstance(self.control_style, str) or self.control_style not in ('underlined', 'filled'):
             raise ValueError('Choose underlined or filled button groups.')
         if self.appearance_mode not in ('light', 'dark'):

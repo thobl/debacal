@@ -74,6 +74,14 @@ QAbstractSpinBox::up-arrow:disabled { image: url("$arrow_disabled_up"); }
 QComboBox::drop-down:hover, QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover { background: $hover; }
 QComboBox::drop-down:pressed, QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed { background: $selection; }
 QComboBox QAbstractItemView { background: $panel; color: $ink; selection-background-color: $selection; selection-color: $ink; }
+QSlider#eventColorAdjustment::groove:horizontal { height: 4px; background: $control_edge; border-radius: 2px; }
+QSlider#eventColorAdjustment::sub-page:horizontal { background: $accent; border-radius: 2px; }
+QSlider#eventColorAdjustment::handle:horizontal {
+    width: 12px; margin: -5px 0; background: $panel; border: 1px solid $accent; border-radius: 6px;
+}
+QSlider#eventColorAdjustment::handle:horizontal:hover { background: $hover; }
+QSlider#eventColorAdjustment::handle:horizontal:disabled { background: $control_surface; border-color: $control_edge; }
+QSlider#eventColorAdjustment::sub-page:horizontal:disabled { background: $control_edge; }
 QListWidget, QTreeWidget { background: $panel; border: 1px solid $line; border-radius: 4px; }
 QListWidget:focus, QTreeWidget:focus { border-color: $focus; }
 QListWidget::item, QTreeWidget::item { padding: 8px; }

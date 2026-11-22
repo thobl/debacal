@@ -6,7 +6,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal, QRegularE
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPen, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QFormLayout, QGridLayout, QHBoxLayout,
-    QComboBox, QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QComboBox, QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
     QVBoxLayout, QWidget,
 )
 
@@ -45,6 +45,11 @@ class _ScrollSafeComboBox(QComboBox):
             super().wheelEvent(event)
         else:
             event.ignore()
+
+
+class _ScrollSafeSlider(QSlider):
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 def _segments(painter, rect, preferences):
@@ -90,6 +95,15 @@ def _sample(painter, rect, kind, value, preferences):
             painter.drawEllipse(rect.center() + QPointF(4, -3), 6, 6)
     elif kind == 'controls':
         _segments(painter, rect.adjusted(3, 1, -3, -1), replace(preferences, control_style=value))
+    elif kind == 'event_colors':
+        candidate = replace(preferences, event_color_mode=value)
+        width = rect.width() / 3
+        for index, source in enumerate(('#587c67', '#b6815c', '#f2d04c')):
+            fill = event_colors(source, candidate)
+            box = QRectF(rect.left() + index * width + 1, rect.top() + 1,
+                         max(1, width - 3), rect.height() - 2)
+            _card(painter, box, fill.fill, fill.outline, corner_radius(candidate, 2))
+            _label(painter, box, 'Aa', fill.ink, 10, align=Qt.AlignmentFlag.AlignCenter)
     elif kind == 'agenda':
         x = rect.left() + (24 if value == 'timeline' else 3)
         if value != 'cards':
@@ -102,7 +116,7 @@ def _sample(painter, rect, kind, value, preferences):
                 _label(painter, QRectF(rect.left(), y, 17, height), '9:00' if not index else '11:00', colors.muted, 7)
                 painter.setPen(QPen(QColor(colors.control_edge), 1))
                 painter.drawLine(rect.left() + 20, y, rect.left() + 20, y + height + (3 if not index else 0))
-            fill = event_colors('#587c67' if not index else '#b6815c', colors)
+            fill = event_colors('#587c67' if not index else '#b6815c', preferences)
             box = QRectF(x, y, max(2, rect.right() - x - 2), height)
             _card(painter, box, fill.fill, fill.outline, 2)
             painter.setPen(QPen(QColor(fill.ink), 1))
@@ -392,7 +406,7 @@ class AppearancePreview(QWidget):
             _label(painter, QRectF(left, y - 7, max(16, axis - 3), 15), str(hour), colors.muted, 8)
             painter.setPen(QPen(QColor(colors.line), 1))
             painter.drawLine(left + axis, y, right, y)
-        fill = event_colors('#587c67', colors)
+        fill = event_colors('#587c67', preferences)
         box = QRectF(left + axis + 4, 94, column - 8, 34)
         _card(painter, box, fill.fill, fill.outline, corner_radius(preferences, 3))
         _label(painter, box.adjusted(4, 0, -4, 0), 'Planning', fill.ink, 10 * scale, True)
@@ -440,6 +454,7 @@ class AppearanceEditor(QWidget):
         self.custom_colors = QWidget()
         form = QFormLayout(self.custom_colors)
         form.setContentsMargins(0, 0, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.custom_accent = ColorField('Accent', preferences.custom_accent)
         self.custom_surface = ColorField('Surface tint', preferences.custom_surface)
         self.custom_weekend = ColorField('Weekend', preferences.custom_weekend)
@@ -448,6 +463,24 @@ class AppearanceEditor(QWidget):
         form.addRow('Weekend', self.custom_weekend)
         self.custom_colors.setToolTip('Surface tint creates light or dark surfaces. Text and borders adjust for contrast.')
         layout.addWidget(self.custom_colors)
+        self.event_color_mode = VisualChoice([
+            ('Uniform', 'uniform', 'Soften calendar colors to suit the interface, keeping text readable.'),
+            ('Calendar colors', 'calendar', 'Use the chosen calendar colors directly, with readable text.')],
+            'event_colors', preferences)
+        self.event_color_mode.setAccessibleName('Event colors')
+        self._choice(layout, 'Event colors', self.event_color_mode)
+        self.event_color_adjustments = QWidget()
+        adjustments = QFormLayout(self.event_color_adjustments)
+        adjustments.setContentsMargins(0, 0, 0, 0)
+        adjustments.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.event_color_brightness = self._slider(
+            adjustments, 'Event brightness', -50, 50, lambda value: f'{value:+d}' if value else '0',
+            'Lighten or darken uniform event backgrounds. Zero keeps the current brightness.')
+        self.event_color_intensity = self._slider(
+            adjustments, 'Color intensity', 0, 300, lambda value: f'{value}%',
+            '100% keeps the current intensity. Lower values soften colors; higher values strengthen them.')
+        self.event_color_adjustments.setToolTip('Brightness and intensity apply to uniform event colors.')
+        layout.addWidget(self.event_color_adjustments)
         self.weekend_style = VisualChoice([
             ('Text color', 'text', 'Tint weekend labels.'),
             ('Background', 'background', 'Shade weekend cells instead of tinting labels.'),
@@ -457,6 +490,8 @@ class AppearanceEditor(QWidget):
 
         layout = self._section(outer, 'Font')
         self.font_family = _ScrollSafeComboBox()
+        self.font_family.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.font_family.setMinimumContentsLength(12)
         self.font_family.setAccessibleName('Typeface')
         self.font_family.setToolTip(f'{DEFAULT_FONT_FAMILY} is the default for controls and calendar text. System default follows your desktop font.')
         self.font_family.addItem('System default', 'system')
@@ -472,6 +507,7 @@ class AppearanceEditor(QWidget):
         self.font_scale.setSingleStep(10)
         self.font_scale.setSuffix(' %')
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.addRow('Typeface', self.font_family)
         form.addRow('Text size', self.font_scale)
         layout.addLayout(form)
@@ -509,17 +545,20 @@ class AppearanceEditor(QWidget):
         self.sidebar_title.setMaxLength(120)
         self.sidebar_title.setPlaceholderText('debacal')
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.addRow(self.show_sidebar_title)
         form.addRow('Title', self.sidebar_title)
         layout.addLayout(form)
 
         outer.addStretch()
-        self._choices = (self.appearance_mode, self.color_scheme, self.control_style, self.corner_style,
+        self._choices = (self.appearance_mode, self.color_scheme, self.event_color_mode, self.control_style, self.corner_style,
                          self.agenda_style, self.weekend_style, self.year_view_style)
         for choice in self._choices:
             choice.currentIndexChanged.connect(self._update)
         self.font_scale.valueChanged.connect(self._update)
         self.font_family.currentIndexChanged.connect(self._update)
+        self.event_color_brightness.valueChanged.connect(self._update)
+        self.event_color_intensity.valueChanged.connect(self._update)
         self.show_sidebar_title.toggled.connect(self._update)
         self.sidebar_title.textChanged.connect(self._update)
         for field in (self.custom_accent, self.custom_surface, self.custom_weekend):
@@ -566,10 +605,33 @@ class AppearanceEditor(QWidget):
         layout.addWidget(label)
         layout.addWidget(field)
 
+    @staticmethod
+    def _slider(form, caption, minimum, maximum, format_value, tooltip):
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        slider = _ScrollSafeSlider(Qt.Orientation.Horizontal, row)
+        slider.setObjectName('eventColorAdjustment')
+        slider.setRange(minimum, maximum)
+        slider.setAccessibleName(caption)
+        slider.setToolTip(tooltip)
+        value = QLabel(format_value(slider.value()), row)
+        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        value.setMinimumWidth(value.fontMetrics().horizontalAdvance('300%'))
+        slider.valueChanged.connect(lambda number: value.setText(format_value(number)))
+        layout.addWidget(slider, 1)
+        layout.addWidget(value)
+        form.addRow(caption, row)
+        form.labelForField(row).setBuddy(slider)
+        return slider
+
     def values(self, *, preview=False):
         custom = self.color_scheme.currentData() == 'custom'
         color = lambda field: field.preview_value() if preview or not custom else field.value()
         return dict(color_scheme=self.color_scheme.currentData(), appearance_mode=self.appearance_mode.currentData(),
+                    event_color_mode=self.event_color_mode.currentData(),
+                    event_color_brightness=self.event_color_brightness.value(),
+                    event_color_intensity=self.event_color_intensity.value(),
                     custom_accent=color(self.custom_accent), custom_surface=color(self.custom_surface),
                     custom_weekend=color(self.custom_weekend), control_style=self.control_style.currentData(),
                     corner_style=self.corner_style.currentData(), agenda_style=self.agenda_style.currentData(),
@@ -600,6 +662,7 @@ class AppearanceEditor(QWidget):
         self._updating = True
         for field in self._choices:
             field_name = {id(self.appearance_mode): 'appearance_mode', id(self.color_scheme): 'color_scheme',
+                          id(self.event_color_mode): 'event_color_mode',
                           id(self.control_style): 'control_style', id(self.corner_style): 'corner_style',
                           id(self.agenda_style): 'agenda_style', id(self.weekend_style): 'weekend_style',
                           id(self.year_view_style): 'year_view_style'}[id(field)]
@@ -607,6 +670,8 @@ class AppearanceEditor(QWidget):
         for name in ('custom_accent', 'custom_surface', 'custom_weekend'):
             getattr(self, name).setColor(getattr(preferences, name))
         self.font_scale.setValue(preferences.font_scale)
+        self.event_color_brightness.setValue(preferences.event_color_brightness)
+        self.event_color_intensity.setValue(preferences.event_color_intensity)
         if self.font_family.findData(preferences.font_family) < 0:
             self.font_family.addItem(preferences.font_family, preferences.font_family)
         self.font_family.setCurrentIndex(self.font_family.findData(preferences.font_family))
@@ -619,6 +684,7 @@ class AppearanceEditor(QWidget):
         if self._updating:
             return
         self.custom_colors.setVisible(self.color_scheme.currentData() == 'custom')
+        self.event_color_adjustments.setEnabled(self.event_color_mode.currentData() == 'uniform')
         self.sidebar_title.setEnabled(self.show_sidebar_title.isChecked())
         try:
             preferences = replace(self._context, **self.values(preview=True))

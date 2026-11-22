@@ -162,7 +162,7 @@ class AgendaResultDelegate(SearchResultDelegate):
         self.initStyleOption(styled, index)
         selected = bool(styled.state & QStyle.StateFlag.State_Selected)
         focused = bool(styled.state & QStyle.StateFlag.State_HasFocus and widget.hasFocus())
-        colors = event_colors(index.data(self.color_role) or scheme.accent, scheme)
+        colors = event_colors(index.data(self.color_role) or scheme.accent, widget)
         body, card, rail = self.geometry(option, row)
         painter.save()
         painter.setClipRect(option.rect)

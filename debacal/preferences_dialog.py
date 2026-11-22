@@ -644,6 +644,7 @@ def _appearance_field(name):
 
 
 for _name in ('appearance_mode', 'color_scheme', 'custom_accent', 'custom_surface', 'custom_weekend',
+              'event_color_mode', 'event_color_brightness', 'event_color_intensity',
               'control_style', 'agenda_style', 'weekend_style', 'font_scale', 'font_family',
               'show_sidebar_title', 'sidebar_title', 'corner_style', 'year_view_style'):
     setattr(PreferencesDialog, _name, _appearance_field(_name))
