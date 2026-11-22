@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -28,6 +29,10 @@ CREATE TABLE IF NOT EXISTS catchup_group (
     PRIMARY KEY(source,component,alarm,occurrence,fingerprint));
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 """
+
+
+class StaleSourcePage(RuntimeError):
+    """A source changed while its historical groups were being prepared."""
 
 
 class ReminderStore:
@@ -121,6 +126,11 @@ class ReminderStore:
     def put_source(self, change: SourceChange, schedule: AlarmSchedule | None, *,
                    cursor: tuple[int, str] | None = None, eligible_since: datetime | None = None,
                    scanned=False) -> None:
+        for _ in self.put_source_steps(change, schedule, cursor=cursor, eligible_since=eligible_since, scanned=scanned):
+            pass
+
+    def put_source_steps(self, change, schedule, *, cursor=None, eligible_since=None, scanned=False):
+        """Yield between history pages. Publication and cursor advancement remain one transaction."""
         self._refresh()
         floor = max(self._now - DAY_US, self._partition.get('boundary', 0),
                     micros(eligible_since) if eligible_since else 0)
@@ -139,17 +149,29 @@ class ReminderStore:
                         if generation > 1:
                             floor = max(floor, micros(state[2]))
                 reader.incarnation()
+        if schedule and (schedule.master.id != change.event_id or schedule.revision != change.version):
+            raise ValueError('The schedule does not match its source change.')
+        row = self._db.execute('SELECT schedule FROM source WHERE id=?', (change.event_id,)).fetchone()
+        previous = AlarmSchedule.loads(row[0]) if row and schedule else None
+        ambiguous = ledger.align(schedule, previous) if schedule and previous else ()
+        token = self.partition_id
+        stage, zones = yield from ledger.stage_groups(self._db, change.event_id, schedule, previous)
+        if stage == 'staged':
+            self._refresh()
+            if self.partition_id != token:
+                raise StaleSourcePage('The reminder partition changed during source preparation.')
         with self._write():
             self._partition.check_owner()
-            if schedule and (schedule.master.id != change.event_id or schedule.revision != change.version):
-                raise ValueError('The schedule does not match its source change.')
-            previous = self._db.execute('SELECT schedule FROM source WHERE id=?', (change.event_id,)).fetchone()
-            previous = AlarmSchedule.loads(previous[0]) if previous and schedule else None
-            if schedule and previous:
-                ledger.align(self._db, schedule, previous, self._now)
+            if stage == 'staged':
+                with self._partition.guarded() as reader:
+                    stamp = change.version if change.event is not None else None
+                    state = reader.calendar_state(schedule.master.calendar_id) if reader and schedule else None
+                    if reader and (reader.source_stamp(change.event_id) != stamp
+                                   or schedule and (not state or state[:2] != (True, generation))):
+                        raise StaleSourcePage('The source changed during reminder preparation.')
             self._db.execute('DELETE FROM frontier WHERE source=?', (change.event_id,))
             self._db.execute('DELETE FROM source WHERE id=?', (change.event_id,))
-            ledger.reconcile(self._db, change.event_id, schedule, previous, self._now)
+            ledger.reconcile(self._db, change.event_id, schedule, previous, self._now, stage, zones, ambiguous)
             if schedule and any(schedule.components.values()):
                 civil = change.event.all_day or change.event.floating_time or any(
                     fields.get('all_day') or fields.get('floating_time')
@@ -450,6 +472,13 @@ class ReminderStore:
             if entry is None or not evidence:
                 return None
             due = entry.reminder
+            movement = self._db.execute(
+                'SELECT coordinate,calendar,revision FROM native_movement m JOIN source s ON s.id=m.source '
+                'WHERE m.source=? AND component=? AND alarm=? AND occurrence=?', ledger.group(key)).fetchone()
+            if movement:
+                coordinate, calendar, revision = movement
+                due = replace(due, key=replace(key, occurrence_key=coordinate[1:]),
+                              calendar_id=calendar, source_revision=revision)
             context = ActivationContext(partition, tuple(evidence[0]), evidence[2])
             with closing(ReminderSources(self._partition.target, evidence=evidence)) as reader:
                 if reader.identity_evidence()[0] != context.main_file:

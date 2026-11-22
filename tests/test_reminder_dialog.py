@@ -56,26 +56,46 @@ def test_inbox_actions_capture_page_and_snooze_duration(tmp_path):
     clock = FakeClock(BASE - MINUTE)
     with Store(path) as writer:
         writer.save_calendar(Calendar('c', 'Calendar', '#123456'))
-        writer.apply_remote([event('one', BASE), event('two', BASE)])
+        from dataclasses import replace
+        from test_reminder_controller import ALARM
+        first = replace(ALARM, key='first', uid='first', repeat=2, repeat_interval='PT1M')
+        other = replace(first, key='other', uid='other')
+        writer.apply_remote([event('one', BASE, first, other, replace(first, key='third', uid='third'))])
         save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app'), now=clock.now())
         with running(path, clock) as (controller, _, page):
             assert not page()
             clock.time = BASE
             controller.reload_settings()
-            wait_for(lambda: len(page()) == 2)
+            wait_for(lambda: len(page()) == 3)
             dialog = ReminderDialog(controller)
             dialog.show()
             try:
-                wait_for(lambda: dialog.rows.topLevelItemCount() == 2)
+                wait_for(lambda: dialog.rows.topLevelItemCount() == 3)
                 assert all(row.unread for row in page())
                 dialog.rows.setCurrentItem(dialog.rows.topLevelItem(0))
                 assert dialog.snooze_duration.text() == '5min'
                 dialog.snooze_duration.setText('12min')
                 dialog.snooze_button.click()
                 assert wait_for(lambda: next((row for row in page() if row.status == 'snoozed'), None)).snoozed_until == BASE + 12*MINUTE
-                dialog.rows.setCurrentItem(dialog.rows.topLevelItem(1))
+                snoozed = next(row.reminder.key for row in page() if row.status == 'snoozed')
+                for i in range(dialog.rows.topLevelItemCount()):
+                    dialog.rows.setCurrentItem(dialog.rows.topLevelItem(i))
+                    if dialog.key() != snoozed:
+                        break
+                dismissed = dialog.key()
+                assert dismissed.alarm_key != snoozed.alarm_key
                 dialog.dismiss_button.click()
                 wait_for(lambda: any(row.status == 'dismissed' for row in page()))
+                untouched = next(row.reminder.key for row in page() if row.reminder.key not in (snoozed, dismissed))
+                clock.time = BASE + MINUTE
+                controller.reload_settings()
+                wait_for(lambda: any(row.reminder.key.repeat_index == 1 and
+                                     row.reminder.key.alarm_key == untouched.alarm_key for row in page()))
+                clock.time = BASE + 12*MINUTE
+                controller.reload_settings()
+                wait_for(lambda: any(row.reminder.key == snoozed and row.status == 'delivered' for row in page()))
+                assert all(row.reminder.key.repeat_index == 0 for row in page()
+                           if row.reminder.key.alarm_key == dismissed.alarm_key)
             finally:
                 dialog.close()
 

@@ -12,7 +12,7 @@ from typing import Iterable
 
 from dateutil.rrule import rrulestr
 
-from .models import Event
+from .models import timing_event, timing_overrides, Event
 from .timezones import timezone_identifier
 from .event_duration import add_duration, add_elapsed, elapsed_duration, end_for, same_duration, parse_duration_spec
 from .coincident_occurrences import apply_occurrence_counts, multiplicities
@@ -35,17 +35,6 @@ from .sequence_document import document_expression, is_sequence_document, parse_
 _SCHEDULE_FIELDS = ('recurrence_rule', 'recurrence_dates', 'excluded_dates', 'recurrence_overrides', 'range_policy',
                     'schedule_expression', 'expression_anchor', 'schedule_syntax', 'timezone_id',
                     'timezone_definitions', 'floating_time', 'duration_spec')
-
-
-def _timing_overrides(overrides):
-    return {key: dict(payload, raw_ics='', alarms=[]) for key, payload in overrides.items()}
-
-
-def timing_event(event):
-    """Keep authored timing and content without transporting wire data through visual projections."""
-    if event is None:
-        return None
-    return replace(event, raw_ics='', alarms=(), recurrence_overrides=_timing_overrides(event.recurrence_overrides))
 
 
 def _checked(value):
@@ -575,7 +564,7 @@ class ScheduleDraft:
         edited = timing_event(self._edited_master)
         fields = self._edited_fields
         if fields is not None:
-            fields = dict(fields, recurrence_overrides=_timing_overrides(fields['recurrence_overrides']))
+            fields = dict(fields, recurrence_overrides=timing_overrides(fields['recurrence_overrides']))
         return replace(self, source=source, _edited_master=edited, _edited_fields=fields)
 
     def fields(self, start, end=None, *, all_day=False, preserve_source=True, prototype=None):
@@ -681,6 +670,10 @@ class ScheduleDraft:
         edited = replace(master, start=canonical_start, end=canonical_end, all_day=all_day,
                          floating_time=master.floating_time and not all_day,
                          duration_spec=master.duration_spec if duration_spec is None else duration_spec)
+        # Only schedule fields leave this draft. The scope projection on Save
+        # works from the original family and owns transport-template rewriting.
+        if master.raw_ics:
+            master = replace(master, raw_ics='')
         projected = updated_series(master, master, edited)
         return canonicalize_authored_primary(projected, primary_range=(start, end)) if phase_edit else projected
 

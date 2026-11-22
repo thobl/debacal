@@ -6,7 +6,7 @@ and offsets for fixed instants, or plain wall clocks for floating timed events.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -317,6 +317,20 @@ class Event:
 _EVENT_FIELD_NAMES = tuple(item.name for item in fields(Event))
 _EVENT_SNAPSHOT_FIELDS = tuple(name for name in _EVENT_FIELD_NAMES
                               if name not in {'start', 'end', '_query_projection'})
+
+
+def timing_overrides(overrides):
+    return {key: dict(payload, raw_ics='', alarms=[]) for key, payload in overrides.items()}
+
+
+def timing_event(event):
+    """Keep authored timing and content without transporting wire data through visual projections."""
+    if event is None:
+        return None
+    if (not event.raw_ics and not event.alarms and not any(
+            payload.get('alarms') or payload.get('raw_ics') for payload in event.recurrence_overrides.values())):
+        return event
+    return replace(event, raw_ics='', alarms=(), recurrence_overrides=timing_overrides(event.recurrence_overrides))
 
 
 def copy_event(event: Event, replacements: dict[str, Any] | None = None) -> Event:

@@ -9,6 +9,7 @@ from typing import Literal
 from uuid import uuid4
 
 from .alarms import Alarm
+from .recurrence import event_zone, key_datetime, normalize_recurrence_time, normalized_rule, recurrence_key, rules_equivalent, shift_rule
 from .prepared_storage import StateReader, StateWriter
 from .query_projection import pack_state, unpack_state
 from .reminder_rule_seek import membership_slice
@@ -41,6 +42,9 @@ CREATE TABLE IF NOT EXISTS snooze_probe (key TEXT PRIMARY KEY, source TEXT NOT N
 CREATE INDEX IF NOT EXISTS snooze_probe_source ON snooze_probe(source);
 CREATE TRIGGER IF NOT EXISTS clear_snooze_probe AFTER UPDATE OF status,until ON ledger
 WHEN OLD.status='snoozed' BEGIN DELETE FROM snooze_probe WHERE key=OLD.key; END;
+CREATE TABLE IF NOT EXISTS native_movement (
+    source TEXT, component TEXT, alarm TEXT, occurrence TEXT, coordinate TEXT NOT NULL,
+    PRIMARY KEY(source,component,alarm,occurrence));
 CREATE TABLE IF NOT EXISTS suppressed (
     source TEXT, component TEXT, alarm TEXT, occurrence TEXT, rank INTEGER, through INTEGER,
     PRIMARY KEY(source,component,alarm,occurrence,rank));
@@ -68,6 +72,10 @@ def encode_due(db, due):
     def save(_kind, ref, state):
         db.execute('INSERT OR IGNORE INTO ledger_zone VALUES(?,?)', (ref, pack_state(state)))
     writer = StateWriter(save)
+    return _encoded_due(writer, due)
+
+
+def _encoded_due(writer, due):
     bounds = writer.datetime(due.start), writer.datetime(due.end)
 
     return json.dumps([due.calendar_id, due.source_revision, due.anchor_fingerprint, due.title,
@@ -95,8 +103,9 @@ def current_due(db, encoded, payload):
     return decode_due(inbox_reader(db), encoded, payload, label)
 
 
-def align(db, schedule, previous, now):
+def align(schedule, previous):
     """Retain exact content/ordinal matches, then an unambiguous residual edit."""
+    ambiguous = []
     for component, alarms in schedule.components.items():
         old = {a.key: a for a in previous.components.get(component, {}).values() if not a.uid}
         new = [a for a in alarms.values() if not a.uid]
@@ -119,9 +128,7 @@ def align(db, schedule, previous, now):
                 # Ambiguous edits suppress past replay only for an occurrence
                 # and repeat rank which actually had a predecessor disposition.
                 for predecessor in old:
-                    db.execute('INSERT OR REPLACE INTO suppressed SELECT source,component,?,occurrence,rank,? '
-                               'FROM ledger WHERE source=? AND component=? AND alarm=?',
-                               (a.key, now, schedule.master.id, component, predecessor))
+                    ambiguous.append((a.key, component, predecessor))
         used = set(matches.values()) | {a.key for a in alarms.values() if a.uid}
         updated = {}
         for a in alarms.values():
@@ -130,12 +137,126 @@ def align(db, schedule, previous, now):
                 key = 'local-' + uuid4().hex
             updated[key] = replace(a, key=key)
         schedule.components[component] = updated
+    return ambiguous
 
 
-def reconcile(db, source, schedule, previous_schedule, now):
-    """Refresh live logical groups and retain the date of each actual anchor edit."""
-    if (previous_schedule and schedule and schedule.timing_key and previous_schedule.timing_key == schedule.timing_key
-            and previous_schedule.components == schedule.components):
+def _native_reanchor(previous, current):
+    """Require the same civil zone and exactly the rule transported by an All move."""
+    if not previous or not current:
+        return None
+    old, new = previous.master, current.master
+    zone = event_zone(old)
+    if (not old.recurrence_rule or old.start.timestamp() == new.start.timestamp()
+            or zone != event_zone(new) or old.all_day != new.all_day or old.floating_time != new.floating_time):
+        return None
+    parts = normalized_rule(old.recurrence_rule, old)
+    shift = new.start.astimezone(zone).replace(tzinfo=None) - old.start.astimezone(zone).replace(tzinfo=None)
+    try:
+        translated = shift_rule(previous.master.recurrence_rule, shift, previous.master)
+        if not rules_equivalent(translated, current.master.recurrence_rule, current.master):
+            return None
+    except (ValueError, OverflowError):
+        return None
+    return parts['FREQ'], shift
+
+
+def _moved_native_key(previous, current, movement, key):
+    """Match the same nominal rule rank, respecting gaps, exclusions and overrides."""
+    if (key in previous.master.recurrence_dates or key in previous.master.excluded_dates
+            or key in previous.components):
+        return None
+    old = key_datetime(key, previous.master)
+    begin = previous.master.start.astimezone(event_zone(previous.master))
+    frequency, shift = movement
+    target = current.master.start.astimezone(event_zone(current.master))
+    try:
+        # A simple monthly/yearly rule takes its implicit day/month from
+        # DTSTART. Match its calendar period even when months differ in length.
+        if frequency in ('MONTHLY', 'YEARLY') and begin.date() != target.date():
+            if frequency == 'MONTHLY':
+                offset = (old.year - begin.year) * 12 + old.month - begin.month
+                year, month = divmod(target.year*12 + target.month - 1 + offset, 12)
+                nominal = target.replace(year=year, month=month+1)
+            else:
+                nominal = target.replace(year=target.year + old.year - begin.year)
+        else:
+            nominal = old + shift
+        moved = recurrence_key(normalize_recurrence_time(nominal), current.master.all_day,
+                               floating_time=current.master.floating_time)
+        if moved in current.components or moved in current.master.recurrence_dates or moved in current.master.excluded_dates:
+            return None
+        return moved if moved in current.explicit or current.native_coordinate(moved) is not None else None
+    except (ValueError, OverflowError):
+        return None
+
+
+HISTORY_PAGE = 32
+
+
+def _staged_group(schedule, previous, movement, component, key, encoded, coordinate, writer):
+    alarm = schedule.components.get(component, {}).get(key) if schedule else None
+    moved = (_moved_native_key(previous, schedule, movement, (coordinate or encoded)[1:])
+             if movement and alarm and not component and encoded else None)
+    if (not moved and coordinate and alarm and previous and schedule
+            and previous.master.start == schedule.master.start
+            and previous.master.recurrence_rule == schedule.master.recurrence_rule):
+        target = coordinate[1:]
+        if target not in schedule.components and (target in schedule.explicit or schedule.native_coordinate(target)):
+            moved = target
+    point = None
+    if alarm:
+        occurrence = encoded[1:] if encoded else None
+        point = schedule.master_point() if occurrence is None else schedule.explicit.get(occurrence)
+        if occurrence and point is None and schedule.prepared and not component:
+            start = schedule.native_coordinate(occurrence)
+            if start is not None:
+                # A historic rank needs its anchor geometry. Exact native
+                # membership matters when an actual snooze is about to fire.
+                try:
+                    point, _ = schedule.point(start, occurrence)
+                except (ValueError, OverflowError):
+                    pass
+    current = (schedule.due(point, alarm, instant(0), 0) if point and point.component == component else None)
+    fingerprint = current.anchor_fingerprint if current else None
+    ack = micros(alarm.acknowledged) if alarm and alarm.acknowledged else -1
+    return (component, key, encoded, fingerprint, _encoded_due(writer, current) if current else None,
+            ack, '1'+moved if moved else None)
+
+
+def stage_groups(db, source, schedule, previous):
+    """Prepare bounded pages in connection-local storage. No canonical or sidecar cursor crosses a yield."""
+    if (previous and schedule and schedule.timing_key and previous.timing_key == schedule.timing_key
+            and previous.components == schedule.components):
+        return 'metadata', {}
+    after = None
+    movement = _native_reanchor(previous, schedule)
+    writer = StateWriter()
+    while True:
+        page = db.execute('SELECT component,alarm,occurrence,coordinate FROM delivery_context '
+                          'LEFT JOIN native_movement USING(source,component,alarm,occurrence) WHERE source=? '
+                          + ('AND (component,alarm,occurrence)>(?,?,?) ' if after else '')
+                          + 'ORDER BY component,alarm,occurrence LIMIT ?',
+                          (source, *(after or ()), HISTORY_PAGE)).fetchall()
+        if not page:
+            return ('staged' if after else 'empty'), writer.zones
+        if after is None:
+            db.execute('CREATE TEMP TABLE IF NOT EXISTS staged_group (component TEXT,alarm TEXT,occurrence TEXT,'
+                       'fingerprint TEXT,payload TEXT,ack INTEGER,moved TEXT,PRIMARY KEY(component,alarm,occurrence))')
+        values = [_staged_group(schedule, previous, movement, *row, writer) for row in page]
+        with db:
+            if after is None:
+                db.execute('DELETE FROM temp.staged_group')
+            db.executemany('INSERT INTO temp.staged_group VALUES(?,?,?,?,?,?,?)', values)
+        after = page[-1][:3]
+        yield
+
+
+def reconcile(db, source, schedule, previous_schedule, now, stage, zones, ambiguous):
+    """Publish the prepared geometry against the dispositions current in this transaction."""
+    db.executemany('INSERT OR REPLACE INTO suppressed SELECT source,component,?,occurrence,rank,? '
+                   'FROM ledger WHERE source=? AND component=? AND alarm=?',
+                   ((key, now, source, component, predecessor) for key, component, predecessor in ambiguous))
+    if stage == 'metadata':
         # The current alarm/anchor proof survives. An in-progress snooze check
         # also retains its cursor across descriptive revisions and restart.
         db.executemany('INSERT INTO source_label VALUES(?,?,?,?,?) ON CONFLICT(source,component) '
@@ -152,37 +273,26 @@ def reconcile(db, source, schedule, previous_schedule, now):
     db.execute('DELETE FROM source_label WHERE source=?', (source,))
     db.execute("UPDATE ledger SET status='uncertain',claim=NULL WHERE source=? AND status='pending'", (source,))
     db.execute('DELETE FROM snooze_probe WHERE source=?', (source,))
-    groups = db.execute('SELECT component,alarm,occurrence,fingerprint FROM delivery_context WHERE source=?', (source,))
-    for component, key, encoded, previous in groups:
-        ids = source, component, key, encoded
-        alarm = schedule.components.get(component, {}).get(key) if schedule else None
-        point = None
-        if alarm:
-            occurrence = encoded[1:] if encoded else None
-            point = schedule.master_point() if occurrence is None else schedule.explicit.get(occurrence)
-            if occurrence and point is None and schedule.prepared and not component:
-                start = schedule.native_coordinate(occurrence)
-                if start is not None:
-                    # A historic rank needs its anchor geometry. Exact native
-                    # membership matters when an actual snooze is about to fire.
-                    try:
-                        point, _ = schedule.point(start, occurrence)
-                    except (ValueError, OverflowError):
-                        pass
-        current = (schedule.due(point, alarm, instant(0), 0) if point and point.component == component else None)
-        fingerprint = current.anchor_fingerprint if current else None
-        if fingerprint != previous:
-            db.execute('UPDATE delivery_context SET fingerprint=?,changed=? WHERE source=? AND component=? '
-                       'AND alarm=? AND occurrence=?', (fingerprint, now, *ids))
-        # Payload is shared by ranks of this alarm/occurrence. Refresh it even
-        # before a later inbox action chooses to snooze an already delivered key.
-        if current:
-            db.execute('UPDATE ledger SET payload=? WHERE source=? AND component=? AND alarm=? AND occurrence=? '
-                       "AND fingerprint=? AND status!='dismissed'", (encode_due(db, current), *ids, fingerprint))
-        ack = micros(alarm.acknowledged) if alarm and alarm.acknowledged else -1
-        db.execute("UPDATE ledger SET status='dismissed',unread=0,until=NULL,closed=0,claim=NULL "
-                   "WHERE source=? AND component=? AND alarm=? AND occurrence=? AND status='snoozed' "
-                   "AND (fingerprint IS NOT ? OR stamp<=?)", (*ids, fingerprint, ack))
+    if stage == 'empty':
+        return
+    db.executemany('INSERT OR IGNORE INTO ledger_zone VALUES(?,?)',
+                   ((ref, pack_state(state)) for ref, state in zones.items()))
+    identity = 't.component=g.component AND t.alarm=g.alarm AND t.occurrence=g.occurrence'
+    db.execute('UPDATE delivery_context AS t SET fingerprint=g.fingerprint,changed=? FROM temp.staged_group g '
+               'WHERE t.source=? AND ' + identity + ' AND t.fingerprint IS NOT g.fingerprint', (now, source))
+    db.execute("UPDATE ledger AS t SET payload=g.payload FROM temp.staged_group g WHERE t.source=? AND "
+               + identity + " AND t.fingerprint=g.fingerprint AND t.status!='dismissed'", (source,))
+    db.execute("UPDATE ledger AS t SET status='dismissed',unread=0,until=NULL,closed=0,claim=NULL "
+               'FROM temp.staged_group g WHERE t.source=? AND '+ identity
+               + " AND t.status='snoozed' AND (t.fingerprint IS NOT g.fingerprint OR t.stamp<=g.ack)", (source,))
+    # Carry the current coordinate of a delivered group through successive All
+    # moves. A changed recurrence without a proven transport ends this chain.
+    db.execute('DELETE FROM native_movement WHERE source=?', (source,))
+    db.execute('INSERT OR REPLACE INTO native_movement SELECT ?,component,alarm,occurrence,moved '
+               'FROM temp.staged_group WHERE moved IS NOT NULL', (source,))
+    db.execute('INSERT OR REPLACE INTO suppressed SELECT t.source,t.component,t.alarm,g.moved,t.rank,? '
+               'FROM temp.staged_group g JOIN ledger t ON '+identity+' WHERE t.source=? AND g.moved IS NOT NULL',
+               (now, source))
 
 
 def verify_snooze(db, schedule, key, encoded):

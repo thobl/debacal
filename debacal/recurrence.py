@@ -1068,7 +1068,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
     overrides = {}
     for key, payload in master.recurrence_overrides.items():
         moved_key = shift_key(key)
-        value = Event.from_dict(payload)
+        value = Event.from_dict(dict(payload, alarms=[]))
         if relative_keys is not None and key in relative_keys:
             override_start = checked_wall(key_datetime(moved_key, master))
         else:
@@ -1088,6 +1088,7 @@ def updated_series(master: Event, reference: Event, edited: Event,
                                        **shared_changes, all_day=edited.all_day,
                                        candidate=edited.candidate,
                                        schedule_expression="", expression_anchor="", schedule_syntax=1).to_dict()
+        overrides[moved_key]['alarms'] = payload.get('alarms')
     expression, anchor = edited.schedule_expression, edited.expression_anchor
     from .ics_resources import rekey_recurrence_templates
     updated = replace(master, **shared_changes,

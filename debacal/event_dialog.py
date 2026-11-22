@@ -660,7 +660,6 @@ class EventDialog(FormDialog):
     def _load_reminders(self, scope, state):
         self.reminders.series_alarms = ()
         self.reminders.all_day = self.all_day.isChecked()
-        self.reminders.reference_time = self._last_start
         self._calendar_selected()
         if not self.original:
             self._new_reminders()
@@ -752,6 +751,7 @@ class EventDialog(FormDialog):
             self.end.setFloatingTime(self.is_floating_time())
             self.start.set_value(start)
             self.end.set_value(end - timedelta(days=1) if all_day else end)
+            self.reminders.reference_time = start
             self._last_start, self._last_end, self._duration = start, end, duration
             self._range_needs_repair = needs_repair
             self.duration.setText(self._duration_caption())

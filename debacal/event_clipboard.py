@@ -8,7 +8,7 @@ import json
 from typing import Iterable
 from uuid import uuid4
 
-from .models import Event
+from .models import Event, timing_event
 from .event_duration import end_for
 from .recurrence import canonicalize_authored_primary, event_zone, key_datetime, occurrence, occurrence_id, recurrence_key, recurrence_set, updated_series, _valid_wall_time
 
@@ -47,6 +47,27 @@ def _moved_times(event: Event, shift: timedelta, zone, *, target: datetime | Non
         if not event.floating_time and not _valid_wall_time(value):
             raise ValueError(f'The local time {value:%d.%m.%Y %H:%M} falls in a daylight-saving clock change. Choose another time.')
     return start, end
+
+
+def relocated_event(event: Event, reference: Event, target: datetime) -> Event:
+    """Project the captured resource into the target wall range before assigning copy identities."""
+    zone = event_zone(event)
+    wall = lambda value, floating=False: value.replace(tzinfo=None) if floating else value.astimezone(zone).replace(tzinfo=None)
+    shift = (timedelta(days=calendar_day_delta(reference, target))
+             if event.all_day or reference.all_day else wall(target) - wall(reference.start, reference.floating_time))
+    primary_reference = (event.id == reference.id or
+        reference.series_id == event.id
+        and reference.recurrence_id == recurrence_key(event.start, event.all_day, floating_time=event.floating_time)
+        and wall(reference.start, reference.floating_time) == wall(event.start, event.floating_time))
+    exact_target = target if primary_reference and not event.all_day else None
+    start, end = _moved_times(event, shift, zone, target=exact_target)
+    moved = replace(event, start=start, end=end)
+    if event.recurring:
+        moved = updated_series(event, event, moved)
+        if primary_reference and (target.fold or reference.start.fold):
+            _, selected_end = _moved_times(reference, shift, zone, target=target)
+            moved = canonicalize_authored_primary(moved, primary_range=(target, selected_end))
+    return moved
 
 
 def _resolve(masters: tuple[Event, ...], reference: Event) -> Event:
@@ -168,6 +189,12 @@ class EventClipboard:
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
             raise ValueError("The clipboard does not contain valid Debacal event snapshots.") from error
 
+    def placement_geometry(self, scope):
+        """Stable, wire-free resources for one interactive placement."""
+        masters = tuple(timing_event(master) for master in self.masters)
+        reference = timing_event(self.reference)
+        return masters if self.exact_selection else _selected(masters, reference, _scope(scope))[0]
+
     def instantiate(self, scope: str, target: datetime, calendar_id: str, *, preserve_calendars=False) -> list[Event]:
         """Prepare fresh resources; callers persist the entire list atomically."""
         scope = _scope(scope)
@@ -181,22 +208,7 @@ class EventClipboard:
         result = []
         for event in selected:
             destination = event.calendar_id if preserve_calendars else calendar_id
-            zone = event_zone(event)
-            wall = lambda value, floating=False: value.replace(tzinfo=None) if floating else value.astimezone(zone).replace(tzinfo=None)
-            shift = (timedelta(days=calendar_day_delta(self.reference, target))
-                     if event.all_day or self.reference.all_day else wall(target) - wall(self.reference.start, self.reference.floating_time))
-            primary_reference = (event.id == self.reference.id or
-                self.reference.series_id == event.id
-                and self.reference.recurrence_id == recurrence_key(event.start, event.all_day, floating_time=event.floating_time)
-                and wall(self.reference.start, self.reference.floating_time) == wall(event.start, event.floating_time))
-            exact_target = target if primary_reference and not event.all_day else None
-            start, end = _moved_times(event, shift, zone, target=exact_target)
-            moved = replace(event, start=start, end=end)
-            if event.recurring:
-                moved = updated_series(event, event, moved)
-                if primary_reference and (target.fold or self.reference.start.fold):
-                    _, selected_end = _moved_times(self.reference, shift, zone, target=target)
-                    moved = canonicalize_authored_primary(moved, primary_range=(target, selected_end))
+            moved = relocated_event(event, self.reference, target)
             new_id = str(uuid4())
             cloned = reidentify_series(moved, new_id, new_id, copy_alarms=True)
             group_id = group_ids.get(event.group_id)

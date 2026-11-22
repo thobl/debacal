@@ -17,7 +17,7 @@ from .reminder_rule_seek import seek_slice
 from .reminder_owner import ReminderOwner
 from .reminder_preferences import CalendarReminderPolicy, ReminderPolicySnapshot, read_reminder_policy
 from .reminder_schedule import compile_schedule
-from .reminder_store import ReminderStore
+from .reminder_store import ReminderStore, StaleSourcePage
 from .timeutil import local_zone
 
 PAGE = 12
@@ -106,6 +106,7 @@ class ReminderWorker(Thread):
         self.database, self.clock, self.transport = database, clock, transport
         self.allowed, self.profile, self.notify = allowed, profile, notify
         self.previous = previous
+        self.source_work = self.source_context = None
         self.commands = Queue()
         self.stopped = Event()
         self.store = self.owner = self.policy = self.partition = None
@@ -138,6 +139,7 @@ class ReminderWorker(Thread):
         self.enqueue('wake')
 
     def release(self):
+        self.cancel_source_work()
         if self.native:
             self.transport.stop()
         self.native = False
@@ -381,23 +383,23 @@ class ReminderWorker(Thread):
                     pass
             cursor = (change.version, change.event_id) if journal else None
             try:
-                self.store.put_source(change, schedule, eligible_since=boundary,
-                                      scanned=scanned, cursor=cursor)
+                yield from self.store.put_source_steps(change, schedule, eligible_since=boundary,
+                                                       scanned=scanned, cursor=cursor)
             except DATA_ERRORS:
-                self.store.put_source(change, None, scanned=scanned, cursor=cursor)
+                yield from self.store.put_source_steps(change, None, scanned=scanned, cursor=cursor)
 
     def sources(self, state):
         store = self.store
         if store.bootstrap is not None:
             page = store.read_sources('scan', after_id=store.bootstrap[1], limit=PAGE, partition=self.partition)
             if page:
-                self.compile(page, scanned=True)
+                yield from self.compile(page, scanned=True)
                 return True
             store.finish_bootstrap()
         if state['scans']:
             cal, after = next(iter(state['scans'].items()))
             page = store.read_sources('scan', calendar_id=cal, after_id=after, limit=PAGE, partition=self.partition)
-            self.compile(page)
+            yield from self.compile(page)
             if page:
                 state['scans'][cal] = page[-1].event_id
             else:
@@ -407,13 +409,13 @@ class ReminderWorker(Thread):
         if not self.checked_zone:
             page = store.rebind_sources(self.zone, limit=PAGE, partition=self.partition)
             if page:
-                self.compile(page)
+                yield from self.compile(page)
                 return True
             self.checked_zone = True
         if self.journal_target is None:
             self.journal_target = store.read_sources('revision', partition=self.partition)
         page = store.read_sources('changes', store.cursor, limit=PAGE, partition=self.partition)
-        self.compile(page, journal=True)
+        yield from self.compile(page, journal=True)
         if len(page) == PAGE and store.cursor[0] <= self.journal_target:
             # Include all IDs tied at the captured high-water revision. A
             # continuously advancing writer cannot indefinitely delay claims.
@@ -423,6 +425,32 @@ class ReminderWorker(Thread):
             self.checked_zone = False
             return True
         return False
+
+    def cancel_source_work(self):
+        if self.source_work is not None:
+            self.source_work.close()
+            self.source_work = None
+        self.source_context = None
+
+    def source_slice(self, state, states):
+        context = (self.partition, self.policy.generation, self.zone, states)
+        if context != self.source_context:
+            self.cancel_source_work()
+        if self.source_work is None:
+            self.source_work = self.sources(state)
+            self.source_context = context
+        try:
+            next(self.source_work)
+            return True
+        except StopIteration as done:
+            self.cancel_source_work()
+            return done.value
+        except StaleSourcePage:
+            self.cancel_source_work()
+            return True
+        except Exception:
+            self.cancel_source_work()
+            raise
 
     def tick(self):
         now = self.clock.now()
@@ -468,7 +496,7 @@ class ReminderWorker(Thread):
             self.zone = zone
             self.checked_zone = False
         state = self.settings(states)
-        more = self.sources(state)
+        more = self.source_slice(state, states)
         self.set_native(prefs.delivery != 'in_app' or self.test is not None)
         self.test_tick()
         if self.native:

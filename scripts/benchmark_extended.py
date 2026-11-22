@@ -39,7 +39,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 ANCHOR = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
 BLOCKS = ('navigation', 'preferences', 'creation', 'gestures', 'editing', 'series', 'heavy_selection', 'clipboard',
-          'calendars', 'search', 'import_export', 'dialogs')
+          'calendars', 'search', 'import_export', 'dialogs', 'notifications')
 
 
 @dataclass(frozen=True)
@@ -332,6 +332,7 @@ def desktop_worker(database, config, mode, profile_path=None):
             return False
         commands = getattr(window, 'database_commands', None)
         return bool((commands is not None and commands.pending)
+                    or getattr(window, '_editor_future', None) is not None
                     or getattr(window, '_import_jobs', ())
                     or getattr(window, '_import_requests', ())
                     or getattr(window, '_import_dialog_active', False)
@@ -765,6 +766,137 @@ def desktop_worker(database, config, mode, profile_path=None):
         if not selected.exists() or not parse_ics_report(selected.read_bytes(), 'check').events:
             raise RuntimeError('Selection export was not an importable calendar.')
 
+    def notifications_block(round_index):
+        from dataclasses import replace
+        from PySide6.QtGui import QCursor
+        from debacal.alarms import Alarm
+        from debacal.recurrence import occurrence
+        from debacal.reminder_controller import ReminderController
+        from debacal.reminder_preferences import ReminderPreferences, save_reminder_preferences
+        from debacal.sequence_document import document_expression
+        from benchmark_reminders import Clock, fake_transport
+
+        # A separate small live workspace permits real enable/build and delivery
+        # in every round while the large common workspace stays a demo.
+        path = database.parent / f'notification-controls-{round_index}.sqlite'
+        clock = Clock()
+        transport = fake_transport()
+        def factory(db, **opts):
+            return ReminderController(db, clock=clock, transport=transport, **opts)
+        with Store(path) as local:
+            clock.time = ANCHOR - timedelta(minutes=1)
+            due_alarm = Alarm('due', 'DISPLAY', 'PT0S', uid='due')
+            due = Event('due', 'local', 'Due reminder', ANCHOR, ANCHOR+timedelta(hours=1), alarms=(due_alarm,))
+            # Keep the draft and gesture workload well above a one-row editor.
+            alarms = tuple(Alarm(f'a{i}', 'DISPLAY', f'-PT{i+1}M', uid=f'a{i}') for i in range(24))
+            master = Event('bench-alarms', 'local', 'Reminder series', ANCHOR+timedelta(hours=2),
+                           ANCHOR+timedelta(hours=3), alarms=alarms,
+                           recurrence_rule='FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', schedule_syntax=2)
+            children = [occurrence(master, master.start+timedelta(days=i+1)) for i in range(12)]
+            master = replace(master, recurrence_dates=tuple(child.recurrence_id for child in children),
+                             recurrence_overrides={child.recurrence_id: child.to_dict() for child in children})
+            master = replace(master, schedule_expression=document_expression(master))
+            local.apply_remote([master, due])
+            live = MainWindow(local, enable_sync=False, delivery_allowed=True, reminder_factory=factory)
+            live.resize(config.width, config.height)
+            live.show()
+            live.open_day(ANCHOR.date())
+            controller = live.reminder_controller
+            pages = {}
+            controller.inboxPageReady.connect(lambda request, rows: pages.update({request: rows}))
+            try:
+                prefs = measure('reminder_preferences_open', lambda: display(PreferencesDialog(
+                    live.preferences, live, store=local, reminder_clock=clock.now)))
+                prefs.remindersApplied.connect(live.apply_reminder_preferences)
+                measure('reminder_preferences_category', lambda: prefs.set_category('Notifications'))
+                page = prefs.notification_page
+                measure('reminder_preferences_enable', page.enabled.click)
+                page.delivery.setCurrentIndex(page.delivery.findData('in_app'))
+                measure('reminder_preferences_save', prefs.save, predicate=lambda: not prefs._applying)
+                dispose(prefs)
+                # Request a FIFO worker barrier and verify durable index readiness.
+                def request():
+                    return controller.request_inbox(limit=1)
+                def ready():
+                    if not Path(str(path)+'.reminders.sqlite3').is_file():
+                        return False
+                    import sqlite3
+                    from contextlib import closing
+                    with closing(sqlite3.connect(str(path)+'.reminders.sqlite3')) as reader:
+                        rows = dict(reader.execute('SELECT key,value FROM metadata'))
+                        return rows.get('bootstrap') == 'null' and bool(rows.get('cursor'))
+                measure('reminder_index_ready', controller.reload_settings, predicate=ready)
+                requests = []
+                measure('reminder_idle_tick', lambda: requests.append(request()), predicate=lambda: requests[-1] in pages)
+                def advance():
+                    clock.time = ANCHOR
+                    controller.reload_settings()
+                measure('reminder_due_batch', advance, predicate=lambda: controller.unread_count == 1)
+                measure('reminder_inbox_open', live.show_reminders,
+                        predicate=lambda: live._reminder_dialog.rows.topLevelItemCount() == 1)
+                live._reminder_dialog.close()
+                ref = occurrence(master, master.start)
+                live.select_event(ref.id)
+                live.set_selection_mode('group')
+                measure('reminder_series_copy', lambda: live.copy_event(ref.id))
+                measure('reminder_series_paste_start', live.paste_events)
+                live._paste_mouse_origin = QCursor.pos()+QPoint(3,3)
+                target = ref.start+timedelta(minutes=15)
+                measure('reminder_series_paste_hover', lambda: live.move_paste_preview(target))
+                assert live.pending_paste.events[0].start == target
+                measure('reminder_series_paste_confirm', live.confirm_paste,
+                        predicate=lambda: not live.database_commands.pending)
+                assert len(local.list_events()) == 3
+                live.select_event(ref.id)
+                measure('reminder_drag_start', lambda: live.preview_drag(ref.id, ref.start, ref.end, Qt.KeyboardModifier.NoModifier))
+                measure('reminder_drag_hover', lambda: live.preview_drag(ref.id, target, ref.end+timedelta(minutes=15),
+                                                                          Qt.KeyboardModifier.ControlModifier))
+                assert live._drag_preview_events
+                live.clear_drag_preview()
+                editor = measure('reminder_editor_open', lambda: display(EventDialog(local.list_calendars(), ref.start,
+                    event=ref, series=master, edit_scope='group', preferences=live.preferences, parent=live)))
+                measure('reminder_editor_list', lambda: editor.notes_choice.setCurrentData('reminders'))
+                measure('reminder_editor_timing', lambda: editor.start.set_value(target))
+                measure('reminder_editor_remove', editor.reminders.remove_buttons[-1].click)
+                measure('reminder_editor_save', editor.save)
+                assert editor.result() == QDialog.DialogCode.Accepted
+                draft = editor.result_events[0]
+                replacement, alarm_edit = editor.schedule_replacement, editor.alarm_edit()
+                measure('reminder_editor_commit', lambda: live.write_database(lambda writer:
+                    writer.edit_series(ref, draft, replace_schedule=replacement,
+                                       alarm_edit=alarm_edit)), predicate=lambda: not live.database_commands.pending)
+                assert len(local.get_event(master.id).alarms) == len(alarms)-1
+                dispose(editor)
+                wire = export_ics([replace(due, id='incoming', ical_uid='incoming')])
+                dialog = measure('reminder_import_open', lambda: display(ImportDialog(local.list_calendars(),
+                    sources=[ImportSource.from_data(wire)], calendar_id='local', parent=live)))
+                measure('reminder_import_ready', lambda: None, predicate=lambda: dialog.preview_ready)
+                measure('reminder_import_remove', lambda: dialog.reminder_mode.setCurrentIndex(dialog.reminder_mode.findData('remove')))
+                dialog.save()
+                def reviewed(actual):
+                    actual.selected_prepared = dialog.selected_prepared
+                    actual.selected_calendar_id = dialog.selected_calendar_id
+                    actual.selected_sources = dialog.selected_sources
+                    return QDialog.DialogCode.Accepted
+                with patch.object(ImportDialog, 'exec', reviewed):
+                    measure('reminder_import_commit', lambda: live.import_data(wire, calendar_id='local'),
+                            predicate=lambda: any(e.ical_uid == 'incoming' for e in local.list_events()))
+                assert next(e for e in local.list_events() if e.ical_uid == 'incoming').alarms == ()
+                dispose(dialog)
+                measure('reminder_single_source_update', lambda: live.apply_events('Rename', [replace(due,title='Revised')]),
+                        predicate=lambda: not live.database_commands.pending and local.get_event('due').title == 'Revised')
+                live.apply_reminder_preferences(replace(live.reminder_preferences, close_behavior='tray'))
+                with patch.object(live.tray, 'available', return_value=True):
+                    live.close()
+                    assert not live.isVisible()
+                    measure('reminder_tray_restore', live.tray._menu.actions()[0].trigger, predicate=live.isVisible)
+            finally:
+                live.request_quit(force=True)
+                if controller._retiring:
+                    controller._retiring.join(10)
+                live.deleteLater()
+                pump()
+
     def dialogs_block(round_index):
         editor = measure('editor_open', lambda: display(EventDialog(store.list_calendars(), ANCHOR,
             ANCHOR + timedelta(hours=1), preferences=window.preferences, parent=window)))
@@ -838,7 +970,7 @@ def desktop_worker(database, config, mode, profile_path=None):
                       'creation': creation_block, 'gestures': gestures_block, 'editing': editing_block, 'series': series_block,
                       'heavy_selection': heavy_selection_block,
                       'clipboard': clipboard_block, 'calendars': calendars_block, 'search': search_block,
-                      'import_export': import_export_block, 'dialogs': dialogs_block}
+                      'import_export': import_export_block, 'dialogs': dialogs_block, 'notifications': notifications_block}
             plan = interaction_plan(config.rounds, config.seed)
             for entry in plan:
                 for block in entry['blocks']:

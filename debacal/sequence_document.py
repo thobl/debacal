@@ -125,7 +125,7 @@ def document_expression(event: Event) -> str:
     if event.excluded_dates:
         document['omit'] = list(event.excluded_dates)
     if event.recurrence_overrides:
-        document['move'] = {key: _range_document(Event.from_dict(payload))
+        document['move'] = {key: _range_document(Event.from_dict(dict(payload, alarms=[])))
                             for key, payload in sorted(event.recurrence_overrides.items())}
     return PREFIX + json.dumps(document, ensure_ascii=False, separators=(', ', ': '))
 
@@ -166,7 +166,7 @@ def document_event(source: Event, text: str) -> Event:
         if canonical in moves:
             raise RecurrenceError('Two moved occurrence keys name the same nominal date.')
         original = source.recurrence_overrides.get(canonical)
-        item = (Event.from_dict(original) if original is not None
+        item = (Event.from_dict(dict(original, alarms=[])) if original is not None
                 else materialize_alarms(bare, occurrence(bare, key_datetime(canonical, bare), canonical)))
         try:
             zone = resolve_timezone(values['zone'], item.timezone_definitions) if values.get('zone') else event_zone(item)

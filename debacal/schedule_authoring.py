@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 
-from .models import Event
+from .models import Event, timing_event
 from .timezones import timezone_identifier
 from .coincident_occurrences import apply_occurrence_counts, multiplicities
 from .patterns import (DEFAULT_LIMIT, PatternError, compile_sequence, expand_sequence,
@@ -313,6 +313,7 @@ def expression_matches(event, expression, *, authoring_zone=None):
     Use ``recurrence_matches`` for nominal RRULE/RDATE/EXDATE comparisons.
     Durations/content are preserved separately, never inferred from this text.
     """
+    event = timing_event(event)
     if is_sequence_document(expression):
         return document_matches(event, expression)
     try:
@@ -588,6 +589,7 @@ def reconstruct_authoring(event, *, authoring_zone=None, prefer_literal=True):
     No occurrence sampling, work budget or missing reference can remove the
     user's ability to read and edit the series definition.
     """
+    event = timing_event(event)
     if (prefer_literal and event.schedule_syntax == 2
             and is_sequence_document(event.schedule_expression)
             and document_matches(event, event.schedule_expression)):

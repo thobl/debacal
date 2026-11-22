@@ -177,6 +177,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         self._paste_mouse_origin = None
         self._drag_preview_events = []
         self._drag_preview_request = None
+        self._drag_placement = None
+        self._drag_selection = None
         self.full_day = bool(store.get_setting('show_full_day', False))
         self._search_index = None
         self._events_revision = None
@@ -1258,17 +1260,30 @@ class MainWindow(WorkspaceChrome, QMainWindow):
         if self.occurrence_picker:
             self.occurrence_picker.drag_preview(event_id, start, end)
             return
-        event = self.event_by_id(event_id)
-        if event is None:
-            return
-        self._drag_preview_request = event_id, start, end, modifiers
+        scope = self.operation_scope()
+        selection_state = self.selection.refs, self._events_revision
         try:
-            prepared = self.store.move_selection(self.operation_references(event), self.operation_scope(),
-                                                  event, start, end, copy=True,
-                                                  preserve_calendars=not bool(modifiers & Qt.KeyboardModifier.ControlModifier))
-            from .recurrence import expand_events
+            if (self._drag_selection != selection_state or self._drag_preview_request is None or self._drag_preview_request[0] != event_id
+                    or self._drag_placement is None or self._drag_placement.scope != scope):
+                event = self.event_by_id(event_id)
+                if event is None:
+                    return
+                selection = self.capture_events(event, scope)
+                self._drag_placement = PastePlacement(selection, event.calendar_id, start, scope)
+                self._drag_selection = selection_state
+            placement = self._drag_placement
+            self._drag_preview_request = event_id, start, end, modifiers
+            copying = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            if copying:
+                calendar = self.store.get_default_calendar()
+                if calendar is None or calendar.read_only or calendar.kind == 'ics':
+                    raise ValueError('Choose a writable calendar for the copied events.')
+                placement.calendar_id = calendar.id
+            placement.update(start, preserve_calendars=not copying)
+            if placement.error:
+                raise ValueError(placement.error)
             days = self.dates()
-            self._drag_preview_events = expand_events(prepared, at(days[0]), at(days[-1] + timedelta(days=1)))
+            self._drag_preview_events = placement.visible(at(days[0]), at(days[-1] + timedelta(days=1)))
             self.render_placement()
         except (ValueError, KeyError, OverflowError) as exc:
             self.report_error(str(exc))
@@ -1278,6 +1293,8 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.occurrence_picker.preview = []
         self._drag_preview_events = []
         self._drag_preview_request = None
+        self._drag_placement = None
+        self._drag_selection = None
         self.render_placement()
 
     def reject_drag(self, message):
@@ -1455,7 +1472,12 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             self.report_error('The destination calendar is no longer writable.', title='Cannot paste events',
                               action_label='Edit calendar…', action=lambda: self.add_calendar(calendar) if calendar else self.add_calendar())
             return
-        events, target = pending.events, pending.target
+        target = pending.target
+        try:
+            events = pending.clipboard.instantiate(pending.scope, target, pending.calendar_id)
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.report_error(str(exc), title='Cannot paste events')
+            return
         captured = pending.clipboard
         master = next((item for item in captured.masters
                        if item.id == (captured.reference.series_id or captured.reference.id)), None)
