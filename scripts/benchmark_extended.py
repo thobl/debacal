@@ -349,7 +349,7 @@ def desktop_worker(database, config, mode, profile_path=None):
             if time.perf_counter() - begin > timeout:
                 raise TimeoutError('UI operation did not complete; active=' + str(active))
             if quiet < 2:
-                QTest.qWait(1)
+                time.sleep(.001)
         if window is not None and getattr(window, 'local_issues', ()):
             raise RuntimeError('Operation produced app issues: ' + repr(window.local_issues))
 

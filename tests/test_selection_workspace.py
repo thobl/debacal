@@ -349,7 +349,7 @@ def test_same_time_multi_move_keeps_both_selected_for_the_next_delete(workspace)
     assert len(store.history()) == 3
 
 
-def test_same_time_independent_future_tails_remain_selected_after_the_split(workspace):
+def test_same_time_independent_future_tails_remain_selected_after_the_split(workspace, monkeypatch):
     _, window, store, insert = workspace
     a = sample('a', START.replace(day=2), recurrence_rule='FREQ=WEEKLY;COUNT=5')
     b = sample('b', START.replace(day=2), recurrence_rule='FREQ=WEEKLY;COUNT=5')
@@ -360,9 +360,16 @@ def test_same_time_independent_future_tails_remain_selected_after_the_split(work
     window.set_selection_mode('future')
     window.select_event(av[2].id)
     window.select_event(bv[2].id, additive=True)
+    enumerations = []
+    original_ids = store.event_ids
+    def count_ids():
+        enumerations.append(1)
+        return original_ids()
+    monkeypatch.setattr(store, 'event_ids', count_ids)
     window.move_event(av[2].id, av[2].start + timedelta(days=1), av[2].end + timedelta(days=1))
     roots = {event.series_id for event in window.selection.refs}
     assert len(roots) == 2 and not roots.intersection({a.id, b.id})
+    assert not enumerations, 'Reselect the split tails from their own operation.'
     assert len(window.selected_ids) == 6
     window.delete_event()
     remaining = store.query_occurrences(START - timedelta(days=5), START + timedelta(days=70))

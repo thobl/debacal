@@ -1075,15 +1075,14 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             def save(writer):
                 if guard is not None and not guard(writer):
                     raise ValueError('This reminder belongs to an earlier version of the event.')
-                previous_ids = writer.event_ids()
-                writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
-                                      calendar_id=calendar_id, expected_masters=expected, alarm_edit=alarm_edit)
-                return previous_ids
-            def saved(previous_ids):
+                operation = writer.edit_selection(refs, scope, reference, edited, replace_schedule=replacement,
+                                                  calendar_id=calendar_id, expected_masters=expected, alarm_edit=alarm_edit)
+                return writer.created_event_ids(operation)
+            def saved(created_ids):
                 destination = self.store.get_calendar(edited.calendar_id)
                 if destination and not destination.visible and (edited.calendar_id != reference.calendar_id or calendar_changed):
                     self.store.set_calendar_visible(destination.id, True)
-                self.reselect_after_operation(refs, target, previous_ids, shift,
+                self.reselect_after_operation(refs, target, created_ids, shift,
                                              expected_starts=expected_starts, all_day=edited.all_day)
             self.write_database(save, on_success=saved, force_async=self.store.path != ':memory:')
         except (ValueError, KeyError, OverflowError) as exc:
@@ -1167,14 +1166,13 @@ class MainWindow(WorkspaceChrome, QMainWindow):
                 result[item.id] = self.reanchored_reference_start(master, item, target)
         return result
 
-    def reselect_after_operation(self, refs, target, previous_ids, shift=None, *, expected_starts=None, all_day=None):
+    def reselect_after_operation(self, refs, target, created_ids, shift=None, *, expected_starts=None, all_day=None):
         self.selection.clear()
         self.selected_id = None
         all_day = refs[-1].all_day if all_day is None and refs else bool(all_day)
         self.anchor = self.selected_day = target.date() if all_day else target.astimezone(local_zone()).date()
         self.refresh()
-        current_ids = self.store.event_ids()
-        allowed = (current_ids - previous_ids) | {value.series_id or value.id for value in refs}
+        allowed = created_ids | {value.series_id or value.id for value in refs}
         choices = self.visible_events_for_sources(allowed)
         selected = []
         for reference in refs:
@@ -1245,11 +1243,10 @@ class MainWindow(WorkspaceChrome, QMainWindow):
             else:
                 shift = start.astimezone(local_zone()).replace(tzinfo=None) - event.start.astimezone(local_zone()).replace(tzinfo=None)
                 def move(writer):
-                    previous_ids = writer.event_ids()
-                    writer.move_selection(refs, scope, event, start, end)
-                    return previous_ids
-                def moved(previous_ids):
-                    self.reselect_after_operation(refs, expected_starts.get(event.id, start), previous_ids, shift,
+                    operation = writer.move_selection(refs, scope, event, start, end)
+                    return writer.created_event_ids(operation)
+                def moved(created_ids):
+                    self.reselect_after_operation(refs, expected_starts.get(event.id, start), created_ids, shift,
                                                  expected_starts=expected_starts, all_day=event.all_day)
                 self.write_database(move, on_success=moved)
         except (ValueError, KeyError, OverflowError) as exc:

@@ -1007,6 +1007,16 @@ class Store(_CanonicalEventReader):
         with self._lock:
             return {row[0] for row in self.connection.execute("SELECT id FROM events")}
 
+    def created_event_ids(self, operation_id: int | None) -> set[str]:
+        """Return resources introduced by this one recorded history operation."""
+        if operation_id is None:
+            return set()
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT item.key FROM operations o, json_each(o.before_data) item "
+                "WHERE o.id=? AND item.type='null'", (operation_id,))
+            return {row[0] for row in rows}
+
     def list_events(
         self, start: datetime | None = None, end: datetime | None = None,
         calendar_ids: Iterable[str] | None = None,
