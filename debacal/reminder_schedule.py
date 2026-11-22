@@ -5,7 +5,10 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
+from math import gcd
 import sqlite3
+
+from dateutil.rrule import HOURLY
 
 from .alarms import _advance, alarm_trigger, signed_duration
 from .event_duration import elapsed_duration
@@ -28,7 +31,8 @@ CREATE TABLE IF NOT EXISTS frontier (
     id INTEGER PRIMARY KEY, wake INTEGER NOT NULL, kind INTEGER NOT NULL, source TEXT NOT NULL,
     component TEXT NOT NULL, alarm TEXT NOT NULL, occurrence TEXT NOT NULL, rank INTEGER NOT NULL,
     state TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS frontier_wake ON frontier(wake,kind,source,component,alarm,occurrence,rank);
+CREATE INDEX IF NOT EXISTS frontier_order ON frontier(wake,source,component,alarm,occurrence,rank,kind);
+DROP INDEX IF EXISTS frontier_wake;
 CREATE INDEX IF NOT EXISTS frontier_source ON frontier(source);
 """
 
@@ -65,7 +69,7 @@ class Job:
 def head(db, deferred=()):
     where = 'WHERE id NOT IN (' + ','.join('?' for _ in deferred) + ') ' if deferred else ''
     sql = ('SELECT id,wake,kind,source,component,alarm,occurrence,rank,state FROM frontier ' + where +
-           'ORDER BY wake,kind,source,component,alarm,occurrence,rank LIMIT 1')
+           'ORDER BY wake,source,component,alarm,occurrence,rank,kind LIMIT 1')
     return db.execute(sql, tuple(deferred)).fetchone()
 
 
@@ -130,6 +134,28 @@ def _offset_bounds(schedule, alarm, cut):
     return q + duration - uncertainty, q + duration + uncertainty
 
 
+def _hourly_origin(rule):
+    """First native start if every reachable hour selects exactly one clock."""
+    if rule._freq != HOURLY or any((rule._bymonth, rule._bymonthday, rule._bynmonthday, rule._bynweekday,
+                                    rule._byweekno, rule._byyearday, rule._byeaster)):
+        return None
+    start = rule._dtstart
+    phase = start.weekday()*24 + start.hour
+    for i in range(168 // gcd(168, rule._interval)):
+        weekday, hour = divmod((phase + i*rule._interval) % 168, 24)
+        if (rule._byweekday and weekday not in rule._byweekday) or (rule._byhour and hour not in rule._byhour):
+            return None
+    minutes, seconds = sorted(rule._byminute), sorted(rule._bysecond)
+    size = len(minutes)*len(seconds)
+    positions = range(size) if not rule._bysetpos else {
+        p-1 if p > 0 else size+p for p in rule._bysetpos if p and -size <= p <= size}
+    if len(positions) != 1:
+        return None
+    minute, second = divmod(next(iter(positions)), len(seconds))
+    origin = micros(start.replace(minute=minutes[minute], second=seconds[second], microsecond=0))
+    return origin if origin >= micros(start) else origin + rule._interval*3_600_000_000
+
+
 def _progression(schedule, alarm, floor):
     """Prove a native constant UTC stride before using exact pair arithmetic."""
     series, master = schedule.prepared, schedule.master
@@ -139,20 +165,21 @@ def _progression(schedule, alarm, floor):
     days = _simple_day_step(rule)
     if days:
         stride = days * DAY_US
-    elif (master.recurrence_rule.upper().split(';')[0] == 'FREQ=HOURLY' and
-          all(p.split('=')[0] in ('FREQ', 'INTERVAL', 'UNTIL', 'COUNT')
-              for p in master.recurrence_rule.upper().split(';'))):
-        stride = rule._interval * 3_600_000_000
+        origin = micros(rule._dtstart)
     else:
-        return None
+        origin = _hourly_origin(rule)
+        if origin is None:
+            return None
+        stride = rule._interval * 3_600_000_000
     if not _fixed(master.start.tzinfo) or (alarm.related == 'END' and not _fixed(master.end.tzinfo)):
         return None
-    origin = micros(rule._dtstart)
     last = (MAX_US-origin) // stride
     if rule._until is not None:
         last = min(last, (micros(rule._until)-origin) // stride)
     if rule._count is not None:
         last = min(last, rule._count-1)
+    if last < 0:
+        return origin, 0, (), None
     offset, _ = _offset_bounds(schedule, alarm, cut=False)
     base = origin + offset
     width = _width(signed_duration(alarm.repeat_interval))
@@ -194,7 +221,7 @@ def initial_jobs(schedule, floor):
     master = schedule.master
     for alarm in schedule.components[''].values():
         if not relative(alarm):
-            point = Point('', None, master.start, master.end)
+            point = schedule.master_point()
             if job := _train(schedule, alarm, point, floor):
                 yield job
         elif schedule.prepared:

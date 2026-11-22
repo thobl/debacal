@@ -5,12 +5,12 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
-from .reminder_sources import ReminderSources
+from .reminder_sources import ReminderSources, UnavailableIdentity
 
 
 class Partition:
-    def __init__(self, database, db):
-        self.database, self.db = database, db
+    def __init__(self, database, target, db):
+        self.database, self.target, self.db = database, target, db
         self.owner = self.reader = self.epoch = None
 
     def get(self, key, default=None):
@@ -20,8 +20,13 @@ class Partition:
     def set(self, key, value):
         self.db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)', (key, json.dumps(value)))
 
+    def check_target(self):
+        if self.database != ':memory:' and str(Path(self.database).expanduser().resolve()) != self.target:
+            raise RuntimeError('The profile alias changed target. Open its current reminder store.')
+
     def attach(self, owner, now):
-        if owner.epoch is None or owner.database != str(Path(self.database).expanduser().resolve()):
+        self.check_target()
+        if owner.epoch is None or owner.database != self.target:
             raise RuntimeError('A delivery owner for this calendar database is required.')
         self.owner, self.epoch = owner, owner.epoch
         self.refresh(now)
@@ -32,11 +37,12 @@ class Partition:
     def check_owner(self):
         if self.database == ':memory:' and self.owner is None:
             return
-        if (self.owner is None or self.epoch != self.owner.epoch or self.epoch != self.get('owner')
-                or str(Path(self.database).expanduser().resolve()) != self.owner.database):
+        self.check_target()
+        if self.owner is None or self.epoch != self.owner.epoch or self.epoch != self.get('owner'):
             raise RuntimeError('Reminder delivery ownership changed.')
 
     def refresh(self, now):
+        self.check_target()
         if self.database == ':memory:':
             return
         if self.owner is None or self.owner.epoch != self.epoch:
@@ -44,10 +50,11 @@ class Partition:
         saved = self.get('evidence')
         try:
             if self.reader is None:
-                self.reader = ReminderSources(self.database, evidence=saved)
+                self.reader = ReminderSources(self.target, evidence=saved)
             token = self.reader.incarnation()
             with self.reader.for_incarnation(token):
                 revision = self.reader.revision()
+            self.check_target()
             evidence = self.reader.identity_evidence()
             reset = (saved is None or tuple(saved[0]) != evidence[0] or saved[2] != token
                      or revision < self.get('revision', 0) or self.get('incoherent'))
@@ -68,7 +75,7 @@ class Partition:
             raise
 
     def latch(self, error):
-        if 'previous WAL' in str(error):
+        if isinstance(error, (UnavailableIdentity, FileNotFoundError)):
             with self.db:
                 if self.reader:
                     self.set('evidence', self.reader.identity_evidence())
@@ -88,6 +95,7 @@ class Partition:
         try:
             with self.reader.for_incarnation(evidence[2]):
                 yield self.reader
+                self.check_target()
         except (OSError, sqlite3.DatabaseError) as error:
             if not self.db.in_transaction:
                 self.latch(error)

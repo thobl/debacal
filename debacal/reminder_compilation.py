@@ -153,6 +153,11 @@ class AlarmSchedule:
         result.reader = reader
         return result
 
+    def master_point(self):
+        event = self.master
+        end = _local_bound(event, event.end, self.zone) if event.all_day or event.floating_time else event.end
+        return Point('', None, _local_bound(event, event.start, self.zone), end)
+
     def point(self, start, key):
         event = self.master
         start = _local_bound(event, start, self.zone)

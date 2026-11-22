@@ -173,3 +173,42 @@ def test_rank_fallback_matches_native_sparse_dst_gap_and_setpos(monkeypatch):
     monkeypatch.setattr(PreparedSeries, '_regular', guarded)
     for data, lower, upper, expected in queries:
         assert next_triggers(data, lower, upper) == expected
+
+
+def test_redundant_hourly_clock_selectors_use_fixed_pair_seek(monkeypatch):
+    from debacal.prepared_recurrence import PreparedSeries
+    start = BASE.replace(year=1980)
+    alarm = Alarm('a', 'DISPLAY', 'PT0S', repeat=2_000_000_000, repeat_interval='PT1S')
+    event = alarm_event(start=start, end=start+DAY, recurrence_rule='BYMINUTE=0;BYSECOND=0;FREQ=HOURLY',
+                        alarms=(alarm,))
+    data = schedule(event)
+    def forbidden(*_):
+        raise AssertionError('Enumerated historic hourly starts')
+    monkeypatch.setattr(PreparedSeries, '_regular', forbidden)
+    actual = next_triggers(data, BASE, BASE+timedelta(seconds=1), limit=2)
+    assert [d.start for d in actual] == [start, start+timedelta(hours=1)]
+
+
+def test_master_absolute_uses_bound_civil_range():
+    zone = ZoneInfo('America/New_York')
+    alarm = Alarm('abs','DISPLAY','20261121T090000Z')
+    for civil, start, end in (
+            ({'floating_time': True}, BASE, BASE+timedelta(hours=1)),
+            ({'all_day': True}, BASE.replace(hour=0), BASE.replace(hour=0)+DAY)):
+        event = alarm_event(start=start, end=end, alarms=(alarm,), **civil)
+        due, = next_triggers(schedule(event, zone=zone), BASE, BASE+DAY)
+        assert due.start == start.replace(tzinfo=zone) and due.end == end.replace(tzinfo=zone)
+        assert due.key.trigger_utc == BASE and due.key.occurrence_key is None
+
+def test_single_effective_hourly_clock_can_differ_from_dtstart(monkeypatch):
+    from debacal.prepared_recurrence import PreparedSeries
+    start = BASE.replace(year=1980)
+    alarm = Alarm('a','DISPLAY','PT0S',repeat=2_000_000_000,repeat_interval='PT1S')
+    event = alarm_event(start=start, end=start+DAY,
+                        recurrence_rule='BYMINUTE=7,12;BYSETPOS=-1;FREQ=HOURLY', alarms=(alarm,))
+    data = schedule(event)
+    def forbidden(*_):
+        raise AssertionError('Expanded a singleton-clock native stream')
+    monkeypatch.setattr(PreparedSeries, '_regular', forbidden)
+    due = next_triggers(data, BASE, BASE+timedelta(seconds=1), limit=3)
+    assert [d.start for d in due] == [start, start+timedelta(minutes=12), start+timedelta(minutes=72)]

@@ -13,7 +13,7 @@ from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminde
 from .reminder_ledger import InboxEntry
 from .reminder_partition import Partition
 from .prepared_storage import StateWriter
-from .reminder_schedule import BACKFILL, FRONTIER_SQL, RULE, head, initial_jobs, pop, step
+from .reminder_schedule import BACKFILL, FRONTIER_SQL, READY, RULE, head, initial_jobs, pop, step
 from .reminder_sources import SourceChange
 
 _SCHEMA = """
@@ -28,11 +28,12 @@ CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 
 class ReminderStore:
     def __init__(self, database: str):
-        path = ':memory:' if database == ':memory:' else str(Path(database).expanduser().resolve()) + '.reminders.sqlite3'
+        target = str(Path(database).expanduser().resolve())
+        path = ':memory:' if database == ':memory:' else target + '.reminders.sqlite3'
         self._db = sqlite3.connect(path, timeout=0)
         self._db.execute('PRAGMA journal_mode=WAL')
         self._db.executescript(_SCHEMA + FRONTIER_SQL + ledger.LEDGER_SQL)
-        self._partition = Partition(database, self._db)
+        self._partition = Partition(database, target, self._db)
         self._now = micros(datetime.now(timezone.utc))
         self._page = {}
         self._scan_end = None
@@ -63,9 +64,11 @@ class ReminderStore:
 
     @contextmanager
     def _write(self):
+        self._partition.check_target()
         self._db.execute('BEGIN IMMEDIATE')
         with self._db:
             yield
+            self._partition.check_target()
 
     def _refresh(self):
         self._partition.check_owner()
@@ -136,8 +139,7 @@ class ReminderStore:
                 ledger.align(self._db, schedule, AlarmSchedule.loads(previous[0]), self._now)
             self._db.execute('DELETE FROM frontier WHERE source=?', (change.event_id,))
             self._db.execute('DELETE FROM source WHERE id=?', (change.event_id,))
-            ledger.refresh_contexts(self._db, change.event_id, schedule, self._now)
-            ledger.update_snoozes(self._db, change.event_id, schedule)
+            ledger.reconcile(self._db, change.event_id, schedule, self._now)
             if schedule and any(schedule.components.values()):
                 civil = change.event.all_day or change.event.floating_time or any(
                     fields.get('all_day') or fields.get('floating_time')
@@ -160,6 +162,7 @@ class ReminderStore:
         return bool(state and state[0] and state[1] == generation and reader.source_stamp(source) == revision)
 
     def next_wakeup(self) -> datetime | None:
+        self._partition.check_target()
         times = [self._db.execute(sql).fetchone()[0] for sql in (
             'SELECT min(wake) FROM frontier', "SELECT min(until) FROM ledger WHERE status='snoozed'")]
         return instant(min(t for t in times if t is not None)) if any(t is not None for t in times) else None
@@ -174,11 +177,11 @@ class ReminderStore:
             with self._write(), self._partition.guarded() as reader:
                 # Bound both accepted deliveries and suppressed/refill progress.
                 # A still-due next_wakeup asks the worker for another slice.
-                loaded, deferred = {}, set()
+                loaded, deferred, refills = {}, {}, {}
                 for _ in range(max(128, limit * 4)):
                     if len(due_items) >= limit:
                         break
-                    result = self._claim_one(reader, loaded, due_items, deferred)
+                    result = self._claim_one(reader, loaded, due_items, deferred, refills)
                     if not result:
                         break
                 if reader and due_items:
@@ -188,22 +191,23 @@ class ReminderStore:
             raise
         return tuple(due_items)
 
-    def _claim_one(self, reader, loaded, items, deferred):
+    def _claim_one(self, reader, loaded, items, deferred, refills):
         row = head(self._db, deferred)
-        snooze = self._db.execute("SELECT until,key,payload FROM ledger WHERE status='snoozed' "
-                                  'ORDER BY until,key LIMIT 1').fetchone()
-        if snooze and snooze[0] <= self._now and (not row or snooze[0] <= row[1]):
-            due = ledger.decode_due(ledger.inbox_reader(self._db), *snooze[1:])
-            source = self._db.execute('SELECT generation FROM source WHERE id=?', (due.key.source_id,)).fetchone()
-            okay = source and self._valid_source(reader, due.key.source_id, due.source_revision,
-                                                 due.calendar_id, source[0])
-            self._db.execute('UPDATE ledger SET status=?,until=NULL,claim=?,unread=0 WHERE key=?',
-                             ('pending' if okay else 'dismissed', self._new_claim(), snooze[1]))
-            if okay:
-                items.append(due)
-            return True
+        order = (row[1], *row[3:8]) if row else None
+        bound = min(deferred.values()) if deferred else None
+        snooze = self._db.execute(
+            "SELECT until,source,component,alarm,occurrence,rank,key,payload FROM ledger WHERE status='snoozed' "
+            'ORDER BY until,source,component,alarm,occurrence,rank LIMIT 1').fetchone()
+        if (snooze and snooze[0] <= self._now and (order is None or snooze[:6] <= order)
+                and (bound is None or snooze[:6] < bound)):
+            return self._claim_snooze(snooze, reader, items)
         if not row or row[1] > self._now:
             return False
+        if row[2] == READY and bound is not None and bound <= order:
+            # Keep the row intact. Later streams can still advance their work,
+            # but this ready key cannot be published ahead of the unknown key.
+            deferred[row[0]] = order
+            return True
         job = pop(self._db, row)
         if job.source not in loaded:
             revision, calendar, generation, changed, blob = self._db.execute(
@@ -214,12 +218,37 @@ class ReminderStore:
             loaded[job.source] = changed, AlarmSchedule.loads(blob)
         changed, schedule = loaded[job.source]
         due, following = step(job, schedule, floor=self._now - DAY_US)
+        stream = job.source, job.component, job.alarm
+        if job.kind == RULE:
+            refills[stream] = refills.get(stream, 0) + 1
         for successor in following:
             row_id = successor.save(self._db)
             dense_refill = successor.kind == RULE and len(successor.state) > 4 and successor.state[-1] is not None
-            if (successor.kind == BACKFILL or dense_refill) and row_id is not None:
-                deferred.add(row_id)
+            yield_rule = successor.kind == RULE and refills[stream] >= 8
+            if (successor.kind == BACKFILL or dense_refill or yield_rule) and row_id is not None:
+                deferred[row_id] = (successor.wake, successor.source, successor.component, successor.alarm,
+                                    successor.occurrence, successor.rank)
         if due and ledger.claimed(self._db, due, changed, self._new_claim()):
+            items.append(due)
+        return True
+
+    def _claim_snooze(self, row, reader, items):
+        encoded, payload = row[6:]
+        due = ledger.decode_due(ledger.inbox_reader(self._db), encoded, payload)
+        source = self._db.execute('SELECT revision,generation FROM source WHERE id=?', (due.key.source_id,)).fetchone()
+        context = self._db.execute('SELECT fingerprint FROM delivery_context WHERE source=? AND component=? '
+                                   'AND alarm=? AND occurrence=?', ledger.group(due.key)).fetchone()
+        valid = (source and source[0] == due.source_revision and context and context[0] == due.anchor_fingerprint
+                 and (not due.alarm.acknowledged or due.alarm.acknowledged < due.key.trigger_utc))
+        if valid and reader:
+            state = reader.calendar_state(due.calendar_id)
+            valid = state and state[0] and state[1] == source[1]
+            if valid and reader.source_stamp(due.key.source_id) != source[0]:
+                # Let journal reconciliation decide whether this anchor survived.
+                return False
+        self._db.execute('UPDATE ledger SET status=?,until=NULL,claim=?,unread=0 WHERE key=?',
+                         ('pending' if valid else 'dismissed', self._new_claim() if valid else None, encoded))
+        if valid:
             items.append(due)
         return True
 
@@ -276,6 +305,7 @@ class ReminderStore:
                              (micros(until), ledger.encode_key(key)))
 
     def inbox(self, *, limit: int = 100, offset: int = 0) -> tuple[InboxEntry, ...]:
+        self._partition.check_target()
         if min(limit, offset) < 0:
             raise ValueError('Reminder inbox limits must be nonnegative.')
         rows = self._db.execute('SELECT key,payload,status,unread,until FROM ledger ORDER BY stamp DESC,key '
@@ -290,6 +320,7 @@ class ReminderStore:
             self._db.executemany('UPDATE ledger SET unread=0 WHERE key=?', ((ledger.encode_key(k),) for k in keys))
 
     def unread_count(self) -> int:
+        self._partition.check_target()
         return self._db.execute('SELECT count(*) FROM ledger WHERE unread=1').fetchone()[0]
 
     def close(self) -> None:

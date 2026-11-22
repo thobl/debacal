@@ -286,7 +286,7 @@ def test_slow_backfill_leaves_another_source_eligible_in_same_slice(tmp_path):
     from zoneinfo import ZoneInfo
     zone = ZoneInfo('America/New_York')
     old = datetime(1990, 1, 1, 9, tzinfo=zone)
-    slow = alarm_event(id='a', ical_uid='a', calendar_id='local', start=old, end=old+timedelta(hours=1),
+    slow = alarm_event(id='z', ical_uid='z', calendar_id='local', start=old, end=old+timedelta(hours=1),
                        alarms=(Alarm('slow','DISPLAY','PT0S',repeat=20000,repeat_interval='P1DT1S'),))
     fast = alarm_event(id='b', ical_uid='b', calendar_id='local', alarms=(Alarm('now','DISPLAY','PT0S'),))
     db = str(tmp_path/'fair')
@@ -468,5 +468,183 @@ def test_converting_fired_standalone_to_series_keeps_journal_progress(tmp_path):
             item, = store.read_sources('changes', store.cursor)
             put(store, item)
             assert store.cursor == (item.version, item.event_id)
+    finally:
+        owner.release()
+
+
+def test_store_handle_opened_through_retargeted_alias_cannot_attach_another_owner(tmp_path):
+    import pytest
+    a, b, alias = (tmp_path/name for name in ('a','b','alias'))
+    alias.symlink_to(a)
+    event = alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    with Store(a) as wa, Store(b) as wb, closing(ReminderStore(str(alias))) as old:
+        wa.apply_remote([event])
+        wb.apply_remote([event])
+        first = ReminderOwner(str(alias))
+        assert first.acquire()
+        try:
+            old.attach_owner(first, now=BASE)
+            put(old, old.read_sources('scan')[0])
+            due, = old.claim_due(BASE)
+            old.record_delivery(due.key, desktop_id=7)
+        finally:
+            first.release()
+        alias.unlink()
+        alias.symlink_to(b)
+        second = ReminderOwner(str(alias))
+        assert second.acquire()
+        try:
+            with pytest.raises(RuntimeError):
+                old.attach_owner(second, now=BASE)
+            with pytest.raises(RuntimeError):
+                old.snooze(due.key, BASE+timedelta(minutes=5))
+            with pytest.raises(RuntimeError):
+                old.inbox()
+            with closing(ReminderStore(str(a))) as history:
+                assert [x.status for x in history.inbox()] == ['delivered']
+            with closing(ReminderStore(str(alias))) as current:
+                current.attach_owner(second, now=BASE)
+                put(current, current.read_sources('scan')[0])
+                assert len(current.claim_due(BASE)) == 1
+        finally:
+            second.release()
+
+
+def test_snooze_after_metadata_edit_or_before_journal_consumption(tmp_path):
+    event = alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    for before_put in (False, True):
+        db = str(tmp_path / str(before_put))
+        owner = ReminderOwner(db)
+        assert owner.acquire()
+        try:
+            with Store(db) as writer, closing(ReminderStore(db)) as store:
+                writer.apply_remote([event])
+                store.attach_owner(owner, now=BASE)
+                put(store, store.read_sources('scan')[0])
+                due, = store.claim_due(BASE)
+                store.record_delivery(due.key, desktop_id=1)
+                writer.apply_remote([replace(event, title='Revised')])
+                later = BASE+timedelta(minutes=5)
+                if before_put:
+                    store.snooze(due.key, later)
+                    assert not store.claim_due(later)
+                    assert store.inbox()[0].status == 'snoozed'
+                change, = store.read_sources('changes',store.cursor)
+                put(store, change)
+                if not before_put:
+                    store.snooze(due.key, later)
+                result, = store.claim_due(later)
+                assert (result.key, result.title, result.source_revision) == (due.key, 'Revised', change.version)
+        finally:
+            owner.release()
+
+
+def test_dense_snoozed_native_occurrence_reconciles_after_title_edit():
+    from debacal.event_range_index import EventRangeIndex
+    from debacal.reminder_sources import SourceChange
+    n = lambda count: ','.join(map(str, range(count)))
+    event = alarm_event(recurrence_rule=f'FREQ=DAILY;BYHOUR={n(24)};BYMINUTE={n(60)};BYSECOND={n(42)}',
+                        alarms=(Alarm('a','DISPLAY','PT0S'),))
+    when = BASE.replace(year=2050, hour=23, minute=55, second=40)
+    def changed(rev):
+        source = replace(event, title=f'Revision {rev}')
+        return SourceChange(rev, source.id, source, EventRangeIndex.prepare(source))
+    with closing(ReminderStore(':memory:')) as store:
+        store.set_context(now=when, generation=1)
+        item = changed(1)
+        store.put_source(item, compile_schedule(item, CalendarReminderPolicy(), zone=timezone.utc), eligible_since=when)
+        due, = store.claim_due(when)
+        store.snooze(due.key, when+timedelta(minutes=5))
+        item = changed(2)
+        store.put_source(item, compile_schedule(item, CalendarReminderPolicy(), zone=timezone.utc), cursor=(2,'e'),
+                         eligible_since=when+timedelta(minutes=6))
+        assert store.cursor == (2,'e')
+        result, = store.claim_due(when+timedelta(minutes=5))
+        assert result.title == 'Revision 2' and result.key == due.key
+
+
+def test_deferred_repeat_orders_equal_time_pages_by_key(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from debacal.alarms import alarm_trigger
+    start = datetime(2026,1,1,9,tzinfo=ZoneInfo('Europe/Berlin'))
+    repeat = Alarm('a','DISPLAY','PT0S', repeat=65, repeat_interval='P1DT1H')
+    first = alarm_event(id='a', ical_uid='a', calendar_id='local', start=start, end=start+timedelta(hours=1),
+                        alarms=(repeat,))
+    when = alarm_trigger(repeat, first.start, first.end, repeat_index=65)
+    other = alarm_event(id='b', ical_uid='b', calendar_id='local', start=when, end=when+timedelta(hours=1),
+                        alarms=(Alarm('b','DISPLAY','PT0S'),))
+    db = str(tmp_path/'ordered')
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer:
+            writer.apply_remote([first, other])
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=when)
+                for item in store.read_sources('scan'):
+                    put(store, item)
+                found = [d.key.source_id for d in store.claim_due(when,limit=1)]
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=when)
+                for _ in range(5):
+                    found.extend(d.key.source_id for d in store.claim_due(when,limit=1))
+            assert found == ['a','b']
+    finally:
+        owner.release()
+
+
+def test_known_unavailable_marker_resets_late_eligibility_after_restart(tmp_path):
+    import sqlite3
+    import pytest
+    db = str(tmp_path/'absent')
+    event = alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer:
+            writer.apply_remote([event])
+            marker, = writer.connection.execute('SELECT token FROM database_incarnation').fetchone()
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=BASE)
+                put(store, store.read_sources('scan')[0])
+                writer.connection.execute('DELETE FROM database_incarnation')
+                writer.connection.commit()
+                with pytest.raises(sqlite3.OperationalError, match='incarnation'):
+                    store.claim_due(BASE)
+            writer.connection.execute('INSERT INTO database_incarnation VALUES(1,?)',(marker,))
+            writer.connection.commit()
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=BASE+timedelta(hours=1))
+                assert not store.claim_due(BASE+timedelta(hours=1))
+                assert store.cursor is None
+    finally:
+        owner.release()
+
+def test_transient_busy_during_identity_probe_preserves_partition(tmp_path, monkeypatch):
+    import sqlite3
+    import pytest
+    db = str(tmp_path/'busy')
+    event = alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer:
+            writer.apply_remote([event])
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=BASE)
+                put(store, store.read_sources('scan')[0])
+                partition = store.partition_id
+                def busy():
+                    error = sqlite3.OperationalError('database is locked')
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                    raise error
+                monkeypatch.setattr(store._partition.reader, 'incarnation', busy)
+                with pytest.raises(sqlite3.OperationalError, match='locked'):
+                    store.claim_due(BASE)
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=BASE+timedelta(hours=1))
+                assert store.partition_id == partition
+                assert len(store.claim_due(BASE+timedelta(hours=1))) == 1
     finally:
         owner.release()

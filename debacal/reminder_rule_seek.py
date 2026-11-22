@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from dateutil.rrule import DAILY, HOURLY, MONTHLY, WEEKLY, YEARLY, _iterinfo
 
+from .recurrence import RecurrenceRangeError, recurrence_key
 from .prepared_recurrence import _CalendarSeek
 from .reminder_compilation import DAY_US, MAX_US, instant, micros
 
@@ -98,3 +99,31 @@ def seek_slice(series, lower, upper, checkpoint):
     if budget == 0:
         return None, [start.isoformat(), count, position, best]
     return (instant(best).astimezone(zone) if best is not None else None), None
+
+
+def native_start(series, key):
+    """Resolve a single original identity, including a guarded dense native rule."""
+    if key in series.excluded or key in series.override_keys or key in series.added_keys:
+        return None
+    master = series.master
+    try:
+        target = datetime.fromisoformat(key)
+        if series.floating:
+            target = target.replace(tzinfo=timezone.utc, fold=0)
+        elif target.tzinfo is None:
+            return None
+        target = target.astimezone(series.zone)
+        if recurrence_key(target, master.all_day, floating_time=master.floating_time) != key:
+            return None
+        expected = micros(target)
+    except (ValueError, OverflowError):
+        return None
+    try:
+        start = next(series._regular(target, target), None)
+    except RecurrenceRangeError:
+        checkpoint = None
+        while True:
+            start, checkpoint = seek_slice(series, expected, expected, checkpoint)
+            if checkpoint is None:
+                break
+    return start if start is not None and micros(start) == expected else None

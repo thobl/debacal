@@ -11,9 +11,9 @@ from uuid import uuid4
 from .alarms import Alarm
 from .prepared_storage import StateReader, StateWriter
 from .query_projection import pack_state, unpack_state
-from .recurrence import key_datetime
+from .reminder_rule_seek import native_start
 from .reminder_compilation import (
-    DeliveryKey, DueReminder, Point, instant, micros, semantics,
+    DeliveryKey, DueReminder, instant, micros, semantics,
 )
 
 LEDGER_SQL = """
@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS ledger (
     status TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, until INTEGER, closed INTEGER DEFAULT 0,
     desktop_id INTEGER, payload TEXT NOT NULL, claim TEXT);
 CREATE INDEX IF NOT EXISTS ledger_group ON ledger(source,component,alarm,occurrence,rank);
-CREATE INDEX IF NOT EXISTS ledger_snoozes ON ledger(until,key) WHERE status='snoozed';
+CREATE INDEX IF NOT EXISTS ledger_snooze_order ON ledger(until,source,component,alarm,occurrence,rank)
+    WHERE status='snoozed';
+DROP INDEX IF EXISTS ledger_snoozes;
 CREATE INDEX IF NOT EXISTS ledger_status ON ledger(source,status);
 CREATE INDEX IF NOT EXISTS ledger_inbox ON ledger(stamp DESC,key);
 CREATE INDEX IF NOT EXISTS ledger_unread ON ledger(unread);
@@ -113,32 +115,34 @@ def align(db, schedule, previous, now):
         schedule.components[component] = updated
 
 
-def refresh_contexts(db, source, schedule, now):
-    """Date an anchor edit once, even if more descriptive edits arrive before claiming."""
-    if schedule is None:
-        db.execute('UPDATE delivery_context SET fingerprint=NULL,changed=? WHERE source=?', (now, source))
-        return
+def reconcile(db, source, schedule, now):
+    """Refresh live logical groups and retain the date of each actual anchor edit."""
     groups = db.execute('SELECT component,alarm,occurrence,fingerprint FROM delivery_context WHERE source=?', (source,))
     for component, key, encoded, previous in groups:
-        alarm = schedule.components.get(component, {}).get(key)
-        fingerprint = None
+        ids = source, component, key, encoded
+        alarm = schedule.components.get(component, {}).get(key) if schedule else None
+        point = None
         if alarm:
             occurrence = encoded[1:] if encoded else None
-            point = schedule.explicit.get(occurrence)
-            if occurrence is None:
-                point = Point('', None, schedule.master.start, schedule.master.end)
-            elif occurrence and point is None and schedule.prepared and not component:
-                # Native identity already gives the original start. Membership
-                # is checked by the frontier if that identity is ever due again.
-                try:
-                    point, _ = schedule.point(key_datetime(occurrence, schedule.master), occurrence)
-                except (ValueError, OverflowError):
-                    point = None
-            if point and point.component == component:
-                fingerprint = schedule.fingerprint(point, alarm)
+            point = schedule.master_point() if occurrence is None else schedule.explicit.get(occurrence)
+            if occurrence and point is None and schedule.prepared and not component:
+                start = native_start(schedule.prepared, occurrence)
+                if start is not None:
+                    point, _ = schedule.point(start, occurrence)
+        current = (schedule.due(point, alarm, instant(0), 0) if point and point.component == component else None)
+        fingerprint = current.anchor_fingerprint if current else None
         if fingerprint != previous:
             db.execute('UPDATE delivery_context SET fingerprint=?,changed=? WHERE source=? AND component=? '
-                       'AND alarm=? AND occurrence=?', (fingerprint, now, source, component, key, encoded))
+                       'AND alarm=? AND occurrence=?', (fingerprint, now, *ids))
+        # Payload is shared by ranks of this alarm/occurrence. Refresh it even
+        # before a later inbox action chooses to snooze an already delivered key.
+        if current:
+            db.execute('UPDATE ledger SET payload=? WHERE source=? AND component=? AND alarm=? AND occurrence=? '
+                       "AND fingerprint=? AND status!='dismissed'", (encode_due(db, current), *ids, fingerprint))
+        ack = micros(alarm.acknowledged) if alarm and alarm.acknowledged else -1
+        db.execute("UPDATE ledger SET status='dismissed',unread=0,until=NULL,closed=0,claim=NULL "
+                   "WHERE source=? AND component=? AND alarm=? AND occurrence=? AND status='snoozed' "
+                   "AND (fingerprint IS NOT ? OR stamp<=?)", (*ids, fingerprint, ack))
 
 
 def claimed(db, due, changed, fence):
@@ -163,27 +167,3 @@ def claimed(db, due, changed, fence):
                "VALUES(?,?,?,?,?,?,?,?,'pending',?,?)", (encode_key(key), *ids, key.repeat_index,
                 micros(key.trigger_utc), due.anchor_fingerprint, encode_due(db, due), fence))
     return True
-
-
-def update_snoozes(db, source, schedule):
-    for key, payload in db.execute("SELECT key,payload FROM ledger WHERE source=? AND status='snoozed'", (source,)):
-        old = decode_due(inbox_reader(db), key, payload)
-        k = old.key
-        alarm = schedule.components.get(k.component_key, {}).get(k.alarm_key) if schedule else None
-        point = None
-        if alarm:
-            if k.occurrence_key is None:
-                point = Point('', None, schedule.master.start, schedule.master.end)
-            else:
-                point = schedule.explicit.get(k.occurrence_key)
-                if point is None and schedule.prepared:
-                    item = schedule.prepared.occurrence_at(k.occurrence_key, floating_zone=schedule.zone)
-                    if item:
-                        point, _ = schedule.point(item.start, k.occurrence_key)
-        if point and point.component == k.component_key:
-            due = schedule.due(point, alarm, k.trigger_utc, k.repeat_index)
-            if (due.anchor_fingerprint == old.anchor_fingerprint and
-                    (not alarm.acknowledged or alarm.acknowledged < k.trigger_utc)):
-                db.execute('UPDATE ledger SET payload=? WHERE key=?', (encode_due(db, due), key))
-                continue
-        db.execute("UPDATE ledger SET status='dismissed',unread=0,until=NULL,closed=0,claim=NULL WHERE key=?", (key,))

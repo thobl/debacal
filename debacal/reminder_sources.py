@@ -28,10 +28,19 @@ def _file_id(path):
     return stat.st_dev, stat.st_ino
 
 
+class UnavailableIdentity(sqlite3.OperationalError):
+    """Positive evidence of an unavailable canonical identity or incoherent file set."""
+
+
 def _incarnation(db) -> str:
-    row = db.execute('SELECT token FROM database_incarnation WHERE id=1').fetchone()
+    try:
+        row = db.execute('SELECT token FROM database_incarnation WHERE id=1').fetchone()
+    except sqlite3.OperationalError as error:
+        if str(error) in ('no such table: database_incarnation', 'no such column: token', 'no such column: id'):
+            raise UnavailableIdentity('The calendar database incarnation is unavailable.') from error
+        raise
     if row is None or not isinstance(row[0], str) or not row[0]:
-        raise sqlite3.OperationalError('The calendar database incarnation is unavailable.')
+        raise UnavailableIdentity('The calendar database incarnation is unavailable.')
     return row[0]
 
 
@@ -63,7 +72,7 @@ class ReminderSources:
         if _file_id(target) != main_id or _file_id(self._path) != main_id:
             raise sqlite3.OperationalError('The calendar database path changed during a read. Retry the profile.')
         if self._main_id != main_id and wal_id is not None and wal_id == self._wal_id:
-            raise sqlite3.OperationalError('The calendar database was replaced with its previous WAL still present. '
+            raise UnavailableIdentity('The calendar database was replaced with its previous WAL still present. '
                                            'Suspend reminders until a consistent database and WAL are available.')
         return wal_id
 
