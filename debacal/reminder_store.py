@@ -135,11 +135,12 @@ class ReminderStore:
             if schedule and (schedule.master.id != change.event_id or schedule.revision != change.version):
                 raise ValueError('The schedule does not match its source change.')
             previous = self._db.execute('SELECT schedule FROM source WHERE id=?', (change.event_id,)).fetchone()
+            previous = AlarmSchedule.loads(previous[0]) if previous and schedule else None
             if schedule and previous:
-                ledger.align(self._db, schedule, AlarmSchedule.loads(previous[0]), self._now)
+                ledger.align(self._db, schedule, previous, self._now)
             self._db.execute('DELETE FROM frontier WHERE source=?', (change.event_id,))
             self._db.execute('DELETE FROM source WHERE id=?', (change.event_id,))
-            ledger.reconcile(self._db, change.event_id, schedule, self._now)
+            ledger.reconcile(self._db, change.event_id, schedule, previous, self._now)
             if schedule and any(schedule.components.values()):
                 civil = change.event.all_day or change.event.floating_time or any(
                     fields.get('all_day') or fields.get('floating_time')
@@ -234,7 +235,7 @@ class ReminderStore:
 
     def _claim_snooze(self, row, reader, items):
         encoded, payload = row[6:]
-        due = ledger.decode_due(ledger.inbox_reader(self._db), encoded, payload)
+        due = ledger.current_due(self._db, encoded, payload)
         source = self._db.execute('SELECT revision,generation FROM source WHERE id=?', (due.key.source_id,)).fetchone()
         context = self._db.execute('SELECT fingerprint FROM delivery_context WHERE source=? AND component=? '
                                    'AND alarm=? AND occurrence=?', ledger.group(due.key)).fetchone()
@@ -245,6 +246,11 @@ class ReminderStore:
             valid = state and state[0] and state[1] == source[1]
             if valid and reader.source_stamp(due.key.source_id) != source[0]:
                 # Let journal reconciliation decide whether this anchor survived.
+                return False
+        if valid and due.key.occurrence_key and not due.key.component_key:
+            blob, = self._db.execute('SELECT schedule FROM source WHERE id=?', (due.key.source_id,)).fetchone()
+            valid = ledger.verify_snooze(self._db, AlarmSchedule.loads(blob), due.key, encoded)
+            if valid is None:
                 return False
         self._db.execute('UPDATE ledger SET status=?,until=NULL,claim=?,unread=0 WHERE key=?',
                          ('pending' if valid else 'dismissed', self._new_claim() if valid else None, encoded))
@@ -259,6 +265,14 @@ class ReminderStore:
         row = self._db.execute("SELECT claim FROM ledger WHERE key=? AND status='pending'",
                                (ledger.encode_key(key),)).fetchone()
         return row[0] if row else None
+
+    def pending_reminder(self, key, fence):
+        """Refresh an unsent claim after descriptive edits, retaining its original fence."""
+        self._partition.check_owner()
+        encoded = ledger.encode_key(key)
+        row = self._db.execute("SELECT payload FROM ledger WHERE key=? AND status='pending' AND claim=?",
+                               (encoded, fence)).fetchone()
+        return ledger.current_due(self._db, encoded, row[0]) if row else None
 
     def can_emit(self, due, fence):
         """Final worker check immediately before handing a claim to transport."""
@@ -308,12 +322,14 @@ class ReminderStore:
         self._partition.check_target()
         if min(limit, offset) < 0:
             raise ValueError('Reminder inbox limits must be nonnegative.')
-        rows = self._db.execute('SELECT key,payload,status,unread,until FROM ledger ORDER BY stamp DESC,key '
-                                'LIMIT ? OFFSET ?', (limit, offset))
+        rows = self._db.execute(
+            'SELECT l.key,l.payload,l.status,l.unread,l.until,m.first_revision,m.revision,m.title '
+            'FROM ledger l LEFT JOIN source_label m ON m.source=l.source AND m.component=l.component '
+            'ORDER BY l.stamp DESC,l.key LIMIT ? OFFSET ?', (limit, offset))
         reader = ledger.inbox_reader(self._db)
-        return tuple(InboxEntry(ledger.decode_due(reader, key, payload), status, bool(unread),
+        return tuple(InboxEntry(ledger.decode_due(reader, key, payload, label), status, bool(unread),
                                 instant(until) if until is not None else None)
-                     for key, payload, status, unread, until in rows)
+                     for key, payload, status, unread, until, *label in rows)
 
     def mark_read(self, keys: Iterable[DeliveryKey]) -> None:
         with self._write():

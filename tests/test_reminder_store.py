@@ -648,3 +648,175 @@ def test_transient_busy_during_identity_probe_preserves_partition(tmp_path, monk
                 assert len(store.claim_due(BASE+timedelta(hours=1))) == 1
     finally:
         owner.release()
+
+
+def test_unrepresentable_changed_group_does_not_stop_following_journal_rows():
+    from datetime import datetime
+    from debacal.event_range_index import EventRangeIndex
+    from debacal.reminder_sources import SourceChange
+
+    start = datetime(9999, 12, 20, 9, tzinfo=timezone.utc)
+    event = alarm_event(start=start, end=start+timedelta(hours=1), recurrence_rule='FREQ=DAILY',
+                        alarms=(Alarm('a','DISPLAY','PT0S'),))
+    later = start+timedelta(days=5)
+    def item(e, rev):
+        return SourceChange(rev, e.id, e, EventRangeIndex.prepare(e))
+    with closing(ReminderStore(':memory:')) as store:
+        store.set_context(now=later, generation=0)
+        first = item(event, 1)
+        store.put_source(first, compile_schedule(first, CalendarReminderPolicy(), zone=timezone.utc),
+                         eligible_since=later, cursor=(1,'e'))
+        due, = store.claim_due(later)
+        store.record_delivery(due.key, desktop_id=7)
+        put(store, item(replace(event, end=start+timedelta(days=10)), 2))
+        assert store.cursor == (2,'e')
+        put(store, item(alarm_event(id='next', start=later, end=later+timedelta(hours=1), alarms=event.alarms), 3))
+        assert store.cursor == (3,'next')
+        assert [d.key.source_id for d in store.claim_due(later)] == ['next']
+
+
+def test_source_edits_do_not_run_dense_membership_for_delivered_history(monkeypatch):
+    from zoneinfo import ZoneInfo
+    from debacal import reminder_rule_seek
+    from debacal.event_range_index import EventRangeIndex
+    from debacal.reminder_sources import SourceChange
+
+    zone = ZoneInfo('America/New_York')
+    start = BASE.replace(minute=55, second=40).astimezone(zone)
+    first = alarm_event(start=start-timedelta(days=7), end=start-timedelta(days=7)+timedelta(minutes=2), timezone_id=zone.key,
+                        recurrence_rule='FREQ=HOURLY', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    n = lambda count: ','.join(map(str, range(count)))
+    dense = replace(first, recurrence_rule=f'FREQ=DAILY;BYHOUR={n(24)};BYMINUTE={n(60)};BYSECOND={n(42)}')
+    with closing(ReminderStore(':memory:')) as store:
+        end = start+timedelta(hours=4)
+        store.set_context(now=start, generation=0)
+        def update(e, rev):
+            item = SourceChange(rev, e.id, e, EventRangeIndex.prepare(e))
+            store.put_source(item, compile_schedule(item, CalendarReminderPolicy(), zone=zone),
+                             eligible_since=start if rev == 1 else end+timedelta(days=1), cursor=(rev,e.id))
+        update(first, 1)
+        deliveries = []
+        while store.next_wakeup() <= end:
+            deliveries.extend(store.claim_due(end))
+        assert len(deliveries) == 5
+        for due in deliveries:
+            store.record_delivery(due.key, desktop_id=None)
+        def no_membership(*_args, **_kwargs):
+            raise AssertionError('Source reconciliation searched dense recurrence history')
+        monkeypatch.setattr(reminder_rule_seek, 'seek_slice', no_membership)
+        update(dense, 2)
+        import sqlite3
+        def preserve_history(action, table, column, *_):
+            if action == sqlite3.SQLITE_UPDATE and table == 'ledger' and column == 'payload':
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+        store._db.set_authorizer(preserve_history)
+        update(replace(dense, title='New title'), 3)
+        assert store.cursor == (3,'e')
+        assert all(row.reminder.title == 'New title' for row in store.inbox())
+
+
+def test_snooze_membership_slices_resume_through_reopen_and_descriptive_edit(tmp_path, monkeypatch):
+    from zoneinfo import ZoneInfo
+    from debacal import reminder_rule_seek
+    zone = ZoneInfo('America/New_York')
+    start = BASE.replace(minute=55, second=40).astimezone(zone)
+    original = alarm_event(calendar_id='local', timezone_id=zone.key,
+                           start=start-timedelta(days=7), end=start-timedelta(days=7)+timedelta(minutes=2),
+                           recurrence_rule='FREQ=HOURLY', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    neighbor = alarm_event(id='neighbor',ical_uid='neighbor', calendar_id='local', start=start,
+                           end=start+timedelta(hours=1), alarms=original.alarms)
+    n = lambda count: ','.join(map(str, range(count)))
+    rule = f'FREQ=DAILY;BYHOUR={n(24)};BYMINUTE={n(60)};BYSECOND='
+    changed = replace(original, recurrence_rule=rule+'0')
+    wake = start+timedelta(minutes=5)
+    def save(store, source):
+        item, = store.read_sources('selected', (source.id,))
+        store.put_source(item, compile_schedule(item, CalendarReminderPolicy(), zone=zone),
+                         eligible_since=wake+timedelta(days=1), cursor=(item.version,item.event_id))
+    calls = []
+    seek = reminder_rule_seek.seek_slice
+    def watch(series, low, high, state, **kwargs):
+        calls.append((kwargs.get('exact_wall'), state))
+        return seek(series, low, high, state, **kwargs)
+    monkeypatch.setattr(reminder_rule_seek, 'seek_slice', watch)
+    db = str(tmp_path/'probe')
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer:
+            writer.apply_remote([original, neighbor])
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner, now=start)
+                for item in store.read_sources('scan'):
+                    put(store,item)
+                issued = store.claim_due(start)
+                for due in issued:
+                    store.record_delivery(due.key,desktop_id=7,unread=True)
+                keys = {d.key.source_id:d.key for d in issued}
+                writer.apply_remote([changed])
+                save(store, changed)
+                store.snooze(keys['e'],wake)
+                # The old :40 native occurrence is absent after the edit.
+                for _ in range(2):
+                    count = len(calls)
+                    assert not store.claim_due(wake)
+                    assert len(calls) == count+1
+                assert calls[-1] == (False,None)
+                with closing(ReminderStore(db)) as observer:
+                    observer.dismiss(keys['neighbor'])
+                    assert any(r.status == 'dismissed' for r in observer.inbox())
+            with closing(ReminderStore(db)) as store:
+                store.attach_owner(owner,now=wake)
+                renamed = replace(changed,title='Renamed')
+                writer.apply_remote([renamed])
+                save(store,renamed)
+                assert not store.claim_due(wake)
+                assert calls[-1][0] is False and calls[-1][1] is not None
+                for _ in range(32):
+                    count = len(calls)
+                    assert not store.claim_due(wake)
+                    assert len(calls) <= count+1
+                    entry, = [r for r in store.inbox() if r.reminder.key == keys['e']]
+                    if entry.status == 'dismissed':
+                        break
+                assert entry.status == 'dismissed' and entry.reminder.title == 'Renamed'
+                store.snooze(keys['e'],wake)
+                assert not store.claim_due(wake) and calls[-1] == (True,None)
+                assert not store.claim_due(wake) and calls[-1] == (False,None)
+                restored = replace(renamed,recurrence_rule=rule+'40')
+                writer.apply_remote([restored])
+                save(store, restored)
+                result, = store.claim_due(wake)
+                assert result.key == keys['e'] and calls[-1] == (True,None)
+    finally:
+        owner.release()
+
+
+def test_source_label_preserves_pending_fence_and_archives_retired_inbox(tmp_path):
+    db = str(tmp_path/'labels')
+    event = alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer, closing(ReminderStore(db)) as store:
+            writer.apply_remote([event])
+            store.attach_owner(owner,now=BASE)
+            put(store,store.read_sources('scan')[0])
+            original, = store.claim_due(BASE)
+            fence = store.claim_fence(original.key)
+            for title in ('Revised','Archived title'):
+                writer.apply_remote([replace(event,title=title)])
+                changed, = store.read_sources('changes',store.cursor)
+                put(store,changed)
+                value = store.pending_reminder(original.key,fence)
+                assert value.title == title and value.source_revision == changed.version
+                assert store.can_emit(value,fence) and not store.can_emit(original,fence)
+            writer.apply_remote([], [event.id],calendar_id='local')
+            deleted, = store.read_sources('changes',store.cursor)
+            store.put_source(deleted,None,cursor=(deleted.version,deleted.event_id))
+            assert store.pending_reminder(original.key,fence) is None
+            history, = store.inbox()
+            assert history.reminder.title == 'Archived title' and history.status == 'uncertain'
+    finally:
+        owner.release()

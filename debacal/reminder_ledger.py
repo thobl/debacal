@@ -11,7 +11,7 @@ from uuid import uuid4
 from .alarms import Alarm
 from .prepared_storage import StateReader, StateWriter
 from .query_projection import pack_state, unpack_state
-from .reminder_rule_seek import native_start
+from .reminder_rule_seek import membership_slice
 from .reminder_compilation import (
     DeliveryKey, DueReminder, instant, micros, semantics,
 )
@@ -33,6 +33,13 @@ CREATE INDEX IF NOT EXISTS ledger_unread ON ledger(unread);
 CREATE TABLE IF NOT EXISTS delivery_context (
     source TEXT, component TEXT, alarm TEXT, occurrence TEXT, fingerprint TEXT, changed INTEGER,
     PRIMARY KEY(source,component,alarm,occurrence));
+CREATE TABLE IF NOT EXISTS source_label (
+    source TEXT, component TEXT, first_revision INTEGER NOT NULL, revision INTEGER NOT NULL, title TEXT NOT NULL,
+    PRIMARY KEY(source,component));
+CREATE TABLE IF NOT EXISTS snooze_probe (key TEXT PRIMARY KEY, source TEXT NOT NULL, state TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS snooze_probe_source ON snooze_probe(source);
+CREATE TRIGGER IF NOT EXISTS clear_snooze_probe AFTER UPDATE OF status,until ON ledger
+WHEN OLD.status='snoozed' BEGIN DELETE FROM snooze_probe WHERE key=OLD.key; END;
 CREATE TABLE IF NOT EXISTS suppressed (
     source TEXT, component TEXT, alarm TEXT, occurrence TEXT, rank INTEGER, through INTEGER,
     PRIMARY KEY(source,component,alarm,occurrence,rank));
@@ -71,11 +78,20 @@ def inbox_reader(db):
                                                            (ref,)).fetchone()[0]))
 
 
-def decode_due(reader, key, payload):
+def decode_due(reader, key, payload, label=None):
     source, component, alarm, occ, stamp, rank = json.loads(key)
     calendar, revision, fingerprint, title, bounds, metadata = json.loads(payload)
+    if label and label[0] is not None and label[0] <= revision <= label[1]:
+        revision, title = label[1:]
     return DueReminder(DeliveryKey(source, component, alarm, occ[1:] if occ else None, instant(stamp), rank),
                        calendar, revision, fingerprint, title, *(reader.datetime(bound) for bound in bounds), Alarm.from_dict(metadata))
+
+
+def current_due(db, encoded, payload):
+    source, component, *_ = json.loads(encoded)
+    label = db.execute('SELECT first_revision,revision,title FROM source_label WHERE source=? AND component=?',
+                       (source, component)).fetchone()
+    return decode_due(inbox_reader(db), encoded, payload, label)
 
 
 def align(db, schedule, previous, now):
@@ -115,8 +131,26 @@ def align(db, schedule, previous, now):
         schedule.components[component] = updated
 
 
-def reconcile(db, source, schedule, now):
+def reconcile(db, source, schedule, previous_schedule, now):
     """Refresh live logical groups and retain the date of each actual anchor edit."""
+    if (previous_schedule and schedule and schedule.timing_key and previous_schedule.timing_key == schedule.timing_key
+            and previous_schedule.components == schedule.components):
+        # The current alarm/anchor proof survives. An in-progress snooze check
+        # also retains its cursor across descriptive revisions and restart.
+        db.executemany('INSERT INTO source_label VALUES(?,?,?,?,?) ON CONFLICT(source,component) '
+                       'DO UPDATE SET revision=excluded.revision,title=excluded.title',
+                       ((source, component, previous_schedule.revision, schedule.revision, title)
+                        for component, title in schedule.titles.items()))
+        return
+    # Materialize the most recent displayed title once when a source retires
+    # or changes its delivery semantics. Later inbox reads remain self-contained.
+    labels = db.execute('SELECT component,first_revision,revision,title FROM source_label WHERE source=?', (source,))
+    for component, first, revision, title in labels:
+        db.execute("UPDATE ledger SET payload=json_set(payload,'$[1]',?,'$[3]',?) WHERE source=? AND component=? "
+                   "AND json_extract(payload,'$[1]') BETWEEN ? AND ?", (revision, title, source, component, first, revision))
+    db.execute('DELETE FROM source_label WHERE source=?', (source,))
+    db.execute("UPDATE ledger SET status='uncertain',claim=NULL WHERE source=? AND status='pending'", (source,))
+    db.execute('DELETE FROM snooze_probe WHERE source=?', (source,))
     groups = db.execute('SELECT component,alarm,occurrence,fingerprint FROM delivery_context WHERE source=?', (source,))
     for component, key, encoded, previous in groups:
         ids = source, component, key, encoded
@@ -126,9 +160,14 @@ def reconcile(db, source, schedule, now):
             occurrence = encoded[1:] if encoded else None
             point = schedule.master_point() if occurrence is None else schedule.explicit.get(occurrence)
             if occurrence and point is None and schedule.prepared and not component:
-                start = native_start(schedule.prepared, occurrence)
+                start = schedule.native_coordinate(occurrence)
                 if start is not None:
-                    point, _ = schedule.point(start, occurrence)
+                    # A historic rank needs its anchor geometry. Exact native
+                    # membership matters when an actual snooze is about to fire.
+                    try:
+                        point, _ = schedule.point(start, occurrence)
+                    except (ValueError, OverflowError):
+                        pass
         current = (schedule.due(point, alarm, instant(0), 0) if point and point.component == component else None)
         fingerprint = current.anchor_fingerprint if current else None
         if fingerprint != previous:
@@ -143,6 +182,18 @@ def reconcile(db, source, schedule, now):
         db.execute("UPDATE ledger SET status='dismissed',unread=0,until=NULL,closed=0,claim=NULL "
                    "WHERE source=? AND component=? AND alarm=? AND occurrence=? AND status='snoozed' "
                    "AND (fingerprint IS NOT ? OR stamp<=?)", (*ids, fingerprint, ack))
+
+
+def verify_snooze(db, schedule, key, encoded):
+    target = schedule.native_coordinate(key.occurrence_key) if not key.component_key else None
+    if target is None:
+        return True
+    row = db.execute('SELECT state FROM snooze_probe WHERE key=?', (encoded,)).fetchone()
+    member, pending = membership_slice(schedule.prepared, target, json.loads(row[0]) if row else None)
+    if pending is not None:
+        db.execute('INSERT OR REPLACE INTO snooze_probe VALUES(?,?,?)', (encoded, key.source_id, json.dumps(pending)))
+        return None
+    return member
 
 
 def claimed(db, due, changed, fence):

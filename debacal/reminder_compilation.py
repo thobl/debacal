@@ -14,7 +14,7 @@ from .event_duration import end_for, occurrence_end_zone
 from .models import Event, copy_event
 from .prepared_storage import StateReader, StateWriter
 from .query_projection import pack_state, unpack_state
-from .recurrence import normalize_recurrence_time
+from .recurrence import normalize_recurrence_time, recurrence_key
 from .reminder_preferences import CalendarReminderPolicy, instantiate_reminder_templates
 from .reminder_sources import SourceChange
 from .timezones import event_timezone
@@ -114,6 +114,7 @@ class AlarmSchedule:
     explicit: dict
     prepared: object
     cut: bool
+    timing_key: str = ''
     writer: StateWriter = field(default_factory=StateWriter, repr=False)
     reader: StateReader = field(init=False, repr=False)
 
@@ -136,22 +137,57 @@ class AlarmSchedule:
                                      for p in self.explicit.values()]
         state = [writer.event(self.master), self.revision, writer.zone(self.zone),
                  {c: [a.to_dict() for a in alarms.values()] for c, alarms in self.components.items()},
-                 self.titles, points, writer.series(self.prepared) if self.prepared else None, self.cut]
+                 self.titles, points, writer.series(self.prepared) if self.prepared else None, self.cut, self.timing_key]
         return pack_state([state, writer.zones, writer.definitions])
 
     @classmethod
     def loads(cls, blob: bytes):
         state, zones, definitions = unpack_state(blob)
         reader = StateReader(zones, definitions)
-        event, rev, zone, alarms, titles, points, series, cut = state
+        event, rev, zone, alarms, titles, points, series, cut, *timing_key = state
         master = reader.event(event)
         result = cls(master, rev, reader.zone(zone), {c: {a['key']: Alarm.from_dict(a) for a in items}
                                                      for c, items in alarms.items()}, titles,
                    {k: Point(c, k, reader.datetime(s), reader.datetime(e)) for c, k, s, e in points},
-                   reader.series(master, series) if series else None, cut)
+                   reader.series(master, series) if series else None, cut, *timing_key)
         result.writer.zones.update(zones)
         result.reader = reader
         return result
+
+    def timing_digest(self):
+        """Identify all inputs to occurrence membership and bounds, independently of titles."""
+        e, w = self.master, self.writer
+        def digest_part(value):
+            digest.update(json.dumps(value, separators=(',', ':')).encode())
+            digest.update(b'\n')
+        digest = hashlib.sha256()
+        digest_part([e.calendar_id, self.encode_bounds(e.start, e.end), e.all_day, e.floating_time,
+                     e.duration_spec, e.recurrence_rule, self.cut, w.zone(self.zone), w.zone(event_timezone(e))])
+        if self.prepared:
+            p = self.prepared
+            digest_part([w.datetime(p.rule._dtstart), w.zone(p.zone), sorted(p.excluded),
+                         sorted(p.added_keys), sorted(p.override_keys)])
+        for key, point in sorted(self.explicit.items()):
+            digest_part([key, point.component, self.encode_bounds(point.start, point.end)])
+        return digest.hexdigest()
+
+    def native_coordinate(self, key):
+        """Original rule coordinate when the identity could belong to the native stream."""
+        series = self.prepared
+        if not key or not series or key in series.excluded or key in series.added_keys or key in series.override_keys:
+            return None
+        try:
+            value = datetime.fromisoformat(key)
+            if series.floating:
+                value = value.replace(tzinfo=UTC, fold=0)
+            elif value.tzinfo is None:
+                return None
+            value = value.astimezone(series.zone)
+            if recurrence_key(value, self.master.all_day, floating_time=self.master.floating_time) == key:
+                return value
+        except (ValueError, OverflowError):
+            pass
+        return None
 
     def master_point(self):
         event = self.master
@@ -233,4 +269,5 @@ def compile_schedule(change: SourceChange, policy: CalendarReminderPolicy, *, zo
         else:
             point, _ = schedule.point(item.start, key)
         schedule.explicit[key] = point
+    schedule.timing_key = schedule.timing_digest()
     return schedule

@@ -212,3 +212,34 @@ def test_single_effective_hourly_clock_can_differ_from_dtstart(monkeypatch):
     monkeypatch.setattr(PreparedSeries, '_regular', forbidden)
     due = next_triggers(data, BASE, BASE+timedelta(seconds=1), limit=3)
     assert [d.start for d in due] == [start, start+timedelta(minutes=12), start+timedelta(minutes=72)]
+
+
+def test_pre_digest_serialized_schedule_can_be_loaded():
+    from debacal.query_projection import pack_state, unpack_state
+    event = alarm_event(alarms=(Alarm('a','DISPLAY','PT0S'),))
+    current = schedule(event)
+    old = unpack_state(current.dumps())
+    old[0].pop()
+    restored = AlarmSchedule.loads(pack_state(old))
+    assert restored.timing_key == ''
+    assert next_triggers(restored, BASE, BASE+DAY) == next_triggers(current, BASE, BASE+DAY)
+
+
+def test_native_snooze_membership_checks_gap_origin_and_fold_identity():
+    from debacal.reminder_rule_seek import membership_slice
+    zone = ZoneInfo('Europe/Berlin')
+    start = datetime(2026,3,1,2,30,tzinfo=zone)
+    event = alarm_event(start=start,end=start+timedelta(hours=1),timezone_id=zone.key,
+                        recurrence_rule='FREQ=DAILY',alarms=(Alarm('a','DISPLAY','PT0S'),))
+    compiled = schedule(event)
+    for wall, expected in ((datetime(2026,3,29,3,30,tzinfo=zone), True),
+                           (datetime(2026,3,29,3,31,tzinfo=zone), False),
+                           (datetime(2026,10,25,2,30,tzinfo=zone,fold=0), True),
+                           (datetime(2026,10,25,2,30,tzinfo=zone,fold=1), False)):
+        target = compiled.native_coordinate(wall.astimezone(UTC).isoformat())
+        state = None
+        for _ in range(4):
+            actual, state = membership_slice(compiled.prepared,target,state)
+            if state is None:
+                break
+        assert actual == expected and state is None
