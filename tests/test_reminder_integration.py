@@ -443,3 +443,142 @@ def test_future_at_observation_rearms_after_staging_pages(native_history, interr
     else:
         assert {entry.reminder.key.alarm_key for entry in worker.store.inbox()
                 if entry.reminder.key.trigger_utc == BASE+MINUTE} == {alarm.key for alarm in alarms}
+
+
+@pytest.mark.parametrize('after', ['ordinary', 'exclude', 'detach'])
+def test_explicit_dtstart_outside_rrule_retains_its_own_move_identity(native_history, after):
+    from datetime import datetime, timezone
+    from debacal.recurrence import recurrence_key
+    from debacal.reminder_reveal import reminder_target
+    writer, clock, worker, enable, drain, move = native_history
+    start = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
+    source = event('root', start, recurrence_rule='FREQ=WEEKLY;BYDAY=TU')
+    enable(source, start-5*MINUTE)
+    clock.time = start
+    drain()
+    original, = worker.store.inbox()
+    move(source, start-MINUTE)
+    current = writer.get_event(source.id)
+    root_key = recurrence_key(current.start)
+    if after == 'exclude':
+        writer.apply('Exclude root', [replace(current, excluded_dates=(root_key,))])
+    elif after == 'detach':
+        detached = replace(current, title='Detached', recurrence_rule='', alarms=())
+        writer.apply('Detach root', [replace(current, recurrence_overrides={root_key: detached.to_dict()})])
+    drain()
+    opened = worker.store.open_entry(original.reminder.key, partition=worker.store.partition_id)
+    if after == 'ordinary':
+        assert [row.reminder.key for row in worker.store.inbox()] == [original.reminder.key]
+        assert opened and reminder_target(writer.path, *opened)[1].start == start-MINUTE
+    else:
+        assert opened is None
+
+
+@pytest.mark.parametrize('block', ['calendar', 'mute'])
+@pytest.mark.parametrize('edit', ['unchanged', 'move', 'exclude'])
+def test_inactive_receipts_follow_canonical_occurrences_without_delivery(native_history, block, edit):
+    from alarm_support import FakeTransport
+    from debacal.reminder_preferences import CalendarReminderPolicy
+    from debacal.reminder_reveal import reminder_target
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, worker, enable, drain, move = native_history
+    prefs = ReminderPreferences(enabled=True, delivery='in_app')
+    calendar = Calendar('c', 'Calendar', '#123456')
+    from debacal.reminder_compilation import AlarmSchedule
+    from test_reminder_controller import ALARM
+    source = replace(event('daily', BASE, replace(ALARM, description='Synthetic alarm details'),
+                           recurrence_rule='FREQ=DAILY'), description='Synthetic private notes')
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    original, = worker.store.inbox()
+    writer.apply_remote([event('never-delivered', BASE+5*MINUTE)])
+    if block == 'calendar':
+        writer.save_calendar(replace(calendar, enabled=False))
+    else:
+        save_reminder_preferences(writer, replace(prefs, calendars={'c': CalendarReminderPolicy('mute')}), now=clock.now())
+    drain()
+    if block == 'calendar':
+        assert worker.store.open_entry(original.reminder.key, partition=worker.store.partition_id) is None
+    if edit == 'exclude':
+        from debacal.recurrence import recurrence_key
+        excluded = replace(source, excluded_dates=(recurrence_key(source.start),))
+        if block == 'calendar':
+            writer.apply_remote([excluded])
+        else:
+            writer.apply('Exclude occurrence', [excluded])
+        drain()
+    if edit == 'move':
+        if block == 'calendar':
+            # A sync write can change a locally disabled calendar.
+            writer.apply_remote([replace(source, start=source.start-2*MINUTE, end=source.end-2*MINUTE)])
+        else:
+            move(source, BASE-2*MINUTE)
+        drain()
+    assert not worker.store._db.execute('SELECT 1 FROM frontier').fetchone()
+    assert not worker.store._db.execute('SELECT 1 FROM source').fetchone()
+    archived, = worker.store._db.execute('SELECT id,schedule FROM receipt_source').fetchall()
+    assert archived[0] == source.id
+    geometry = AlarmSchedule.loads(archived[1])
+    assert not (geometry.master.description or geometry.master.raw_ics or geometry.titles)
+    assert all(not alarm.description and not alarm.raw_ics for alarms in geometry.components.values() for alarm in alarms.values())
+    clock.time = BASE+6*MINUTE
+    drain()
+    assert len(worker.store.inbox()) == 1
+    worker.release()
+    resumed = ReminderWorker(str(writer.path), clock, FakeTransport(), True, 'Example', lambda *_: None)
+    try:
+        def settle():
+            for _ in range(1000):
+                if resumed.tick() >= 1:
+                    return
+            pytest.fail('Reminder worker did not settle')
+        settle()
+        if block == 'calendar':
+            writer.save_calendar(calendar)
+        else:
+            save_reminder_preferences(writer, prefs, now=clock.now())
+        settle()
+        opened = resumed.store.open_entry(original.reminder.key, partition=resumed.store.partition_id)
+        if edit == 'exclude':
+            assert opened is None
+        else:
+            assert opened is not None
+            assert reminder_target(writer.path, *opened)[1].start == (BASE-2*MINUTE if edit == 'move' else BASE)
+        assert [row.reminder.key for row in resumed.store.inbox()] == [original.reminder.key]
+    finally:
+        resumed.release()
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_uid_bearing_moved_cutoff_overlaps_uidless_delivered_sibling(native_history, legacy):
+    from datetime import datetime, timezone
+    from debacal.recurrence import recurrence_key
+    from test_reminder_controller import ALARM
+    writer, clock, worker, enable, drain, move = native_history
+    start = datetime(2026, 11, 1, 8, tzinfo=timezone.utc)
+    due = start+timedelta(days=1)
+    early = replace(ALARM, key='early', uid='early', trigger='-PT10M')
+    sibling = replace(ALARM, key='sibling', uid=None)
+    master = replace(event('series', start, early, sibling, recurrence_rule='FREQ=DAILY',
+                           recurrence_dates=(recurrence_key(due-10*MINUTE),)), end=start+60*MINUTE)
+    enable(master, due-16*MINUTE)
+    clock.time = due
+    drain()
+    move(master, start-10*MINUTE)
+    drain()
+    if legacy:
+        with worker.store._db as db:
+            db.execute("INSERT INTO suppressed SELECT source,component,alarm,occurrence,rank,through "
+                       "FROM rank_suppression WHERE kind='native'")
+            db.execute("DELETE FROM rank_suppression")
+    changed = replace(writer.get_event(master.id), recurrence_rule='FREQ=MONTHLY', recurrence_dates=(),
+                      alarms=(replace(early, trigger='-PT5M'), sibling))
+    writer.apply('Monthly', [changed])
+    drain()
+    move(writer.get_event(master.id), due-10*MINUTE)
+    drain()
+    assert any(row.reminder.key.alarm_key == early.key and row.reminder.key.trigger_utc == due-15*MINUTE
+               for row in worker.store.inbox())
+    assert not worker.store._db.execute(
+        "SELECT 1 FROM rank_suppression WHERE alarm=? AND kind='ambiguous'", (early.key,)).fetchone()

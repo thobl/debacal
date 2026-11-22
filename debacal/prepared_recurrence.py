@@ -449,14 +449,19 @@ class PreparedSeries:
         self._explicit_ends = tuple(ends)
         self.rule_bounds = self._bounds()
 
-    def _explicit(self):
-        master = self.master
+    def initial_start(self):
+        """Canonical explicit DTSTART, including the RRULE-owned fold."""
         initial = self.generation_master.start.astimezone(self.zone)
         if initial.fold and self.rule is not None:
             # DTSTART's nominal fold is owned by the rule when it matches.
             anchor = self.rule.before(initial, inc=True)
             if anchor is not None and anchor.replace(tzinfo=None) == initial.replace(tzinfo=None):
                 initial = anchor
+        return initial
+
+    def _explicit(self):
+        master = self.master
+        initial = self.initial_start()
         starts = {recurrence_key(initial, master.all_day, floating_time=master.floating_time): initial}
         starts.update((key, key_datetime(key, self.generation_master)) for key in master.recurrence_dates)
         result = {}

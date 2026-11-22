@@ -176,17 +176,32 @@ class _NativeProof:
         self.series = schedule.prepared if schedule else None
         self.info = None
 
+    def prepared(self):
+        if self.series is None:
+            # Short unrolled rules have no runtime frontier iterator. Rebuild
+            # their bounded proof once for the source edit, outside the writer.
+            bare = copy_event(self.schedule.master, dict(recurrence_dates=(), excluded_dates=(), recurrence_overrides={}))
+            self.series = PreparedSeries(bare)
+        return self.series
+
+    def root_key(self):
+        if not self.schedule or not self.schedule.master.recurrence_rule:
+            return None
+        master = self.schedule.master
+        start = master.start
+        if not master.all_day and not master.floating_time:
+            start = start.astimezone(event_zone(master))
+            if start.fold:
+                start = self.prepared().initial_start()
+        key = recurrence_key(start, master.all_day, floating_time=master.floating_time)
+        return None if key in master.excluded_dates or key in self.schedule.components else key
+
     def nominal(self, key):
         master = self.schedule.master
         if (not master.recurrence_rule or key in master.recurrence_dates or key in master.excluded_dates
                 or key in self.schedule.components):
             return None
-        if self.series is None:
-            # Short unrolled rules have no runtime frontier iterator. Rebuild
-            # their bounded proof once for the source edit, outside the writer.
-            self.series = PreparedSeries(copy_event(master, dict(recurrence_dates=(), excluded_dates=(),
-                                                                recurrence_overrides={})))
-        series = self.series
+        series = self.prepared()
         if not series.rule:
             return None
         target = datetime.fromisoformat(key)
@@ -278,6 +293,10 @@ class _NativeCorrespondence:
     def __init__(self, previous, current):
         self.old = _NativeProof(previous)
         self.new = _NativeProof(current)
+        self.old_root = self.old.root_key()
+        self.new_root = self.new.root_key()
+        if current and self.new_root not in current.explicit:
+            self.new_root = None
         self.movement = _native_reanchor(previous, current)
         self.same_rule = bool(previous and current
                               and previous.master.start == current.master.start
@@ -286,7 +305,7 @@ class _NativeCorrespondence:
                               and previous.master.floating_time == current.master.floating_time
                               and event_zone(previous.master) == event_zone(current.master))
 
-    def coordinate(self, component, encoded, prior, alarm):
+    def coordinate(self, component, encoded, prior):
         # NULL starts at the delivered coordinate. An empty string marks an
         # ended correspondence. A nonempty value is the proven current key.
         if prior == '' or component or not encoded:
@@ -295,17 +314,23 @@ class _NativeCorrespondence:
         if not previous:
             return '' if prior else None
         original = (prior or encoded)[1:]
-        if not previous.master.recurrence_rule or original in previous.master.recurrence_dates:
+        if not previous.master.recurrence_rule:
             return None
         if not current or current.master.ical_uid != previous.master.ical_uid:
             return ''
+        # DTSTART is an explicit member even when its weekday or clock is
+        # outside the RRULE. Both ends must still belong to the master.
+        if original == self.old_root and self.new_root and (self.movement or original == self.new_root):
+            return '1'+self.new_root if self.movement or prior else None
+        if original in previous.master.recurrence_dates:
+            return None
         if self.same_rule:
             if (original in current.master.excluded_dates or original in current.master.recurrence_dates
-                    or original in current.components or prior and not alarm):
+                    or original in current.components):
                 return ''
             return prior
         old = yield from self.old.nominal(original)
-        if old is None or not alarm:
+        if old is None:
             return ''
         if self.movement:
             target = _moved_native_key(previous, current, self.movement, old)
@@ -320,7 +345,7 @@ class _NativeCorrespondence:
 def _staged_group(schedule, correspondence, component, key, encoded, coordinate, writer):
     alarm = schedule.components.get(component, {}).get(key) if schedule else None
     try:
-        moved = yield from correspondence.coordinate(component, encoded, coordinate, alarm)
+        moved = yield from correspondence.coordinate(component, encoded, coordinate)
     except (ValueError, OverflowError):
         moved = ''
     point = None
@@ -350,7 +375,6 @@ def stage_groups(db, source, schedule, previous):
         return 'metadata', {}
     after = None
     writer = StateWriter()
-    correspondence = _NativeCorrespondence(previous, schedule)
     while True:
         page = db.execute('SELECT component,alarm,occurrence,coordinate FROM delivery_context '
                           'LEFT JOIN native_movement USING(source,component,alarm,occurrence) WHERE source=? '
@@ -360,6 +384,7 @@ def stage_groups(db, source, schedule, previous):
         if not page:
             return ('staged' if after else 'empty'), writer.zones
         if after is None:
+            correspondence = _NativeCorrespondence(previous, schedule)
             db.execute('CREATE TEMP TABLE IF NOT EXISTS staged_group (component TEXT,alarm TEXT,occurrence TEXT,'
                        'fingerprint TEXT,payload TEXT,ack INTEGER,moved TEXT,PRIMARY KEY(component,alarm,occurrence))')
         values = []
@@ -387,11 +412,20 @@ def reconcile(db, source, schedule, previous_schedule, now, stage, zones, ambigu
     # any possible UID-less evidence for this source. Its moved cutoffs are
     # re-established from living correspondences below. Receipts stay intact.
     if db.execute('SELECT 1 FROM suppressed WHERE source=? LIMIT 1', (source,)).fetchone():
+        # A successor with a stable UID cannot be the result of UID-less
+        # many-to-many alignment, even if a sibling delivered at its point.
+        candidates = db.execute('SELECT DISTINCT component,alarm FROM suppressed WHERE source=?', (source,)).fetchall()
+        named = [(source, component, key) for component, key in candidates
+                 if any(prior and (alarm := prior.components.get(component, {}).get(key)) and alarm.uid
+                        for prior in (previous_schedule, schedule))]
+        db.executemany('DELETE FROM suppressed WHERE source=? AND component=? AND alarm=?', named)
         db.execute("WITH predecessors AS MATERIALIZED (SELECT DISTINCT component,occurrence,rank FROM ledger "
                    "WHERE source=? AND coalesce(json_extract(payload,'$[5].uid'),'')='') "
                    "INSERT OR REPLACE INTO rank_suppression SELECT s.source,s.component,s.alarm,s.occurrence,"
                    "s.rank,'ambiguous',s.through FROM suppressed s JOIN predecessors USING(component,occurrence,rank) "
-                   "WHERE s.source=?", (source, source))
+                   "WHERE s.source=? AND NOT EXISTS (SELECT 1 FROM ledger t WHERE t.source=s.source "
+                   "AND t.component=s.component AND t.alarm=s.alarm AND coalesce(json_extract(t.payload,'$[5].uid'),'')!='')",
+                   (source, source))
         db.execute('DELETE FROM suppressed WHERE source=?', (source,))
     db.executemany("INSERT OR REPLACE INTO rank_suppression SELECT source,component,?,occurrence,rank,'ambiguous',? "
                    'FROM ledger WHERE source=? AND component=? AND alarm=?',
@@ -460,8 +494,8 @@ def claimed(db, due, changed, fence):
         return False
     cutoff = (*ids, key.repeat_index, micros(key.trigger_utc))
     match = ' WHERE source=? AND component=? AND alarm=? AND occurrence=? AND rank=? AND through>=?'
-    if db.execute('SELECT 1 FROM rank_suppression'+match+' UNION ALL SELECT 1 FROM suppressed'+match+' LIMIT 1',
-                  (*cutoff, *cutoff)).fetchone():
+    if db.execute("SELECT 1 FROM rank_suppression"+match+" AND (kind='native' OR ?=0) "
+                  "UNION ALL SELECT 1 FROM suppressed"+match+" LIMIT 1", (*cutoff, bool(due.alarm.uid), *cutoff)).fetchone():
         return False
     if context:
         db.execute("DELETE FROM native_movement WHERE source=? AND component=? AND alarm=? AND occurrence=? "

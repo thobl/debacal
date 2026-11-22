@@ -13,6 +13,7 @@ from . import reminder_ledger as ledger
 from .reminder_compilation import DAY_US, AlarmSchedule, DeliveryKey, DueReminder, instant, micros
 from .reminder_ledger import InboxEntry
 from .reminder_partition import Partition
+from .models import copy_event
 from .prepared_storage import StateWriter
 from .reminder_schedule import BACKFILL, FRONTIER_SQL, READY, RULE, head, initial_jobs, pop, step
 from .reminder_activation import ActivationContext
@@ -24,6 +25,8 @@ CREATE TABLE IF NOT EXISTS source (
     generation INTEGER NOT NULL, changed INTEGER NOT NULL, zone TEXT, schedule BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS source_civil ON source(id,zone) WHERE zone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS source_calendar ON source(calendar,id);
+CREATE TABLE IF NOT EXISTS receipt_source (
+    id TEXT PRIMARY KEY, calendar TEXT NOT NULL, revision INTEGER NOT NULL, schedule BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catchup_group (
     source TEXT, component TEXT, alarm TEXT, occurrence TEXT, fingerprint TEXT, through INTEGER,
     PRIMARY KEY(source,component,alarm,occurrence,fingerprint));
@@ -131,25 +134,39 @@ class ReminderStore:
         for _ in self.put_source_steps(change, schedule, cursor=cursor, eligible_since=eligible_since, scanned=scanned):
             pass
 
+    def _receipt_timing(self, schedule, previous):
+        """Keep geometry and alignment inputs only for components with receipts."""
+        source = schedule.master.id
+        if not self._db.execute('SELECT 1 FROM delivery_context WHERE source=? LIMIT 1', (source,)).fetchone():
+            return None
+        components = {}
+        for component, alarms in schedule.components.items():
+            components[component] = {}
+            if self._db.execute('SELECT 1 FROM delivery_context WHERE source=? AND component=? LIMIT 1',
+                                (source, component)).fetchone():
+                retained = alarms or (previous.components.get(component, {}) if previous else {})
+                components[component] = {key: replace(alarm, description='') for key, alarm in retained.items()}
+        master = copy_event(schedule.master, dict(title='Reminder source'))
+        return replace(schedule, master=master, components=components, titles={}).dumps(runtime=True)
+
     def put_source_steps(self, change, schedule, *, cursor=None, eligible_since=None, scanned=False):
         """Yield between history pages. Publication and cursor advancement remain one transaction."""
         self._refresh()
         floor = max(self._partition.get('boundary', 0),
                     micros(eligible_since) if eligible_since else 0)
         with self._partition.guarded() as reader:
-            generation = 0
+            calendar_state = None
+            enabled, generation = True, 0
             if reader:
                 page = self._page.get(id(change))
                 if page is None or page[0] is not change or page[1] != self.partition_id:
                     raise sqlite3.OperationalError('The source batch requires the current reminder partition.')
                 if schedule:
                     state = reader.calendar_state(schedule.master.calendar_id)
-                    if not state or not state[0]:
-                        schedule = None
-                    else:
-                        generation = state[1]
-                        if generation > 1:
-                            floor = max(floor, micros(state[2]))
+                    calendar_state = state[:2] if state else None
+                    enabled, generation = calendar_state or (False, 0)
+                    if enabled and generation > 1:
+                        floor = max(floor, micros(state[2]))
                 reader.incarnation()
         if schedule and (schedule.master.id != change.event_id or schedule.revision != change.version):
             raise ValueError('The schedule does not match its source change.')
@@ -159,7 +176,7 @@ class ReminderStore:
             self._observation_partition = token
         # Only interrupted or in-progress sources retain an entry. A replayed
         # page can publish earlier IDs without changing a later edit's cutoff.
-        intent = (change.event.ical_uid if change.event else None, generation, floor,
+        intent = (change.event.ical_uid if change.event else None, enabled, generation, floor,
                   schedule.timing_key if schedule else None,
                   frozenset((component, key, alarm.uid, alarm.action, alarm.related, alarm.trigger,
                              alarm.repeat, alarm.repeat_interval, alarm.acknowledged)
@@ -169,27 +186,35 @@ class ReminderStore:
         observed = pending[1] if pending and pending[0] == intent else self._now
         self._observations[change.event_id] = intent, observed
         floor = max(observed - DAY_US, floor)
-        row = self._db.execute('SELECT schedule FROM source WHERE id=?', (change.event_id,)).fetchone()
+        row = self._db.execute('SELECT schedule,0 FROM source WHERE id=? UNION ALL '
+                               'SELECT schedule,1 FROM receipt_source WHERE id=? LIMIT 1',
+                               (change.event_id, change.event_id)).fetchone()
         previous = AlarmSchedule.loads(row[0]) if row else None
         ambiguous = ledger.align(schedule, previous) if schedule and previous else ()
         stage, zones = yield from ledger.stage_groups(self._db, change.event_id, schedule, previous)
-        if stage == 'staged':
+        active = schedule is not None and enabled and any(schedule.components.values())
+        history_blob = (self._receipt_timing(schedule, previous)
+                        if schedule and not active and stage != 'empty' else None)
+        verify = stage == 'staged' or history_blob is not None
+        if verify:
             self._refresh()
             if self.partition_id != token:
                 raise StaleSourcePage('The reminder partition changed during source preparation.')
         with self._write():
             self._partition.check_owner()
-            if stage == 'staged':
+            if verify:
                 with self._partition.guarded() as reader:
                     stamp = change.version if change.event is not None else None
                     state = reader.calendar_state(schedule.master.calendar_id) if reader and schedule else None
                     if reader and (reader.source_stamp(change.event_id) != stamp
-                                   or schedule and (not state or state[:2] != (True, generation))):
+                                   or schedule and (state[:2] if state else None) != calendar_state):
                         raise StaleSourcePage('The source changed during reminder preparation.')
             self._db.execute('DELETE FROM frontier WHERE source=?', (change.event_id,))
             self._db.execute('DELETE FROM source WHERE id=?', (change.event_id,))
+            if row and row[1] and history_blob is None:
+                self._db.execute('DELETE FROM receipt_source WHERE id=?', (change.event_id,))
             ledger.reconcile(self._db, change.event_id, schedule, previous, observed, stage, zones, ambiguous)
-            if schedule and any(schedule.components.values()):
+            if active:
                 civil = change.event.all_day or change.event.floating_time or any(
                     fields.get('all_day') or fields.get('floating_time')
                     for fields in change.event.recurrence_overrides.values())
@@ -199,6 +224,15 @@ class ReminderStore:
                                   generation, observed, zone, schedule.dumps(runtime=True)))
                 for job in initial_jobs(schedule, floor):
                     job.save(self._db)
+            elif history_blob is not None:
+                # Ineligibility ends real send and snooze authorizations even
+                # when the canonical geometry itself is a metadata-only match.
+                self._db.execute("UPDATE ledger SET status='uncertain',claim=NULL WHERE source=? AND status='pending'",
+                                 (change.event_id,))
+                self._db.execute("UPDATE ledger SET status='dismissed',until=NULL,closed=0,unread=0,claim=NULL "
+                                 "WHERE source=? AND status='snoozed'", (change.event_id,))
+                self._db.execute('INSERT OR REPLACE INTO receipt_source VALUES(?,?,?,?)',
+                                 (change.event_id, schedule.master.calendar_id, change.version, history_blob))
             if cursor is not None:
                 self._partition.set('cursor', cursor)
             if scanned and self.bootstrap is not None:
@@ -492,8 +526,10 @@ class ReminderStore:
                 return None
             due = entry.reminder
             movement = self._db.execute(
-                'SELECT coordinate,calendar,revision FROM native_movement m JOIN source s ON s.id=m.source '
-                'WHERE m.source=? AND component=? AND alarm=? AND occurrence=?', ledger.group(key)).fetchone()
+                'SELECT coordinate,coalesce(s.calendar,h.calendar),coalesce(s.revision,h.revision) '
+                'FROM native_movement m LEFT JOIN source s ON s.id=m.source LEFT JOIN receipt_source h ON h.id=m.source '
+                'WHERE m.source=? AND component=? AND alarm=? AND occurrence=? AND (s.id IS NOT NULL OR h.id IS NOT NULL)',
+                ledger.group(key)).fetchone()
             if self._db.execute('SELECT 1 FROM retired_native WHERE key=?', (ledger.encode_key(key),)).fetchone():
                 return None
             if movement:

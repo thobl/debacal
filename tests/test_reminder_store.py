@@ -2,8 +2,11 @@ from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta, timezone
 
+import pytest
+
 from alarm_support import BASE, alarm_event
 from debacal.alarms import Alarm
+from debacal.models import Calendar
 from debacal.reminder_owner import ReminderOwner
 from debacal.reminder_preferences import CalendarReminderPolicy
 from debacal.reminder_schedule import compile_schedule
@@ -148,7 +151,8 @@ def test_zone_change_selects_only_civil_sources_and_rebinds(tmp_path):
         owner.release()
 
 
-def test_ambiguous_legacy_and_new_distinct_alarm(tmp_path):
+@pytest.mark.parametrize('legacy_format', [False, True])
+def test_ambiguous_legacy_and_new_distinct_alarm(tmp_path, legacy_format):
     db = str(tmp_path/'ambiguous')
     owner = ReminderOwner(db)
     assert owner.acquire()
@@ -166,9 +170,16 @@ def test_ambiguous_legacy_and_new_distinct_alarm(tmp_path):
             put(store, store.read_sources('scan')[0])
             assert not store.claim_due(BASE)
             assert [d.key.alarm_key for d in store.claim_due(BASE+timedelta(minutes=1))] == ['d']
+            if legacy_format:
+                with store._db as db:
+                    db.execute("INSERT INTO suppressed SELECT source,component,alarm,occurrence,rank,through "
+                               "FROM rank_suppression WHERE kind='ambiguous'")
+                    db.execute('DELETE FROM rank_suppression')
             writer.apply_remote([replace(source, alarms=(*changed, Alarm('added','DISPLAY','-PT5M')))])
             put(store, store.read_sources('scan')[0])
             assert [d.key.alarm_key for d in store.claim_due(BASE+timedelta(minutes=1))] == ['added']
+            assert {row[0] for row in store._db.execute(
+                "SELECT alarm FROM rank_suppression WHERE kind='ambiguous'")} == {'c', 'd'}
     finally:
         owner.release()
 
@@ -854,5 +865,31 @@ def test_inbox_page_uses_partition_and_rows_from_one_read_snapshot(tmp_path, mon
             assert token == old_partition and entry.unread
             token, (entry,) = reader.inbox_page()
             assert token == 'next' and not entry.unread
+    finally:
+        owner.release()
+
+
+def test_temporarily_inactive_receipt_proof_never_reauthorizes_a_pending_send(tmp_path):
+    db = str(tmp_path / 'inactive')
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer, closing(ReminderStore(db)) as queue:
+            calendar = Calendar('c', 'Calendar', '#123456')
+            writer.save_calendar(calendar)
+            source = alarm_event(calendar_id='c', recurrence_rule='FREQ=DAILY', alarms=(Alarm('a', 'DISPLAY', 'PT0S'),))
+            writer.apply_remote([source])
+            queue.attach_owner(owner, now=BASE)
+            put(queue, queue.read_sources('selected', (source.id,))[0])
+            due, = queue.claim_due(BASE)
+            original = queue.claim_fence(due.key)
+            assert queue.can_emit(due, original)
+            writer.save_calendar(replace(calendar, enabled=False))
+            put(queue, queue.read_sources('selected', (source.id,))[0])
+            assert not queue.can_emit(due, original)
+            writer.save_calendar(calendar)
+            put(queue, queue.read_sources('selected', (source.id,))[0])
+            assert not queue.can_emit(due, original)
+            assert queue.entry(due.key).status == 'uncertain'
     finally:
         owner.release()

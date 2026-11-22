@@ -60,7 +60,7 @@ class Partition:
                      or revision < self.get('revision', 0) or self.get('incoherent'))
             with self.db:
                 if reset:
-                    for table in ('frontier', 'source', 'ledger', 'ledger_zone', 'delivery_context', 'native_movement', 'rank_suppression', 'retired_native', 'source_label', 'snooze_probe', 'suppressed', 'catchup_group', 'metadata'):
+                    for table in ('frontier', 'source', 'receipt_source', 'ledger', 'ledger_zone', 'delivery_context', 'native_movement', 'rank_suppression', 'retired_native', 'source_label', 'snooze_probe', 'suppressed', 'catchup_group', 'metadata'):
                         self.db.execute('DELETE FROM ' + table)
                     self.set('boundary', now)
                     self.set('partition', uuid4().hex)
