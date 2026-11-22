@@ -355,14 +355,14 @@ def test_long_calendar_name_keeps_status_in_view_at_large_scale(tmp_path):
 
 
 @contextmanager
-def delivered_workspace(tmp_path, *alarms, style=None):
+def delivered_workspace(tmp_path, *alarms, style=None, source=None):
     path = tmp_path / 'calendar'
     clock = FakeClock(BASE-60*MINUTE)
     with Store(path) as writer:
         if style:
             style.save(writer)
         writer.save_calendar(Calendar('c', 'Appointments', '#123456'))
-        writer.apply_remote([event('one', BASE, *alarms)])
+        writer.apply_remote([source or event('one', BASE, *alarms)])
         save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
         with workspace(path, clock, writer) as (window, transport, page):
             assert not page()
@@ -609,13 +609,24 @@ def test_inbox_result_belongs_to_exact_request_selection_and_lifetime(tmp_path, 
         assert wait_for(lambda: any(entry.status == 'snoozed' for entry in page()))
 
 
-def test_retired_native_open_cannot_restore_a_draft(tmp_path):
+@pytest.mark.parametrize('retirement', ['source', 'occurrence'])
+def test_retired_native_open_cannot_restore_a_draft(tmp_path, retirement):
+    from dataclasses import replace
+    from datetime import timedelta
+    from debacal.reminder_ledger import encode_key
     from PySide6.QtWidgets import QDialog
-    with delivered_workspace(tmp_path) as (writer, window, transport, page):
+    source = event('one', BASE-timedelta(days=1), recurrence_rule='FREQ=DAILY')
+    with delivered_workspace(tmp_path, source=source) as (writer, window, transport, page):
         key = transport.sent[0][0].key
         transport.delivered.emit(key, 1)
         assert page()[0].unread
-        writer.apply('Remove event', delete_ids=['one'])
+        if retirement == 'source':
+            writer.apply('Remove event', delete_ids=['one'])
+        else:
+            writer.apply('Remove occurrence', [replace(source, recurrence_rule='FREQ=WEEKLY')])
+            window.reminder_controller.reload_settings()
+            with sqlite3.connect(str(writer.path) + '.reminders.sqlite3') as db:
+                wait_for(lambda: db.execute('SELECT 1 FROM retired_native WHERE key=?', (encode_key(key),)).fetchone())
         blocker = QDialog(window)
         blocker.setModal(True)
         blocker.show()

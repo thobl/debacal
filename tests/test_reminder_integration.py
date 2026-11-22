@@ -1108,3 +1108,135 @@ def test_user_snooze_declines_a_retired_native_member(native_history, action, pu
     drain()
     assert deadline is None and not worker.store.entry(key).unread
     assert len(worker.transport.sent) == 1
+
+
+@pytest.mark.parametrize('action', ['inbox', 'native'])
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('days', [-1, 1])
+def test_snooze_tracks_logical_member_when_all_move_reuses_old_clock(native_history, action, published, days):
+    from alarm_support import FakeTransport
+    from debacal.recurrence import recurrence_key
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, worker, enable, drain, move = native_history
+    day = timedelta(days=1)
+    series = event('series', BASE-2*day, recurrence_rule='FREQ=DAILY')
+    enable(series, BASE-MINUTE)
+    save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+    drain()
+    clock.time = BASE
+    drain()
+    key = worker.transport.sent[0][0].key
+    worker.command('delivered', (key, 7))
+    move(series, series.start+days*day)
+    if published:
+        drain()
+    target, _ = worker.store.open_entry(key, partition=worker.partition)
+    assert target.key.occurrence_key == recurrence_key(BASE+days*day)
+    notices = []
+    worker.notify = lambda _, name, args: notices.append((name, args))
+    if action == 'inbox':
+        worker.command('request', (42, 'snooze', worker.partition, key, 5*MINUTE))
+        error, = [args[-1] for name, args in notices if name == 'actionResult']
+    else:
+        worker.command('native', (worker.partition, key, 'snooze'))
+        error = next((args[0] for name, args in notices if name == 'actionIssue'), None)
+    deadline = worker.store.entry(key).snoozed_until
+    writer.apply_remote([series])
+    worker.release()
+    resumed = ReminderWorker(str(writer.path), clock, FakeTransport(), True, '', lambda *_: None)
+    try:
+        for now in (BASE, BASE+5*MINUTE):
+            clock.time = now
+            for _ in range(100):
+                if resumed.tick() >= 1:
+                    break
+        assert error and deadline is None
+        assert not resumed.store.entry(key).unread and not resumed.transport.sent
+    finally:
+        resumed.release()
+
+
+@pytest.mark.parametrize('edit,interruption,expected', [
+    ('title', 'none', True), ('alarm description', 'none', True), ('title', 'restart before', True),
+    ('title', 'restart after', False), ('title', 'gap', False), ('title', 'enable after', False),
+    ('geometry', 'none', False),
+    ('alarm uid', 'none', False), ('alarm rule', 'none', False),
+])
+def test_bootstrap_known_wake_across_selected_source_replay(native_history, edit, interruption, expected):
+    from alarm_support import FakeTransport
+    from debacal.reminder_worker import ReminderWorker
+    writer, clock, first, _, _, _ = native_history
+    clock.time = BASE-timedelta(milliseconds=100)
+    source = event('a', BASE)
+    filler = [replace(event(f'm{i:02}', BASE), alarms=()) for i in range(65)]
+    writer.apply_remote([source, *filler])
+    save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app', missed='none'), now=clock.now())
+    first.tick()
+    assert first.store.next_wakeup() == BASE and first.store.bootstrap is not None
+    clock.time += timedelta(milliseconds=50)
+    alarm, = source.alarms
+    if edit == 'geometry':
+        updated = replace(source, start=source.start+timedelta(seconds=1), end=source.end+timedelta(seconds=1))
+    elif edit == 'alarm uid':
+        updated = replace(source, alarms=(replace(alarm, uid='replacement'),))
+    elif edit == 'alarm rule':
+        updated = replace(source, alarms=(replace(alarm, trigger='-PT5M', related='END'),))
+    elif edit == 'alarm description':
+        updated = replace(source, alarms=(replace(alarm, description='Updated alarm text'),))
+    else:
+        updated = replace(source, title='Current title')
+    writer.apply_remote([updated])
+    worker = first
+    if interruption == 'enable after':
+        save_reminder_preferences(writer, ReminderPreferences(enabled=False), now=clock.now())
+        first.tick()
+        clock.time = BASE+timedelta(milliseconds=50)
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app', missed='none'),
+                                  now=clock.now())
+    if interruption.startswith('restart'):
+        first.release()
+        worker = ReminderWorker(str(writer.path), clock, FakeTransport(), True, '', lambda *_: None)
+        if interruption == 'restart before':
+            worker.tick()
+    if interruption == 'gap':
+        clock.time += 5*MINUTE
+    try:
+        for _ in range(30):
+            clock.time += timedelta(milliseconds=400 if edit == 'geometry' else 100)
+            if worker.tick() >= 1:
+                break
+        assert worker.store.bootstrap is None
+        if interruption != 'enable after':
+            disposition, = worker.store._db.execute("SELECT status FROM ledger WHERE source='a'").fetchone()
+            assert disposition == ('delivered' if expected else 'suppressed')
+        assert [(entry.reminder.title, entry.reminder.key.trigger_utc) for entry in worker.store.inbox()] == (
+            [(updated.title, BASE)] if expected else [])
+    finally:
+        if worker is not first:
+            worker.release()
+
+
+@pytest.mark.parametrize('pending', ['rename', 'move back'])
+def test_snooze_composes_published_and_unpublished_all_moves(native_history, pending):
+    writer, clock, worker, enable, drain, move = native_history
+    day = timedelta(days=1)
+    source = event('series', BASE-2*day, recurrence_rule='FREQ=DAILY')
+    enable(source, BASE-MINUTE)
+    clock.time = BASE
+    drain()
+    key = worker.store.inbox()[0].reminder.key
+    worker.store.mark_read((key,), partition=worker.partition)
+    move(source, source.start+day)
+    drain()
+    current = writer.get_event(source.id)
+    if pending == 'move back':
+        move(current, source.start)
+    else:
+        writer.apply('Rename', [replace(current, title='Current title')])
+    worker.command('request', (1, 'snooze', worker.partition, key, 5*MINUTE))
+    deadline = worker.store.entry(key).snoozed_until
+    drain()
+    clock.time = BASE+5*MINUTE
+    drain()
+    assert (deadline, worker.store.entry(key).unread) == (
+        (clock.time, True) if pending == 'move back' else (None, False))

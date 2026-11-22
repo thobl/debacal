@@ -342,14 +342,23 @@ class _NativeCorrespondence:
         return prior if member is not None else ''
 
 
-def current_native_coordinate(previous, current, key):
-    """Resolve one explicit Open through the same All-move proof as journal reconciliation."""
+def mapped_key(key, coordinate):
+    """NULL retains the selected coordinate, while an empty correspondence retires it."""
+    if coordinate is None:
+        return key
+    return replace(key, occurrence_key=coordinate[1:]) if coordinate else None
+
+
+def selected_member(previous, current, key):
+    """Follow a published selection through the same pending All-move proof used by the journal."""
+    if previous.revision == current.revision or not key.occurrence_key or key.component_key:
+        return key
     proof = _NativeCorrespondence(previous, current).coordinate('', '1'+key.occurrence_key, None)
     while True:
         try:
             next(proof)
         except StopIteration as done:
-            return done.value
+            return mapped_key(key, done.value)
 
 
 def _staged_group(schedule, correspondence, component, key, encoded, coordinate, writer):
