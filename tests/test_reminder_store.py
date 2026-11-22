@@ -820,3 +820,35 @@ def test_source_label_preserves_pending_fence_and_archives_retired_inbox(tmp_pat
             assert history.reminder.title == 'Archived title' and history.status == 'uncertain'
     finally:
         owner.release()
+
+
+def test_inbox_page_uses_partition_and_rows_from_one_read_snapshot(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    db = str(tmp_path/'partition-page')
+    owner = ReminderOwner(db)
+    assert owner.acquire()
+    try:
+        with Store(db) as writer, closing(ReminderStore(db)) as store:
+            writer.apply_remote([alarm_event(calendar_id='local', alarms=(Alarm('a','DISPLAY','PT0S'),))])
+            store.attach_owner(owner, now=BASE)
+            put(store, store.read_sources('scan')[0])
+            due, = store.claim_due(BASE)
+            store.record_delivery(due.key, desktop_id=None, unread=True)
+            old_partition = store.partition_id
+        with closing(ReminderStore(db)) as reader, closing(sqlite3.connect(db+'.reminders.sqlite3')) as changer:
+            # Commit a distinct ledger state after the partition read, before decoding rows.
+            original = reader.inbox
+            def concurrent_rotation(**kwargs):
+                with changer:
+                    changer.execute("UPDATE metadata SET value=? WHERE key='partition'", (json.dumps('next'),))
+                    changer.execute("UPDATE ledger SET unread=0")
+                return original(**kwargs)
+            monkeypatch.setattr(reader, 'inbox', concurrent_rotation)
+            token, (entry,) = reader.inbox_page()
+            assert token == old_partition and entry.unread
+            token, (entry,) = reader.inbox_page()
+            assert token == 'next' and not entry.unread
+    finally:
+        owner.release()

@@ -177,6 +177,10 @@ class ReminderStore:
         return instant(min(t for t in times if t is not None)) if any(t is not None for t in times) else None
 
     def claim_due(self, now: datetime, *, limit: int = 128) -> tuple[DueReminder, ...]:
+        return tuple(due for due, _ in self.claim_due_with_fences(now, limit=limit))
+
+    def claim_due_with_fences(self, now: datetime, *, limit: int = 128) -> tuple[tuple[DueReminder, str], ...]:
+        """Return each committed claim with the original fence from its transaction."""
         if limit < 0:
             raise ValueError('Reminder claim limit must be nonnegative.')
         self._now = micros(now)
@@ -237,8 +241,10 @@ class ReminderStore:
             if (successor.kind == BACKFILL or dense_refill or yield_rule) and row_id is not None:
                 deferred[row_id] = (successor.wake, successor.source, successor.component, successor.alarm,
                                     successor.occurrence, successor.rank)
-        if due and ledger.claimed(self._db, due, changed, self._new_claim()):
-            items.append(due)
+        if due:
+            fence = self._new_claim()
+            if ledger.claimed(self._db, due, changed, fence):
+                items.append((due, fence))
         return True
 
     def _claim_snooze(self, row, reader, items):
@@ -260,10 +266,11 @@ class ReminderStore:
             valid = ledger.verify_snooze(self._db, AlarmSchedule.loads(blob), due.key, encoded)
             if valid is None:
                 return False
-        self._db.execute('UPDATE ledger SET status=?,until=NULL,claim=?,unread=0 WHERE key=?',
-                         ('pending' if valid else 'dismissed', self._new_claim() if valid else None, encoded))
+        fence = self._new_claim() if valid else None
+        self._db.execute('UPDATE ledger SET status=?,until=?,claim=?,unread=0 WHERE key=?',
+                         ('pending' if valid else 'dismissed', row[0] if valid else None, fence, encoded))
         if valid:
-            items.append(due)
+            items.append((due, fence))
         return True
 
     def _new_claim(self):
@@ -299,7 +306,7 @@ class ReminderStore:
                         uncertain: bool = False, fence=None) -> None:
         self._partition.check_owner()
         with self._write():
-            self._db.execute("UPDATE ledger SET status=?,desktop_id=?,unread=coalesce(?,unread),claim=NULL WHERE key=? "
+            self._db.execute("UPDATE ledger SET status=?,desktop_id=?,unread=coalesce(?,unread),until=NULL,claim=NULL WHERE key=? "
                              "AND status='pending' AND (? IS NULL OR claim=?)",
                              ('uncertain' if uncertain else 'delivered', desktop_id, unread,
                               ledger.encode_key(key), fence, fence))
@@ -340,7 +347,7 @@ class ReminderStore:
                                (encoded,)).fetchone()
         if row:
             return InboxEntry(ledger.current_due(self._db, encoded, row[0]), row[1], bool(row[2]),
-                              instant(row[3]) if row[3] is not None else None)
+                              instant(row[3]) if row[1] == 'snoozed' else None)
 
     def actionable(self, due):
         self._refresh()
@@ -352,7 +359,7 @@ class ReminderStore:
         with self._partition.guarded() as reader:
             return self._valid_source(reader, due.key.source_id, row[0], due.calendar_id, row[1])
 
-    def prepare_unsent(self, due, fence):
+    def prepare_unsent(self, due, fence, *, add_unread=False):
         """Renew only a caller-held, still-unsent claim after a policy change."""
         prefix = f'{self.partition_id}/{self._partition.epoch}/'
         if not fence or not fence.startswith(prefix) or not self.actionable(due):
@@ -362,8 +369,8 @@ class ReminderStore:
         with self._write():
             self._partition.check_owner()
             renewed = self._new_claim()
-            changed = self._db.execute("UPDATE ledger SET claim=? WHERE key=? AND status='pending' AND claim=?",
-                                       (renewed, ledger.encode_key(due.key), fence))
+            changed = self._db.execute("UPDATE ledger SET claim=?,unread=max(unread,?) WHERE key=? AND status='pending' AND claim=?",
+                                       (renewed, add_unread, ledger.encode_key(due.key), fence))
             return renewed if changed.rowcount else None
 
     def pending_unread(self, key, fence):
@@ -371,14 +378,16 @@ class ReminderStore:
             self._db.execute("UPDATE ledger SET unread=1 WHERE key=? AND status='pending' AND claim=?",
                              (ledger.encode_key(key), fence))
 
-    def is_snooze_claim(self, key, fence):
-        return bool(self._db.execute("SELECT 1 FROM ledger WHERE key=? AND claim=? AND closed=1",
-                                     (ledger.encode_key(key), fence)).fetchone())
+    def snooze_deadline(self, key, fence):
+        row = self._db.execute("SELECT until FROM ledger WHERE key=? AND claim=? AND status='pending'",
+                               (ledger.encode_key(key), fence)).fetchone()
+        return instant(row[0]) if row and row[0] is not None else None
 
     def suppress(self, key, fence):
         with self._write():
-            self._db.execute("UPDATE ledger SET status='suppressed',claim=NULL,unread=0 WHERE key=? AND claim=?",
-                             (ledger.encode_key(key), fence))
+            # A missed local wake already has a historical inbox entry.
+            self._db.execute("UPDATE ledger SET status=CASE WHEN until IS NULL THEN 'suppressed' ELSE 'dismissed' END,"
+                             "until=NULL,claim=NULL,unread=0 WHERE key=? AND claim=?", (ledger.encode_key(key), fence))
 
     def begin_catchup(self, due, now):
         """Only the first overdue rank represents this logical alarm through now."""
@@ -418,8 +427,17 @@ class ReminderStore:
             'ORDER BY l.stamp DESC,l.key LIMIT ? OFFSET ?', (limit, offset))
         reader = ledger.inbox_reader(self._db)
         return tuple(InboxEntry(ledger.decode_due(reader, key, payload, label), status, bool(unread),
-                                instant(until) if until is not None else None)
+                                instant(until) if status == 'snoozed' else None)
                      for key, payload, status, unread, until, *label in rows)
+
+    def inbox_page(self, *, limit=100, offset=0):
+        """Read the partition and every inbox payload from one WAL snapshot."""
+        self._db.execute('BEGIN')
+        with self._db:
+            token = self.partition_id
+            entries = self.inbox(limit=limit, offset=offset)
+            self._partition.check_target()
+            return token, entries
 
     def mark_read(self, keys: Iterable[DeliveryKey], *, partition=None) -> None:
         with self._write():

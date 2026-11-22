@@ -545,3 +545,184 @@ def test_test_notification_uses_draft_without_global_enable_or_ledger(tmp_path):
         transport.delivered.emit(previews[0].key, 1)
         wait_for(lambda: not transport.started)
         assert page() == () and not path.with_name('profile.reminders.sqlite3').exists()
+
+
+def busy_once(monkeypatch, operation):
+    import sqlite3
+    from debacal.reminder_store import ReminderStore
+
+    actual = getattr(ReminderStore, operation)
+    attempts = []
+    def contended(*args, **kwargs):
+        attempts.append(True)
+        if len(attempts) == 1:
+            error = sqlite3.OperationalError('Synthetic write contention')
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise error
+        return actual(*args, **kwargs)
+    monkeypatch.setattr(ReminderStore, operation, contended)
+    return attempts
+
+
+@pytest.mark.parametrize('operation', ['pending_unread', 'begin_catchup', 'claim_fence'])
+def test_qualification_survives_busy_and_delivers_next_alarm(tmp_path, monkeypatch, operation):
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE-MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        writer.apply_remote([event('first', BASE), event('later', BASE+MINUTE)])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+        with running(path, clock) as (controller, transport, page):
+            assert not page()
+            busy_once(monkeypatch, operation)
+            clock.time = BASE+timedelta(seconds=5)
+            controller.reload_settings()
+            page()
+            clock.time = BASE+MINUTE
+            controller.reload_settings()
+            wait_for(lambda: len(transport.sent) == 2, timeout=1.5)
+            entries = page()
+            assert [due.key.source_id for due, *_ in transport.sent] == ['first','later']
+            assert len(entries) == 2 and all(row.unread for row in entries)
+
+
+@pytest.mark.parametrize('missed,lateness,expected', [
+    ('none', timedelta(), True), ('none', MINUTE, False),
+    ('upcoming', MINUTE, False), ('all', timedelta(days=1), True),
+    ('all', timedelta(days=1, microseconds=1), False)])
+def test_restart_snooze_applies_missed_policy_at_local_deadline(tmp_path, missed, lateness, expected):
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE-MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        writer.apply_remote([event('original', BASE)])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, missed=missed), now=clock.now())
+        with running(path, clock) as (controller, transport, page):
+            assert page() == ()
+            clock.time = BASE
+            controller.reload_settings()
+            wait_for(lambda: transport.sent)
+            key = transport.sent[0][0].key
+            transport.delivered.emit(key, 1)
+            controller.snooze(key, 10*MINUTE)
+            wait_for(lambda: page()[0].status=='snoozed')
+        clock.time = BASE+10*MINUTE+lateness
+        with running(path, clock) as (controller, transport, page):
+            wait_for(lambda: transport.started)
+            rows = page()
+            assert bool(transport.sent) is expected
+            assert len(rows) == 1 and rows[0].reminder.key == key
+            if not expected:
+                assert not rows[0].unread and rows[0].status == 'dismissed'
+
+
+def test_nonowner_preview_completes_after_discovery(tmp_path):
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE-MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        writer.apply_remote([event('ordinary', BASE)])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+        with running(path, clock) as (owner, ordinary, owner_page):
+            wait_for(lambda: ordinary.started)
+            with running(path, clock) as (secondary, preview, page):
+                assert not page() and not preview.started
+                preview.ready = None
+                secondary.test_notification(ReminderPreferences(delivery='desktop'))
+                wait_for(lambda: preview.started)
+                assert not preview.sent
+                preview.ready = True
+                preview.availabilityChanged.emit(True)
+                assert not page() and len(preview.sent) == 1
+                preview.delivered.emit(preview.sent[0][0].key, 3)
+                wait_for(lambda: not preview.started)
+                clock.time = BASE
+                owner.reload_settings()
+                wait_for(lambda: ordinary.sent)
+                assert len(preview.sent) == 1
+                assert [e.reminder.key.source_id for e in page()] == ['ordinary']
+
+
+def test_secondary_page_binds_current_partition_and_rejects_retained_page(tmp_path):
+    import json
+    import sqlite3
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE-MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        writer.apply_remote([event('one', BASE)])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True, delivery='in_app'), now=clock.now())
+        with running(path, clock) as (owner, _, owner_page):
+            assert not owner_page()
+            clock.time = BASE
+            key = wait_for(lambda: next(iter(owner_page()), None)).reminder.key
+            with running(path, clock) as (reader, _, page):
+                assert page()[0].unread
+                old = reader.inbox_partition
+                with sqlite3.connect(str(path)+'.reminders.sqlite3') as db:
+                    db.execute("UPDATE metadata SET value=? WHERE key='partition'", (json.dumps('rotated'),))
+                assert page()[0].unread and reader.inbox_partition == 'rotated'
+                reader.mark_read((key,), partition=old)
+                assert page()[0].unread
+                reader.mark_read((key,), partition='rotated')
+                assert not page()[0].unread
+
+
+@pytest.mark.parametrize('operation,action', [('actionable','dismiss'), ('dismiss','dismiss'),
+                                             ('mark_read','open'), ('snooze','snooze')])
+def test_native_action_commit_retries_once(tmp_path, monkeypatch, operation, action):
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE-MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        writer.apply_remote([event('one', BASE)])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+        with running(path, clock) as (controller, transport, page):
+            opened = []
+            controller.activate.connect(opened.append)
+            assert not page()
+            clock.time = BASE
+            controller.reload_settings()
+            wait_for(lambda: transport.sent)
+            key = transport.sent[0][0].key
+            transport.delivered.emit(key, 42)
+            assert page()[0].status == 'delivered'
+            busy_once(monkeypatch, operation)
+            transport.action.emit(key, action)
+            row = page()[0]
+            assert not row.unread
+            assert row.status == {'open':'delivered', 'dismiss':'dismissed', 'snooze':'snoozed'}[action]
+            assert len(opened) == int(action=='open')
+            transport.action.emit(key, action)
+            assert page()[0] == row and len(opened) == int(action=='open')
+
+
+def test_snooze_jitter_after_end_and_missed_ongoing_wake(tmp_path):
+    path = tmp_path/'profile'
+    clock = FakeClock(BASE - 2*MINUTE)
+    with Store(path) as writer:
+        writer.save_calendar(Calendar('c', 'Example', '#123456'))
+        ended = event('ended', BASE)
+        ongoing = replace(event('ongoing', BASE), end=BASE+4*timedelta(hours=1))
+        writer.apply_remote([ended, ongoing])
+        save_reminder_preferences(writer, ReminderPreferences(enabled=True), now=clock.now())
+        with running(path, clock) as (controller, transport, page):
+            assert not page()
+            # Both original triggers use missed grouping, then receive local snoozes.
+            clock.time = BASE + MINUTE
+            controller.reload_settings()
+            wait_for(lambda: len(transport.sent) == 2)
+            for due, *_ in list(transport.sent):
+                transport.delivered.emit(due.key, 1)
+                controller.snooze(due.key, (9 if due.key.source_id=='ended' else 29)*MINUTE)
+            wait_for(lambda: all(row.status=='snoozed' for row in page()))
+            clock.time = BASE+10*MINUTE-timedelta(milliseconds=300)
+            assert all(row.status=='snoozed' for row in page())
+            clock.time += timedelta(milliseconds=500)
+            controller.reload_settings()
+            wait_for(lambda: len(transport.sent) == 3)
+            assert transport.sent[-1][0].key.source_id == 'ended'
+            clock.time = BASE+40*MINUTE
+            controller.reload_settings()
+            wait_for(lambda: len(transport.sent) == 4)
+            assert transport.sent[-1][0].key.source_id == 'ongoing'

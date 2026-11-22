@@ -1,11 +1,13 @@
 """Single-threaded reminder owner, bounded scheduling slices and inbox commands."""
 from collections import deque
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from queue import Empty, Queue
 import sqlite3
 from threading import Event, Thread
 from time import monotonic
+from typing import Generator
 from uuid import uuid4
 
 from .alarms import Alarm
@@ -13,7 +15,7 @@ from .recurrence import RecurrenceRangeError, recurrence_key
 from .reminder_compilation import DAY_US, MAX_US, DeliveryKey, DueReminder, instant, micros
 from .reminder_rule_seek import seek_slice
 from .reminder_owner import ReminderOwner
-from .reminder_preferences import CalendarReminderPolicy, read_reminder_policy
+from .reminder_preferences import CalendarReminderPolicy, ReminderPolicySnapshot, read_reminder_policy
 from .reminder_schedule import compile_schedule
 from .reminder_store import ReminderStore
 from .timeutil import local_zone
@@ -25,13 +27,35 @@ DESKTOP_ISSUE = 'Desktop notifications are unavailable. Check the desktop notifi
 DATA_ERRORS = (ValueError, OverflowError, TypeError, LookupError, AttributeError, RecursionError)
 
 
-def advance(probe):
-    """Run one bounded part of a qualification, returning None while incomplete."""
-    try:
-        next(probe)
-    except StopIteration as done:
-        return done.value
-    return None
+@dataclass
+class Qualification:
+    """Keep the completed decision while its durable disposition awaits a write lock."""
+    due: DueReminder
+    fence: str
+    now: datetime
+    policy: ReminderPolicySnapshot
+    group_repeats: bool = True
+    result: bool | None = None
+    probe: Generator[None, None, bool] | None = None
+
+    def resolve(self, worker):
+        if self.result is None and self.probe is None:
+            worker.assess(self)
+        if self.probe is not None:
+            # Only the bounded, in-memory recurrence computation lives in the
+            # generator. A busy database operation cannot close its continuation.
+            try:
+                next(self.probe)
+                return None
+            except StopIteration as done:
+                self.result = done.value
+            except DATA_ERRORS:
+                self.result = False
+            self.probe = None
+        if self.group_repeats and self.result:
+            self.result = worker.store.begin_catchup(self.due, self.now)
+            self.group_repeats = False
+        return self.result
 
 
 def upcoming(schedule, now):
@@ -210,8 +234,10 @@ class ReminderWorker(Thread):
             return
         if kind == 'page':
             request, limit, offset = args
-            entries = self.store.inbox(limit=limit, offset=offset) if self.inbox_store() else ()
-            self.post('page', request, entries, self.partition)
+            token, entries = self.store.inbox_page(limit=limit, offset=offset) if self.inbox_store() else (None, ())
+            if not self.owner:
+                self.partition = token
+            self.post('page', request, entries, token)
             self.count_unread()
             return
         if not self.inbox_store():
@@ -225,10 +251,12 @@ class ReminderWorker(Thread):
             entry = self.store.entry(key)
             if not entry:
                 return
-            if kind == 'native':
-                if (self.native_calendars.pop(key, None) is None or not self.owner or not self.native
+            native_action = kind == 'native'
+            if native_action:
+                if (key not in self.native_calendars or not self.owner or not self.native
                         or entry.status != 'delivered'
                         or not self.store.actionable(entry.reminder)):
+                    self.native_calendars.pop(key, None)
                     return
                 kind = extra[0]
                 extra = [timedelta(minutes=5)]
@@ -236,13 +264,14 @@ class ReminderWorker(Thread):
                 self.store.mark_read((key,), partition=partition)
                 self.post('activate', entry.reminder)
             elif kind in ('dismiss', 'snooze'):
-                self.native_calendars.pop(key, None)
-                self.transport.forget(key)
-                self.submitted.pop(key, None)
                 if kind == 'dismiss':
                     self.store.dismiss(key, partition=partition)
                 elif extra[0] > timedelta() and self.policy.preferences.enabled:
                     self.store.snooze(key, self.clock.now() + extra[0], partition=partition)
+                self.transport.forget(key)
+                self.submitted.pop(key, None)
+            if native_action or kind in ('dismiss', 'snooze'):
+                self.native_calendars.pop(key, None)
         self.changed()
 
     def ensure_owner(self, now):
@@ -393,6 +422,7 @@ class ReminderWorker(Thread):
             self.test_tick()
             return POLL
         if not self.ensure_owner(now):
+            self.test_tick()
             return POLL
         states = self.store.read_sources('calendar_states')
         if self.partition != self.store.partition_id:
@@ -427,23 +457,21 @@ class ReminderWorker(Thread):
             return .001
         wake = self.store.next_wakeup()
         if wake and wake <= now and not self.qualifying and len(self.unsent) < PAGE:
-            due_page = self.store.claim_due(now, limit=PAGE)
-            for due in due_page:
-                fence = self.store.claim_fence(due.key)
-                probe = self.eligible(due, fence, now, self.policy)
-                self.qualifying.append((due.key, fence, self.policy, probe))
+            for due, fence in self.store.claim_due_with_fences(now, limit=PAGE):
+                self.qualifying.append(Qualification(due, fence, now, self.policy))
         resolved = False
         while self.qualifying:
-            key, fence, policy, probe = self.qualifying[0]
-            accepted = advance(probe)
+            claim = self.qualifying[0]
+            accepted = claim.resolve(self)
             if accepted is None:
                 break
+            key = claim.due.key
             if accepted:
-                self.unsent.append((key, fence, policy))
-                if policy.preferences.delivery != 'desktop':
-                    self.store.pending_unread(key, fence)
+                if claim.policy.preferences.delivery != 'desktop':
+                    self.store.pending_unread(key, claim.fence)
+                self.unsent.append((key, claim.fence, claim.policy))
             else:
-                self.store.suppress(key, fence)
+                self.store.suppress(key, claim.fence)
             self.qualifying.popleft()
             resolved = True
         if resolved:
@@ -460,33 +488,37 @@ class ReminderWorker(Thread):
             return .01
         return POLL
 
-    def eligible(self, due, fence, now, policy, *, group=True):
-        if self.store.is_snooze_claim(due.key, fence):
-            return True
-        trigger = due.key.trigger_utc
+    def assess(self, claim):
+        due, policy, now = claim.due, claim.policy, claim.now
+        snooze_wake = self.store.snooze_deadline(due.key, claim.fence)
+        trigger = snooze_wake or due.key.trigger_utc
         boundary = policy.calendar_eligible_since.get(due.calendar_id)
         if any(value and trigger <= value for value in (policy.eligible_since, boundary)):
-            return False
+            claim.result = False
+            return
         if trigger == now or (self.armed and self.armed <= trigger and now - self.armed <= JITTER
-                              and due.source_revision <= self.armed_revision):
-            return True
+                              and (snooze_wake or due.source_revision <= self.armed_revision)):
+            claim.result = True
+            claim.group_repeats = False
+            return
         missed = policy.preferences.missed
         if missed == 'none' or now-trigger > timedelta(days=1):
-            return False
-        if missed == 'upcoming':
-            if due.key.occurrence_key is None:
-                changes = self.store.read_sources('selected', (due.key.source_id,), partition=self.partition)
-                if not changes or changes[0].event is None:
-                    return False
+            claim.result = False
+            return
+        if snooze_wake:
+            claim.group_repeats = False
+        if missed == 'upcoming' and due.key.occurrence_key is None:
+            changes = self.store.read_sources('selected', (due.key.source_id,), partition=self.partition)
+            if changes and changes[0].event is not None:
                 try:
                     schedule = compile_schedule(changes[0], CalendarReminderPolicy(), zone=self.zone)
-                    if not (yield from upcoming(schedule, now)):
-                        return False
+                    claim.probe = upcoming(schedule, now)
+                    return
                 except DATA_ERRORS:
-                    return False
-            elif due.end is None or micros(due.end) <= micros(now):
-                return False
-        return not group or self.store.begin_catchup(due, now)
+                    pass
+            claim.result = False
+        else:
+            claim.result = missed == 'all' or (due.end is not None and micros(due.end) > micros(now))
 
     def dispatch(self):
         for _ in range(len(self.unsent)):
@@ -512,25 +544,24 @@ class ReminderWorker(Thread):
                     self.review = None
                     continue
                 if original.preferences.missed != prefs.missed:
-                    if not self.review or self.review[0] != self.policy.generation:
-                        probe = self.eligible(due, fence, self.clock.now(), self.policy, group=False)
-                        self.review = self.policy.generation, probe
-                    accepted = advance(self.review[1])
+                    if not self.review or self.review.policy.generation != self.policy.generation:
+                        self.review = Qualification(due, fence, self.clock.now(), self.policy, group_repeats=False)
+                    accepted = self.review.resolve(self)
                     if accepted is None:
                         return
-                    self.review = None
                     if not accepted:
                         self.store.suppress(key, fence)
+                        self.review = None
                         self.unsent.popleft()
                         continue
-                fence = self.store.prepare_unsent(due, fence)
+                add_unread = original.preferences.delivery == 'desktop' and prefs.delivery != 'desktop'
+                fence = self.store.prepare_unsent(due, fence, add_unread=add_unread)
                 if not fence:
                     # A canonical edit can outrun its journal page. Reconcile
                     # it before retiring or refreshing the original claim.
                     return
                 self.unsent[0] = key, fence, self.policy
-                if original.preferences.delivery == 'desktop' and prefs.delivery != 'desktop':
-                    self.store.pending_unread(key, fence)
+                self.review = None
             calendar = self.store.read_sources('calendar_name', due.calendar_id, partition=self.partition)
             if not self.store.can_emit(due, fence):
                 return
